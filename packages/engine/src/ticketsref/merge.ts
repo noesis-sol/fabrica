@@ -22,7 +22,7 @@ import {
   notesById,
   ticketFileText,
 } from './codec'
-import { type Hlc, HlcOrder, later } from './hlc'
+import { Hlc, HlcOrder, later } from './hlc'
 
 // The tickets ref's merge (spec §11.4, §11.7): the engine merges the ref itself, three-way, each
 // ticket's file against the merge base. A ticket changed on one side only takes that side; notes are
@@ -146,29 +146,24 @@ const statusWinner = ({ base, ours, theirs }: MergeInput): Side => {
 }
 
 /**
- * Which side's `assignee` wins where both changed it: with a run lease held, a change another engine
- * wrote (a claim or a release made under a lease since expired), or a claim naming another engine,
- * loses to the other side; else the later clock. Only the lease's holder writes claims (spec §11.5).
+ * The side whose `assignee` wins for the run lease (spec §11.5), where both changed it: with a lease
+ * held, a change another engine wrote (a claim or a release made under a lease since expired), or a
+ * claim naming another engine, loses to the other side. None when the lease doesn't decide it.
  */
-const assigneeWinner = (
+const leaseWinner = (
   { ours, theirs }: MergeInput,
   holder: Option.Option<EngineId>,
   sides: Record<Side, FieldView>,
-): Side => {
-  const stale = (file: TicketFile, view: FieldView): boolean =>
-    Option.exists(
-      holder,
-      engine =>
-        view.clock.engine !== engine ||
-        Option.exists(file.ticket.assignee, claim => claim.engine !== engine),
-    )
-  const oursStale = stale(ours, sides.ours)
-  return oursStale !== stale(theirs, sides.theirs)
-    ? oursStale
-      ? 'theirs'
-      : 'ours'
-    : byClock(sides.ours, sides.theirs)
-}
+): Option.Option<{ readonly side: Side; readonly holder: EngineId }> =>
+  Option.flatMap(holder, engine => {
+    const stale = (file: TicketFile, view: FieldView): boolean =>
+      view.clock.engine !== engine ||
+      Option.exists(file.ticket.assignee, claim => claim.engine !== engine)
+    const oursStale = stale(ours, sides.ours)
+    return oursStale === stale(theirs, sides.theirs)
+      ? Option.none()
+      : Option.some({ side: oursStale ? 'theirs' : 'ours', holder: engine })
+  })
 
 /** A set three ways: kept where both sides have it, or where one side added it since the base. */
 const mergeSet = <A extends string>(
@@ -260,15 +255,42 @@ export const mergeTicketFile = ({
       field === 'status'
         ? () => statusWinner(input)
         : field === 'assignee'
-          ? sides => assigneeWinner(input, holder, sides)
+          ? sides =>
+              Option.match(leaseWinner(input, holder, sides), {
+                onNone: () => byClock(sides.ours, sides.theirs),
+                onSome: ({ side }) => side,
+              })
           : sides => byClock(sides.ours, sides.theirs),
     ),
+  )
+  // The lease holder's assignee, kept over another engine's later change, is kept at a clock just
+  // past both that names the holder, so the next merge still sees the holder wrote it.
+  const assignee = Option.match(
+    decided.assignee.conflict
+      ? leaseWinner(input, holder, {
+          ours: views.ours.assignee,
+          theirs: views.theirs.assignee,
+        })
+      : Option.none(),
+    {
+      onNone: () => decided.assignee,
+      onSome: ({ side, holder }) => ({
+        ...decided.assignee,
+        side,
+        clock: new Hlc({
+          wall: decided.assignee.clock.wall,
+          counter: decided.assignee.clock.counter + 1,
+          engine: holder,
+        }),
+      }),
+    },
   )
   // A ticket's resolution and close reason go with the status they were set with.
   const status = decided.status
   const withStatus = status.conflict
     ? {
         ...decided,
+        assignee,
         resolution: followOutcome(
           decided.resolution,
           status.side,
@@ -282,7 +304,7 @@ export const mergeTicketFile = ({
           'closeReason',
         ),
       }
-    : decided
+    : { ...decided, assignee }
   // A question's type and its question go together: where they merged apart into a ticket the
   // schema refuses, both come from the side whose type was kept.
   const typeSide = withStatus.type.side

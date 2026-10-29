@@ -467,6 +467,60 @@ describe('the merge of a ticket file (examples)', () => {
     }
   })
 
+  it("keeps the lease holder's assignee through the next merge, against the other engine's later claim", () => {
+    const claim = (engine: EngineId, session: string) =>
+      Option.some(new Assignee({ engine, session: SessionId.make(session) }))
+    const holder = Option.some(fb)
+    const twice = (
+      claimedAt: TicketFile,
+      holders: TicketFile,
+      stales: TicketFile,
+      expected: Option.Option<Assignee>,
+    ) => {
+      const first = mergeTicketFile({
+        base: Option.some(claimedAt),
+        ours: holders,
+        theirs: stales,
+        holder,
+      })
+      expect(first.file.ticket.assignee).toEqual(expected)
+      expect(first.file.clocks.assignee.engine).toBe(fb)
+      // fe-a claims again on its own side, before it has fetched the merge.
+      const again = edited(stales, hlc(2500, fa), {
+        assignee: claim(fa, 's-3'),
+      })
+      for (const [ours, theirs] of [
+        [first.file, again],
+        [again, first.file],
+      ] as const)
+        expect(
+          mergeTicketFile({ base: Option.some(stales), ours, theirs, holder })
+            .file.ticket.assignee,
+        ).toEqual(expected)
+    }
+    // The holder's claim, against a release written under an expired lease.
+    const claimedByA = edited(baseFile, hlc(100, fa), {
+      status: 'in_progress',
+      assignee: claim(fa, 's-1'),
+    })
+    twice(
+      claimedByA,
+      edited(claimedByA, hlc(1000, fb), { assignee: claim(fb, 's-2') }),
+      edited(claimedByA, hlc(2000, fa), { assignee: Option.none() }),
+      claim(fb, 's-2'),
+    )
+    // The holder's release, against a claim made under an expired lease.
+    const claimedByB = edited(baseFile, hlc(100, fb), {
+      assignee: claim(fb, 's-2'),
+    })
+    twice(
+      claimedByB,
+      edited(claimedByB, hlc(1500, fb), { assignee: Option.none() }),
+      edited(claimedByB, hlc(2000, fa), { assignee: claim(fa, 's-1') }),
+      Option.none(),
+    )
+  })
+
   it('merges labels and edges as sets against the base', () => {
     const ours = edited(
       baseFile,
