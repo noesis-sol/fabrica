@@ -11,6 +11,7 @@ import {
   sshArguments,
   sshEnded,
 } from '../transports/ssh'
+import { WslFailed, WslFailure, wslEnded, wslEnv } from '../transports/wsl'
 
 // The host an engine is installed on, as the installer reaches it (spec §9.2, §7.6): one interface,
 // a command run there with its stdin, so the same steps install over SSH, in WSL2 through wsl.exe, and
@@ -246,7 +247,10 @@ export const sshShell = ({
         : Option.none(),
   }))
 
-/** A WSL2 distribution through wsl.exe (§7.6), each command run there without a shell between. */
+/**
+ * A WSL2 distribution through wsl.exe (§7.6), each command run there without a shell between; a
+ * distribution WSL has none of is said so.
+ */
 export const wslShell = ({
   distro,
   env,
@@ -260,6 +264,13 @@ export const wslShell = ({
   shellOf(`WSL ${distro}`, argv => ({
     command: wsl ?? 'wsl.exe',
     args: ['-d', distro, '--exec', ...argv],
-    env,
-    failed: () => Option.none(),
+    env: wslEnv(env),
+    failed: ran =>
+      Option.map(
+        Option.filter(
+          wslEnded({ code: ran.code, signal: null, stderr: ran.stderr }),
+          WslFailure.$is('DistroMissing'),
+        ),
+        failure => new WslFailed({ distro, failure }).message,
+      ),
   }))

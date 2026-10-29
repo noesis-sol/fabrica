@@ -184,6 +184,17 @@ const agreed = (consent: InstallConsent, plan: InstallPlan): boolean =>
       InstallPlan.guards.Update(plan) && plan.from === from && plan.to === to,
   })
 
+/**
+ * Whether the engine is installed as a login service: always (a host's own login session keeps it), or
+ * only where the user's systemd answers (a WSL2 distribution without systemd starts the engine through
+ * the bridge at each connection instead, spec §7.6).
+ */
+export type LoginServiceUse = 'always' | 'where-systemd-runs'
+
+/** What the install says where it installs no login service. */
+export const noServiceWords =
+  "systemd isn't running here, so no login service is installed: the engine starts when the app connects"
+
 /** Makes the install's folder beside the engine's versions, private to the user. */
 const stageScript = String.raw`set -eu
 mkdir -p "$1"
@@ -253,11 +264,16 @@ printf 'placed=%s\n' "$target/$6"
 
 /**
  * Asks the engine $1 (the old version's launcher, where this is an update) to wind its runs down and
- * stop, then installs the login service from the link $2, which (re)starts the engine from it.
+ * stop, then installs the login service from the link $2, which (re)starts the engine from it. Where
+ * $3 is `where-systemd-runs` and the user's systemd doesn't answer, it installs none, and says so.
  */
 const serviceScript = String.raw`set -u
 if [ -n "$1" ] && [ -x "$1" ]; then
   "$1" engine stop </dev/null >/dev/null 2>&1 || true
+fi
+if [ "$3" = where-systemd-runs ] && ! { command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment </dev/null >/dev/null 2>&1; }; then
+  printf '%s\n' "${noServiceWords}"
+  exit 0
 fi
 exec "$2" service install </dev/null
 `
@@ -419,9 +435,12 @@ const place = Effect.fn('EngineInstall.place')(function* ({
 export const installEngine = ({
   source,
   consent,
+  loginService = 'always',
 }: {
   readonly source: DistributionSource
   readonly consent: InstallConsent
+  /** `always` unless given. */
+  readonly loginService?: LoginServiceUse
 }): Effect.Effect<
   EngineInstalled,
   InstallFailure,
@@ -462,7 +481,7 @@ export const installEngine = ({
       })
       const service = yield* runScript({
         script: serviceScript,
-        args: [old, places.link],
+        args: [old, places.link, loginService],
         timeLimit: SERVICE_TIME,
       }).pipe(Effect.mapError(unreachable))
       if (service.code !== 0) {

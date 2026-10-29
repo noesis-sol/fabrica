@@ -1,12 +1,14 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    // The connection process is Node's, in Electron's utilityProcess: no DOM.
+    // The connection process is Node's, in Electron's utilityProcess: no DOM. So is main's WSL2 module.
     "types": ["node"]
   },
   "include": [
     "src/connection/**/*",
+    "src/main/wsl.ts",
     "test/connection.test.ts",
-    "test/connection-ssh.test.ts"
+    "test/connection-ssh.test.ts",
+    "test/wsl.test.ts"
   ]
 }

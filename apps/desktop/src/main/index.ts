@@ -73,6 +73,7 @@ const reachLocalEngine = ConnectionTarget.match(target, {
       ),
     ),
   Ssh: () => Effect.void,
+  Wsl: () => Effect.void,
   Unavailable: () => Effect.void,
 })
 

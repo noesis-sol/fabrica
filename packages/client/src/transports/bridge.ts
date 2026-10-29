@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, type Scope } from 'effect'
+import { Effect, Layer, Option, Schedule, type Scope } from 'effect'
 import { Socket } from 'effect/socket'
 import { type ChildProcessByStdio, spawn } from 'node:child_process'
 import { PassThrough, Readable, Writable } from 'node:stream'
@@ -28,6 +28,12 @@ export interface BridgeCommand {
    */
   readonly ended?: (end: BridgeEnd) => Option.Option<Error>
 }
+
+/** Effect's own back-off for a lost bridge: 0.5 s, growing, up to 5 s. */
+export const bridgeBackOff = Schedule.min([
+  Schedule.exponential(500, 1.5),
+  Schedule.spaced(5000),
+])
 
 /** How much of a bridge's stderr is kept for its `ended`. */
 export const stderrTailBytes = 16 * 1024

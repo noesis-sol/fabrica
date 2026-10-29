@@ -1,21 +1,26 @@
 import { Context, Effect, Layer, type Scope } from 'effect'
 import { Socket } from 'effect/socket'
 
-import { SshPrompting, layerSsh, layerUnixSocket } from '@fabrica/client/node'
+import {
+  SshPrompting,
+  layerSsh,
+  layerUnixSocket,
+  layerWsl,
+} from '@fabrica/client/node'
 
 import { ConnectionTarget } from './target'
 
-// The connection process's transports (spec §8.2, §9.1): how it reaches the engine a target names, one
-// new connection (a socket connection, or an `ssh` child) for each connection the page opens. Its ssh
-// asks nothing yet (`BatchMode`): it reaches hosts `known_hosts` knows with keys ssh-agent holds, until
-// its prompts are relayed to the app through `SSH_ASKPASS`.
+// The connection process's transports (spec §8.2, §9.1, §7.6): how it reaches the engine a target
+// names, one new connection (a socket connection, or an `ssh` or `wsl.exe` child) for each connection
+// the page opens. Its ssh asks nothing yet (`BatchMode`): it reaches hosts `known_hosts` knows with keys
+// ssh-agent holds, until its prompts are relayed to the app through `SSH_ASKPASS`.
 
 /** A socket to the engine, made anew for each connection the page opens, and closed with its scope. */
 export type EngineSocket = Effect.Effect<Socket.Socket, never, Scope.Scope>
 
 /** What the transports take from the connection process's host. */
 export interface TransportHost {
-  /** The connection process's environment, the user's: ssh's, for their agent and config. */
+  /** The connection process's environment, the user's: ssh's, for their agent and config, and wsl.exe's. */
   readonly env: Readonly<Record<string, string | undefined>>
 }
 
@@ -47,6 +52,8 @@ export const engineSocket = (
           prompting: SshPrompting.None(),
         }),
       ),
+    Wsl: ({ distro }) =>
+      socketOf(layerWsl({ distro, env: definedOf(host.env) })),
     Unavailable: ({ reason }) =>
       Socket.fromTransformStream(
         Effect.fail(

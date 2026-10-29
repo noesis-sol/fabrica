@@ -7,8 +7,14 @@
     "types": ["node"],
     "allowImportingTsExtensions": true
   },
-  // The connection process and its tests have their own, without the DOM (tsconfig.connection.json).
-  "exclude": ["test/connection.test.ts", "test/connection-ssh.test.ts"],
+  // The connection process, main's WSL2 module (which reaches @fabrica/client's Node transports, whose
+  // web streams are Node's) and their tests have their own, without the DOM (tsconfig.connection.json).
+  "exclude": [
+    "src/main/wsl.ts",
+    "test/connection.test.ts",
+    "test/connection-ssh.test.ts",
+    "test/wsl.test.ts"
+  ],
   // The renderer's declarations of the Monaco modules it loads, which its tests reach.
   "include": [
     "src/main/**/*",

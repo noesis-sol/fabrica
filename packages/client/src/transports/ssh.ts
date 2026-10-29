@@ -18,7 +18,12 @@ import * as NodePath from 'node:path'
 import { NodeSocketServer } from '@effect/platform-node'
 
 import type { SshDestination } from '../destination'
-import { type BridgeCommand, type BridgeEnd, bridgeSocket } from './bridge'
+import {
+  type BridgeCommand,
+  type BridgeEnd,
+  bridgeBackOff,
+  bridgeSocket,
+} from './bridge'
 
 // The SSH stdio bridge (spec §8.2, §9.1, H30): the system's `ssh <destination> fabrica bridge`, with the
 // user's own config, keys and agent, the RPC over its stdin and stdout. One ssh process per connection
@@ -152,15 +157,9 @@ export const sshFailed = (
     : Option.none()
 }
 
-/** Effect's own back-off for a lost connection: 0.5 s, growing, up to 5 s. */
-const backOff = Schedule.min([
-  Schedule.exponential(500, 1.5),
-  Schedule.spaced(5000),
-])
-
 /** The client's reconnect schedule over ssh: `base` (Effect's back-off unless given), until ssh refuses. */
 export const sshReconnect = (
-  base: Schedule.Schedule<unknown, Socket.SocketError> = backOff,
+  base: Schedule.Schedule<unknown, Socket.SocketError> = bridgeBackOff,
 ): Schedule.Schedule<unknown, Socket.SocketError> =>
   Schedule.while(base, ({ input }) =>
     Option.match(sshFailed(input), {
