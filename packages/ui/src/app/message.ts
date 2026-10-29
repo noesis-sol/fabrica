@@ -1,6 +1,7 @@
 import { Schema } from 'effect'
 import { defineMessageUnion } from 'foldkit/message'
 
+import { SshPrompt } from '@fabrica/client'
 import {
   EngineId,
   ProjectId,
@@ -36,8 +37,13 @@ import {
   itemsOf,
 } from './streams'
 
-// The root's Messages: keys pressed and commands asked for, the connection's lifecycle, and each
-// stream's items, a frame's worth at a time (spec §18.1, §18.5), and the app's notifications.
+// The root's Messages: keys pressed and commands asked for, the connection's lifecycle and what ssh
+// asks as it connects, and each stream's items, a frame's worth at a time (spec §18.1, §18.5, §9.1),
+// and the app's notifications.
+
+/** How the user answers what ssh asked: yes, no (a cancel, a dismissal), or the secret typed. */
+export const SshReply = Schema.Literals(['Accepted', 'Declined', 'Entered'])
+export type SshReply = typeof SshReply.Type
 
 export const Message = defineMessageUnion({
   /** A key went down anywhere in the window; `inField` while focus is in a text field. */
@@ -88,6 +94,19 @@ export const Message = defineMessageUnion({
   LostEngine: {},
   ReleasedEngine: {},
   FailedToConnect: { reason: Schema.String },
+  /** The connection was refused in a way trying again won't mend: ssh refused the engine's host. */
+  StoppedConnecting: { reason: Schema.String },
+  /** The user asked to try a connection that stopped again. */
+  RequestedReconnect: {},
+  /** ssh asked something, numbered `id`, as the app connects (§9.1). */
+  AskedSsh: { id: Schema.Int, prompt: SshPrompt },
+  /** ssh went on, or ended, without the answer to prompt `id`. */
+  WithdrewSsh: { id: Schema.Int },
+  /** The secret typed for the prompt shown. */
+  ChangedSshSecret: { secret: Schema.Redacted(Schema.String) },
+  /** The user answered prompt `id`. */
+  RepliedToSsh: { id: Schema.Int, reply: SshReply },
+  CompletedAnswerSsh: {},
   RefusedByEngine: {
     client: ProtocolVersion,
     engine: ProtocolVersion,

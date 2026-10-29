@@ -14,6 +14,7 @@ import { AppHost, type AppHostShape } from './host'
 import { Message } from './message'
 import { Flags, Model, initialModel } from './model'
 import { type NotifierShape, layerNotifier } from './notifier'
+import { type SshPromptHostShape, layerSshPromptHost } from './ssh-prompts'
 import {
   type SubscriptionEnvironment,
   makeSubscriptions,
@@ -23,7 +24,8 @@ import { update } from './update'
 import { view } from './view'
 
 // The program the entries run (spec §18.1): the Model, its update and view, the engine connection as
-// a ManagedResource, the subscriptions, the notifier and the app around the renderer as resources,
+// a ManagedResource, the subscriptions, the notifier, ssh's prompts and the app around the renderer as
+// resources,
 // given what they need of their host, injected so tests run them against a test engine and their own
 // frames and keys.
 
@@ -35,6 +37,8 @@ export interface Environment extends SubscriptionEnvironment {
   readonly notifier: NotifierShape
   /** The app around the renderer: the desktop app's preload, or none in a browser. */
   readonly host: AppHostShape
+  /** What ssh asks as the app connects (§9.1): through the preload, or nothing without it. */
+  readonly sshPrompts: SshPromptHostShape
   /** Where the theme is shown and kept: the window the renderer runs in. */
   readonly themeHost: ThemeHostShape
 }
@@ -69,6 +73,7 @@ export const makeManagedResources = (
               engine: mismatch.engine,
               update: mismatch.update,
             }),
+          Stopped: ({ reason }) => Message.StoppedConnecting({ reason }),
           Unreachable: ({ reason }) => Message.FailedToConnect({ reason }),
         }),
     }),
@@ -85,6 +90,7 @@ export const program = (environment: Environment) => ({
     layerNotifier(environment.notifier),
     Layer.succeed(AppHost, environment.host),
     layerThemeHost(environment.themeHost),
+    layerSshPromptHost(environment.sshPrompts),
   ),
   managedResources: makeManagedResources(environment),
 })

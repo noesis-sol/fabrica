@@ -33,6 +33,7 @@ import { Theme } from '../theme/theme'
 import { Connection } from './connection'
 import * as Notify from './notify'
 import { Screen } from './screen'
+import * as SshPrompts from './ssh-prompts'
 import { ProjectEvents } from './streams'
 
 // The root Model (spec §18.1): the screen shown and any overlay over it, the scope the sidebar chose,
@@ -90,6 +91,8 @@ export const Model = Schema.Struct({
   /** The connection attempt: each new one acquires the client afresh. */
   attempt: Schema.Int,
   connection: Connection,
+  /** What ssh asks as the app connects, waiting for the user (§9.1). */
+  sshPrompts: SshPrompts.Model,
   screen: Screen,
   overlay: Overlay,
   /** The project the sidebar chose; none for every project. */
@@ -133,6 +136,7 @@ export const initialModel = (flags: Flags): Model => ({
   theme: Option.fromUndefinedOr(flags.theme),
   attempt: 1,
   connection: Connection.Connecting(),
+  sshPrompts: SshPrompts.init(),
   screen: Screen.Console(),
   overlay: Overlay.Closed(),
   scope: Option.none(),

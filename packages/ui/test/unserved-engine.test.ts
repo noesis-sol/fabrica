@@ -34,6 +34,7 @@ import type { Message } from '../src/app/message'
 import { type Flags, initialModel } from '../src/app/model'
 import { silentNotifier } from '../src/app/notifier'
 import { program } from '../src/app/program'
+import { noSshPromptHost } from '../src/app/ssh-prompts'
 import { themeHostOf } from '../src/app/theme-host'
 import { update } from '../src/app/update'
 
@@ -184,6 +185,7 @@ describe('the console against an engine that serves little yet', () => {
           replacedEnginePorts: Stream.never,
           notifier: silentNotifier,
           host: noAppHost,
+          sshPrompts: noSshPromptHost,
           themeHost: themeHostOf(window),
         })
         const container = document.createElement('div')

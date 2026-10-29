@@ -1,7 +1,7 @@
 import { Array, type DateTime, Effect, Option, Schema, Stream } from 'effect'
 import { Subscription } from 'foldkit'
 
-import { type EngineClientShape, Link } from '@fabrica/client'
+import { type EngineClientShape, Link, SshPromptEvent } from '@fabrica/client'
 import {
   type AttentionPatch,
   type AttentionRequest,
@@ -37,6 +37,7 @@ import type { Model } from './model'
 import { Notifier } from './notifier'
 import { liveRuns, watchedRuns } from './notify'
 import { Screen } from './screen'
+import { SshPromptHost } from './ssh-prompts'
 import { watchOf } from './streams'
 
 // The streams the app listens to (spec §18.1, §18.5): the keys, the engine ports that replace the
@@ -45,7 +46,8 @@ import { watchOf } from './streams'
 // stream's items go on once per animation frame, so a burst of patches costs one update. The scope's
 // run talk is opened as the scope changes, and every talk the app holds has its transcript watched.
 // For the app's notifications (§18.5), every project's attention requests and the events of each run
-// going, while connected, and the clicks on the notifications shown.
+// going, while connected, and the clicks on the notifications shown; and what ssh asks as the app
+// connects (§9.1).
 
 /** What the subscriptions need from their host, injected so tests drive them. */
 export interface SubscriptionEnvironment {
@@ -273,8 +275,8 @@ const historyRuns = (
       liveRuns(Sidebar.rows(model.console.sidebar).map(row => row.status)),
   })
 
-/** The services the subscriptions use: the engine connection, and the notifier. */
-type Services = EngineConnectionService | Notifier
+/** The services the subscriptions use: the engine connection, the notifier, and ssh's prompts. */
+type Services = EngineConnectionService | Notifier | SshPromptHost
 
 export const makeSubscriptions = ({
   nextFrame,
@@ -466,6 +468,21 @@ export const makeSubscriptions = ({
                 ),
               ),
       },
+    ),
+    sshPrompts: Subscription.persistentEntry(
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const host = yield* SshPromptHost
+          return Stream.map(
+            host.events,
+            SshPromptEvent.match({
+              Asked: ({ id, prompt }): Message =>
+                Message.AskedSsh({ id, prompt }),
+              Withdrawn: ({ id }): Message => Message.WithdrewSsh({ id }),
+            }),
+          )
+        }),
+      ),
     ),
     notificationClicks: Subscription.persistentEntry(
       Stream.unwrap(

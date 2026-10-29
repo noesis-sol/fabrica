@@ -1022,6 +1022,7 @@ export const connectionWord = (
     Up: () => ({ word: 'Connected', tone: 'text-c1' }),
     Down: () => ({ word: 'Reconnecting', tone: 'text-c2' }),
     Failed: () => ({ word: 'Unreachable', tone: 'text-c3' }),
+    Stopped: () => ({ word: 'Refused', tone: 'text-c3' }),
     Refused: ({ update }) => ({
       word: update === 'client' ? 'Needs a newer app' : 'Needs an update',
       tone: 'text-c3',
@@ -1116,6 +1117,7 @@ const engineCard = (
       Option.some(`${release} · protocol ${protocol}`),
     Down: () => Option.none<string>(),
     Failed: () => Option.none<string>(),
+    Stopped: () => Option.none<string>(),
     Refused: ({ engine }) => Option.some(`protocol ${engine}`),
   })
   return h.article(
@@ -1210,6 +1212,7 @@ const updateOffer = (
     Up: () => h.empty,
     Down: () => h.empty,
     Failed: () => h.empty,
+    Stopped: () => h.empty,
   })
 
 /** The host, as the setup names it. */

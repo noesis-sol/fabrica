@@ -32,6 +32,7 @@ import * as Talks from '../screens/talks'
 import * as Worker from '../screens/worker'
 import type { Theme } from '../theme/theme'
 import { Connection, isLive } from './connection'
+import { dialog } from './dialog'
 import {
   type KeyCommand,
   hints,
@@ -43,6 +44,7 @@ import {
 import { Message } from './message'
 import { type Model, Overlay } from './model'
 import { Screen, screenTitle } from './screen'
+import * as SshPrompts from './ssh-prompts'
 import { modelCommands, openWorker, paletteEntries } from './update'
 
 // The app's frame (spec §18.3, Appendix A.1), at the handoff's 1280 × 800 reference window: a 38px
@@ -499,6 +501,8 @@ const connectionNotice = (model: Model): Option.Option<string> =>
     Down: () => Option.some('Lost the engine; reconnecting…'),
     Failed: ({ reason }) =>
       Option.some(`Couldn't reach the engine (${reason}); trying again.`),
+    Stopped: ({ reason }) =>
+      Option.some(`Couldn't reach the engine: ${reason}.`),
     Refused: ({ update }) =>
       Option.some(
         update === 'client'
@@ -507,6 +511,7 @@ const connectionNotice = (model: Model): Option.Option<string> =>
       ),
   })
 
+/** The connection's notice; one stopped offers to try again. */
 const noticeView = (model: Model, h: HtmlBuilder<Message>): Html =>
   Option.match(connectionNotice(model), {
     onNone: () => h.empty,
@@ -516,35 +521,26 @@ const noticeView = (model: Model, h: HtmlBuilder<Message>): Html =>
           h.Role('status'),
           h.Class('rounded-card border border-line px-12 py-6 text-xs'),
         ],
-        [text],
+        [
+          text,
+          ...(Connection.guards.Stopped(model.connection)
+            ? [
+                ' ',
+                h.button(
+                  [
+                    h.Type('button'),
+                    h.OnClick(Message.RequestedReconnect()),
+                    h.Class(
+                      'rounded-button border border-line px-8 py-2 text-xs text-fg',
+                    ),
+                  ],
+                  ['Try again'],
+                ),
+              ]
+            : []),
+        ],
       ),
   })
-
-const dialog = (
-  label: string,
-  body: ReadonlyArray<Html>,
-  h: HtmlBuilder<Message>,
-): Html =>
-  h.div(
-    [
-      h.Class('fixed inset-0 flex items-start justify-center'),
-      h.Style({ paddingTop: '96px' }),
-    ],
-    [
-      h.div(
-        [
-          h.Role('dialog'),
-          h.AriaModal(true),
-          h.AriaLabel(label),
-          h.Class(
-            'flex w-full flex-col gap-8 rounded-window border border-line bg-panel py-12 shadow-glow1',
-          ),
-          h.Style({ maxWidth: '520px' }),
-        ],
-        body,
-      ),
-    ],
-  )
 
 const keyHelpView = (model: Model, h: HtmlBuilder<Message>): Html =>
   dialog(
@@ -672,6 +668,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
         ],
       ),
       overlayView(model, h),
+      SshPrompts.view(model.sshPrompts, h),
     ],
   ),
 })

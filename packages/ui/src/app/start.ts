@@ -12,6 +12,7 @@ import { Message } from './message'
 import { type NotifierShape, silentNotifier } from './notifier'
 import { onEnginePorts } from './port'
 import { program } from './program'
+import { sshPromptHostOf } from './ssh-prompts'
 import { documentKeys } from './subscriptions'
 import { themeHostOf } from './theme-host'
 
@@ -50,6 +51,7 @@ export const start = (
       ticks: localTicks,
       notifier,
       host: appHostOf(target),
+      sshPrompts: sshPromptHostOf(target),
       themeHost,
     }),
     container: target.document.getElementById('root'),

@@ -1,4 +1,4 @@
-import { Array, Duration, Effect, Option, Schema } from 'effect'
+import { Array, Duration, Effect, Option, Redacted, Schema } from 'effect'
 import { Command, Update } from 'foldkit'
 import { modifyFields } from 'foldkit/struct'
 
@@ -38,6 +38,7 @@ import { type Model, Overlay } from './model'
 import { type Notifier, ShowNotification } from './notifier'
 import * as Notify from './notify'
 import { Screen } from './screen'
+import * as SshPrompts from './ssh-prompts'
 import {
   applyAttention,
   applyBacklog,
@@ -48,7 +49,7 @@ import {
 import { ShowTheme, type ThemeHost } from './theme-host'
 
 // The root's update (spec §18.1): routing, the keys through the screen's command list, the
-// connection's lifecycle, each stream's items applied to the part of the Model they change, and the
+// connection's lifecycle and what ssh asks as it connects (§9.1), each stream's items applied to the part of the Model they change, and the
 // app's notifications: those to show, and a click on one focusing its target (§18.5).
 
 /** Waits before the next connection attempt. */
@@ -84,6 +85,7 @@ type Return = Update.Return<
   | EngineConnectionService
   | Notifier
   | ThemeHost
+  | SshPrompts.SshPromptHost
 >
 
 /**
@@ -778,11 +780,27 @@ export const update = (model: Model, message: Message): Return =>
     GotBacklogMessage: ({ message }) => foldBacklog(model, message),
 
     ConnectedToEngine: ({ engine, release, protocol }) => {
+      // The notices ssh gave as it connected are done with.
+      const notices = SshPrompts.notices(model.sshPrompts)
       const connected = modifyFields(model, {
         connection: () => Connection.Up({ engine, release, protocol }),
+        sshPrompts: prompts => notices.reduce(SshPrompts.drop, prompts),
       })
       // The screen shown asks again what it shows of the engine just reached.
-      return reopenScreen(connected)
+      const reopened = reopenScreen(connected)
+      return {
+        ...reopened,
+        commands: [
+          ...(reopened.commands ?? []),
+          ...notices.map(id =>
+            SshPrompts.AnswerSshPrompt({
+              id,
+              reply: 'Declined',
+              secret: Redacted.make(''),
+            }),
+          ),
+        ],
+      }
     },
     LostEngine: () => ({
       model: modifyFields(model, { connection: () => Connection.Down() }),
@@ -811,6 +829,50 @@ export const update = (model: Model, message: Message): Return =>
       }),
       commands: [WaitToReconnect()],
     }),
+    StoppedConnecting: ({ reason }) => ({
+      model: modifyFields(model, {
+        connection: () => Connection.Stopped({ reason }),
+      }),
+    }),
+    RequestedReconnect: () => ({
+      model: Connection.guards.Stopped(model.connection)
+        ? modifyFields(model, {
+            attempt: attempt => attempt + 1,
+            connection: () => Connection.Connecting(),
+          })
+        : model,
+    }),
+    AskedSsh: ({ id, prompt }) => ({
+      model: modifyFields(model, {
+        sshPrompts: prompts => SshPrompts.ask(prompts, { id, prompt }),
+      }),
+    }),
+    WithdrewSsh: ({ id }) => ({
+      model: modifyFields(model, {
+        sshPrompts: prompts => SshPrompts.drop(prompts, id),
+      }),
+    }),
+    ChangedSshSecret: ({ secret }) => ({
+      model: modifyFields(model, {
+        sshPrompts: prompts => modifyFields(prompts, { secret: () => secret }),
+      }),
+    }),
+    RepliedToSsh: ({ id, reply }) =>
+      SshPrompts.isAsked(model.sshPrompts, id)
+        ? {
+            model: modifyFields(model, {
+              sshPrompts: prompts => SshPrompts.drop(prompts, id),
+            }),
+            commands: [
+              SshPrompts.AnswerSshPrompt({
+                id,
+                reply,
+                secret: model.sshPrompts.secret,
+              }),
+            ],
+          }
+        : { model },
+    CompletedAnswerSsh: () => ({ model }),
     RefusedByEngine: ({ client, engine, update }) => ({
       model: modifyFields(model, {
         connection: () => Connection.Refused({ client, engine, update }),
@@ -822,14 +884,17 @@ export const update = (model: Model, message: Message): Return =>
         connection: () => Connection.Connecting(),
       }),
     }),
-    // The connection is acquired again over the new port; one refused waits for an update still.
+    // The connection is acquired again over the new port; one refused waits for an update still, and
+    // one stopped for the user.
     ReplacedEnginePort: () => ({
-      model: Connection.guards.Refused(model.connection)
-        ? model
-        : modifyFields(model, {
-            attempt: attempt => attempt + 1,
-            connection: () => Connection.Connecting(),
-          }),
+      model:
+        Connection.guards.Refused(model.connection) ||
+        Connection.guards.Stopped(model.connection)
+          ? model
+          : modifyFields(model, {
+              attempt: attempt => attempt + 1,
+              connection: () => Connection.Connecting(),
+            }),
     }),
 
     ReceivedRunView: ({ project, items }) =>
