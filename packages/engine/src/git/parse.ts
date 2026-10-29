@@ -1,6 +1,6 @@
 import { Option } from 'effect'
 
-import { CommitHash } from '@fabrica/contracts'
+import { CommitHash, TreeHash } from '@fabrica/contracts'
 
 // How git's output is read: the one place each of its formats is parsed. Every format read is one git
 // keeps stable for scripts (`-z`, `--porcelain`), under `LC_ALL=C`.
@@ -40,6 +40,10 @@ export const parseStatus = (output: string): Option.Option<WorktreeStatus> => {
 /** One line's commit hash, as `rev-parse` and `merge-base` print it. */
 export const parseHash = (output: string): Option.Option<CommitHash> =>
   CommitHash.makeOption(output.trim())
+
+/** One line's tree hash, as `rev-parse <revision>^{tree}` prints it. */
+export const parseTreeHash = (output: string): Option.Option<TreeHash> =>
+  TreeHash.makeOption(output.trim())
 
 /** One worktree of a repository, as `git worktree list --porcelain -z` gives it. */
 export interface WorktreeEntry {

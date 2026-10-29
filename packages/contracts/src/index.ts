@@ -1,3 +1,4 @@
+export * from './control'
 export * from './events'
 export * from './host'
 export * from './ids'

@@ -2,7 +2,7 @@ import { Context, Effect, Layer, Option } from 'effect'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import type { CommitHash } from '@fabrica/contracts'
+import type { CommitHash, TreeHash } from '@fabrica/contracts'
 
 import { CommandOutcome, ProcessRunner, StartFailure } from '../process'
 import { type GitConfig, defaultConfig, makeCommands } from './command'
@@ -21,6 +21,7 @@ import {
   parseGitVersion,
   parseHash,
   parseStatus,
+  parseTreeHash,
   parseWorktrees,
   shortBranch,
 } from './parse'
@@ -55,6 +56,11 @@ export interface GitShape {
     readonly repo: string
     readonly revision: string
   }) => Effect.Effect<Option.Option<CommitHash>, CantTell>
+  /** The tree of the commit `revision` names; none when it names none. */
+  readonly treeHash: (input: {
+    readonly repo: string
+    readonly revision: string
+  }) => Effect.Effect<Option.Option<TreeHash>, CantTell>
   /** The branch checked out in `repo`'s worktree, its short name; none for a detached HEAD. */
   readonly currentBranch: (input: {
     readonly repo: string
@@ -269,26 +275,38 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     )
   })
 
-  const hashOf = (name: string, repo: string, revision: string) =>
+  /** The object `revision` names, peeled to `peel` (`commit`, `tree`) and read by `parse`; none when it names none. */
+  const peeledHash = <H>(
+    name: string,
+    input: {
+      readonly repo: string
+      readonly revision: string
+      readonly peel: 'commit' | 'tree'
+      readonly parse: (output: string) => Option.Option<H>
+    },
+  ) =>
     readExit(
       name,
       {
-        cwd: repo,
+        cwd: input.repo,
         args: [
           'rev-parse',
           '--verify',
           '--quiet',
           '--end-of-options',
-          `${revision}^{commit}`,
+          `${input.revision}^{${input.peel}}`,
         ],
       },
       exit =>
         exit.code === 0
-          ? Option.map(parseHash(exit.stdout), Option.some)
+          ? Option.map(input.parse(exit.stdout), Option.some)
           : exit.code === 1
-            ? Option.some(Option.none<CommitHash>())
+            ? Option.some(Option.none<H>())
             : Option.none(),
     )
+
+  const hashOf = (name: string, repo: string, revision: string) =>
+    peeledHash(name, { repo, revision, peel: 'commit', parse: parseHash })
 
   const commitHash = Effect.fn('Git.commitHash')(function* ({
     repo,
@@ -298,6 +316,21 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     readonly revision: string
   }) {
     return yield* hashOf('commitHash', repo, revision)
+  })
+
+  const treeHash = Effect.fn('Git.treeHash')(function* ({
+    repo,
+    revision,
+  }: {
+    readonly repo: string
+    readonly revision: string
+  }) {
+    return yield* peeledHash('treeHash', {
+      repo,
+      revision,
+      peel: 'tree',
+      parse: parseTreeHash,
+    })
   })
 
   const currentBranch = Effect.fn('Git.currentBranch')(function* ({
@@ -628,6 +661,7 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     isOnBase,
     mergeBase,
     commitHash,
+    treeHash,
     currentBranch,
     changedFiles,
     trackedFiles,
