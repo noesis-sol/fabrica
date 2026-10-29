@@ -1,0 +1,24 @@
+{
+  "name": "@fabrica/engine-app",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The engine's entry points: the daemon (fabrica serve) and the CLI.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "fabrica": "./dist/main.js"
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit -p tsconfig.json",
+    "typecheck:tsc": "tsc --noEmit -p tsconfig.json",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@fabrica/contracts": "workspace:*",
+    "@fabrica/engine": "workspace:*",
+    "effect": "4.0.0"
+  },
+  "devDependencies": {
+    "vite": "8.3.5"
+  }
+}

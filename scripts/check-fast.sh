@@ -6,5 +6,21 @@
 # the script, and its cd leaves the next suite at the root.
 # Each suite prints SUITE: <name> as it starts. A suite that reruns a failed test, and passes when
 # the rerun does, prints FLAKY: <test> for it: the ticket merges, and tutti warns of it.
-# It checks nothing yet: add a line for each suite.
-exit 0
+# Every suite runs, and the script fails when any of them does.
+
+# Run with the Node and pnpm that mise.toml pins, where mise is installed.
+if [ -z "${FABRICA_TOOLCHAIN:-}" ] && command -v mise >/dev/null 2>&1; then
+  FABRICA_TOOLCHAIN=mise exec mise exec -- "$0" "$@"
+fi
+
+# The run's share of the cores bounds the type checks, builds and test workers.
+if [ -z "${FABRICA_CORES:-}" ] && [ -n "${TUTTI_CORES:-}" ]; then
+  export FABRICA_CORES="$TUTTI_CORES"
+fi
+
+status=0
+(echo "SUITE: typecheck" && pnpm run typecheck) || status=1
+(echo "SUITE: lint" && pnpm run lint) || status=1
+(echo "SUITE: format" && pnpm run format:check) || status=1
+(echo "SUITE: unit" && pnpm run test) || status=1
+exit $status

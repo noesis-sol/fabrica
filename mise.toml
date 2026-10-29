@@ -1,0 +1,5 @@
+# The toolchain's pinned versions. Keep them in step with package.json (packageManager, engines)
+# and the requires list in .tutti/settings.json.
+[tools]
+node = "26.13.0"
+pnpm = "12.16.1"

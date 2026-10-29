@@ -126,3 +126,92 @@ bd prime                # Refresh Beads context
 
 **Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md for details and anti-patterns.
 <!-- END BEADS CODEX SETUP -->
+
+## Build & Test
+
+The toolchain is pinned: Node 26.13.0 and pnpm 12.16.1 in `mise.toml` (and `packageManager`/`engines` in
+`package.json`), git 2.38 or later. The requires list in `.tutti/settings.json` checks and installs them.
+
+```bash
+mise install                    # Node and pnpm, as mise.toml pins them
+pnpm install --frozen-lockfile  # dependencies, exactly as pnpm-lock.yaml has them
+scripts/check-fast.sh           # type check (tsgo), lint (oxlint), format check (oxfmt), unit tests (Vitest)
+scripts/check-full.sh           # the fast check, then every package's build, electron-vite's included
+```
+
+Both check scripts run under mise's toolchain when mise is installed, run every suite, and fail when any
+suite fails. One step at a time, from the root:
+
+```bash
+pnpm typecheck        # tsgo --noEmit in every package (pnpm typecheck:tsc runs tsc instead)
+pnpm lint             # oxlint, with @foldkit/oxlint-plugin
+pnpm format           # oxfmt, writing; pnpm format:check only checks
+pnpm test             # every package's tests (Vitest projects)
+pnpm build            # every package's build
+```
+
+One package:
+
+```bash
+pnpm vitest run --project contracts                # its tests: contracts, engine, pi-extension, client, ui, engine-app
+pnpm vitest run packages/contracts/src/ids.test.ts # one test file
+pnpm --filter @fabrica/contracts typecheck         # its type check (or build)
+pnpm --filter @fabrica/desktop dev                 # the app, with the renderer's dev server
+pnpm --filter @fabrica/ui dev                      # the renderer alone, in a browser
+```
+
+Test files run side by side in `FABRICA_CORES` workers (the check scripts set it from `TUTTI_CORES`), or
+half the machine's cores without it.
+
+Dependencies are pinned to exact versions (`saveExact` in `pnpm-workspace.yaml`): add one with
+`pnpm add --filter <package> <name>@<version>`. `effect` and every `@effect/*` package stay on one version,
+the Effect peer Foldkit pins (4.0.0 at Foldkit 0.169.0), held by `overrides` in `pnpm-workspace.yaml`; they
+are upgraded with Foldkit, never alone.
+
+## Architecture Overview
+
+One TypeScript monorepo, pnpm workspaces (spec §6):
+
+- `apps/desktop`: the Electron app (main, preload, renderer), built by electron-vite.
+- `apps/engine`: the engine's entry points, the daemon and the CLI, bundled by Vite into one Node file.
+- `packages/contracts`: Effect Schema contracts every package imports; it imports nothing but `effect`.
+- `packages/engine`: the engine's Effect services.
+- `packages/pi-extension`: the first-party Pi package loaded into every agent.
+- `packages/client`: the RPC client and connection management, shared by the app and the CLI.
+- `packages/ui`: the renderer, a Foldkit program.
+
+The spec is `docs/spec/fabrica-spec.md`; the console's design handoff is under `design/console/`.
+
+## Conventions & Patterns
+
+Code rules (spec §6):
+
+- **One rule, one module.** How a git status is read, whether a process is alive, finding a command on the
+  PATH it will run with, a command's environment, the keys a screen binds: each lives in one module, and
+  everything else calls it. Never restate a rule.
+- **Each value read once** per decision and passed on; independent reads run side by side.
+- **Tagged unions for outcomes**, made by their constructors (`Data.TaggedEnum`, `Schema.TaggedUnion`) and
+  matched exhaustively (`Match.exhaustive`, `$match`): never object literals told apart by their fields, never
+  sentinel values (`""` for a commit git couldn't give, `-1` for a count it couldn't make).
+- **Branded IDs** (`packages/contracts/src/ids.ts`: `TicketId`, `CommitHash`, `SessionId`, `MessageId`,
+  `ProjectId`, `RunId`, `EngineId`) are made only through their constructors (`TicketId.make`, `.makeOption`,
+  `.makeEffect`, or decoding with the schema), where they are read or drawn; never by a type assertion (lint
+  refuses `as`). A function taking several of them takes them by name, in one object.
+- **Named spans**: services at process and I/O boundaries are `Effect.fn("Service.method")`.
+- `packages/contracts` imports nothing but `effect`. TypeScript is strict, ESM, with extensionless relative
+  imports; oxfmt sets the style.
+- **Order of work**: in the engine, Schema contracts in `contracts` first, then the service interface, then
+  tests against in-memory layers, then the implementation. In the UI, the Model and Messages, then story
+  tests, then `update`, then `view`.
+- **Tests**: Vitest with `@effect/vitest` (`it.effect` for effects), next to the module as
+  `<module>.test.ts`. No test reads facts about its host (cores, clock, home folder, PATH, environment): they
+  are injected. No real sleeps: wait on events or `TestClock`.
+
+Working beside other agents (spec §23, from building tutti):
+
+- **New tests go in a new test file named after the feature**, not at the end of an existing one.
+- **Changelog entries are one file per ticket**, `changes/<ticket>.md`; never edit another ticket's.
+- A ticket's text names a file only where the ticket will change it, since footprints read every path a
+  ticket names; a description opens with the detail, not a restatement of its title.
+- An agent's write tools turn `\u` escapes of printable controls into the raw characters: write such escapes
+  with a script.

@@ -1,0 +1,29 @@
+{
+  "name": "@fabrica/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Electron app: main, preload and the renderer.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "typecheck": "tsgo --noEmit -p tsconfig.node.json && tsgo --noEmit -p tsconfig.web.json",
+    "typecheck:tsc": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "build": "electron-vite build"
+  },
+  "dependencies": {
+    "@fabrica/ui": "workspace:*",
+    "effect": "4.0.0",
+    "foldkit": "0.169.0"
+  },
+  "devDependencies": {
+    "@foldkit/devtools": "0.169.0",
+    "@foldkit/vite-plugin": "0.28.0",
+    "@tailwindcss/vite": "4.3.3",
+    "electron": "45.1.0",
+    "electron-vite": "6.0.0",
+    "tailwindcss": "4.3.3",
+    "vite": "8.3.5"
+  }
+}

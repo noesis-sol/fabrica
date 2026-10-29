@@ -1,0 +1,41 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "semi": false,
+  "singleQuote": true,
+  "arrowParens": "avoid",
+  "trailingComma": "all",
+  "printWidth": 80,
+  "sortImports": {
+    "ignoreCase": false,
+    "customGroups": [
+      {
+        "groupName": "scoped",
+        "elementNamePattern": ["@*", "@*/**"]
+      }
+    ],
+    "groups": [
+      ["builtin", "external"],
+      "scoped",
+      ["parent", "sibling", "index"],
+      "unknown"
+    ]
+  },
+  "sortPackageJson": false,
+  "ignorePatterns": [
+    "**/*.md",
+    "node_modules",
+    "dist",
+    "out",
+    "repos",
+    "design",
+    "docs",
+    "*.tsbuildinfo",
+    "pnpm-lock.yaml",
+    ".beads",
+    ".claude",
+    ".agents",
+    ".codex",
+    ".cursor",
+    ".tutti"
+  ]
+}

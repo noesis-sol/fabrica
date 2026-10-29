@@ -5,3 +5,10 @@
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# Dependencies and build outputs
+node_modules/
+dist/
+out/
+*.tsbuildinfo
+.DS_Store

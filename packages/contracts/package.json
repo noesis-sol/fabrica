@@ -1,0 +1,19 @@
+{
+  "name": "@fabrica/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Effect Schema contracts: domain types, the client protocol, tool payloads, ticket files, settings and events.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit -p tsconfig.json",
+    "typecheck:tsc": "tsc --noEmit -p tsconfig.json",
+    "build": "tsgo -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "effect": "4.0.0"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "@fabrica/client",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The RPC client and connection management, shared by the app and the CLI.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit -p tsconfig.json",
+    "typecheck:tsc": "tsc --noEmit -p tsconfig.json",
+    "build": "tsgo -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@fabrica/contracts": "workspace:*",
+    "effect": "4.0.0"
+  }
+}

@@ -1,0 +1,19 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Every dependency is pinned to an exact version (spec §1, §20.4).
+saveExact: true
+
+# One Effect version everywhere: the one Foldkit pins as its peer (spec §6).
+overrides:
+  effect: 4.0.0
+  '@effect/platform-browser': 4.0.0
+  '@effect/platform-node': 4.0.0
+  '@effect/platform-node-shared': 4.0.0
+  '@effect/vitest': 4.0.0
+
+allowBuilds:
+  electron: true
+  esbuild: true
+  msgpackr-extract: false

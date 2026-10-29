@@ -3,6 +3,50 @@
   "version": 1,
   "concurrent": 3,
   "keep_awake": true,
+  "requires": [
+    {
+      "name": "mise-macos",
+      "platforms": [
+        "darwin"
+      ],
+      "check": "command -v mise >/dev/null",
+      "install": "HOMEBREW_NO_AUTO_UPDATE=1 brew install mise"
+    },
+    {
+      "name": "mise-linux",
+      "platforms": [
+        "linux"
+      ],
+      "check": "command -v mise >/dev/null",
+      "install": "curl -fsSL https://mise.run | sh"
+    },
+    {
+      "name": "node",
+      "check": "[ \"$(MISE_EXEC_AUTO_INSTALL=0 mise exec node@26.13.0 -- node -e 'require(\"node:sqlite\"); process.stdout.write(process.version)' 2>/dev/null)\" = v26.13.0 ]",
+      "install": "mise install node@26.13.0"
+    },
+    {
+      "name": "pnpm",
+      "check": "[ \"$(MISE_EXEC_AUTO_INSTALL=0 mise exec pnpm@12.16.1 -- pnpm --version 2>/dev/null)\" = 12.16.1 ]",
+      "install": "mise install pnpm@12.16.1"
+    },
+    {
+      "name": "git-macos",
+      "platforms": [
+        "darwin"
+      ],
+      "check": "git --version | awk '{ split($3, v, \".\"); exit !(v[1] > 2 || (v[1] == 2 && v[2] >= 38)) }'",
+      "install": "HOMEBREW_NO_AUTO_UPDATE=1 brew install git"
+    },
+    {
+      "name": "git-linux",
+      "platforms": [
+        "linux"
+      ],
+      "check": "git --version | awk '{ split($3, v, \".\"); exit !(v[1] > 2 || (v[1] == 2 && v[2] >= 38)) }'",
+      "manual": "Install git 2.38 or later (Ubuntu 22.04's git 2.34 is too old: use the git-core PPA, ppa:git-core/ppa)."
+    }
+  ],
   "checks": {
     "fast": {
       "command": "scripts/check-fast.sh",
@@ -11,6 +55,9 @@
     "full": {
       "command": "scripts/check-full.sh",
       "timeout": "60m"
+    },
+    "setup": {
+      "command": "pnpm install --frozen-lockfile"
     }
   },
   "workers": {
