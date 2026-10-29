@@ -172,8 +172,11 @@ export const historyRows = (
     mergeRows(rows, projectRows(project)),
   )
 
-/** A row's height: 5px above and below a 16px line (Appendix A.2). */
-export const rowHeightPx = 26
+/**
+ * A row's height: 5px above and below the 12px text's line (Appendix A.2), the handoff's reference
+ * drawing the first row's dot 86px above the fourth's.
+ */
+export const rowHeightPx = 86 / 3
 
 /** The time column's width: a time, or a day and a time (`Wed 28 Oct 23:30`) once the oldest row isn't today's. */
 export const timeWidth = { today: '40px', otherDay: '116px' }
@@ -262,6 +265,7 @@ const rowView = <ParentMessage>(
           ? `${width} 6px 16px minmax(0,1fr)`
           : `${width} 6px minmax(0,1fr)`,
         padding: '5px 12px',
+        lineHeight: `${rowHeightPx - 10}px`,
       }),
     ],
     [

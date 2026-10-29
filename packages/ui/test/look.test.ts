@@ -102,7 +102,7 @@ const handoffOf = ({ width, height }: Size) => {
     main,
     stats,
     talk,
-    history: { width: 320, row: 28 },
+    history: { width: 320, row: 86 / 3 },
     columns,
     column,
     sidebar: { width: 260, rowsTop: 84, row: 62.4 },
@@ -425,19 +425,11 @@ const partsOf = (
 const tolerance = 0.05
 
 /**
- * Differences beyond the tolerance, filed as tickets, by theme and measure or part: a measure held at
- * what the page had, a part at the share measured (with room for another platform's rendering).
+ * Differences beyond the tolerance, filed as tickets, by theme and measure or part (`classic history`):
+ * a measure held at what the page had, a part at the share measured (with room for another platform's
+ * rendering). None at present.
  */
-const known: ReadonlyMap<string, { ticket: string; held: number }> = new Map(
-  themes.flatMap(theme => {
-    const entry = (name: string, ticket: string, held: number) =>
-      [`${theme} ${name}`, { ticket, held }] as const
-    return [
-      entry('history row height', 'fab-mgi.70', 26),
-      entry('history', 'fab-mgi.70', 0.2),
-    ]
-  }),
-)
+const known: ReadonlyMap<string, { ticket: string; held: number }> = new Map()
 
 /** The page's address, served from the build in memory. */
 const origin = 'http://look.test'
