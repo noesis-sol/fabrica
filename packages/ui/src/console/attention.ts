@@ -135,7 +135,7 @@ export const Message = defineMessageUnion({
   CancelledOpen: {},
 
   ClickedTaskDone: { key: Schema.String, project: ProjectId, ticket: TicketId },
-  ClickedReview: { ticket: TicketId },
+  ClickedReview: { project: ProjectId, ticket: TicketId },
   ClickedOpenSession: { ticket: TicketId },
 
   SucceededAnswer: { key: Schema.String },
@@ -149,7 +149,7 @@ export const OutMessage = defineMessageUnion({
   /** The answer talk, for a question (§15.3). */
   OpenedAnswerTalk: { project: ProjectId, ticket: TicketId },
   /** The Review screen, for a set-aside ticket. */
-  OpenedReview: { ticket: TicketId },
+  OpenedReview: { project: ProjectId, ticket: TicketId },
   /** The worker view of a ticket's session. */
   OpenedSession: { ticket: TicketId },
 })
@@ -490,9 +490,9 @@ export const update = (model: Model, message: Message): Return =>
             }),
             commands: [CloseTask({ key, project, ticket })],
           },
-    ClickedReview: ({ ticket }) => ({
+    ClickedReview: ({ project, ticket }) => ({
       model,
-      outMessage: OutMessage.OpenedReview({ ticket }),
+      outMessage: OutMessage.OpenedReview({ project, ticket }),
     }),
     ClickedOpenSession: ({ ticket }) => ({
       model,
@@ -1192,7 +1192,12 @@ const reviewBody = (
       h.button(
         [
           h.Type('button'),
-          h.OnClick(Message.ClickedReview({ ticket: request.ticket })),
+          h.OnClick(
+            Message.ClickedReview({
+              project: request.project,
+              ticket: request.ticket,
+            }),
+          ),
           h.Class(primaryButton),
         ],
         ['Review'],

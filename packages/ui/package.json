@@ -26,7 +26,8 @@
     "@fabrica/contracts": "workspace:*",
     "@foldkit/ui": "0.169.0",
     "effect": "4.0.0",
-    "foldkit": "0.169.0"
+    "foldkit": "0.169.0",
+    "monaco-editor": "0.57.0"
   },
   "devDependencies": {
     "@foldkit/devtools": "0.169.0",

@@ -3,6 +3,7 @@ import { Array, Option } from 'effect'
 import type { Platform } from '@fabrica/contracts'
 
 import * as Attention from '../console/attention'
+import * as Review from '../screens/review'
 import { Message } from './message'
 import { Screen, screenTitle } from './screen'
 
@@ -97,6 +98,25 @@ const answerKeys = (options: KeyedOptions): ReadonlyArray<KeyCommand> =>
       })),
   })
 
+/** The Review screen's views, each a key (§18.4). */
+const reviewKeys: ReadonlyArray<KeyCommand> = (
+  [
+    { tab: 'diff', key: 'd', title: 'Show the diff' },
+    { tab: 'report', key: 'r', title: 'Show the report' },
+    { tab: 'log', key: 'l', title: 'Show the log' },
+  ] satisfies ReadonlyArray<{
+    readonly tab: Review.Tab
+    readonly key: string
+    readonly title: string
+  }>
+).map(({ tab, key, title }) => ({
+  id: `review.${tab}`,
+  title,
+  chord: plain(key),
+  hint: true,
+  message: Message.PressedReviewTab({ tab }),
+}))
+
 /** Each screen's own commands; the screens' tickets add theirs here. */
 const ofScreen = (
   screen: Screen,
@@ -107,7 +127,7 @@ const ofScreen = (
     Worker: () => [backToConsole],
     Talks: () => [backToConsole],
     Backlog: () => [backToConsole],
-    Review: () => [backToConsole],
+    Review: () => [...reviewKeys, backToConsole],
     Insights: () => [backToConsole],
     Engines: () => [backToConsole],
     Settings: () => [backToConsole],

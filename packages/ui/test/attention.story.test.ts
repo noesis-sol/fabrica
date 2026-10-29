@@ -44,6 +44,7 @@ import type { AttentionItem } from '../src/app/streams'
 import { modelCommands, update } from '../src/app/update'
 import { view } from '../src/app/view'
 import * as Attention from '../src/console/attention'
+import * as Review from '../src/screens/review'
 
 // The console's Needs your attention column (spec §15.1, §18.3, H62, H92; Appendix A.2), from fixture
 // requests: each kind's card with its tag and waiting time, a permission request's input shown whole
@@ -739,6 +740,43 @@ describe('reviews and tasks', () => {
       ).toHaveText('Its merge check failed'),
       click(within(card('Review fa-11'), role('button', { name: 'Review' }))),
       expectScene(role('heading', { name: 'Review' })).toExist(),
+      // It opens on the ticket's branch diff, beside its project's report and log (review.story.test.ts).
+      Command.expectExact(
+        Review.LoadDiff({
+          subject: Review.Subject.Ticket({
+            project,
+            ticket: TicketId.make('fa-11'),
+          }),
+        }),
+        Review.LoadReport({ project }),
+        Review.LoadLog({ project }),
+      ),
+      Command.resolveAll(
+        [
+          Review.LoadDiff,
+          Review.Message.FailedLoadDiff({
+            subject: Review.Subject.Ticket({
+              project,
+              ticket: TicketId.make('fa-11'),
+            }),
+            reason: 'the engine is not connected',
+          }),
+        ],
+        [
+          Review.LoadReport,
+          Review.Message.FailedLoadReport({
+            project,
+            reason: 'the engine is not connected',
+          }),
+        ],
+        [
+          Review.LoadLog,
+          Review.Message.FailedLoadLog({
+            project,
+            reason: 'the engine is not connected',
+          }),
+        ],
+      ),
     )
   })
 

@@ -360,7 +360,13 @@ const screenView = (model: Model, h: HtmlBuilder<Message>): Html =>
     Worker: ({ ticket }) => Worker.view(model.screens.worker, ticket, h),
     Talks: () => Talks.view(model.screens.talks, h),
     Backlog: () => Backlog.view(model.screens.backlog, h),
-    Review: () => Review.view(model.screens.review, h),
+    Review: () =>
+      h.submodel({
+        slotId: 'review',
+        view: Review.view,
+        model: model.screens.review,
+        toParentMessage: message => Message.GotReviewMessage({ message }),
+      }),
     Insights: () => Insights.view(model.screens.insights, h),
     Engines: () =>
       h.submodel({

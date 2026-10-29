@@ -14,6 +14,7 @@ import * as History from '../console/history'
 import * as Sidebar from '../console/sidebar'
 import * as Stats from '../console/stats'
 import * as Engines from '../screens/engines'
+import * as Review from '../screens/review'
 import * as Settings from '../screens/settings'
 import { dayOf, sameDay } from './clock'
 import { Connection, retryAfter } from './connection'
@@ -62,7 +63,7 @@ export const WaitToRewatchRunView = Command.define('WaitToRewatchRunView', {
 type Return = Update.Return<
   Model,
   Message,
-  Engines.Requires | Settings.Requires | Notifier | ThemeHost
+  Engines.Requires | Settings.Requires | Review.Requires | Notifier | ThemeHost
 >
 
 /** The stats row's Messages, folded into its submodel; a run it started is watched afresh. */
@@ -104,22 +105,62 @@ const writeAttention = (model: Model, attention: Attention.Model): Model =>
 const toAttentionMessage = (message: Attention.Message): Message =>
   Message.GotAttentionMessage({ message })
 
+const writeReview = (model: Model, review: Review.Model): Model =>
+  modifyFields(model, {
+    screens: screens => modifyFields(screens, { review: () => review }),
+  })
+
+const foldReview = Update.foldChild({
+  update: Review.update,
+  read: (model: Model) => Option.some(model.screens.review),
+  write: writeReview,
+  toParentMessage: (message: Review.Message) =>
+    Message.GotReviewMessage({ message }),
+})
+
+/** The Review screen's own Model changed, and its Commands lifted, by `step`. */
+const stepReview = (
+  model: Model,
+  step: (
+    review: Review.Model,
+  ) => Update.Return<Review.Model, Review.Message, Review.Requires>,
+): Return => {
+  const stepped = step(model.screens.review)
+  return {
+    model: writeReview(model, stepped.model),
+    commands: Command.mapMessages(stepped.commands, message =>
+      Message.GotReviewMessage({ message }),
+    ),
+  }
+}
+
+/** What the Review screen shows as it opens, or as the scope changes under it: the scope's project and its run going. */
+const reviewScope = (model: Model): Return =>
+  stepReview(model, review =>
+    Review.opened(review, {
+      project: model.scope,
+      run: Option.map(model.runView, view => view.header.run),
+    }),
+  )
+
 /** The attention column's Messages, folded into its submodel; a card's buttons open their screens. */
 const foldAttention = Update.foldChild({
   update: Attention.update,
   read: (model: Model) => Option.some(model.console.attention),
   write: writeAttention,
   toParentMessage: toAttentionMessage,
-  foldOutMessage: (outMessage: Attention.OutMessage) => (model: Model) => ({
-    model: showScreen(
-      model,
-      Attention.OutMessage.match(outMessage, {
-        OpenedAnswerTalk: () => Screen.Talks(),
-        OpenedReview: () => Screen.Review(),
-        OpenedSession: ({ ticket }) => Screen.Worker({ ticket }),
+  foldOutMessage: (outMessage: Attention.OutMessage) => (model: Model) =>
+    Attention.OutMessage.match<Return>(outMessage, {
+      OpenedAnswerTalk: () => ({ model: showScreen(model, Screen.Talks()) }),
+      // A set-aside ticket's Review opens its branch diff (§18.3).
+      OpenedReview: ({ project, ticket }) =>
+        stepReview(showScreen(model, Screen.Review()), review =>
+          Review.openTicket(review, { project, ticket }),
+        ),
+      OpenedSession: ({ ticket }) => ({
+        model: showScreen(model, Screen.Worker({ ticket })),
       }),
-    ),
-  }),
+    }),
 })
 
 /** The attention column kept in step with the Model's requests, after they change. */
@@ -271,7 +312,8 @@ const openSettings = (model: Model): Return => {
 
 /**
  * Shows `screen`; a screen that wasn't shown already asks what it shows as it opens: the Engines
- * screen, its engine's status and credentials, and the Settings screen, its settings (§18.4).
+ * screen, its engine's status and credentials; the Settings screen, its settings; the Review screen,
+ * the scope's report, log and diff (§18.4).
  */
 const enterScreen = (model: Model, screen: Screen): Return => {
   const shown = showScreen(model, screen)
@@ -279,7 +321,9 @@ const enterScreen = (model: Model, screen: Screen): Return => {
     ? stepEngines(shown, Engines.opened)
     : Screen.guards.Settings(screen) && !Screen.guards.Settings(model.screen)
       ? openSettings(shown)
-      : { model: shown }
+      : Screen.guards.Review(screen) && !Screen.guards.Review(model.screen)
+        ? reviewScope(shown)
+        : { model: shown }
 }
 
 /** What the screen shown asks again of the engine just reached, or of the scope just chosen. */
@@ -288,7 +332,9 @@ const reopenScreen = (model: Model): Return =>
     ? stepEngines(model, Engines.opened)
     : Screen.guards.Settings(model.screen)
       ? openSettings(model)
-      : { model }
+      : Screen.guards.Review(model.screen)
+        ? reviewScope(model)
+        : { model }
 
 export const update = (model: Model, message: Message): Return =>
   Message.match<Return>(message, {
@@ -323,15 +369,20 @@ export const update = (model: Model, message: Message): Return =>
         }),
         Option.none(),
       )
-      // The Settings screen shows the new scope's settings.
-      if (Screen.guards.Settings(scoped.model.screen)) {
-        const reopened = openSettings(scoped.model)
-        return {
-          model: reopened.model,
-          commands: [...(scoped.commands ?? []), ...(reopened.commands ?? [])],
-        }
-      }
-      return scoped
+      // The Settings screen shows the new scope's settings; the Review screen follows the scope to its
+      // project.
+      const reopened = Screen.guards.Settings(scoped.model.screen)
+        ? Option.some(openSettings(scoped.model))
+        : Screen.guards.Review(scoped.model.screen)
+          ? Option.some(reviewScope(scoped.model))
+          : Option.none()
+      return Option.match(reopened, {
+        onNone: () => scoped,
+        onSome: again => ({
+          model: again.model,
+          commands: [...(scoped.commands ?? []), ...(again.commands ?? [])],
+        }),
+      })
     },
     RequestedAddProject: () => {
       const entered = enterScreen(model, Screen.Engines())
@@ -353,6 +404,10 @@ export const update = (model: Model, message: Message): Return =>
       commands: [ShowTheme({ theme })],
     }),
     CompletedShowTheme: () => ({ model }),
+    GotReviewMessage: ({ message }) => foldReview(model, message),
+    PressedReviewTab: ({ tab }) => ({
+      model: writeReview(model, Review.selectTab(model.screens.review, tab)),
+    }),
 
     ConnectedToEngine: ({ engine, release, protocol }) => {
       const connected = modifyFields(model, {
