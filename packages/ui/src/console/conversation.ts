@@ -358,7 +358,10 @@ const composerView = <Message>(
 /**
  * A conversation's pane: its header (the agent's name, its note, the model and the context use), its
  * messages bottom-aligned and scrolling once they overflow, a failed send's reason, and its composer.
- * With no conversation, the header and composer alone, `empty` said between them.
+ * With no conversation, the header and composer alone, `empty` said between them. The messages are one
+ * column inside a reversed one: a short talk sits at the bottom, a long one scrolls up to its first
+ * line and stays on its newest as lines arrive (`justify-content: flex-end` would push the overflow
+ * above the scroll box, out of reach).
  */
 export const view = <Message>(
   conversation: Option.Option<Conversation>,
@@ -378,30 +381,39 @@ export const view = <Message>(
         [
           h.Role('log'),
           h.AriaLabel('Messages'),
-          h.Class('flex min-h-0 flex-1 flex-col justify-end overflow-auto'),
+          h.Class('flex min-h-0 flex-1 flex-col-reverse overflow-auto'),
           h.Style({
-            gap: '6px',
             padding: '8px 12px',
             fontSize: '12.5px',
             lineHeight: '1.35',
           }),
         ],
         [
-          ...(lines.length === 0 && options.empty !== undefined
-            ? [h.p([h.Class('text-xs text-muted')], [options.empty])]
-            : lines.map(line => lineView(line, options.name, h))),
-          ...(Option.exists(conversation, shown => shown.ended)
-            ? [h.p([h.Class('text-xs text-muted')], ['The talk has ended.'])]
-            : []),
-          ...(options.footer ?? []),
-          ...(options.composer.sending._tag === 'failed'
-            ? [
-                h.p(
-                  [h.Role('alert'), h.Class('text-xs text-c3')],
-                  [`Not sent: ${options.composer.sending.reason}`],
-                ),
-              ]
-            : []),
+          h.div(
+            [h.Class('flex flex-col'), h.Style({ gap: '6px' })],
+            [
+              ...(lines.length === 0 && options.empty !== undefined
+                ? [h.p([h.Class('text-xs text-muted')], [options.empty])]
+                : lines.map(line => lineView(line, options.name, h))),
+              ...(Option.exists(conversation, shown => shown.ended)
+                ? [
+                    h.p(
+                      [h.Class('text-xs text-muted')],
+                      ['The talk has ended.'],
+                    ),
+                  ]
+                : []),
+              ...(options.footer ?? []),
+              ...(options.composer.sending._tag === 'failed'
+                ? [
+                    h.p(
+                      [h.Role('alert'), h.Class('text-xs text-c3')],
+                      [`Not sent: ${options.composer.sending.reason}`],
+                    ),
+                  ]
+                : []),
+            ],
+          ),
         ],
       ),
       composerView(options, enabled, h),

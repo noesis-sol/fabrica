@@ -262,7 +262,9 @@ describe('the run talk', () => {
       expectScene(selector('[data-talk-model]')).toHaveText(
         'claude-opus-5-5 · 14k ctx',
       ),
-      expectScene(role('log', { name: 'Messages' })).toHaveClass('justify-end'),
+      expectScene(role('log', { name: 'Messages' })).toHaveClass(
+        'flex-col-reverse',
+      ),
       expectScene(
         within(
           role('log', { name: 'Messages' }),
