@@ -217,6 +217,17 @@ exports[`the tools’ JSON Schema > ask_question matches its snapshot 1`] = `
 }
 `;
 
+exports[`the tools’ JSON Schema > check_own matches its snapshot 1`] = `
+{
+  "description": "Runs the project's check_own on your worktree as it is now: HEAD's tree with your uncommitted and untracked files. Its whole output is kept in a file, and a pass is recorded with the tree it ran on, so committing exactly what was checked keeps the pass: finish with that tree, the commit and the output file. Run it after your last change, once, and read its output file rather than running it again; never run the command yourself, as only this tool records a pass.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object",
+  },
+}
+`;
+
 exports[`the tools’ JSON Schema > defer matches its snapshot 1`] = `
 {
   "description": "Ends your turn without finishing, when you cannot: commit the work done so far first. The ticket is set aside with its worktree and session kept, and your reason as its note.",

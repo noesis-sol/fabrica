@@ -5,6 +5,7 @@ import {
   Option,
   Queue,
   Schema,
+  Semaphore,
   Stream,
 } from 'effect'
 
@@ -12,6 +13,8 @@ import {
   type Actor,
   Awaited,
   type CheckOwnPass,
+  CheckOwnRan,
+  CommandSetting,
   Edge,
   type Ended,
   Filed,
@@ -32,12 +35,14 @@ import {
   ToolRefusal,
 } from '@fabrica/contracts'
 
+import { CheckOutcome, type ChecksShape, notRunReason } from '../checks'
 import {
   type CantTell,
   type GitShape,
   type WorktreeStatus,
   isClean,
 } from '../git'
+import { ExitStatus } from '../process'
 import type { Wake } from '../time'
 import type {
   EdgeCycle,
@@ -56,6 +61,20 @@ import { inScope } from './token'
 // its own ticket, or one linked to it. A refusal (`ToolRefusal`) is the agent's to correct; a failure
 // in the engine (the store, git) is a defect of the call, published as `ToolFailed` (§12.8).
 
+/** How the session's `check_own` runs (spec §13.6, §7.3): the project's setting and the worker's share of the machine. */
+export interface CheckOwnRun {
+  /** The project's `check_own`. */
+  readonly command: CommandSetting
+  /** The project's checkout, whose `.fabrica/run/checks/` keeps the check's log. */
+  readonly checkout: string
+  /** `check_timeout`, counted in time awake. */
+  readonly timeLimit: Duration.Input
+  /** The worker's share of the machine's cores, at least 1. */
+  readonly cores: number
+  /** `worker_nice`; none for the engine's own priority. */
+  readonly nice: Option.Option<number>
+}
+
 /** The agent's session the tools act for, and the services they act through. */
 export interface ToolContext {
   readonly project: ProjectId
@@ -64,8 +83,10 @@ export interface ToolContext {
   readonly worktree: string
   /** How long `ask_and_wait` holds the agent for an answer, in time awake. */
   readonly questionWait: Duration.Input
+  readonly checkOwn: CheckOwnRun
   readonly graph: WorkGraphShape
   readonly git: GitShape
+  readonly checks: ChecksShape
   readonly wake: Wake['Service']
   readonly passes: CheckOwnPassesShape
   readonly attention: AttentionShape
@@ -115,6 +136,8 @@ const isEngineError = (
 export const makeTools = (context: ToolContext) => {
   const { ticket, graph, git, outcomes } = context
   const actor: Actor = { _tag: 'worker', session: context.session }
+  /** One `check_own` at a time: the worktree's tree is read through one git folder of the engine's own. */
+  const checking = Semaphore.makeUnsafe(1)
 
   const publish = (outcome: Outcome) => Queue.offer(outcomes, outcome)
 
@@ -307,6 +330,83 @@ export const makeTools = (context: ToolContext) => {
       note => new Noted({ id: note.id }),
     ).pipe(engineFault('add_note'), Effect.withSpan('Control.add_note'))
 
+  /** Runs `command` as the ticket's `check_own`, recording a pass with the tree it ran on. */
+  const runCheckOwn = Effect.fn('Control.runCheckOwn')(function* (
+    command: string,
+  ) {
+    const run = context.checkOwn
+    // The tree is read before the check runs: the pass stands for what it ran on.
+    const [tree, head, passedAt] = yield* Effect.all(
+      [
+        git.worktreeTree({ worktree: context.worktree }),
+        git.treeHash({ repo: context.worktree, revision: 'HEAD' }),
+        context.passes.last(ticket),
+      ],
+      { concurrency: 'unbounded' },
+    )
+    const outcome = yield* context.checks.run({
+      suite: 'own',
+      ticket: Option.some(ticket),
+      command,
+      worktree: context.worktree,
+      checkout: run.checkout,
+      timeLimit: run.timeLimit,
+      cores: run.cores,
+      passedAt,
+      nice: run.nice,
+    })
+    yield* publish(Outcome.Checked({ check: outcome.record }))
+    return yield* CheckOutcome.$match(outcome, {
+      Passed: ({ log }) =>
+        Effect.as(
+          context.passes.record({ ticket, tree }),
+          CheckOwnRan.cases.passed.make({
+            tree,
+            committed: Option.contains(head, tree),
+            output: log,
+          }),
+        ),
+      Failed: ({ log, status }) =>
+        Effect.succeed(
+          CheckOwnRan.cases.failed.make({
+            tree,
+            exit: ExitStatus.$match(status, {
+              Code: ({ code }) => `exit ${code}`,
+              Signal: ({ signal }) => `ended by ${signal}`,
+            }),
+            output: log,
+          }),
+        ),
+      TimedOut: ({ log }) =>
+        Effect.succeed(CheckOwnRan.cases.timed_out.make({ tree, output: log })),
+      CouldNotRun: ({ reason }) =>
+        Effect.succeed(
+          CheckOwnRan.cases.not_run.make({ reason: notRunReason(reason) }),
+        ),
+    })
+  })
+
+  const checkOwn = () =>
+    CommandSetting.match(context.checkOwn.command, {
+      Unset: () =>
+        Effect.succeed(
+          CheckOwnRan.cases.not_run.make({
+            reason: "the project's check_own isn't set",
+          }),
+        ),
+      None: () =>
+        Effect.succeed(
+          CheckOwnRan.cases.not_run.make({
+            reason: 'the project\'s check_own is "none"',
+          }),
+        ),
+      Command: ({ command }) => runCheckOwn(command),
+    }).pipe(
+      checking.withPermits(1),
+      engineFault('check_own'),
+      Effect.withSpan('Control.check_own'),
+    )
+
   const finish = (input: {
     readonly checkOwn: CheckOwnPass
     readonly result: TicketResult
@@ -422,6 +522,7 @@ export const makeTools = (context: ToolContext) => {
     askQuestion,
     askAndWait,
     addNote,
+    checkOwn,
     finish,
     defer,
     waitFor,

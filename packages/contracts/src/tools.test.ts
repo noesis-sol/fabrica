@@ -433,6 +433,7 @@ describe('the tools', () => {
       'file_ticket',
       'ask_question',
       'add_note',
+      'check_own',
       'finish',
       'defer',
       'wait_for',

@@ -2,6 +2,8 @@ import { Data } from 'effect'
 
 import type { CheckOwnPass, TicketId, TicketResult } from '@fabrica/contracts'
 
+import type { CheckRecord } from '../checks'
+
 // What a worker's session came to, as its control channel heard it (spec §12.3, §13.5, §12.8): the
 // run loop reads one stream of these per session and does what each asks of the run (the verifier and
 // the merge queue, a freed slot, a resume once a question is answered). The work graph already holds
@@ -18,6 +20,8 @@ export type Outcome = Data.TaggedEnum<{
   Asked: { readonly question: TicketId }
   /** The session settled a second time with no outcome tool called: it ends unfinished, set aside (§12.3). */
   Unfinished: {}
+  /** `check_own` ran (or couldn't): its record for the event stream (§13.12); the turn goes on. */
+  Checked: { readonly check: CheckRecord }
   /** A tool failed in the engine (the work graph, git), not on its arguments: a `ToolDefect` (§12.8). */
   ToolFailed: { readonly tool: string; readonly reason: string }
 }>

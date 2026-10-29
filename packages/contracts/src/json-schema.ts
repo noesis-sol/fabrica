@@ -16,12 +16,17 @@ export interface ToolJsonSchema {
   readonly parameters: JsonSchema.JsonSchema
 }
 
-/** The JSON Schema (draft 2020-12) of a tool's arguments, with no references. */
+/**
+ * The JSON Schema (draft 2020-12) of a tool's arguments, with no references. A tool taking none
+ * (`check_own`) is an object with no keys, where Effect would write any value but null.
+ */
 export const parametersJsonSchema = (tool: AnyTool): JsonSchema.JsonSchema =>
-  Schema.toJsonSchemaDocument(tool.parameters, {
-    referencePolicy: () => undefined,
-    onExcessProperty: 'error',
-  }).schema
+  Object.keys(tool.parameters.fields).length === 0
+    ? { type: 'object', properties: {}, additionalProperties: false }
+    : Schema.toJsonSchemaDocument(tool.parameters, {
+        referencePolicy: () => undefined,
+        onExcessProperty: 'error',
+      }).schema
 
 /** A tool with its arguments' JSON Schema. */
 export const toolJsonSchema = (tool: AnyTool): ToolJsonSchema => ({

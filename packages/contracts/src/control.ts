@@ -9,6 +9,8 @@ import {
   AddNoteParameters,
   AskQuestionParameters,
   Awaited,
+  CheckOwnParameters,
+  CheckOwnRan,
   DeferParameters,
   Ended,
   FileTicketParameters,
@@ -88,6 +90,11 @@ export const ControlRpcs = RpcGroup.make(
   Rpc.make('add_note', {
     payload: AddNoteParameters,
     success: Noted,
+    error: ToolRefusal,
+  }),
+  Rpc.make('check_own', {
+    payload: CheckOwnParameters,
+    success: CheckOwnRan,
     error: ToolRefusal,
   }),
   Rpc.make('finish', {

@@ -11,4 +11,4 @@ export {
   make,
 } from './server'
 export { drawToken, inScope, tokenMatches } from './token'
-export { type ToolContext, makeTools } from './tools'
+export { type CheckOwnRun, type ToolContext, makeTools } from './tools'

@@ -259,6 +259,45 @@ export const AddNoteTool = {
   success: Noted,
 } satisfies AnyTool
 
+/** No arguments: an empty struct alone takes any value but null, so the check refuses every key. */
+export const CheckOwnParameters = Schema.Struct({}).check(
+  Schema.makeFilter(input =>
+    typeof input === 'object' && Object.keys(input).length === 0
+      ? undefined
+      : 'check_own takes no arguments',
+  ),
+)
+
+/** What `check_own` came to: each case that ran gives the tree it ran on and the file its whole output is in. */
+export const CheckOwnRan = Schema.TaggedUnion({
+  /** It passed, and the pass is recorded with the tree it ran on (H89). */
+  passed: {
+    tree: TreeHash,
+    /** Whether the tree is HEAD's: nothing was left uncommitted or untracked. */
+    committed: Schema.Boolean,
+    output: Text,
+  },
+  /** It failed: its exit code, or the signal that ended it. */
+  failed: { tree: TreeHash, exit: Text, output: Text },
+  /** Its time limit (`check_timeout`) ran out, and it was ended. */
+  timed_out: { tree: TreeHash, output: Text },
+  /** It didn't run: the project sets no `check_own`, or the command couldn't start or keep its output. */
+  not_run: { reason: Text },
+})
+export type CheckOwnRan = typeof CheckOwnRan.Type
+
+export const CheckOwnTool = {
+  name: 'check_own',
+  description:
+    "Runs the project's check_own on your worktree as it is now: HEAD's tree with your uncommitted " +
+    'and untracked files. Its whole output is kept in a file, and a pass is recorded with the tree it ' +
+    'ran on, so committing exactly what was checked keeps the pass: finish with that tree, the commit ' +
+    'and the output file. Run it after your last change, once, and read its output file rather than ' +
+    'running it again; never run the command yourself, as only this tool records a pass.',
+  parameters: CheckOwnParameters,
+  success: CheckOwnRan,
+} satisfies AnyTool
+
 /** The `check_own` pass a `finish` stands on: the tree it ran on, the commit, and the file its output is in (H89). */
 export class CheckOwnPass extends Schema.Class<CheckOwnPass>('CheckOwnPass')({
   tree: TreeHash.annotate({
@@ -356,6 +395,7 @@ export const WorkerTools = [
   FileTicketTool,
   AskQuestionTool,
   AddNoteTool,
+  CheckOwnTool,
   FinishTool,
   DeferTool,
   WaitForTool,

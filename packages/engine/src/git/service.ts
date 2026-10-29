@@ -1,11 +1,17 @@
 import { Context, Effect, Layer, Option } from 'effect'
 import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 
 import type { CommitHash, TreeHash } from '@fabrica/contracts'
 
 import { CommandOutcome, ProcessRunner, StartFailure } from '../process'
-import { type GitConfig, defaultConfig, makeCommands } from './command'
+import {
+  type GitCommand,
+  type GitConfig,
+  defaultConfig,
+  makeCommands,
+} from './command'
 import { CantTell, GitFailed } from './errors'
 import {
   AbortOutcome,
@@ -61,6 +67,15 @@ export interface GitShape {
     readonly repo: string
     readonly revision: string
   }) => Effect.Effect<Option.Option<TreeHash>, CantTell>
+  /**
+   * The tree of the worktree as it is: HEAD's, with its uncommitted and untracked files (those its
+   * ignore rules leave out stay out), the tree a commit of everything would have (spec §13.6, H89).
+   * It is written through an index of the engine's own, so the worktree's index is never changed;
+   * one read at a time per worktree, as they share that index's folder.
+   */
+  readonly worktreeTree: (input: {
+    readonly worktree: string
+  }) => Effect.Effect<TreeHash, CantTell>
   /** The branch checked out in `repo`'s worktree, its short name; none for a detached HEAD. */
   readonly currentBranch: (input: {
     readonly repo: string
@@ -331,6 +346,76 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
       peel: 'tree',
       parse: parseTreeHash,
     })
+  })
+
+  /** Runs `command` in a read, failing the attempt on any exit but 0. */
+  const queryOnly = (command: GitCommand) =>
+    Effect.flatMap(query(command), exit =>
+      exit.code === 0 ? Effect.succeed(exit) : unexpected(command.args, exit),
+    )
+
+  const worktreeTree = Effect.fn('Git.worktreeTree')(function* ({
+    worktree,
+  }: {
+    readonly worktree: string
+  }) {
+    const head = yield* headOf('worktreeTree', worktree)
+    const attempt = Effect.gen(function* () {
+      const folders = yield* queryOnly({
+        cwd: worktree,
+        args: ['rev-parse', '--absolute-git-dir', '--git-common-dir'],
+      })
+      const [own, common] = folders.stdout
+        .split('\n')
+        .filter(line => line !== '')
+        .map(folder => resolve(worktree, folder))
+      if (own === undefined || common === undefined)
+        return yield* unexpected(['rev-parse', '--absolute-git-dir'], folders)
+      // A git folder of the engine's own beside the worktree's, sharing its repository through
+      // `commondir` (its objects, configuration and ignore rules) but holding an index of its own,
+      // started from a copy of the worktree's: that keeps the files tracked though ignored, and what
+      // git knows of each file's state. Git's local variables never reach a command (H85), so the
+      // folder is named by `--git-dir`.
+      const tree = join(own, 'fabrica-tree')
+      const inTree = (args: ReadonlyArray<string>) =>
+        queryOnly({
+          cwd: worktree,
+          args: ['--git-dir', tree, '--work-tree', worktree, ...args],
+        })
+      const prepared = Effect.tryPromise({
+        try: async () => {
+          await rm(tree, { recursive: true, force: true })
+          await mkdir(tree)
+          await writeFile(join(tree, 'commondir'), `${common}\n`)
+          await writeFile(join(tree, 'HEAD'), `${head}\n`)
+          const index = join(own, 'index')
+          if (!existsSync(index)) return false
+          await copyFile(index, join(tree, 'index'))
+          return true
+        },
+        catch: cause =>
+          new GitFailed({
+            command: `preparing ${tree}`,
+            reason: cause instanceof Error ? cause.message : String(cause),
+          }),
+      })
+      const written = yield* Effect.gen(function* () {
+        if (!(yield* prepared)) yield* inTree(['read-tree', head])
+        yield* inTree(['add', '--all', '--', ':/'])
+        return yield* inTree(['write-tree'])
+      }).pipe(
+        Effect.ensuring(
+          Effect.ignore(
+            Effect.tryPromise(() => rm(tree, { recursive: true, force: true })),
+          ),
+        ),
+      )
+      return yield* Option.match(parseTreeHash(written.stdout), {
+        onNone: () => unexpected(['write-tree'], written),
+        onSome: Effect.succeed,
+      })
+    })
+    return yield* read('worktreeTree', attempt)
   })
 
   const currentBranch = Effect.fn('Git.currentBranch')(function* ({
@@ -662,6 +747,7 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     mergeBase,
     commitHash,
     treeHash,
+    worktreeTree,
     currentBranch,
     changedFiles,
     trackedFiles,

@@ -6,7 +6,7 @@ import type {
   FileRefused,
   PathOutsideRoot,
 } from '../files'
-import type { ExitStatus, StartFailure } from '../process'
+import { type ExitStatus, StartFailure } from '../process'
 import type { EventDraft } from '../runlog'
 
 // What a check or a setup came to (spec §13.7, §13.8, §13.9, §13.12). Each is a tagged union made by
@@ -44,6 +44,22 @@ export type NotRun = Data.TaggedEnum<{
   LogNotKept: { readonly error: LogError }
 }>
 export const NotRun = Data.taggedEnum<NotRun>()
+
+/** Why a check didn't run, in words, as an agent or a log line says it. */
+export const notRunReason: (reason: NotRun) => string = NotRun.$match({
+  CommandRefused: () =>
+    'its command holds a newline or a control character, and is refused',
+  DidNotStart: ({ reason }) =>
+    StartFailure.$match(reason, {
+      NotOnPath: ({ command, path }) =>
+        `${command} isn't on the PATH it runs with (${path})`,
+      SpawnFailed: ({ command, message }) =>
+        `${command} didn't start: ${message}`,
+    }),
+  OutputCut: ({ limit }) =>
+    `its output passed ${limit} bytes, and it was ended`,
+  LogNotKept: ({ error }) => `its output couldn't be kept: ${error.message}`,
+})
 
 /** A check or a setup run to its end by `Checks.run`. */
 export type CheckOutcome = Data.TaggedEnum<{

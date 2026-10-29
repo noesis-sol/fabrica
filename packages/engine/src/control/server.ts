@@ -29,13 +29,14 @@ import {
   type TicketId,
 } from '@fabrica/contracts'
 
+import { Checks } from '../checks'
 import { Git } from '../git'
 import { Wake } from '../time'
 import { WorkGraph } from '../workgraph'
 import type { Outcome } from './outcome'
 import { Attention, CheckOwnPasses } from './ports'
 import { drawToken, tokenMatches } from './token'
-import { makeTools } from './tools'
+import { type CheckOwnRun, makeTools } from './tools'
 
 // The agent control server (spec §12.2, §12.3, §20.2): for each agent's session, a Unix socket of its
 // own, mode 0600 in a folder only the engine's user can enter, serving the control group in the
@@ -53,6 +54,8 @@ export interface ControlSession {
   readonly folder: string
   /** How long `ask_and_wait` holds the agent for an answer (`question_wait`), in time awake. */
   readonly questionWait: Duration.Input
+  /** How `check_own` runs for it. */
+  readonly checkOwn: CheckOwnRun
 }
 
 /** An agent's control channel, open. */
@@ -114,6 +117,7 @@ const prepare = (folder: string, socket: string) =>
 export const make = Effect.gen(function* () {
   const graph = yield* WorkGraph
   const git = yield* Git
+  const checks = yield* Checks
   const wake = yield* Wake
   const passes = yield* CheckOwnPasses
   const attention = yield* Attention
@@ -135,6 +139,7 @@ export const make = Effect.gen(function* () {
       ...session,
       graph,
       git,
+      checks,
       wake,
       passes,
       attention,
@@ -146,6 +151,7 @@ export const make = Effect.gen(function* () {
         file_ticket: tools.fileTicket,
         ask_question: tools.askQuestion,
         add_note: tools.addNote,
+        check_own: tools.checkOwn,
         finish: tools.finish,
         defer: tools.defer,
         wait_for: tools.waitFor,
@@ -205,9 +211,9 @@ export const make = Effect.gen(function* () {
   return ControlServer.of({ open })
 })
 
-/** The control server, over the work graph, git, time awake, the passes and the attention service. */
+/** The control server, over the work graph, git, the checks, time awake, the passes and the attention service. */
 export const layer: Layer.Layer<
   ControlServer,
   never,
-  WorkGraph | Git | Wake | CheckOwnPasses | Attention
+  WorkGraph | Git | Checks | Wake | CheckOwnPasses | Attention
 > = Layer.effect(ControlServer, make)

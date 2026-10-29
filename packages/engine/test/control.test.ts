@@ -29,6 +29,7 @@ import { afterAll, beforeAll, describe, expect, it } from '@effect/vitest'
 import {
   type Actor,
   CheckOwnPass,
+  CommandSetting,
   CommitHash,
   ControlRpcs,
   ControlSocketVariable,
@@ -50,10 +51,12 @@ import {
   controlTokenClient,
 } from '@fabrica/contracts'
 
+import { layer as checksLayer } from '../src/checks'
 import {
   type AgentControl,
   Attention,
   CheckOwnPasses,
+  type CheckOwnRun,
   ControlServer,
   Outcome,
   type PermissionRequest,
@@ -172,16 +175,22 @@ const graphLayer = Layer.effect(
   makeWorkGraph({ prefix: 'fa' }),
 ).pipe(Layer.provideMerge(storeLayer(':memory:')))
 
-const gitServiceLayer = Layer.provide(
-  gitLayer(gitConfig),
-  Layer.provide(runnerLayer(runnerConfig()), layerClock),
+const runnerServiceLayer = Layer.provide(
+  runnerLayer(runnerConfig()),
+  layerClock,
 )
+
+const gitServiceLayer = Layer.provide(gitLayer(gitConfig), runnerServiceLayer)
 
 const services = controlLayer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       graphLayer,
       gitServiceLayer,
+      Layer.provide(
+        checksLayer,
+        Layer.merge(runnerServiceLayer, gitServiceLayer),
+      ),
       Layer.provide(layerWake, noSleepCauses),
       checkOwnPassesLayer,
       attentionLayer,
@@ -219,6 +228,15 @@ const connect = (
 const withToken = (control: AgentControl) =>
   controlTokenClient(control.environment[ControlTokenVariable] ?? '')
 
+/** A project that sets no `check_own`, its logs kept under `checkout`. */
+const noCheckOwn = (checkout: string): CheckOwnRun => ({
+  command: CommandSetting.cases.Unset.make({}),
+  checkout,
+  timeLimit: Duration.minutes(1),
+  cores: 1,
+  nice: Option.none(),
+})
+
 /** The services, a ticket of its own and its control channel open, with a client holding its token. */
 const harness = Effect.gen(function* () {
   const { worktree, folder } = fixture()
@@ -234,6 +252,7 @@ const harness = Effect.gen(function* () {
     worktree,
     folder,
     questionWait: Duration.minutes(15),
+    checkOwn: noCheckOwn(folder),
   })
   const client = yield* connect(control.socket, withToken(control))
   /** The next outcome the session published. */
@@ -324,6 +343,7 @@ describe('the socket and its token', () => {
           worktree: fixture().worktree,
           folder: fixture().folder,
           questionWait: Duration.minutes(15),
+          checkOwn: noCheckOwn(root),
         })
         const stranger = yield* connect(control.socket, withToken(otherControl))
         const refused = yield* Effect.flip(

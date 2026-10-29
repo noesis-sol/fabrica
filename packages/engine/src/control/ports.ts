@@ -1,4 +1,12 @@
-import { Context, Effect, HashSet, Layer, Ref } from 'effect'
+import {
+  Context,
+  Effect,
+  HashMap,
+  HashSet,
+  Layer,
+  type Option,
+  Ref,
+} from 'effect'
 
 import type {
   PermissionDecision,
@@ -54,6 +62,8 @@ export interface CheckOwnPassesShape {
     readonly ticket: TicketId
     readonly tree: TreeHash
   }) => Effect.Effect<boolean>
+  /** The tree the ticket's last pass ran on, `FABRICA_CHECK_OWN_PASSED_AT` for its next run; none before its first. */
+  readonly last: (ticket: TicketId) => Effect.Effect<Option.Option<TreeHash>>
 }
 
 export class CheckOwnPasses extends Context.Service<
@@ -66,12 +76,27 @@ const passKey = (pass: {
   readonly tree: TreeHash
 }): string => `${pass.ticket} ${pass.tree}`
 
-/** Passes kept in memory for the engine's life. */
+/** Passes kept in memory for the engine's life, each ticket's last one beside them. */
 export const makeCheckOwnPasses: Effect.Effect<CheckOwnPassesShape> =
-  Effect.map(Ref.make(HashSet.empty<string>()), passes => ({
-    record: pass => Ref.update(passes, HashSet.add(passKey(pass))),
-    passed: pass => Effect.map(Ref.get(passes), HashSet.has(passKey(pass))),
-  }))
+  Effect.map(
+    Ref.make({
+      passes: HashSet.empty<string>(),
+      last: HashMap.empty<TicketId, TreeHash>(),
+    }),
+    kept => ({
+      record: pass =>
+        Ref.update(kept, ({ passes, last }) => ({
+          passes: HashSet.add(passes, passKey(pass)),
+          last: HashMap.set(last, pass.ticket, pass.tree),
+        })),
+      passed: pass =>
+        Effect.map(Ref.get(kept), ({ passes }) =>
+          HashSet.has(passes, passKey(pass)),
+        ),
+      last: ticket =>
+        Effect.map(Ref.get(kept), ({ last }) => HashMap.get(last, ticket)),
+    }),
+  )
 
 export const checkOwnPassesLayer: Layer.Layer<CheckOwnPasses> = Layer.effect(
   CheckOwnPasses,
