@@ -17,7 +17,8 @@ export type Migrations = Readonly<
 /** The table the migrator records the migrations applied in. */
 const migrationsTable = 'effect_sql_migrations'
 
-const statements = (...sqls: ReadonlyArray<string>) =>
+/** A migration that runs `sqls`, one statement each, in order. */
+export const statements = (...sqls: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     for (const text of sqls) yield* sql.unsafe(text)
