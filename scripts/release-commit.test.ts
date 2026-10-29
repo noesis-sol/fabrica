@@ -5,8 +5,8 @@ import { describe, expect, layer } from '@effect/vitest'
 
 import {
   Toolbox,
-  makeGitRepo,
   layerToolbox,
+  makeGitRepo,
   runCommandExit,
 } from '../packages/testkit/src/index.ts'
 
