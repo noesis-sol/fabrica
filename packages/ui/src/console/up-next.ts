@@ -52,7 +52,7 @@ const questionWords = (
 /**
  * A ticket's place in the queue, as its phase says; none for a ticket out of it. The queue is what the
  * phase table counts in the queue (H58), each one's words from `waiting` (H81), so the stats row's count
- * and hover and this column agree; a ticket waiting on a question is listed after them, with the question.
+ * and hover and this column agree; a ticket waiting on a question waits too, with the question.
  */
 export const placeOf = (
   phase: Phase,
