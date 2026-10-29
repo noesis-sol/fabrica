@@ -343,8 +343,9 @@ socket.on('end', () => {
 socket.on('error', () => {})
 `
 
-/** `text` quoted for /bin/sh. */
-const shQuote = (text: string): string => `'${text.replaceAll("'", `'\\''`)}'`
+/** `text` quoted as one word for /bin/sh, and for the login shells ssh runs a command with. */
+export const shQuote = (text: string): string =>
+  `'${text.replaceAll("'", `'\\''`)}'`
 
 /** The host and fingerprint of ssh's question about an unknown host's key, where it is one. */
 const hostKeyQuestion = (

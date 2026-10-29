@@ -126,10 +126,13 @@ export interface InstallPlaces {
   readonly link: string
 }
 
-/** The install places under `home`, as the install script makes them. */
+/**
+ * The install places under `home`, as the install script makes them: POSIX paths, since the engine's
+ * host is POSIX, whichever machine the app that installs it over SSH or in WSL2 runs on.
+ */
 export const installPlaces = (home: string): InstallPlaces => ({
-  engines: NodePath.join(home, '.local', 'share', 'fabrica', 'engine'),
-  link: NodePath.join(home, '.local', 'bin', 'fabrica'),
+  engines: NodePath.posix.join(home, '.local', 'share', 'fabrica', 'engine'),
+  link: NodePath.posix.join(home, '.local', 'bin', 'fabrica'),
 })
 
 /** The folder a version is installed in. */
@@ -139,7 +142,7 @@ export const versionFolder = ({
 }: {
   readonly places: InstallPlaces
   readonly version: ReleaseVersion
-}): string => NodePath.join(places.engines, version)
+}): string => NodePath.posix.join(places.engines, version)
 
 const parts = (version: ReleaseVersion) => {
   const dash = version.indexOf('-')

@@ -54,10 +54,10 @@ export interface ReleaseSource {
 }
 
 /** The most checksums.txt may hold. */
-const CHECKSUMS_LIMIT = 1024 * 1024
+export const CHECKSUMS_LIMIT = 1024 * 1024
 
 /** The most an engine archive may hold: past it, the download is cut and refused. */
-const ARCHIVE_LIMIT = 2 * 1024 * 1024 * 1024
+export const ARCHIVE_LIMIT = 2 * 1024 * 1024 * 1024
 
 /** How long tar has to unpack the archive. */
 const UNPACK_TIME = Duration.minutes(5)

@@ -9,7 +9,8 @@
     ".": "./src/index.ts",
     "./bridge": "./src/engine/bridge.ts",
     "./files": "./src/files/index.ts",
-    "./paths": "./src/engine/paths.ts"
+    "./paths": "./src/engine/paths.ts",
+    "./update": "./src/update/index.ts"
   },
   "scripts": {
     "typecheck": "tsgo --noEmit -p tsconfig.json",
