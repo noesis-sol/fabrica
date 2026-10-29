@@ -2987,6 +2987,10 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
               "branch": {
                 "type": "string",
               },
+              "commit": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "type": "string",
+              },
               "concurrency": {
                 "minimum": 0,
                 "type": "integer",
@@ -3065,6 +3069,7 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
               "engine",
               "repo",
               "branch",
+              "commit",
               "concurrency",
             ],
             "type": "object",

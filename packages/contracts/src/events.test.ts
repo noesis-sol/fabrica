@@ -56,6 +56,7 @@ const samples: { readonly [K in EventKind]: Extract<RunEvent, { kind: K }> } = {
     engine: EngineId.make('laptop'),
     repo: '/Users/me/proj',
     branch: 'main',
+    commit,
     scope: ticket,
     feature: 'Add a --json flag',
     spec: '.fabrica/specs/app.md',

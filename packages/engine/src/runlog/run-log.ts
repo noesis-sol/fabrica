@@ -49,6 +49,9 @@ export const eventsPath = '.fabrica/run/events.jsonl'
 /** The human log, below the project's checkout. */
 export const logPath = '.fabrica/fabrica.log'
 
+/** A run's report (§13.9, §16), below the project's checkout: the reviewer writes it, `report.get` reads it. */
+export const reportPath = (run: RunId): string => `.fabrica/reports/${run}.md`
+
 type DraftOf<Event> = Event extends RunEvent
   ? Omit<Event, 'v' | 'time' | 'run'>
   : never

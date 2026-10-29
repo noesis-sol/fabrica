@@ -15,8 +15,8 @@ import {
 // checkout): without following a link, without waiting on a named pipe, and only a regular file
 // (spec §20.2, H62).
 
-/** The bytes of the regular file at `location`; past `maxBytes`, a failure rather than a part of it. */
-export const readFileBytes = Effect.fn('SafeFiles.readFileBytes')(function* (
+/** The bytes of the regular file at `location` and its stat as opened; past `maxBytes`, a failure. */
+const readRegular = Effect.fn('SafeFiles.readRegular')(function* (
   location: FileLocation,
   options?: { readonly maxBytes?: number },
 ) {
@@ -34,8 +34,16 @@ export const readFileBytes = Effect.fn('SafeFiles.readFileBytes')(function* (
         size: bytes.length,
         maxBytes,
       })
-    return new Uint8Array(bytes)
+    return { bytes: new Uint8Array(bytes), stats }
   }).pipe(Effect.ensuring(closeQuietly(handle)))
+})
+
+/** The bytes of the regular file at `location`; past `maxBytes`, a failure rather than a part of it. */
+export const readFileBytes = Effect.fn('SafeFiles.readFileBytes')(function* (
+  location: FileLocation,
+  options?: { readonly maxBytes?: number },
+) {
+  return (yield* readRegular(location, options)).bytes
 })
 
 /** The text of the regular file at `location`, read as UTF-8; past `maxBytes`, a failure. */
@@ -46,3 +54,17 @@ export const readFileText = Effect.fn('SafeFiles.readFileText')(function* (
   const bytes = yield* readFileBytes(location, options)
   return Buffer.from(bytes).toString('utf8')
 })
+
+/**
+ * The text of the regular file at `location`, read as UTF-8, and when it was last written, in whole
+ * milliseconds since the epoch, from the file it read; past `maxBytes`, a failure.
+ */
+export const readFileTextWritten = Effect.fn('SafeFiles.readFileTextWritten')(
+  function* (location: FileLocation, options?: { readonly maxBytes?: number }) {
+    const { bytes, stats } = yield* readRegular(location, options)
+    return {
+      text: Buffer.from(bytes).toString('utf8'),
+      writtenAt: Math.floor(stats.mtimeMs),
+    }
+  },
+)

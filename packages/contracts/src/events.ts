@@ -255,6 +255,8 @@ export const StartEvent = record('start', {
   repo: Text,
   /** Base: where finished tickets land. */
   branch: Text,
+  /** Base's commit as the run started: where the run's merged diff starts (§8.1). */
+  commit: CommitHash,
   /** The ticket of a `--ticket` or feature run, or a spec run's root epic. */
   scope: optional(TicketId),
   feature: optional(Text),

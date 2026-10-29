@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
-import type { CommitHash, TreeHash } from '@fabrica/contracts'
+import type { CommitHash, FileDiff, TreeHash } from '@fabrica/contracts'
 
 import { CommandOutcome, ProcessRunner, StartFailure } from '../process'
 import {
@@ -24,6 +24,7 @@ import {
   type WorktreeEntry,
   type WorktreeStatus,
   nulList,
+  parseDiff,
   parseGitVersion,
   parseHash,
   parseStatus,
@@ -86,6 +87,15 @@ export interface GitShape {
     readonly branch: string
     readonly base: string
   }) => Effect.Effect<ReadonlyArray<string>, CantTell>
+  /**
+   * The changes from the commit `from` to the commit `to`, one patch per file, renames found; git's
+   * own diff, whatever the repository's configuration asks (no external diff, no text conversion).
+   */
+  readonly diff: (input: {
+    readonly repo: string
+    readonly from: CommitHash
+    readonly to: CommitHash
+  }) => Effect.Effect<ReadonlyArray<FileDiff>, CantTell>
   /** The files tracked at `revision`, as paths from the repository's root. */
   readonly trackedFiles: (input: {
     readonly repo: string
@@ -471,6 +481,42 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     )
   })
 
+  const diff = Effect.fn('Git.diff')(function* ({
+    repo,
+    from,
+    to,
+  }: {
+    readonly repo: string
+    readonly from: CommitHash
+    readonly to: CommitHash
+  }) {
+    return yield* readExit(
+      'diff',
+      {
+        cwd: repo,
+        args: [
+          'diff',
+          '--raw',
+          '-z',
+          '--patch',
+          '--find-renames',
+          '--no-relative',
+          '--no-color',
+          '--no-ext-diff',
+          '--no-textconv',
+          '--submodule=short',
+          '--src-prefix=a/',
+          '--dst-prefix=b/',
+          '--end-of-options',
+          from,
+          to,
+          '--',
+        ],
+      },
+      exit => (exit.code === 0 ? parseDiff(exit.stdout) : Option.none()),
+    )
+  })
+
   const trackedFiles = Effect.fn('Git.trackedFiles')(function* ({
     repo,
     revision,
@@ -768,6 +814,7 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     worktreeTree,
     currentBranch,
     changedFiles,
+    diff,
     trackedFiles,
     worktrees,
     rebase,

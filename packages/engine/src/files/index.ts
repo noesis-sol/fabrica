@@ -3,7 +3,8 @@ export * from './errors'
 export { type FileLocation, resolveLocation } from './open'
 export { type FileContent, writeFileWhole } from './whole'
 export { type FileWriter, openFileTruncating } from './truncate'
-export { readFileBytes, readFileText } from './read'
+export { readFileBytes, readFileText, readFileTextWritten } from './read'
+export { readFileTail } from './tail'
 export {
   type ByteSink,
   type LineStream,

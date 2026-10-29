@@ -48,7 +48,6 @@ import {
   backlogHandlers,
   insightsHandlers,
   projectsHandlers,
-  reviewHandlers,
   runsHandlers,
   secretsHandlers,
   talksHandlers,
@@ -154,9 +153,9 @@ const modeOf = (path: string) =>
 
 /** Whether an exit is a defect named `NotImplemented`, as the protocol carries it. */
 /** The groups whose handlers answer `NotImplemented`: every one but the Engine group. */
-type Unfilled = Exclude<ProtocolGroupName, 'engine'>
+type Unfilled = Exclude<ProtocolGroupName, 'engine' | 'review'>
 const unfilled = ProtocolGroupName.literals.filter(
-  (group): group is Unfilled => group !== 'engine',
+  (group): group is Unfilled => group !== 'engine' && group !== 'review',
 )
 
 /** Whether a handler's answer is an effect: the handlers built here need no service. */
@@ -430,7 +429,6 @@ describe('the groups not served yet', () => {
           workers: client['worker.release']({ project, ticket }),
           attention: client['attention.list']({ project: Option.none() }),
           talks: client['talk.close']({ talk: TalkId.make('talk-1') }),
-          review: client['log.tail']({ project, lines: 10 }),
           insights: client['insights.summary']({
             project: Option.none(),
             since: Option.none(),
@@ -455,7 +453,6 @@ describe('the groups not served yet', () => {
         workers: workersHandlers,
         attention: attentionHandlers,
         talks: talksHandlers,
-        review: reviewHandlers,
         insights: insightsHandlers,
       }
       for (const group of unfilled) {

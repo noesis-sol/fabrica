@@ -1,6 +1,6 @@
 import { Option } from 'effect'
 
-import { CommitHash, TreeHash } from '@fabrica/contracts'
+import { CommitHash, FileChange, FileDiff, TreeHash } from '@fabrica/contracts'
 
 // How git's output is read: the one place each of its formats is parsed. Every format read is one git
 // keeps stable for scripts (`-z`, `--porcelain`), under `LC_ALL=C`.
@@ -44,6 +44,77 @@ export const parseHash = (output: string): Option.Option<CommitHash> =>
 /** One line's tree hash, as `rev-parse <revision>^{tree}` prints it. */
 export const parseTreeHash = (output: string): Option.Option<TreeHash> =>
   TreeHash.makeOption(output.trim())
+
+/** How each of `git diff --raw`'s statuses changed a file; any other (a copy, an unmerged path) is none. */
+const rawChanges: Readonly<Record<string, FileChange>> = {
+  A: 'added',
+  M: 'modified',
+  // A type change (a file made a link) is a modification of its path.
+  T: 'modified',
+  D: 'deleted',
+  R: 'renamed',
+}
+
+/** Where a file's patch begins in `git diff -p`: no line of a patch's body starts so. */
+const PATCH_START = 'diff --git '
+
+/**
+ * `git diff --raw -z -p`: the raw entries, each `:<modes> <hashes> <status>` and its path (a rename's
+ * two), every field NUL-terminated, a NUL after the last, then one patch per entry in the same order.
+ * Paths are taken from the raw entries, as git wrote them; the patches' headers quote theirs. Output in
+ * another shape is none.
+ */
+export const parseDiff = (
+  output: string,
+): Option.Option<ReadonlyArray<FileDiff>> => {
+  const entries: Array<{
+    readonly change: FileChange
+    readonly path: string
+    readonly from: Option.Option<string>
+  }> = []
+  let at = 0
+  /** The field from `at` to its NUL, `at` moved past it; none where no NUL ends it. */
+  const field = (): Option.Option<string> => {
+    const end = output.indexOf('\0', at)
+    if (end === -1) return Option.none()
+    const value = output.slice(at, end)
+    at = end + 1
+    return Option.some(value)
+  }
+  while (output.startsWith(':', at)) {
+    const header = field()
+    if (Option.isNone(header)) return Option.none()
+    const change = rawChanges[header.value.split(' ')[4]?.charAt(0) ?? '']
+    if (change === undefined) return Option.none()
+    const first = field()
+    if (Option.isNone(first)) return Option.none()
+    if (change === 'renamed') {
+      const to = field()
+      if (Option.isNone(to)) return Option.none()
+      entries.push({ change, path: to.value, from: first })
+    } else entries.push({ change, path: first.value, from: Option.none() })
+  }
+  const patches = output.slice(output.startsWith('\0', at) ? at + 1 : at)
+  if (entries.length === 0)
+    return patches === '' ? Option.some([]) : Option.none()
+  if (!patches.startsWith(PATCH_START)) return Option.none()
+  const starts = [0]
+  for (
+    let next = patches.indexOf(`\n${PATCH_START}`);
+    next !== -1;
+    next = patches.indexOf(`\n${PATCH_START}`, next + 1)
+  )
+    starts.push(next + 1)
+  if (starts.length !== entries.length) return Option.none()
+  return Option.all(
+    entries.map((entry, index) =>
+      FileDiff.makeOption({
+        ...entry,
+        patch: patches.slice(starts[index], starts[index + 1]),
+      }),
+    ),
+  )
+}
 
 /** One worktree of a repository, as `git worktree list --porcelain -z` gives it. */
 export interface WorktreeEntry {

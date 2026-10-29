@@ -3,7 +3,11 @@ import { Reactivity } from 'effect/reactivity'
 import { SqlClient } from 'effect/sql'
 
 import { SqliteClient } from '@effect/sql-sqlite-node'
-import { EngineId, decodeEngineSettings } from '@fabrica/contracts'
+import {
+  EngineId,
+  type ProjectId,
+  decodeEngineSettings,
+} from '@fabrica/contracts'
 
 import { drawBase36 } from '../workgraph/ids'
 import { type Migrations, migrate, statements } from '../workgraph/migrations'
@@ -127,3 +131,23 @@ export const projectCount = Effect.fn('EngineDatabase.projectCount')(
     return rows[0]?.count ?? 0
   },
 )
+
+/** What the engine keeps of a project for the groups that act in its checkout. */
+export interface ProjectRecord {
+  /** Its checkout. */
+  readonly path: string
+  /** Base: the branch finished tickets land on. */
+  readonly base: string
+}
+
+/** The project `id` names; none when the engine holds no such project. */
+export const findProject = Effect.fn('EngineDatabase.findProject')(function* (
+  id: ProjectId,
+) {
+  const sql = yield* SqlClient.SqlClient
+  const rows =
+    yield* sql<ProjectRecord>`SELECT path, base FROM projects WHERE id = ${id}`
+  return Option.fromUndefinedOr(rows[0]).pipe(
+    Option.map(({ path, base }): ProjectRecord => ({ path, base })),
+  )
+})
