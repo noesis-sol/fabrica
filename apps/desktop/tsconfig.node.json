@@ -7,5 +7,12 @@
     "types": ["node"],
     "allowImportingTsExtensions": true
   },
-  "include": ["src/main/**/*", "src/preload/**/*", "build/**/*", "test/**/*"]
+  // The connection process and its test have their own, without the DOM (tsconfig.connection.json).
+  "exclude": ["test/connection.test.ts"],
+  "include": [
+    "src/main/**/*",
+    "src/preload/**/*",
+    "build/**/*",
+    "test/**/*"
+  ]
 }

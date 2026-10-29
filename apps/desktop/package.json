@@ -8,8 +8,8 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
-    "typecheck": "tsgo --noEmit -p tsconfig.node.json && tsgo --noEmit -p tsconfig.web.json",
-    "typecheck:tsc": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "tsgo --noEmit -p tsconfig.node.json && tsgo --noEmit -p tsconfig.connection.json && tsgo --noEmit -p tsconfig.web.json",
+    "typecheck:tsc": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.connection.json && tsc --noEmit -p tsconfig.web.json",
     "build": "electron-vite build"
   },
   "dependencies": {
@@ -18,7 +18,9 @@
     "foldkit": "0.169.0"
   },
   "devDependencies": {
+    "@effect/platform-node": "4.0.0",
     "@electron/fuses": "2.1.3",
+    "@fabrica/client": "workspace:*",
     "@fabrica/contracts": "workspace:*",
     "@fabrica/engine": "workspace:*",
     "@fabrica/testkit": "workspace:*",

@@ -8,6 +8,8 @@ import {
   type EngineClientShape,
   Link,
   make as makeClient,
+  portSocket,
+  webPortEnd,
 } from '@fabrica/client'
 import {
   EngineId,
@@ -16,8 +18,6 @@ import {
   UpdateSide,
   VersionMismatch,
 } from '@fabrica/contracts'
-
-import { portSocket } from './port'
 
 // The connection to the engine (spec §8.2, §18.1): a ManagedResource, the engine client over the
 // connection process's MessagePort, held while the Model wants it. Its first hello says whether the
@@ -81,7 +81,7 @@ export const connect = Effect.fn('EngineConnection.connect')(function* (
   environment: ConnectionEnvironment,
 ) {
   const port = yield* environment.enginePort
-  const socket = yield* portSocket(port)
+  const socket = yield* portSocket(webPortEnd(port))
   const client = yield* makeClient(environment.client).pipe(
     Effect.provideService(Socket.Socket, socket),
   )

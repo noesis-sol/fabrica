@@ -3,12 +3,16 @@ import {
   BrowserWindow,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
+  MessageChannelMain,
+  type MessagePortMain,
   type OpenDialogOptions,
+  type WebContents,
   app,
   dialog,
   ipcMain,
   session,
   shell,
+  utilityProcess,
 } from 'electron'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -17,16 +21,52 @@ import { type Theme, defaultTheme } from '@fabrica/ui/theme'
 import { windowColours } from '@fabrica/ui/window-colours'
 
 import { FolderPick, UpdateStatus, channels } from '../preload/api'
-import { type MainIpc, registerIpc } from './ipc'
+import { type MainIpc, registerIpc, sendEnginePort } from './ipc'
 import { AppPage, isAppUrl } from './navigation'
+import { type BrokeredPage, localTarget, makeBroker } from './ports'
 import { guardPermissions, guardWebContents } from './security'
 import { makeUpdateStatusCell } from './updateStatus'
 import { titleBarOverlay, windowOptions } from './window'
 
-// Electron main (spec §5): the window, its title bar and its confinement, and the preload's API.
-// It runs no orchestration and stays out of the data path.
+// Electron main (spec §5): the window, its title bar and its confinement, the preload's API, and the
+// connection process, to which it brokers each page's engine port. It runs no orchestration and stays
+// out of the data path.
 
 const preload = fileURLToPath(new URL('../preload/index.cjs', import.meta.url))
+const connectionProcess = fileURLToPath(
+  new URL('./connection.js', import.meta.url),
+)
+
+/** How long main waits before starting a connection process that exited again. */
+const connectionRestartPause = 1_000
+
+const broker = makeBroker<MessagePortMain>({
+  spawn: onExit => {
+    const child = utilityProcess.fork(connectionProcess)
+    child.once('exit', onExit)
+    return { relay: (target, port) => child.postMessage(target, [port]) }
+  },
+  afterExit: restart => {
+    setTimeout(restart, connectionRestartPause)
+  },
+  channel: () => {
+    const { port1, port2 } = new MessageChannelMain()
+    return { page: port1, relay: port2 }
+  },
+  target: localTarget({
+    platform: process.platform,
+    home: app.getPath('home'),
+    environment: process.env,
+  }),
+})
+
+const brokeredPage = (
+  contents: WebContents,
+): BrokeredPage<MessagePortMain> => ({
+  onLoad: listener => contents.on('did-finish-load', listener),
+  onGone: listener => contents.once('destroyed', listener),
+  send: port => sendEnginePort(contents, port),
+})
 
 // The dev server only in a development build: a packaged app never loads a page from a variable.
 const devServer = process.env['ELECTRON_RENDERER_URL']
@@ -62,6 +102,7 @@ const makeAppWindow = () => {
       }),
     )
     window.once('ready-to-show', () => window.show())
+    broker.attach(brokeredPage(window.webContents))
     const stopUpdates = updateStatus.subscribe(status =>
       window.webContents.send(channels.updateStatusChanged, status),
     )

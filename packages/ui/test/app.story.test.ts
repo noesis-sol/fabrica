@@ -1,5 +1,4 @@
 import { Effect, Layer, Option, Queue, Schema, Stream } from 'effect'
-import { NetAddress } from 'effect/net'
 import { RpcSerialization, RpcServer } from 'effect/rpc'
 import { SocketServer } from 'effect/socket'
 import {
@@ -16,6 +15,7 @@ import {
 import { Command, given, message, model, story } from 'foldkit/story'
 
 import { describe, expect, it, test } from '@effect/vitest'
+import { portServer, webPortEnd } from '@fabrica/client'
 import {
   EngineHello,
   EngineId,
@@ -41,7 +41,6 @@ import {
 } from '../src/app/keys'
 import { Message } from '../src/app/message'
 import { type Flags, type Model, Overlay, initialModel } from '../src/app/model'
-import { portSocket } from '../src/app/port'
 import { clientName } from '../src/app/program'
 import { Screen } from '../src/app/screen'
 import { RunViewItem } from '../src/app/streams'
@@ -470,15 +469,7 @@ describe('frames decoded into the Model', () => {
             channel.port2.close()
           }),
         )
-        const engineEnd = yield* portSocket(channel.port2)
-        const server = SocketServer.SocketServer.of({
-          address: NetAddress.unixPathAddress('fabrica-test'),
-          run: handler =>
-            Effect.andThen(
-              Effect.ignoreCause(handler(engineEnd)),
-              Effect.never,
-            ),
-        })
+        const server = portServer(webPortEnd(channel.port2))
         yield* Layer.build(
           RpcServer.layer(served).pipe(
             Layer.provide(handlers),

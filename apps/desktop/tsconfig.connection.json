@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // The connection process is Node's, in Electron's utilityProcess: no DOM.
+    "types": ["node"]
+  },
+  "include": ["src/connection/**/*", "test/connection.test.ts"]
+}
