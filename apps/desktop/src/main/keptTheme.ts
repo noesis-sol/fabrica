@@ -1,4 +1,4 @@
-import { Data, Effect, Option, Schema } from 'effect'
+import { Data, Effect, Option, Schema, Semaphore } from 'effect'
 
 import { readFileText, writeFileWhole } from '@fabrica/engine/files'
 import { Theme } from '@fabrica/ui/theme'
@@ -58,3 +58,29 @@ export const keepTheme = Effect.fn('KeptTheme.keep')(function* ({
     ),
   )
 })
+
+/** Keeps a theme in a data folder: each keep made after the one before, the theme it writes the last told. */
+export interface ThemeKeeper {
+  /** Keeps `theme`, unless a theme told after it is kept instead. */
+  readonly keep: (theme: Theme) => Effect.Effect<void, ThemeKeepFailed>
+}
+
+/** A ThemeKeeper of `folder`: themes told one after another are kept in that order, the last one left. */
+export const makeThemeKeeper = (folder: string): ThemeKeeper => {
+  const lock = Semaphore.makeUnsafe(1)
+  let told: Option.Option<Theme> = Option.none()
+  return {
+    keep: theme =>
+      Effect.sync(() => {
+        told = Option.some(theme)
+      }).pipe(
+        Effect.andThen(
+          lock.withPermits(1)(
+            Effect.suspend(() =>
+              keepTheme({ folder, theme: Option.getOrElse(told, () => theme) }),
+            ),
+          ),
+        ),
+      ),
+  }
+}

@@ -6,7 +6,12 @@ import { describe, expect, it } from '@effect/vitest'
 import { tempFolder } from '@fabrica/testkit'
 import { themes } from '@fabrica/ui/theme'
 
-import { keepTheme, keptTheme, themeFileName } from '../src/main/keptTheme'
+import {
+  keepTheme,
+  keptTheme,
+  makeThemeKeeper,
+  themeFileName,
+} from '../src/main/keptTheme'
 
 // The window opens in the theme the page last showed (spec §18.2): main keeps the last theme it was
 // told in the app's data folder, and makes the next start's window in it.
@@ -51,5 +56,28 @@ describe('the kept theme', () => {
         }
       }),
     ),
+  )
+
+  it.effect(
+    'is the last theme told, however close together they are told',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const folder = yield* tempFolder('theme')
+          const keeper = makeThemeKeeper(folder)
+          for (let round = 0; round < 20; round += 1) {
+            yield* Effect.all(
+              [keeper.keep('classic'), keeper.keep('neon-grid')],
+              { concurrency: 'unbounded' },
+            )
+            expect(yield* keptTheme(folder)).toEqual(Option.some('neon-grid'))
+            yield* Effect.all(
+              [keeper.keep('neon-grid'), keeper.keep('classic')],
+              { concurrency: 'unbounded' },
+            )
+            expect(yield* keptTheme(folder)).toEqual(Option.some('classic'))
+          }
+        }),
+      ),
   )
 })

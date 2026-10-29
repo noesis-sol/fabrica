@@ -27,7 +27,7 @@ import { windowColours } from '@fabrica/ui/window-colours'
 import { ConnectionTarget } from '../connection/target'
 import { FolderPick, UpdateStatus, channels } from '../preload/api'
 import { type MainIpc, registerIpc, sendEnginePort } from './ipc'
-import { keepTheme, keptTheme } from './keptTheme'
+import { keptTheme, makeThemeKeeper } from './keptTheme'
 import {
   bundledLauncher,
   ensureLocalEngine,
@@ -258,6 +258,8 @@ const makeAppWindow = () => {
 
 const appWindow = makeAppWindow()
 
+const themeKeeper = makeThemeKeeper(app.getPath('userData'))
+
 /** Colours the window in the theme the page shows, and keeps a new one for the next start's window. */
 const setTheme = (theme: Theme): void => {
   if (theme === appWindow.theme()) {
@@ -265,11 +267,13 @@ const setTheme = (theme: Theme): void => {
   }
   appWindow.setTheme(theme)
   void Effect.runPromise(
-    keepTheme({ folder: app.getPath('userData'), theme }).pipe(
-      Effect.catch(error =>
-        Effect.logWarning(`keeping the theme: ${error.reason}`),
+    themeKeeper
+      .keep(theme)
+      .pipe(
+        Effect.catch(error =>
+          Effect.logWarning(`keeping the theme: ${error.reason}`),
+        ),
       ),
-    ),
   )
 }
 
