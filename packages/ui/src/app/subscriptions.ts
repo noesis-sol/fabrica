@@ -8,12 +8,21 @@ import {
   type BacklogPatch,
   type HostLoad,
   ProjectId,
+  type ProjectStatus,
+  type ProjectStatusPatch,
   type RunView,
   type RunViewPatch,
   type Ticket,
 } from '@fabrica/contracts'
 
-import { type EngineConnectionService, isLive, withClient } from './connection'
+import {
+  type EngineConnectionService,
+  type EngineSession,
+  isLive,
+  localEngineName,
+  withClient,
+  withSession,
+} from './connection'
 import { perFrame } from './frame'
 import type { Pressed } from './keys'
 import { Message } from './message'
@@ -129,6 +138,25 @@ export const loadMessages = (
     Stream.catch(() => Stream.empty),
   )
 
+/** The engine's projects and their runs' states, for the sidebar's rows. */
+export const projectMessages = (
+  { client, hello }: EngineSession,
+  nextFrame: Effect.Effect<void>,
+): Stream.Stream<Message> =>
+  watchOf<ReadonlyArray<ProjectStatus>, typeof ProjectStatusPatch.Type>(client)(
+    resume => client.rpc['projects.watchStatus']({ resume }),
+  ).pipe(
+    perFrame(nextFrame),
+    Stream.map(items =>
+      Message.ReceivedProjects({
+        engine: hello.engine,
+        name: localEngineName,
+        items,
+      }),
+    ),
+    Stream.catch(() => Stream.empty),
+  )
+
 export const makeSubscriptions = ({
   nextFrame,
   keys,
@@ -189,6 +217,16 @@ export const makeSubscriptions = ({
             onSome: project =>
               withClient(client => backlogMessages(client, project, nextFrame)),
           }),
+      },
+    ),
+    projects: entry(
+      { live: Schema.Boolean },
+      {
+        modelToDependencies: model => ({ live: isLive(model.connection) }),
+        dependenciesToStream: ({ live }) =>
+          live
+            ? withSession(session => projectMessages(session, nextFrame))
+            : Stream.empty,
       },
     ),
     load: entry(

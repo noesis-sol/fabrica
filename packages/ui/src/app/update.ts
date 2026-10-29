@@ -2,6 +2,9 @@ import { Effect, Option, Schema } from 'effect'
 import { Command, type Update } from 'foldkit'
 import { modifyFields } from 'foldkit/struct'
 
+import { ProjectId } from '@fabrica/contracts'
+
+import * as Sidebar from '../console/sidebar'
 import { Connection, retryAfter } from './connection'
 import { commandFor, commandsFor } from './keys'
 import { Message } from './message'
@@ -35,6 +38,9 @@ export const modelCommands = (model: Model) =>
 
 const sameScreen = Schema.toEquivalence(Screen)
 
+/** Selecting the scope already chosen keeps the Model: its streams aren't subscribed again. */
+const sameScope = Schema.toEquivalence(Schema.Option(ProjectId))
+
 /** Shows `screen`, closing any overlay; the same screen again keeps the Model as it is. */
 const showScreen = (model: Model, screen: Screen): Model =>
   sameScreen(model.screen, screen) && !isOverlayOpen(model)
@@ -64,13 +70,18 @@ export const update = (model: Model, message: Message): Return =>
       model: modifyFields(model, { overlay: () => Overlay.Closed() }),
     }),
     SelectedScope: ({ project }) => ({
-      model: modifyFields(model, {
-        scope: () => project,
-        runView: () => Option.none(),
-        attention: () => Option.none(),
-        backlog: () => Option.none(),
-        usage: () => Option.none(),
-      }),
+      model: sameScope(model.scope, project)
+        ? model
+        : modifyFields(model, {
+            scope: () => project,
+            runView: () => Option.none(),
+            attention: () => Option.none(),
+            backlog: () => Option.none(),
+            usage: () => Option.none(),
+          }),
+    }),
+    RequestedAddProject: () => ({
+      model: showScreen(model, Screen.Engines()),
     }),
 
     ConnectedToEngine: ({ engine, release, protocol }) => ({
@@ -88,6 +99,8 @@ export const update = (model: Model, message: Message): Return =>
         backlog: () => Option.none(),
         load: () => Option.none(),
         usage: () => Option.none(),
+        console: parts =>
+          modifyFields(parts, { sidebar: () => Sidebar.init() }),
       }),
     }),
     FailedToConnect: ({ reason }) => ({
@@ -135,5 +148,14 @@ export const update = (model: Model, message: Message): Return =>
         : { model },
     ReceivedLoad: ({ items }) => ({
       model: modifyFields(model, { load: load => applyLoad(load, items) }),
+    }),
+    ReceivedProjects: ({ engine, name, items }) => ({
+      model: modifyFields(model, {
+        console: parts =>
+          modifyFields(parts, {
+            sidebar: sidebar =>
+              Sidebar.receivedProjects(sidebar, { engine, name, items }),
+          }),
+      }),
     }),
   })

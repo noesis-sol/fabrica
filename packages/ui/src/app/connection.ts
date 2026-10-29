@@ -110,18 +110,31 @@ export type EngineConnectionService = ManagedResource.ServiceOf<
   typeof EngineConnection
 >
 
-/** The client, or nothing while the resource isn't held. */
-export const withClient = <A, E, R>(
-  use: (client: EngineClientShape) => Stream.Stream<A, E, R>,
+/** The engine session, or nothing while the resource isn't held. */
+export const withSession = <A, E, R>(
+  use: (session: EngineSession) => Stream.Stream<A, E, R>,
 ): Stream.Stream<A, E, R | EngineConnectionService> =>
   Stream.unwrap(
     EngineConnection.get.pipe(
-      Effect.map(({ client }) => use(client)),
+      Effect.map(use),
       Effect.catchTag('ResourceNotAvailable', () =>
         Effect.succeed(Stream.empty),
       ),
     ),
   )
+
+/** The client, or nothing while the resource isn't held. */
+export const withClient = <A, E, R>(
+  use: (client: EngineClientShape) => Stream.Stream<A, E, R>,
+): Stream.Stream<A, E, R | EngineConnectionService> =>
+  withSession(({ client }) => use(client))
+
+/**
+ * The name of the engine the connection reaches, as the sidebar says it: the connection process
+ * relays to the local engine's socket until the SSH, WSL2 and TLS engines join it, named as the app's
+ * known engines name them (§9.1).
+ */
+export const localEngineName = 'local'
 
 /** What a failed attempt says: the version refusal kept whole, anything else as its message. */
 export type AttemptFailure = Data.TaggedEnum<{

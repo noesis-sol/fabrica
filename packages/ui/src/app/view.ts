@@ -6,7 +6,7 @@ import {
   createLazy,
 } from 'foldkit/html'
 
-import type { Platform } from '@fabrica/contracts'
+import type { Platform, ProjectId } from '@fabrica/contracts'
 
 import * as Attention from '../console/attention'
 import * as History from '../console/history'
@@ -33,7 +33,7 @@ import {
   openPalette,
   paletteCommands,
 } from './keys'
-import type { Message } from './message'
+import { Message } from './message'
 import { type Model, Overlay } from './model'
 import { Screen, screenTitle } from './screen'
 import { modelCommands } from './update'
@@ -56,6 +56,18 @@ export const layout = {
 }
 
 const lazySidebar = createLazy()
+
+/** The sidebar's Messages, made once, so its memo holds across renders. */
+const sidebarMessages: Sidebar.Messages<Message> = {
+  select: project => Message.SelectedScope({ project }),
+  addProject: Message.RequestedAddProject(),
+}
+
+const sidebarView = (
+  sidebar: Sidebar.Model,
+  scope: Option.Option<ProjectId>,
+  h: HtmlBuilder<Message>,
+): Html => Sidebar.view(sidebar, { scope, messages: sidebarMessages }, h)
 const lazyStats = createLazy()
 const lazyTalkPanel = createLazy()
 const lazyHistory = createLazy()
@@ -354,7 +366,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
               h.AriaLabel('Projects'),
               h.Class('flex min-h-0 flex-col border-r border-line bg-side'),
             ],
-            [lazySidebar(Sidebar.view<Message>, [model.console.sidebar, h])],
+            [lazySidebar(sidebarView, [model.console.sidebar, model.scope, h])],
           ),
           h.main(
             [

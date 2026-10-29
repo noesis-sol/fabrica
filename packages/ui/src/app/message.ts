@@ -4,6 +4,7 @@ import { defineMessageUnion } from 'foldkit/message'
 import {
   EngineId,
   ProjectId,
+  ProjectStatusItem,
   ProtocolVersion,
   ReleaseVersion,
   UpdateSide,
@@ -35,6 +36,8 @@ export const Message = defineMessageUnion({
   DismissedOverlay: {},
   /** A project chosen in the sidebar, or none for every project. */
   SelectedScope: { project: Schema.Option(ProjectId) },
+  /** The sidebar's "+ Add project": the engines screen's add-project flow (§10.1). */
+  RequestedAddProject: {},
 
   ConnectedToEngine: {
     engine: EngineId,
@@ -57,5 +60,11 @@ export const Message = defineMessageUnion({
   ReceivedAttention: { items: itemsOf(AttentionItem) },
   ReceivedBacklog: { project: ProjectId, items: itemsOf(BacklogItem) },
   ReceivedLoad: { items: itemsOf(LoadItem) },
+  /** An engine's project rows, for the sidebar; `name` is the engine's, as the app knows it. */
+  ReceivedProjects: {
+    engine: EngineId,
+    name: Schema.String,
+    items: itemsOf(ProjectStatusItem),
+  },
 })
 export type Message = typeof Message.Type
