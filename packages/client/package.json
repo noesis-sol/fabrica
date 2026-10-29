@@ -6,7 +6,8 @@
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./node": "./src/node.ts"
   },
   "scripts": {
     "typecheck": "tsgo --noEmit -p tsconfig.json",
@@ -14,7 +15,11 @@
     "build": "tsgo -p tsconfig.build.json"
   },
   "dependencies": {
+    "@effect/platform-node": "4.0.0",
     "@fabrica/contracts": "workspace:*",
     "effect": "4.0.0"
+  },
+  "devDependencies": {
+    "@fabrica/testkit": "workspace:*"
   }
 }
