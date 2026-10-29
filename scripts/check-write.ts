@@ -14,7 +14,7 @@
 // runs on the written files, with .oxlintrc.json's settings. Both run side by side.
 import { Data, Option } from 'effect'
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs'
 import { isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -312,9 +312,12 @@ export const checkWritten = async (input: {
   readonly run: Run
   readonly bin?: (tool: string) => string
 }): Promise<Option.Option<string>> => {
-  const { root, cwd, run } = input
+  const { cwd, run } = input
+  // Links resolved on both sides, so a checkout reached through one (macOS's /var) still holds its files.
+  const real = (path: string) => (existsSync(path) ? realpathSync(path) : path)
+  const root = real(input.root)
   const files = input.paths.flatMap(path =>
-    Option.toArray(inRepository(root, cwd, path)),
+    Option.toArray(inRepository(root, root, real(resolve(cwd, path)))),
   )
   const checks = await checkWrite({
     root,

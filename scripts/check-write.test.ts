@@ -1,5 +1,5 @@
 import { Effect, Option } from 'effect'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { describe, expect, it, layer } from '@effect/vitest'
@@ -466,6 +466,25 @@ layer(layerToolbox({ tools: ['node'] }))('the real checks', it => {
         expect(yield* check(join(repo, 'packages/a/src/good.ts'))).toEqual(
           Option.none(),
         )
+        // The checkout reached through a link, as macOS's /var links to /private/var.
+        const linked = join(yield* tempFolder('check-write-link'), 'repo')
+        yield* Effect.promise(() => symlink(repo, linked))
+        const throughLink = (input: { root: string; path: string }) =>
+          Effect.promise(() =>
+            checkWritten({
+              root: input.root,
+              cwd: linked,
+              paths: [input.path],
+              run: spawnRun(repo, tools.env()),
+              bin: tool => join(own, 'node_modules', '.bin', tool),
+            }),
+          )
+        for (const root of [linked, repo]) {
+          const report = Option.getOrThrow(
+            yield* throughLink({ root, path: 'packages/a/src/bad.ts' }),
+          )
+          expect(report).toContain('packages/a/src/bad.ts(1,14): error TS2322')
+        }
       }),
     60_000,
   )
