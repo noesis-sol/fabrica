@@ -233,33 +233,39 @@ class Reader {
 
   /**
    * The rest of a parameter expansion (`${…}`, up to `}`) or an arithmetic one (`$((…))`, up to `))`),
-   * the command substitutions inside it read as commands, since the shell runs them.
+   * entered inside double quotes where `withinDouble`. Its quotes are followed only to find where it
+   * closes; the command substitutions in it are read as commands wherever they stand, quoted or not,
+   * so that the reader never skips one the shell runs.
    */
-  expansion(close: '}' | '))'): void {
+  expansion(close: '}' | '))', withinDouble: boolean): void {
     let depth = 0
+    let quote: 'none' | 'single' | 'double' = 'none'
     while (this.index < this.source.length) {
       const char = this.peek()
       const next = this.peek(1)
-      if (char === '\\') this.index += 2
-      else if (char === "'" && close === '}') {
-        const end = this.source.indexOf("'", this.index + 1)
-        if (end === -1) break
-        this.index = end + 1
+      if (char === '\\') this.index += quote === 'single' ? 1 : 2
+      else if (char === '"' && quote !== 'single') {
+        quote = quote === 'double' ? 'none' : 'double'
+        this.index++
+      } else if (char === "'" && quote !== 'double' && !withinDouble) {
+        quote = quote === 'single' ? 'none' : 'single'
+        this.index++
       } else if (char === '$' && next === '(' && this.peek(2) === '(') {
         this.index += 3
-        this.expansion('))')
+        this.expansion('))', withinDouble || quote === 'double')
       } else if (char === '$' && next === '(') {
         this.index += 2
         this.list(')')
       } else if (char === '$' && next === '{') {
         this.index += 2
-        this.expansion('}')
+        this.expansion('}', withinDouble || quote === 'double')
       } else if (char === '`') {
         this.index++
         this.backticks++
         this.list('`')
         this.backticks--
-      } else if (close === '}' && char === '}') {
+      } else if (quote !== 'none') this.index++
+      else if (close === '}' && char === '}') {
         this.index++
         return
       } else if (close === '))' && char === '(') {
@@ -300,12 +306,12 @@ class Reader {
         dynamic = true
       }
     }
-    const dollar = (): void => {
+    const dollar = (withinDouble: boolean): void => {
       const next = this.peek(1)
       if (next === '(' && this.peek(2) === '(') {
         const start = this.index
         this.index += 3
-        this.expansion('))')
+        this.expansion('))', withinDouble)
         variable(this.source.slice(start, this.index), '')
       } else if (next === '(') {
         const start = this.index
@@ -315,7 +321,7 @@ class Reader {
       } else if (next === '{') {
         const start = this.index
         this.index += 2
-        this.expansion('}')
+        this.expansion('}', withinDouble)
         const written = this.source.slice(start, this.index)
         variable(written, written.slice(2, -1))
       } else if (nameStart.test(next)) {
@@ -384,7 +390,7 @@ class Reader {
           if (inner === '\\' && '$`"\\\n'.includes(this.peek(1))) {
             if (this.peek(1) !== '\n') literal(this.peek(1), true)
             this.index += 2
-          } else if (inner === '$') dollar()
+          } else if (inner === '$') dollar(true)
           else if (inner === '`') backtick()
           else {
             literal(inner, true)
@@ -392,7 +398,7 @@ class Reader {
           }
         }
         this.index++
-      } else if (char === '$') dollar()
+      } else if (char === '$') dollar(false)
       else if (char === '`') backtick()
       else {
         literal(char, false)
