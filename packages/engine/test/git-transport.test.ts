@@ -74,6 +74,17 @@ describe('commandEnvironment', () => {
       ...transport,
     })
   })
+
+  it('gives the host’s kind of ssh only with its own ssh command', () => {
+    const { GIT_SSH_COMMAND: _command, ...withoutCommand } = transport
+    expect(
+      commandEnvironment({
+        host: { ...withoutCommand, GIT_SSH: '/usr/bin/plink' },
+        extra: {},
+        network: true,
+      }),
+    ).not.toHaveProperty('GIT_SSH_VARIANT')
+  })
 })
 
 let root = ''
@@ -91,12 +102,15 @@ beforeAll(() => {
     join(home, '.gitconfig'),
     '[user]\n\tname = Fabrica Test\n\temail = test@fabrica.invalid\n',
   )
-  // The host's own ssh: writes the agent's socket it saw and its arguments, then refuses.
-  writeFileSync(
-    join(stubs, 'own-ssh'),
-    '#!/bin/sh\necho "agent=${SSH_AUTH_SOCK-none}" > "$HOME/ssh-saw"\necho "args=$*" >> "$HOME/ssh-saw"\necho "stub ssh refused" >&2\nexit 255\n',
-  )
-  chmodSync(join(stubs, 'own-ssh'), 0o755)
+  // ssh as git runs it, and the host's own: each writes its name, the agent's socket it saw and its
+  // arguments, then refuses.
+  for (const name of ['ssh', 'own-ssh']) {
+    writeFileSync(
+      join(stubs, name),
+      `#!/bin/sh\necho "by=${name}" > "$HOME/ssh-saw"\necho "agent=\${SSH_AUTH_SOCK-none}" >> "$HOME/ssh-saw"\necho "args=$*" >> "$HOME/ssh-saw"\necho "stub ssh refused" >&2\nexit 255\n`,
+    )
+    chmodSync(join(stubs, name), 0o755)
+  }
   gitFolder = execFileSync('git', ['--exec-path'], { encoding: 'utf8' }).trim()
 })
 
@@ -182,6 +196,43 @@ describe('Git.clone', () => {
         git({
           SSH_AUTH_SOCK: transport.SSH_AUTH_SOCK,
           GIT_SSH_COMMAND: transport.GIT_SSH_COMMAND,
+        }),
+      ),
+    ),
+  )
+
+  it.live(
+    'runs the engine’s batch-mode ssh as OpenSSH, whatever kind the host’s GIT_SSH is',
+    () =>
+      Effect.gen(function* () {
+        yield* (yield* Git).clone({
+          url: 'ssh://git@git.invalid:2222/repo.git',
+          into: join(root, 'cloned-variant'),
+        })
+        const saw = readFileSync(join(home, 'ssh-saw'), 'utf8')
+        expect(saw).toContain('by=ssh\n')
+        expect(saw).toMatch(
+          /^args=.*-o BatchMode=yes.* -p 2222 .*git@git\.invalid/m,
+        )
+      }).pipe(
+        Effect.provide(git({ GIT_SSH: 'plink', GIT_SSH_VARIANT: 'plink' })),
+      ),
+  )
+
+  it.live('runs the host’s own GIT_SSH_COMMAND as the kind it names', () =>
+    Effect.gen(function* () {
+      yield* (yield* Git).clone({
+        url: 'ssh://git@git.invalid:2222/repo.git',
+        into: join(root, 'cloned-own-variant'),
+      })
+      const saw = readFileSync(join(home, 'ssh-saw'), 'utf8')
+      expect(saw).toContain('by=own-ssh\n')
+      expect(saw).toMatch(/^args=--own-flag .*-P 2222 .*git@git\.invalid/m)
+    }).pipe(
+      Effect.provide(
+        git({
+          GIT_SSH_COMMAND: transport.GIT_SSH_COMMAND,
+          GIT_SSH_VARIANT: 'plink',
         }),
       ),
     ),
