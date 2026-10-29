@@ -72,6 +72,7 @@ const reachLocalEngine = ConnectionTarget.match(target, {
         Effect.logWarning(`the local engine: ${error.message}`),
       ),
     ),
+  Ssh: () => Effect.void,
   Unavailable: () => Effect.void,
 })
 

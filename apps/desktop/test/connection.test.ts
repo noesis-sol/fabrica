@@ -50,8 +50,9 @@ import {
 import { tempFolder } from '@fabrica/testkit'
 
 import { mainPortEnd } from '../src/connection/port'
-import { engineSocket, relay } from '../src/connection/relay'
+import { relay } from '../src/connection/relay'
 import { ConnectionTarget } from '../src/connection/target'
+import { engineSocket } from '../src/connection/transports'
 import {
   type BrokeredPage,
   type ConnectionProcess,
@@ -225,7 +226,10 @@ const portPair = Effect.acquireRelease(
 /** The relay on `relayEnd`, to the engine `target` names, as the connection process runs it. */
 const runRelay = (relayEnd: MessagePort, target: ConnectionTarget) =>
   Effect.forkScoped(
-    relay({ port: webPortEnd(relayEnd), engine: engineSocket(target) }),
+    relay({
+      port: webPortEnd(relayEnd),
+      engine: engineSocket(target, { env: {} }),
+    }),
   )
 
 const clientOptions: ClientOptions = {

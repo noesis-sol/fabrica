@@ -4,5 +4,9 @@
     // The connection process is Node's, in Electron's utilityProcess: no DOM.
     "types": ["node"]
   },
-  "include": ["src/connection/**/*", "test/connection.test.ts"]
+  "include": [
+    "src/connection/**/*",
+    "test/connection.test.ts",
+    "test/connection-ssh.test.ts"
+  ]
 }

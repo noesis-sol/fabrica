@@ -1,8 +1,9 @@
 import { Effect, Option, Schema } from 'effect'
 
 import { mainPortEnd } from './port'
-import { engineSocket, relay } from './relay'
+import { relay } from './relay'
 import { ConnectionTarget } from './target'
+import { engineSocket } from './transports'
 
 // The connection process (spec §5, §8.2), Electron's utilityProcess: main sends it, for each page it
 // brokers, one end of the page's port with the engine to reach, and it relays the port to that
@@ -19,9 +20,10 @@ process.parentPort.on('message', event => {
     onNone: () => port.close(),
     onSome: target =>
       Effect.runFork(
-        relay({ port: mainPortEnd(port), engine: engineSocket(target) }).pipe(
-          Effect.ensuring(Effect.sync(() => port.close())),
-        ),
+        relay({
+          port: mainPortEnd(port),
+          engine: engineSocket(target, { env: process.env }),
+        }).pipe(Effect.ensuring(Effect.sync(() => port.close()))),
       ),
   })
 })

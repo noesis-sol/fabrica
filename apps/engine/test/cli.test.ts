@@ -258,7 +258,7 @@ describe('fabrica engine', () => {
       )
       expect(Exit.isFailure(exit)).toBe(true)
       expect(err).toStrictEqual([
-        'fabrica: no engine named server\\u001b[2J-1 is known: only the local engine (local) is, yet',
+        'fabrica: no engine named server\\u001b[2J-1 is known: name the local engine (local), or one on another host by its SSH destination (ssh://[user@]host[:port])',
       ])
     }).pipe(Effect.scoped),
   )

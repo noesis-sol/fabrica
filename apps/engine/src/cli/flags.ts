@@ -11,11 +11,13 @@ export const Json = GlobalFlag.Setting('json')({
   ),
 })
 
-/** `--engine <name>`: the engine to talk to, the local engine where it isn't given. */
+/** `--engine <name>`: the engine to talk to, `local` or `ssh://<destination>`, the local engine where it isn't given. */
 export const EngineName = GlobalFlag.Setting('engine')({
   flag: Flag.String('engine').pipe(
     Flag.withAlias('e'),
-    Flag.withDescription('The engine to talk to (the local engine by default)'),
+    Flag.withDescription(
+      'The engine to talk to: local (the default), or ssh://[user@]host[:port] for one on another host',
+    ),
     Flag.optional,
   ),
 })
