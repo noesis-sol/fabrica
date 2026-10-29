@@ -172,7 +172,10 @@ export interface GitShape {
   readonly checkoutOf: (input: {
     readonly folder: string
   }) => Effect.Effect<Option.Option<CheckoutPlace>, CantTell>
-  /** Clones `url` into the new folder `into`, with the host's git credentials (spec §10.1). */
+  /**
+   * Clones `url` into the new folder `into`, with the host's git credentials (spec §10.1): its git
+   * configuration, credential helpers, keys and ssh-agent.
+   */
   readonly clone: (input: {
     readonly url: string
     readonly into: string
@@ -210,10 +213,11 @@ const argumentBatches = (
 
 export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
   const runner = yield* ProcessRunner
-  const { write, query, queryOutcome, read, unexpected } = makeCommands({
-    runner,
-    config,
-  })
+  const { write, network, query, queryOutcome, read, unexpected } =
+    makeCommands({
+      runner,
+      config,
+    })
 
   /** A read of a value that `answer` takes from the exit, failing the attempt where it gives none. */
   const readExit = <A>(
@@ -928,7 +932,7 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     readonly url: string
     readonly into: string
   }) {
-    const exit = yield* write({
+    const exit = yield* network({
       cwd: dirname(into),
       args: ['clone', '--quiet', '--', url, into],
     })

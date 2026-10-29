@@ -22,6 +22,13 @@ const ALLOWED: ReadonlySet<string> = new Set([
   'XDG_RUNTIME_DIR',
 ])
 
+/**
+ * What a command reaching a remote also gets, where the engine has it (spec §10.1, §10.3): the host's
+ * ssh-agent, which holds the keys a clone, fetch or push of an SSH URL signs in with. Only git's network
+ * commands get it, never an agent's or a check's command.
+ */
+const NETWORK: ReadonlySet<string> = new Set(['SSH_AUTH_SOCK'])
+
 /** The locale's categories: `LC_ALL`, `LC_CTYPE` and the rest. */
 const LOCALE = /^LC_[A-Z]+$/
 
@@ -49,23 +56,27 @@ export const GIT_LOCAL_VARIABLES: ReadonlySet<string> = new Set([
   'GIT_COMMON_DIR',
 ])
 
-const allowed = (name: string): boolean =>
-  ALLOWED.has(name) || LOCALE.test(name)
+const allowed = (name: string, network: boolean): boolean =>
+  ALLOWED.has(name) || LOCALE.test(name) || (network && NETWORK.has(name))
 
 /**
  * A command's environment: the allowlisted variables of `host` (the engine's environment, read once
- * where the engine starts), then the caller's `extra` over them, less git's local variables.
+ * where the engine starts), with those a `network` command gets, then the caller's `extra` over them,
+ * less git's local variables.
  */
 export const commandEnvironment = ({
   host,
   extra,
+  network = false,
 }: {
   readonly host: Readonly<Record<string, string | undefined>>
   readonly extra: Readonly<Record<string, string>>
+  /** Whether the command reaches a remote: git's clone, fetch and push. */
+  readonly network?: boolean
 }): Readonly<Record<string, string>> => {
   const environment: Record<string, string> = {}
   for (const [name, value] of Object.entries(host)) {
-    if (value !== undefined && allowed(name)) environment[name] = value
+    if (value !== undefined && allowed(name, network)) environment[name] = value
   }
   for (const [name, value] of Object.entries(extra)) environment[name] = value
   for (const name of GIT_LOCAL_VARIABLES) delete environment[name]

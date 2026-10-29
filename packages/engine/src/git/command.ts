@@ -29,6 +29,16 @@ const READ_ENVIRONMENT: Readonly<Record<string, string>> = {
   GIT_OPTIONAL_LOCKS: '0',
 }
 
+/**
+ * What network commands (clone, fetch, push) add: they reach the host's ssh-agent (the runner passes
+ * them `SSH_AUTH_SOCK`), and ssh runs in batch mode, so a key the agent doesn't hold, a passphrase or
+ * an unknown host key fails the command instead of asking.
+ */
+const NETWORK_ENVIRONMENT: Readonly<Record<string, string>> = {
+  ...GIT_ENVIRONMENT,
+  GIT_SSH_COMMAND: 'ssh -o BatchMode=yes',
+}
+
 /** How the git service runs its commands. */
 export interface GitConfig {
   /** Each git command's time limit. */
@@ -71,27 +81,33 @@ export const makeCommands = ({
   readonly runner: ProcessRunnerShape
   readonly config: GitConfig
 }) => {
-  /** Runs `git <args>` in `cwd` with `environment` over the allowlisted one, as the runner ends it. */
+  /**
+   * Runs `git <args>` in `cwd` with `environment` over the allowlisted one, as the runner ends it; a
+   * `network` command with the host's ssh-agent too.
+   */
   const invoke = (
     environment: Readonly<Record<string, string>>,
     { cwd, args }: GitCommand,
+    network = false,
   ): Effect.Effect<CommandOutcome> =>
     runner.run({
       command: 'git',
       args: ['--no-pager', ...args],
       cwd,
       env: environment,
+      network,
       timeLimit: config.timeLimit,
     })
 
   const runIn = (
     environment: Readonly<Record<string, string>>,
     command: GitCommand,
+    network = false,
   ): Effect.Effect<GitExit, GitFailed> => {
     const failed = (reason: string) =>
       Effect.fail(new GitFailed({ command: command.args.join(' '), reason }))
     return Effect.flatMap(
-      invoke(environment, command),
+      invoke(environment, command, network),
       CommandOutcome.$match({
         Exited: ({ status, stdout, stderr }) =>
           ExitStatus.$match(status, {
@@ -111,6 +127,10 @@ export const makeCommands = ({
 
   /** A command that writes: run once. */
   const write = (command: GitCommand) => runIn(GIT_ENVIRONMENT, command)
+
+  /** A command that reaches a remote (clone, fetch, push): run once, with the host's ssh-agent. */
+  const network = (command: GitCommand) =>
+    runIn(NETWORK_ENVIRONMENT, command, true)
 
   /** A command that only reads, run as `read`'s attempts are. */
   const query = (command: GitCommand) => runIn(READ_ENVIRONMENT, command)
@@ -150,7 +170,7 @@ export const makeCommands = ({
   const queryOutcome = (command: GitCommand) =>
     invoke(READ_ENVIRONMENT, command)
 
-  return { write, query, queryOutcome, read, unexpected }
+  return { write, network, query, queryOutcome, read, unexpected }
 }
 
 export type Commands = ReturnType<typeof makeCommands>

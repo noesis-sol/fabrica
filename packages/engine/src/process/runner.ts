@@ -54,6 +54,8 @@ interface Invocation {
   readonly cwd: string
   /** Variables beyond the engine's allowlisted ones, over them (git's local variables are dropped). */
   readonly env?: Readonly<Record<string, string>>
+  /** Whether it reaches a remote (git's clone, fetch and push): it also gets the host's ssh-agent. */
+  readonly network?: boolean
   /** The nice value a worker's command runs at (`worker_nice`); without one, the engine's own. */
   readonly nice?: number
 }
@@ -317,6 +319,7 @@ export const make = Effect.fn('ProcessRunner.make')(function* (
     const environment = commandEnvironment({
       host: config.hostEnvironment,
       extra: invocation.env ?? {},
+      network: invocation.network === true,
     })
     const path = environment['PATH'] ?? ''
     const file = yield* findOnPath({
