@@ -29,6 +29,7 @@ import { dayOf, sameDay } from './clock'
 import {
   Connection,
   type EngineConnectionService,
+  isLive,
   retryAfter,
 } from './connection'
 import { commandFor, commandsFor, keyLabel, paletteCommands } from './keys'
@@ -278,6 +279,14 @@ const foldAnswerKey = Update.foldChild({
 export const isOverlayOpen = (model: Model): boolean =>
   !Overlay.guards.Closed(model.overlay)
 
+/** The run controls the stats row offers now, for the scoped project. */
+export const runOffers = (model: Model): ReadonlyArray<Stats.Offer> =>
+  Stats.offers(model.console.stats, {
+    project: model.scope,
+    live: isLive(model.connection),
+    run: model.runView,
+  })
+
 /** The command list of the screen shown, with its overlay's. */
 export const modelCommands = (model: Model) =>
   commandsFor({
@@ -285,6 +294,7 @@ export const modelCommands = (model: Model) =>
     overlayOpen: isOverlayOpen(model),
     paletteOpen: Overlay.guards.Palette(model.overlay),
     options: Attention.keyedOptions(model.console.attention),
+    offers: runOffers(model),
   })
 
 /** Opens a ticket's worker view: made once, so the In progress column's memo holds across renders. */
@@ -304,6 +314,7 @@ export const paletteEntries = (
       screen: model.screen,
       overlayOpen: false,
       options: Attention.keyedOptions(model.console.attention),
+      offers: runOffers(model),
     }),
   ).map((command): Palette.Entry<Message> => ({
     id: command.id,

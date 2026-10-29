@@ -131,6 +131,108 @@ export const OutMessage = defineMessageUnion({
 })
 export type OutMessage = typeof OutMessage.Type
 
+/** What the controls are given: the scope, the connection and the scoped project's run. */
+export interface ControlInputs {
+  /** The project the sidebar chose: its run's controls are the row's. */
+  readonly project: Option.Option<ProjectId>
+  /** Whether the engine's client is held, so requests can be sent. */
+  readonly live: boolean
+  /** The scoped project's run view, while it has a run. */
+  readonly run: Option.Option<RunView>
+}
+
+/** The project the controls act on: the scoped one, while the engine's client is held. */
+export const controlledProject = (
+  inputs: ControlInputs,
+): Option.Option<ProjectId> => (inputs.live ? inputs.project : Option.none())
+
+/** Whether the run's controls wait: a request unanswered, or the run stopping. */
+export const isBusy = (model: Model, state: RunState): boolean =>
+  Request.guards.Pending(model.request) || state === 'stopping'
+
+/**
+ * A control the row offers now, enabled: the console's keys and the palette run the same ones
+ * (§13.10, §18.5), so a key acts only where its button would.
+ */
+export const Offer = defineTaggedUnion({
+  /** Start run, which opens its modes. */
+  Start: { project: ProjectId },
+  /** One of Start run's modes, chosen straight away. */
+  StartIn: { project: ProjectId, mode: StartMode },
+  /** Start run's modes or a mode's field closed. */
+  CloseStart: {},
+  Drain: { project: ProjectId },
+  Undrain: { project: ProjectId },
+  /** Stop, which asks its confirmation first. */
+  Stop: {},
+  ConfirmStop: { project: ProjectId },
+  KeepRunning: {},
+})
+export type Offer = typeof Offer.Type
+
+/** The controls the row offers enabled, in its order: none without a project or a connection. */
+export const offers = (
+  model: Model,
+  inputs: ControlInputs,
+): ReadonlyArray<Offer> =>
+  Option.match(controlledProject(inputs), {
+    onNone: () => [],
+    onSome: project =>
+      Option.match(inputs.run, {
+        onNone: () =>
+          Controls.guards.Typing(model.controls)
+            ? [Offer.CloseStart()]
+            : Request.guards.Pending(model.request)
+              ? []
+              : [
+                  Offer.Start({ project }),
+                  ...StartMode.literals.map(mode =>
+                    Offer.StartIn({ project, mode }),
+                  ),
+                  ...(Controls.guards.ChoosingMode(model.controls)
+                    ? [Offer.CloseStart()]
+                    : []),
+                ],
+        onSome: run =>
+          isBusy(model, run.header.state)
+            ? []
+            : [
+                run.header.state === 'draining'
+                  ? Offer.Undrain({ project })
+                  : Offer.Drain({ project }),
+                ...(Controls.guards.ConfirmingStop(model.controls)
+                  ? [Offer.ConfirmStop({ project }), Offer.KeepRunning()]
+                  : [Offer.Stop()]),
+              ],
+      }),
+  })
+
+/** What an offered control is called, as its button says it. */
+export const offerTitle = (offer: Offer): string =>
+  Offer.match(offer, {
+    Start: () => 'Start run',
+    StartIn: ({ mode }) => `Start run: ${modeTitle[mode]}`,
+    CloseStart: () => 'Cancel Start run',
+    Drain: () => 'Drain',
+    Undrain: () => 'Undrain',
+    Stop: () => 'Stop',
+    ConfirmStop: () => 'Stop the run',
+    KeepRunning: () => 'Keep running',
+  })
+
+/** The Message an offered control's button sends. */
+export const offerMessage = (offer: Offer): Message =>
+  Offer.match(offer, {
+    Start: () => Message.ClickedStartRun(),
+    StartIn: ({ project, mode }) => Message.ChoseMode({ project, mode }),
+    CloseStart: () => Message.CancelledControls(),
+    Drain: ({ project }) => Message.ClickedDrain({ project }),
+    Undrain: ({ project }) => Message.ClickedUndrain({ project }),
+    Stop: () => Message.ClickedStop(),
+    ConfirmStop: ({ project }) => Message.ConfirmedStop({ project }),
+    KeepRunning: () => Message.CancelledControls(),
+  })
+
 /** A run started from the app: no dispatch limit, online, the project's own settings. */
 export const startFlags: RunFlags = {
   limit: Option.none(),
@@ -413,14 +515,8 @@ export const shownSteps = (
       Option.isNone(step.ticket) && secondsSince(step.startedAt, now) >= 1,
   )
 
-/** What the frame gives the row. */
-export interface ViewInputs {
-  /** The project the sidebar chose: its run's controls are the row's. */
-  readonly project: Option.Option<ProjectId>
-  /** Whether the engine's client is held, so requests can be sent. */
-  readonly live: boolean
-  /** The scoped project's run view, while it has a run. */
-  readonly run: Option.Option<RunView>
+/** What the frame gives the row: what its controls are given, and the time. */
+export interface ViewInputs extends ControlInputs {
   /** The time now, in the viewer's zone. */
   readonly now: Option.Option<DateTime.Zoned>
 }
@@ -760,7 +856,7 @@ const modeMenu = (project: ProjectId, h: HtmlBuilder<Message>): Html =>
       ),
       h.Style({ minWidth: '200px' }),
     ],
-    StartMode.literals.map(mode =>
+    StartMode.literals.map((mode, index) =>
       h.keyed('li')(
         mode,
         [],
@@ -769,6 +865,8 @@ const modeMenu = (project: ProjectId, h: HtmlBuilder<Message>): Html =>
             [
               h.Type('button'),
               h.Role('menuitem'),
+              // Opened by its key, the menu takes focus: Tab and Enter choose a mode (§18.5).
+              h.Autofocus(index === 0),
               h.OnClick(Message.ChoseMode({ project, mode })),
               h.Class('w-full px-12 py-4 text-left text-sm hover:bg-bg'),
             ],
@@ -800,6 +898,7 @@ const typingForm = (
         h.AriaLabel(field.label),
         h.Placeholder(field.placeholder),
         h.Value(typing.text),
+        h.Autofocus(true),
         h.OnInput(text => Message.TypedModeText({ text })),
         h.Class(
           'rounded-button border border-line bg-bg px-8 py-4 text-sm text-fg',
@@ -877,7 +976,7 @@ const runningControls = (
   state: RunState,
   h: HtmlBuilder<Message>,
 ): ReadonlyArray<Html> => {
-  const busy = Request.guards.Pending(model.request) || state === 'stopping'
+  const busy = isBusy(model, state)
   return [
     Option.match(stateWords[state], {
       onNone: () => h.empty,
@@ -960,7 +1059,7 @@ const controls = (
   inputs: ViewInputs,
   h: HtmlBuilder<Message>,
 ): Html =>
-  Option.match(inputs.live ? inputs.project : Option.none(), {
+  Option.match(controlledProject(inputs), {
     onNone: () => h.empty,
     onSome: project =>
       h.div(

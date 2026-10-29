@@ -45,7 +45,7 @@ import { Message } from '../src/app/message'
 import { type Model, Overlay, initialModel } from '../src/app/model'
 import { Screen } from '../src/app/screen'
 import { ShowTheme } from '../src/app/theme-host'
-import { paletteEntries, update } from '../src/app/update'
+import { paletteEntries, runOffers, update } from '../src/app/update'
 import { view } from '../src/app/view'
 import * as Insights from '../src/screens/insights'
 import * as Palette from '../src/screens/palette'
@@ -232,9 +232,11 @@ describe('the palette lists exactly the bound commands', () => {
   test("each screen's commands, from its one list, with their keys, but the palette's own", () => {
     for (const screen of allScreens) {
       const shown: Model = { ...connected, screen, overlay: Overlay.Palette() }
-      const listed = commandsFor({ screen, overlayOpen: false }).filter(
-        command => command.id !== openPalette.id,
-      )
+      const listed = commandsFor({
+        screen,
+        overlayOpen: false,
+        offers: runOffers(shown),
+      }).filter(command => command.id !== openPalette.id)
       expect(
         commandEntries(shown).map(entry => [
           entry.id,

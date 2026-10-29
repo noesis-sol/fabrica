@@ -3,6 +3,7 @@ import { Array, Option } from 'effect'
 import type { Platform } from '@fabrica/contracts'
 
 import * as Attention from '../console/attention'
+import * as Stats from '../console/stats'
 import * as Review from '../screens/review'
 import { Message } from './message'
 import { Screen, screenTitle } from './screen'
@@ -114,6 +115,37 @@ const answerTalk: KeyCommand = {
   message: Message.RequestedAnswerTalk(),
 }
 
+/**
+ * The stats row's run controls the scoped project's run offers now, each run as its button is (§18.5):
+ * Start run opening its modes (each mode the palette's too), Drain or Undrain (`s`, §13.10), Stop and
+ * then its confirmation on the same key, Escape closing what Start run or Stop opened.
+ */
+const runKeys = (
+  offers: ReadonlyArray<Stats.Offer>,
+): ReadonlyArray<KeyCommand> =>
+  offers.map(offer => {
+    const { id, chord } = Stats.Offer.match(offer, {
+      Start: () => ({ id: 'run.start', chord: plain('r') }),
+      StartIn: ({ mode }) => ({
+        id: `run.start.${mode}`,
+        chord: Option.none(),
+      }),
+      CloseStart: () => ({ id: 'run.start.close', chord: plain('Escape') }),
+      Drain: () => ({ id: 'run.drain', chord: plain('s') }),
+      Undrain: () => ({ id: 'run.undrain', chord: plain('s') }),
+      Stop: () => ({ id: 'run.stop', chord: plain('x') }),
+      ConfirmStop: () => ({ id: 'run.stop.confirm', chord: plain('x') }),
+      KeepRunning: () => ({ id: 'run.stop.keep', chord: plain('Escape') }),
+    })
+    return {
+      id,
+      title: Stats.offerTitle(offer),
+      chord,
+      hint: false,
+      message: Message.GotStatsMessage({ message: Stats.offerMessage(offer) }),
+    }
+  })
+
 /** The Review screen's views, each a key (§18.4). */
 const reviewKeys: ReadonlyArray<KeyCommand> = (
   [
@@ -137,9 +169,10 @@ const reviewKeys: ReadonlyArray<KeyCommand> = (
 const ofScreen = (
   screen: Screen,
   options: KeyedOptions,
+  offers: ReadonlyArray<Stats.Offer>,
 ): ReadonlyArray<KeyCommand> =>
   Screen.match(screen, {
-    Console: () => [...answerKeys(options), answerTalk],
+    Console: () => [...answerKeys(options), answerTalk, ...runKeys(offers)],
     Worker: () => [backToConsole],
     Talks: () => [backToConsole],
     Backlog: () => [backToConsole],
@@ -196,12 +229,15 @@ export const commandsFor = (options: {
   readonly paletteOpen?: boolean
   /** The attention column's drawn options, which keys 1–9 answer while no overlay covers them. */
   readonly options?: KeyedOptions
+  /** The run controls the console's stats row offers now (`Stats.offers`). */
+  readonly offers?: ReadonlyArray<Stats.Offer>
 }): ReadonlyArray<KeyCommand> => [
   ...(options.overlayOpen && options.paletteOpen === true ? paletteKeys : []),
   ...(options.overlayOpen ? [closeOverlay] : []),
   ...ofScreen(
     options.screen,
     options.overlayOpen ? Option.none() : (options.options ?? Option.none()),
+    options.offers ?? [],
   ),
   ...everywhere,
 ]
