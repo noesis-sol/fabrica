@@ -1,12 +1,12 @@
 # Fabrica — Product and Technology Spec
 
-Oct 21, 2026 · refined from `stack.md` (first called `hivemind.md`) with @Michael Michailidis · revised Oct 22, 2026 with the lessons of building and running tutti (H50–H65), and Oct 29, 2026 with those of tutti 0.2.0 to 0.5.0 (H66–H92). Fabrica was first called Hivemind, then Agmen.
+Oct 21, 2026 · refined from a first technology spec (`stack.md`, first called `hivemind.md`) and its git-sync companion (`git-sync.md`), both of 2026-10-21, with @Michael Michailidis · revised Oct 22, 2026 with the lessons of building and running tutti (H50–H65), and Oct 29, 2026 with those of tutti 0.2.0 to 0.5.0 (H66–H92). Fabrica was first called Hivemind, then Agmen.
 
 ## 1. Purpose, scope and conventions
 
 Fabrica is a port of **orchestra** (v0.9.1, `github.com/noesis-sol/orchestra`) to a desktop app with a headless engine. It works through a backlog of tickets with several Pi coding agents side by side, each in its own git worktree, and merges each finished ticket, checked, into the branch the run started on. The engine runs on the user's machine or on a remote server; the Electron app and a command line attach to it.
 
-This spec fixes the product's behaviour, its architecture and its technology stack. Its reader is an AI agent that will turn it into an implementation plan. It supersedes `stack.md` (the technology spec it was refined from), which is kept unchanged as the original; §27 lists every `stack.md` `[DECISION]` this spec changes, with the reason.
+This spec fixes the product's behaviour, its architecture and its technology stack. Its reader is an AI agent that will turn it into an implementation plan. It stands alone: it carries every decision of the technology spec it was refined from (`stack.md`) and of that spec's git-sync companion (`git-sync.md`) that still holds, so neither is needed to build Fabrica. Appendix A carries the console's design handoff, Appendix B its theme tokens, and Appendix C says where the design's files are. §27 lists the options set aside and records any later change to a decision.
 
 In scope: behaviour (as a port of orchestra), process boundaries, data stores, contracts, remote operation, packaging, security and the development toolchain. Out of scope: pricing and branding beyond the name.
 
@@ -70,12 +70,12 @@ Unchanged from orchestra unless marked.
 
 ## 3. Decisions
 
-Settled with the maintainer on 2026-10-21, on top of `stack.md`'s; H50–H65 on 2026-10-22, from what building and running tutti taught (its demo beside orchestra, its first release, and a full scan that filed 62 tickets, 7 of them P1, after it counted as complete); H66–H92 on 2026-10-29, from tutti's next week (its releases 0.2.0 to 0.5.0, two design reviews, three speed scans and the runs between them, 380 tickets closed). Several of H66–H92 are choices the maintainer made in tutti (keeping awake by default, answering in place, the worker view, a spec from a URL, `--auto-answer`); the rest follow from its evidence. Each shapes the sections named.
+Settled with the maintainer on 2026-10-21, on top of the first technology spec's (carried in here); H50–H65 on 2026-10-22, from what building and running tutti taught (its demo beside orchestra, its first release, and a full scan that filed 62 tickets, 7 of them P1, after it counted as complete); H66–H92 on 2026-10-29, from tutti's next week (its releases 0.2.0 to 0.5.0, two design reviews, three speed scans and the runs between them, 380 tickets closed). Several of H66–H92 are choices the maintainer made in tutti (keeping awake by default, answering in place, the worker view, a spec from a URL, `--auto-answer`); the rest follow from its evidence. Each shapes the sections named.
 
 | # | Decision | Chosen | Sections |
 |---|---|---|---|
 | H1 | Basis | A new product, **Fabrica**, in fresh code. orchestra 0.9.1 is the behavioural reference, tutti a second reference | §1, §26 |
-| H2 | Agent harness | **Pi only** (`stack.md` §7). Model agnosticism is Pi's provider layer | §12 |
+| H2 | Agent harness | **Pi only**. Model agnosticism is Pi's provider layer | §12 |
 | H3 | Choosing a model | A **provider and model per project**, overridable **per ticket**, and a **fallback list used only when a provider or model fails to start** (credentials, provider down) | §12.5 |
 | H4 | Engine scope | **One long-lived engine per user per machine**, holding many projects and running several at once under one machine-wide worker budget. Clients attach and detach; runs go on without them | §7 |
 | H5 | Engine runtime | **Node**: an engine distribution per target, holding a pinned Node runtime, the engine bundle and Pi, the same on a laptop and a server. No Bun | §6, §7, §22 |
@@ -86,7 +86,7 @@ Settled with the maintainer on 2026-10-21, on top of `stack.md`'s; H50–H65 on 
 | H10 | Pushing | A per-project **`push`** setting: `never` (default for a registered checkout), `after_run` (default for a cloned one: Base is pushed once the run's full check passes), `after_merge`. Fetch and fast-forward Base before a run; never force | §10.3 |
 | H11 | Ticket backend | A **tracker interface** (`WorkGraph`); the **local tracker** is the only one built. Each adapter defines its own sync | §11 |
 | H12 | Local tracker | **SQLite is the engine's live store; a dedicated git ref is the synced record**, one JSON file per ticket, merged per field, continuously | §11 |
-| H13 | Coordination | **orchestra's model** (the engine dispatches each ready ticket to a fresh worker; the merge queue is the gate), **plus `stack.md`'s typed hand-offs and supervision policies** | §13 |
+| H13 | Coordination | **orchestra's model** (the engine dispatches each ready ticket to a fresh worker; the merge queue is the gate), **plus typed hand-offs and supervision policies** | §13, §12.8 |
 | H14 | Worker control channel | **The first-party Pi extension's tools** over a per-agent socket: the worker's ticket, filing tickets, questions (2–4 options enforced), notes, and the outcomes `finish`, `defer`, `wait_for`. A turn that ends with no outcome gets one nudge | §12.3 |
 | H15 | Standing rules | **Injected by the extension into Pi's system prompt**; rules about an action live in that tool's description and schema | §12.4 |
 | H16 | Isolation | **A worktree by default; a container per worker as a project option** | §12.7 |
@@ -101,7 +101,7 @@ Settled with the maintainer on 2026-10-21, on top of `stack.md`'s; H50–H65 on 
 | H25 | Platforms | **Engine: macOS and Linux, x64 and arm64. App: macOS, Linux and Windows x64**; on Windows the app uses a remote engine or one in WSL2 | §4 |
 | H26 | Credentials | **In the engine host's own secret store**, entered through the app, used only by the engine's model proxy (H29) | §20.3 |
 | H27 | Scope | **orchestra 0.9.1's behaviour, minus what is about Herdr, tmux, cmux, screen reading or Claude Code itself**, delivered in milestones | §13–§17, §26 |
-| H28 | UI stack | **Foldkit, `@foldkit/ui`, Tailwind**; Monaco, xterm.js and Cytoscape.js mounted (`stack.md` §11) | §18 |
+| H28 | UI stack | **Foldkit, `@foldkit/ui`, Tailwind**; Monaco, xterm.js and Cytoscape.js mounted | §18 |
 | H29 | Agents' credentials | **A model proxy in the engine**: each agent's provider base URLs point at the engine with a per-agent token; the engine adds the real credential, refreshes OAuth tokens, grants permits and counts usage. No agent ever holds a credential | §12.9 |
 | H30 | SSH transport | **An SSH stdio bridge**: `ssh <host> fabrica bridge`, the RPC (NDJSON) over ssh's stdin and stdout. No port opened, nothing forwarded | §8.2, §9.1 |
 | H31 | WSL2 | **One more host**: the Windows app installs the Linux engine in a WSL2 distribution and connects with `wsl.exe -d <distro> -- fabrica bridge` | §7.6 |
@@ -167,7 +167,7 @@ Settled with the maintainer on 2026-10-21, on top of `stack.md`'s; H50–H65 on 
 | H91 | Worker view | **The ticket on top, figures live during a turn, no spending panel; a message to a finished worker can be filed as a ticket** | §18.4 |
 | H92 | Answering in place | **Needs your attention answers questions inline**: the question's own title, the ticket waiting on it, its options with keys; an answer wakes the run at once | §15.2, §18.3 |
 
-Kept from `stack.md` as decided there: Electron; TypeScript, strict, ESM; Effect v4 at one exact version across every package; SQLite through `@effect/sql-sqlite-node` (`node:sqlite`) for the work graph; Effect's tracing and metrics (sent out only through an optional export, H38); pnpm workspaces and electron-vite; oxlint and oxfmt; electron-builder; testing against Effect test layers; the rules for developing with coding agents.
+Also decided in the first technology spec, and kept: Electron; TypeScript, strict, ESM; Effect v4 at one exact version across every package; SQLite through `@effect/sql-sqlite-node` (`node:sqlite`) for the work graph; Effect's tracing and metrics (sent out only through an optional export, H38); pnpm workspaces and electron-vite; oxlint and oxfmt; electron-builder; testing against Effect test layers; the rules for developing with coding agents.
 
 ## 4. Platform targets
 
@@ -212,7 +212,7 @@ Kept from `stack.md` as decided there: Electron; TypeScript, strict, ESM; Effect
 
 ## 6. Language, runtime and repository
 
-\[DECISION\] One TypeScript monorepo, one exact Effect version everywhere; Foldkit's pinned Effect peer version sets that number (`stack.md` §5).
+\[DECISION\] One TypeScript monorepo, one exact Effect version everywhere; Foldkit's pinned Effect peer version sets that number. Foldkit is pre-1.0 and may break in a minor version; it pins its Effect peers exactly (`effect` and `@effect/platform-browser` 4.0.0 at Foldkit 0.169.0, 2026-10-29, while `effect` 4.1.0 was out), and the monorepo follows that pin and upgrades with Foldkit.
 
 **Versions**
 
@@ -344,13 +344,13 @@ The engine samples its host's load every few seconds for the console's system st
 | WSL2 (H31) | The same bridge, run as `wsl.exe -d <distro> -- fabrica bridge` |
 | Remote, option | WebSocket over TLS on a configured address (`RpcServer.makeProtocolWebsocket`), authenticated with a pairing token (§9.3) |
 
-In the app, the connection process (a `utilityProcess`) owns every transport (it runs `ssh` and `wsl.exe` as its children) and relays frames to the renderer over a `MessageChannelMain` port that main brokers once; main then leaves the data path (`stack.md` §6) \[VERIFY M0: Effect RPC over a child process's stdio and over a MessagePort relay\]. The CLI uses the same client package directly.
+In the app, the connection process (a `utilityProcess`) owns every transport (it runs `ssh` and `wsl.exe` as its children) and relays frames to the renderer over a `MessageChannelMain` port that main brokers once; main then leaves the data path \[VERIFY M0: Effect RPC over a child process's stdio and over a MessagePort relay\]. The CLI uses the same client package directly.
 
 ### 8.3 Streams and the run view
 
 - The engine keeps, per run, a **run view**: an immutable projection of what the console shows (§18.3) (totals, ticket rows, workers, the merge queue, holds, banners, open attention requests, the load). It is written by its own fiber, at most every 50 ms (`view_interval`, an engine setting; H40), with unchanged parts keeping their identity (tutti spec §3.5), and published only when a part changed: Effect's `SubscriptionRef` publishes every set, changed or not, so tutti's status writers published the same values many times a second, and its equality check took any two Maps for the same (tutti-rvzn.4). Every engine step that takes more than a second (the start's checks, a setup, the merge check, the full check and its setup, the report, an install, a breakdown) is in the view with its start time, so a client shows what the run is doing and for how long (H80). Every interval and rate is a whole number of milliseconds (H55): tutti's `1000 / 30` ms left its tests' `TestClock` at a fraction of a millisecond, and a count in its event schema failed to decode.
 - A stream sends a full snapshot, then patches, each with a sequence number. A client that reconnects asks for patches after its last sequence number; one too far behind gets a new snapshot.
-- High-frequency events (tokens, tool output) are batched before they cross, one flush per 50 ms (`stream_flush`, an engine setting; H40; `stack.md` §6). Over SSH to a distant host both MAY be lowered per connection. The renderer applies updates at most once per animation frame.
+- High-frequency events (tokens, tool output) are batched before they cross, one flush per 50 ms (`stream_flush`, an engine setting; H40). Over SSH to a distant host both MAY be lowered per connection. The renderer applies updates at most once per animation frame.
 - Transcripts are streamed per worker, only while a client shows that worker.
 
 ### 8.4 Versions
@@ -403,7 +403,7 @@ Either way the engine checks the project as `orchestra init` and a run's start d
 <repo>/.fabrica/fabrica.log    Ignored. The human log
 ```
 
-Worktrees: `<repo>-worktrees/<ticket>` beside a registered checkout (orchestra's layout), `<data>/projects/<id>/worktrees/<ticket>` for a cloned one; branch `fabrica/<ticket>`. A worktree is kept for review when its ticket is set aside, removed with its branch when it merges \[DECISION; closes `stack.md` §17's worktree item\].
+Worktrees: `<repo>-worktrees/<ticket>` beside a registered checkout (orchestra's layout), `<data>/projects/<id>/worktrees/<ticket>` for a cloned one; branch `fabrica/<ticket>`. A worktree is kept for review when its ticket is set aside, removed with its branch when it merges \[DECISION\].
 
 ### 10.3 Base, fetching and pushing
 
@@ -416,15 +416,15 @@ Worktrees: `<repo>-worktrees/<ticket>` beside a registered checkout (orchestra's
 
 ### 11.1 The tracker interface
 
-\[DECISION\] Every ticket operation goes through the `WorkGraph` service (`stack.md` §9), the only code that knows the backend. The local tracker (§11.2–11.5) is the only backend built. Adapters for JIRA, Linear or GitHub Issues MAY follow; each defines its own sync, and declares which capabilities it has (questions, typed results, area labels), the engine degrading where one lacks them.
+\[DECISION\] Every ticket operation goes through the `WorkGraph` service, the only code that knows the backend. The local tracker (§11.2–11.5) is the only backend built. Adapters for JIRA, Linear or GitHub Issues MAY follow; each defines its own sync, and declares which capabilities it has (questions, typed results, area labels), the engine degrading where one lacks them.
 
-**Interface:** `ready` (orchestra's rule, §13.3), `show`, `list`, `create`, `update`, `claim`, `release`, `close`, `reopen`, `defer`, `undefer`, `addDependency`, `removeDependency`, `label`, `unlabel`, `note`, `fileDiscovered`, `ask` (a question), `answer`, `history`, `changes` (a stream).
+**Interface:** `ready` (orchestra's rule, §13.3), `show`, `list`, `create`, `update`, `claim`, `release`, `close`, `reopen`, `defer`, `undefer`, `addDependency`, `removeDependency`, `label`, `unlabel`, `note`, `fileDiscovered`, `ask` (a question), `answer`, `delete` (a tombstone, §11.7), `history`, `changes` (a stream). `close` offers to close what the ticket blocks with it.
 
 ### 11.2 The local store (SQLite)
 
-\[DECISION\] SQLite through `@effect/sql-sqlite-node` (`node:sqlite`), one database per project at `<repo>/.fabrica/work.db`, git-ignored, the engine its single writer, WAL, writes that must be atomic in `withTransaction`, forward-only migrations bundled with `fromRecord` or `fromGlob`, a backup before each migration, and a database newer than the engine refused (`stack.md` §9). `sql.reactive` streams the backlog and the ready set to the run view. Reads are in-process: each of tutti's Beads calls took 0.45–0.75 s and Beads' embedded database served them one at a time (three side by side took longer than in a row), so only fewer calls helped, and five of its speed tickets did nothing else (tutti-ejkt.5, -ejkt.6, -gr4z.6, -gr4z.7, -0vbd.5).
+\[DECISION\] SQLite through `@effect/sql-sqlite-node` (`node:sqlite`), one database per project at `<repo>/.fabrica/work.db`, git-ignored, the engine its single writer, WAL, writes that must be atomic in `withTransaction`, forward-only migrations bundled with `fromRecord` or `fromGlob` (never `fromFileSystem`, whose paths break inside a bundle), a backup with `SqliteClient.backup` before each migration, and a database newer than the engine refused; one serialised connection, with a 5 s busy timeout. `node:sqlite` is synchronous, so a query blocks the engine's event loop while it runs: queries stay small and indexed, and anything long (a rebuild from the ref, an import) runs in batches that yield between them. `sql.reactive` streams the backlog and the ready set to the run view. Reads are in-process: each of tutti's Beads calls took 0.45–0.75 s and Beads' embedded database served them one at a time (three side by side took longer than in a row), so only fewer calls helped, and five of its speed tickets did nothing else (tutti-ejkt.5, -ejkt.6, -gr4z.6, -gr4z.7, -0vbd.5).
 
-**Schema** (extends `stack.md`'s for orchestra's ticket model):
+**Schema** (orchestra's ticket model):
 
 ```sql
 CREATE TABLE tickets (
@@ -508,13 +508,30 @@ CREATE TABLE leases (               -- engine-local; never synced
 ### 11.6 Interop
 
 - \[DECISION\] (H40) `fabrica tickets import --beads <file>` brings a Beads backlog (a `bd export` JSONL file, such as orchestra's and tutti's) into a project's work graph, mapping types, statuses, priorities, labels, dependencies (blocks, parent-child, discovered-from, related), notes, design, acceptance and metadata; a Beads ticket labelled `human` with options in its metadata (orchestra-tnei.1) becomes a `question` \[VERIFY Beads' JSONL fields at the version in use\]. IDs keep their prefix. An import into a project with tickets merges as §11.4 does. Export to Beads comes later, when someone needs it.
-- Keep all SQL inside the local tracker's implementation and within SQLite's dialect, so a later engine (Turso Database, libSQL) is a Layer swap (`stack.md` §16).
+- Keep all SQL inside the local tracker's implementation and within SQLite's dialect, so a later engine (Turso Database, libSQL) is a Layer swap (§27.1).
+
+### 11.7 The ref in git
+
+\[DECISION\] How the engine keeps `refs/fabrica/tickets` (§11.3, §11.4), so that no checkout, index, `HEAD` or stash of the user's is ever touched:
+
+- **Writing** with git's plumbing only: `git hash-object -w --stdin` for each changed file, `git mktree` for each folder and then the root (or a temporary index through `GIT_INDEX_FILE` with `read-tree`, `update-index` and `write-tree` \[OPEN which\]), `git commit-tree` with its parents, then `git update-ref refs/fabrica/tickets <new> <expected-old>`, which fails when another process moved the ref meanwhile, and the cycle runs again. A commit's author is the engine's ID (§11.3), its message `tickets: <n> changed (<engine>)`. Plumbing runs no git hooks \[VERIFY for each command used\].
+- **Reading**: `git ls-tree -r <commit>` lists the files, `git cat-file --batch` reads them in one process, `git merge-base` finds the base of a three-way merge, and `git diff-tree --name-status` lists what changed, so an import reads only the files that changed.
+- **Transport**: fetch and push name the ref explicitly \[VERIFY the refspecs for a ref outside `refs/heads/`\], with the host's own git configuration, keys and credential helpers; the engine stores no git credentials. Every git command runs with `GIT_TERMINAL_PROMPT=0`, no pager, `LC_ALL=C` and the environment of §20.2, so it never waits for input and its output parses the same everywhere.
+- **Canonical files**: UTF-8, LF line endings, two-space indent, a trailing newline; keys sorted by code point, every field present (`null` or `[]` when empty); lists of IDs sorted and de-duplicated, one to a line; times ISO 8601 in UTC with milliseconds; each file decoded with its Schema from `contracts`. The same state always serialises to the same bytes, so a sync with nothing changed makes no commit and writes nothing to SQLite, and importing a commit twice changes nothing.
+- **Sync state** kept in SQLite: the last commit pushed, the last commit imported, the engine's ID and the last clock it issued.
+- **Import** applies the files changed between the last commit imported and the new head in one transaction (tickets upserted, their labels and edges rebuilt, tombstoned tickets removed), then records the commit.
+- **Deletion**: a ticket's file goes only through an explicit deletion, which writes a tombstone (`tombstones/<id>.json`, with its clock and engine, pruned after 90 days); a ticket missing from SQLite never removes its file, so a fresh or broken database can't wipe the backlog. A deletion against an edit on the other side loses to the edit, with a conflict recorded: work is never lost silently.
+- **After a merge**: a merge can make a `blocks` cycle that neither side had; the edges are kept, the tickets marked blocked by the cycle, and the app says so. An edge to a missing or tombstoned ticket is dropped and logged. Each field both sides changed records a `merge_conflict` event with both values, which the app lists with "use the other value"; sync never stops for a conflict.
+- **Failures** leave SQLite and the ref as they were: a crash between commit and push is harmless (the next sync pushes it); a crash during an import rolls its transaction back, the last commit imported unchanged; offline or a refused authentication shows in the app and waits for the next scheduled sync, never a retry storm; `git` missing or too old turns sync off with a clear message. The ref is never force-pushed: its history only grows.
+- **Versions**: `meta.json` carries the layout's version, and each file a `v` for its record's shape. Readers take their version and every older one, upgrading records in memory through Schema transformations; writers write the newest they know, a new field with a default; a layout newer than the engine stops sync and asks for an update, and an engine never writes an older format over a newer one. A file that fails to decode is quarantined: skipped, its local copy kept, an event recorded and shown in the app.
+- **Privacy**: what the ref holds goes to the project's remote, and titles, descriptions, notes and results can hold code, paths or business details. The app names the remote before the first push; a result over 64 KB stays local \[OPEN the cap\]; transcripts never sync; a secret-pattern check on what is exported blocks the commit and warns \[OPEN which detector\].
+- **Tested** (§24): canonical files round-trip and encode stably (properties); the merge is symmetric and merging with the base changes nothing (properties); two simulated engines (two databases, two clones, one bare remote) converge after concurrent edits, deletions, offline periods and rejected pushes; failures injected between each step converge with no lost edit.
 
 ## 12. Workers
 
 ### 12.1 Process model
 
-\[DECISION\] Each worker is a Pi process in RPC mode over stdio, owned by the engine as an Effect scoped resource behind a `PiAgent` service; Pi's Promise and RPC surface never leaks past it (`stack.md` §7).
+\[DECISION\] Each worker is a Pi process in RPC mode over stdio, owned by the engine as an Effect scoped resource behind a `PiAgent` service; Pi's Promise and RPC surface never leaks past it. `sjunepark/pi-effect` is a reference for that boundary (interruption mapped to the session's abort, event streams that lose nothing); Fabrica writes its own adapter and doesn't depend on it.
 
 - Spawn: the engine distribution's Node running Pi's CLI as `pi --mode rpc --extension <the first-party extension> --session-dir <data>/projects/<id>/sessions/<ticket>/`, cwd the ticket's worktree, in a process group of its own. RPC mode takes JSONL commands on stdin and writes JSONL records on stdout, correlated by `id`; records are split on LF only. Every external command (git, checks, setup) is started in its own group the same way, so a terminal's or a service manager's signals reach the engine alone.
 - Each agent's Pi gets a configuration folder of its own, holding only the model proxy's provider entries (§12.9); the user's own Pi configuration and credentials are never read \[VERIFY how Pi's configuration folder is set per process\].
@@ -527,7 +544,7 @@ CREATE TABLE leases (               -- engine-local; never synced
 - A reaper per worker (as tutti's spec §3.2): if the engine dies without its finalizers (SIGKILL), each worker's group is terminated within seconds.
 - A ticket's sessions live in its session folder; a worker's session is resumed with `switch_session` for its hand-backs, after a question is answered, and in the carry-over.
 - **One session at a time** (H75): a ticket's agent has one lifecycle, Starting, Open or Closing. A start or resume waits for a closing session's process to exit: tutti resumed a session whose Claude Code was still exiting, and two processes shared one session file and worktree (tutti-j3w). A close during a start cancels the start, and reserving, spawning and closing on interruption are one uninterruptible step, so an interrupted start leaves nothing reserved (tutti-0k95). The session's ID is saved for the carry-over only once the agent has started; a start that fails or is interrupted before then saves nothing, and the next run starts the ticket afresh in the same worktree (tutti-y3d). A message sent to a closing session fails; it is never reported sent (tutti-763l).
-- Only the first-party extension loads. It takes part in Pi's `project_trust` step, which runs before a project's own extensions load, and refuses a project's own `.pi/` settings and packages until the user trusts that project (`stack.md` §12).
+- Only the first-party extension loads. It takes part in Pi's `project_trust` step, which runs before a project's own extensions load, and refuses a project's own `.pi/` settings and packages until the user trusts that project.
 
 ### 12.2 The first-party extension
 
@@ -543,7 +560,7 @@ CREATE TABLE leases (               -- engine-local; never synced
 
 Model calls need no hook: they pass through the model proxy (§12.9), which grants permits and counts usage, so the extension doesn't use `before_provider_request` (which providers registered by extensions bypass, Pi issue #7368).
 
-The extension's tools forward to the engine over a per-agent Unix domain socket whose path and token arrive in the agent's environment, speaking the Schema RPC protocol; the token scopes the session to its ticket \[DECISION; resolves `stack.md` §17's channel item\]. Tool schemas have one source in `contracts`: each tool's Effect Schema is turned into JSON Schema and handed to Pi wrapped as a TypeBox schema (TypeBox schemas are JSON Schema, `Type.Unsafe`); arguments are decoded again with the Effect Schema in the handler \[VERIFY Pi validates the wrapped schema as given\].
+The extension's tools forward to the engine over a per-agent Unix domain socket whose path and token arrive in the agent's environment, speaking the Schema RPC protocol; the token scopes the session to its ticket \[DECISION\]. Tool schemas have one source in `contracts`: each tool's Effect Schema is turned into JSON Schema and handed to Pi wrapped as a TypeBox schema (TypeBox schemas are JSON Schema, `Type.Unsafe`); arguments are decoded again with the Effect Schema in the handler \[VERIFY Pi validates the wrapped schema as given\].
 
 ### 12.3 The control channel
 
@@ -560,7 +577,7 @@ The extension's tools forward to the engine over a per-agent Unix domain socket 
 | `wait_for` | Ends the turn: another ticket must merge first, with what this one needs from it | The ticket is linked as blocked; nothing uncommitted |
 | `ask_and_wait` | `ask_question`, then holds the agent on a `Deferred` up to `question_wait` (default 15 min) for the answer; past it, ends the turn as asked | As `ask_question` |
 
-- An invalid payload fails the tool call inside Pi's loop, so the agent retries with the decode error in its context (`stack.md` §8).
+- An invalid payload fails the tool call inside Pi's loop, so the agent retries with the decode error in its context.
 - A turn about to end with no outcome tool gets one nudge, inside Pi: the extension's `agent_before_settle` handler asks for one more model call with the nudge ("call finish, defer, wait_for or ask_question"). A second settle with no outcome ends the session as unfinished: the ticket is set aside with a note (§14.5).
 - The extension's own tools are always allowed by the gate.
 
@@ -598,7 +615,7 @@ While a ticket waits to merge or merges, the gate refuses `git commit` and other
 
 ### 12.8 Supervision
 
-\[DECISION\] A `Supervisor` fiber per worker applies `stack.md` §8's policies, adapted:
+\[DECISION\] Live state is held in Effect primitives inside the engine (`Queue`, `PubSub`, `SubscriptionRef`, `Deferred`), durable state in the work graph; agents never talk to each other. A `Supervisor` fiber per worker applies these policies:
 
 | Failure (tagged error) | Policy |
 |---|---|
@@ -880,7 +897,7 @@ orchestra-coyp's list \[DECISION\]: `requires` in the project's settings, each e
 
 ### 18.1 Stack
 
-\[DECISION\] The renderer is a Foldkit program: one Schema-defined Model, Messages, a pure `update`, side effects as Commands (`stack.md` §11). Behaviour from `@foldkit/ui`, appearance from Tailwind over the design handoff's tokens (§18.2). Mounted: Monaco for diffs and code, xterm.js for agents' command output (read-only), Cytoscape.js for the ticket graph with a layered layout through its dagre or ELK extension, styled from the tokens (H40). Split panels and trees come from `@foldkit/ui` where it has them, otherwise they are built as Foldkit submodels in `packages/ui`; no React component library \[VERIFY `@foldkit/ui`'s components\].
+\[DECISION\] The renderer is a Foldkit program: one Schema-defined Model, Messages, a pure `update`, side effects as Commands. Behaviour from `@foldkit/ui`, appearance from Tailwind over the design handoff's tokens (§18.2). Mounted: Monaco for diffs and code, xterm.js for agents' command output (read-only), Cytoscape.js for the ticket graph with a layered layout through its dagre or ELK extension, styled from the tokens (H40). Split panels and trees come from `@foldkit/ui` where it has them, otherwise they are built as Foldkit submodels in `packages/ui`; no React component library \[VERIFY `@foldkit/ui`'s components: dialog, menu, tabs, listbox, disclosure and virtual list were listed on 2026-10-21\]. Foldkit's slow-update warnings are on in development builds; Foldkit DevTools and its MCP server are in development builds only \[VERIFY how they are left out of a production build\].
 
 | Concern | Foldkit construct |
 |---|---|
@@ -891,7 +908,7 @@ orchestra-coyp's list \[DECISION\]: `requires` in the project's settings, each e
 
 ### 18.2 The design handoff and themes
 
-\[DECISION\] (H42) The **Fabrica Console handoff** (`design_handoff_hivemind_console`, named for Fabrica's first name, 2026-10-21: a README, `themes.css`, and two HTML references, the three themes side by side and Lichen Bright alone) is the app's visual source, kept in the repository under `design/console/`: its README, `themes.css`, the two HTML references, and both references rendered at their size (`reference.png`, `kits.png`). The design tool's runtime the HTML needs to open (`support.js`, `_ds/`) has no licence of ours and stays out of the public repository; the PNGs are what tests compare against. It is high fidelity: colours, type, spacing and radii are final, at a 1280 × 800 reference window. Its HTML is a reference recreated in Foldkit (its README's suggestion of React doesn't apply); only `themes.css` is used as it is.
+\[DECISION\] (H42) The **Fabrica Console handoff** (`design_handoff_hivemind_console`, named for Fabrica's first name, 2026-10-21: a README, `themes.css`, and two HTML references, the three themes side by side and Lichen Bright alone) is the app's visual source, kept in the repository under `design/console/`: its README, `themes.css`, the two HTML references, and both references rendered at their size (`reference.png`, `kits.png`). The design tool's runtime the HTML needs to open (`support.js`, `_ds/`) has no licence of ours and stays out of the public repository; the PNGs are what tests compare against. It is high fidelity: colours, type, spacing and radii are final, at a 1280 × 800 reference window. Its HTML is a reference recreated in Foldkit (its README's suggestion of React doesn't apply); only `themes.css` is used as it is. The handoff's measurements are carried in Appendix A, `themes.css` in Appendix B, and where each of its files is in Appendix C.
 
 - **Tokens:** `themes.css` is copied into `packages/ui` unchanged, as the only source of colours, fonts, radii and glows. Tailwind's theme maps onto its variables (`--bg`, `--side`, `--panel`, `--line`, `--fg`, `--muted`, `--ink`, `--c1` to `--c5`, `--r`, `--rb`, `--rw`, `--glow1`, `--glow2`, `--font`, `--mono`); components use only those, and a lint rule refuses colour literals anywhere else. Spacing keeps to the handoff's steps (4, 6, 8, 10, 12, 16, 18, 20 and 24 px).
 - **Themes:** **Lichen Bright** (the default), **Classic** and **Neon Grid**: one layout, chosen by `data-theme` on the root. The theme is a setting of each app install, not the engine's, switched in Settings and the command palette, and applied at once. All three are dark; there is no light theme in v1.
@@ -935,7 +952,7 @@ orchestra-coyp's list \[DECISION\]: `requires` in the project's settings, each e
 
 ### 18.5 Desktop rules
 
-From `stack.md` §11: density over whitespace, monospace for agent output; keyboard first (a command palette, keys for approve, refuse, interrupt, drain, the answer talk; approve and refuse act only on the request shown, H62); one status mark per ticket, in the role colours (working, waiting on you, blocked, failed, done); notifications for questions, permission requests, a run's end and a hold; never push each token through `update` (buffer, once per animation frame); virtualise long lists; lazy views for inactive workers. The handoff first; for what it doesn't cover, Linear, Codex desktop, Claude desktop and VS Code's workbench.
+Density over whitespace, monospace for agent output; keyboard first (a command palette, keys for approve, refuse, interrupt, drain, the answer talk; approve and refuse act only on the request shown, H62); one status mark per ticket, in the role colours (working, waiting on you, blocked, failed, done); notifications for questions, permission requests, a run's end and a hold; never push each token through `update` (buffer, once per animation frame); virtualise long lists; lazy views for inactive workers. The handoff first; for what it doesn't cover, Linear, Codex desktop, Claude desktop and VS Code's workbench.
 
 Each screen's keys are one list of commands, from which its bindings, its hints, the key help and the command palette are drawn: tutti wrote each screen's keys three times, and they drifted (a bound key missing from its help, tutti-rvzn.8). A component subscribes to the part of the run view it draws, not the whole view, which tutti redrew everywhere at each change, up to 30 times a second (tutti-rvzn.1). Streamed text is drawn at most every 33 ms, and a tool call's streamed input not until it is whole (tutti-ejkt.8).
 
@@ -968,7 +985,7 @@ Every command has `--json` for scripts and agents. Flags take two dashes; one-le
 
 ## 20. Security
 
-\[DECISION\] The renderer is treated as an untrusted web page; agents as code running with the engine user's permissions, confined by the gate (and a container where configured); a remote engine as a server holding credentials (`stack.md` §12, extended).
+\[DECISION\] The renderer is treated as an untrusted web page; agents as code running with the engine user's permissions, confined by the gate (and a container where configured); a remote engine as a server holding credentials. Pi doesn't sandbox its tool calls, so the gate (§12.6) is the main control over what an agent does.
 
 ### 20.1 App
 
@@ -1008,12 +1025,13 @@ Exact pins and a committed lockfile; CI verifies the checksums of every download
 \[DECISION\] (H38) Telemetry is the engine's own, kept on its host and always on; nothing leaves the host unless the user configures an export.
 
 - **Store** (H65, revising H38): from M1 the engine records typed rows in its own SQLite store, `<data>/telemetry.db`, one per engine across its projects, beside each project's event stream. From M6, after its M0 spike, DuckDB (`@duckdb/node-api`) is the query layer over them, at `<data>/telemetry.duckdb`. Only the engine opens either (DuckDB allows one writing process per file); clients query through the RPC's Insights group, by named queries. The work graph's database (§11.2) is never written by telemetry. DuckDB's storage version is pinned (`storage_compatibility_version`), so an upgrade can't leave the file unreadable to the engine's previous version: DuckDB 2.0 (2026-10-21) writes a format 1.x can't read. Measured on 2026-10-22: its native library is 63 MB per platform, and npm had only a release candidate of 2.0.
+- **Instrumentation:** spans (`Effect.withSpan`) around each agent turn, tool call, work-graph operation, git command and RPC request; counters and histograms; structured logs.
 - **What is recorded:** model calls (from the model proxy: provider, model, tokens in, out and cached, cost, latency, time to first token, refusals and errors), tool calls (name, duration, the gate's decision), checks (kind, duration, result), merges, hand-backs, holds, worker sessions (ticket, model, duration, outcome), organ calls, and the host's load samples (§7.4), each tied to its project, run and ticket.
 - **Writes** go from one fiber, in batches; a crash loses at most the open batch.
 - **Reads in place:** the event stream (`events.jsonl`) and Pi's session files are queried where they lie, and the work graph is attached read-only for joins with tickets \[VERIFY that the `json` and `sqlite` extensions can be bundled with the engine rather than downloaded at run time, and that DuckDB reads the work graph safely while the engine writes it\].
 - **Retention:** raw rows for 90 days, daily aggregates kept (engine settings).
 - **Uses:** the cost figures (§14.4), the run report (§16), the app's Insights screen (§18.4), `fabrica insights`. The named queries include where a ticket's time goes (phases, waiting by reason, the merge queue, checks by suite, hand-backs, waiting on the maintainer), the waits of questions and permission requests, check durations and flaky tests by test, and cost per merged ticket by run. tutti's queries over its event stream (`docs/analytics.md`) drove three speed scans that took a ticket from ready to merged from a median 90 minutes to 21 (2026-10-25 to 27).
-- **Export**, optional and off by default: Parquet files on demand, or OTLP to an endpoint the user configures (an OpenTelemetry Collector, ClickHouse or another store behind it), carrying Effect's spans and metrics (`@effect/opentelemetry`) and the recorded rows. Exports carry metadata only (counts, durations, model IDs, token totals, cost, error tags), never prompts, code, file contents, secrets or absolute paths (`stack.md` §10's rules). No Fabrica-hosted telemetry service in v1.
+- **Export**, optional and off by default: Parquet files on demand, or OTLP to an endpoint the user configures (an OpenTelemetry Collector, ClickHouse or another store behind it), carrying Effect's spans and metrics (`@effect/opentelemetry`) and the recorded rows. Exports carry metadata only (counts, durations, model IDs, token totals, cost, error tags), never prompts, code, file contents, secrets or absolute paths. Content capture, were it ever offered, would be a separate explicit setting, with a redaction step before anything is written. No Fabrica-hosted telemetry service in v1.
 
 ## 22. Packaging, signing and distribution
 
@@ -1050,7 +1068,7 @@ Anything with native code MUST appear here, with its CPU baseline: whether its x
 | Docker or Podman | System's, not bundled | Optional, for containers (§12.7) |
 | `node-pty` (interactive shells) | Yes | Out of v1 |
 | Beads `bd` | Yes | Out (not used; its JSONL is imported, §11.6) |
-| Turso, libSQL, chDB | Yes | Out (`stack.md` §16) |
+| Turso, libSQL, chDB | Yes | Out (§27.1) |
 
 ### 22.5 Releases
 
@@ -1074,11 +1092,17 @@ Anything with native code MUST appear here, with its CPU baseline: whether its x
 
 **Lessons from building tutti** \[DECISION\] (H70, H87): ticket text names a file only where the ticket will change it, since footprints read every path a ticket names (§13.4); a description opens with the detail, not a restatement of the title, which the worker view shows above it; the maintainer's checkout stays clean while orchestra's run goes (a stray edit held tutti's merges until the run ended). Fabrica's own `check_own` selects the tests a change touches by its import graph, leaving out type-only imports, and keeps its passes by tree, as tutti's `scripts/check-own.ts` does: the median source module went from 365 test files to 212, and type-only imports took 12% more off. An agent's write tools turn `\u` escapes of printable controls into the raw characters, so such escapes are written by a script, and a lint refuses raw bidi controls, C1 controls and line separators in the source (tutti-hgdi).
 
-Otherwise unchanged from `stack.md` §14 \[DECISION\]: Foldkit, Effect v4 and Pi vendored as git subtrees under `repos/`, pinned and refreshed on every upgrade; Foldkit's agent skills and `FOLDKIT.md`; source-first Effect skills; after every file write, a type check and oxlint on the changed files, errors returned to the agent in-band (a Claude Code `PostToolUse` hook; a development-only Pi package); Foldkit DevTools MCP in development; the order of work (contracts, then interfaces, then tests against in-memory layers, then implementations; for UI, Model and Messages first, then story tests, `update`, `view`).
+**Agents' context and checks** \[DECISION\]:
+
+- **Vendored source**: Foldkit, Effect v4 and Pi are git subtrees under `repos/`, each pinned to the exact version installed and refreshed on every upgrade; they are read-only references, and code imports from `node_modules`. Foldkit's tags are `foldkit@<version>`; `FOLDKIT.md` is replaced whole from that tag on every upgrade, and the project's own rules live in `AGENTS.md`.
+- **Skills and docs**: Foldkit's official agent skills; for Effect, source-first skills (`joelhooks/pi-effect`, or `pi-effect-harness` inside Pi). Foldkit's docs are also served as Markdown (a `.md` suffix, `llms-full.txt`) for an agent without the subtree.
+- **Checks after every write**: a type check and oxlint (with `@foldkit/oxlint-plugin`) on the changed files, their errors returned to the agent in-band: a Claude Code `PostToolUse` hook, and a `tool_result` handler in a development-only Pi package. Hooks, not prompts.
+- **Feedback**: Foldkit DevTools MCP is connected in development, so agents can inspect the Model and replay or dispatch Messages against the running app.
+- **Order of work**: for the UI, the Model and Message changes first, reviewed by a person, then story tests, then `update`, then `view`, the agent pointed at a named Foldkit example; for the engine, Schema contracts in `contracts` first, then the service interface, then tests against in-memory layers, then the implementation.
 
 ## 24. Testing and quality gates
 
-\[DECISION\] Every layer is tested against Effect Layers swapped for test implementations, so no unit test needs a real model, a real network or a browser (`stack.md` §15, extended).
+\[DECISION\] Every layer is tested against Effect Layers swapped for test implementations, so no unit test needs a real model, a real network or a browser.
 
 | Layer | Approach | Tools |
 |---|---|---|
@@ -1093,7 +1117,7 @@ Otherwise unchanged from `stack.md` §14 \[DECISION\]: Foldkit, Effect v4 and Pi
 | Sleep | The wake service under `TestClock`: a gap taken for a sleep, the limits it crossed put off, resets left on the wall clock (H66) | `@effect/vitest` |
 | Soak | One engine through many runs and tickets with scripted agents: memory, file handles, fibers and subscriptions flat at the end (H77) | `@effect/vitest` |
 | Pi contract | Real pinned Pi in RPC mode with the extension, against a stub model provider, on every Pi upgrade \[VERIFY stub-provider support\] | Vitest |
-| UI state | Foldkit story tests on `update` | `foldkit/story` |
+| UI state | Foldkit story tests on `update`, Commands resolved inline | `foldkit/story` |
 | UI behaviour | Foldkit scene tests with accessible locators | `foldkit/scene` |
 | UI look | The console with fixture data at 1280 × 800, captured in each theme and compared with the handoff's rendered references (`design/console/*.png`); colour-literal lint | The packaged-app test tool's screenshots |
 | Packaged app | Smoke tests per target (§22.3), driving the packaged app | Playwright's Electron support \[VERIFY it attaches to a packaged, fused build on each target\] |
@@ -1166,36 +1190,30 @@ The parity audit (M6) checks each orchestra feature against Fabrica. Its startin
 | A dirty checkout stops merging until the run ends (`DIRTY_TREE`) | Merges wait, naming the files, and go on once it is clean (§13.7) | A stray edit shouldn't cost a run its merges (H72) |
 | Questions wait for the maintainer | `--auto-answer` takes a run's questions that aren't consequential with their recommended option (§15.2) | Unattended runs; tutti's, the maintainer's choice (H82) |
 
-## 27. Changes to `stack.md`'s decisions
+## 27. Deferred options and changes
 
-| `stack.md` | Was | Now | Reason |
+### 27.1 Set aside
+
+Each option below was weighed and set aside. Don't bring one back without meeting its condition.
+
+| Option | Status | Why | Revisit when |
 |---|---|---|---|
-| §2 Product context | An app supervising Pi agents with typed hand-offs and a shared work graph | A port of orchestra (dispatch, footprints, merge queue, checks, questions, organs) with `stack.md`'s typed hand-offs and supervision | The maintainer wants orchestra's behaviour on this stack (H13, H27) |
-| §4 Process architecture | The orchestrator is an Electron `utilityProcess`; closing the app aborts sessions | The engine is a separate long-lived Node daemon, local or remote; runs survive the app; a connection `utilityProcess` owns transports | The engine must run locally or on a remote server, headless (H4, H5) |
-| §5 Node | Electron's bundled Node for every process | The engine ships its own pinned Node; Electron's Node only for the app | The same engine runs on servers without Electron (H5) |
-| §6 Channels and versioning | Renderer to orchestrator over a MessagePort; no backward compatibility needed (one build) | Renderer to engine through the connection process (socket, SSH, TLS); a versioned protocol supporting the previous version | Engines and apps update separately, on different machines (H6, H22) |
-| §7 Agent child runtime \[OPEN\] | `ELECTRON_RUN_AS_NODE` or a bundled Node | The engine distribution's Node | Resolved by H5; lets the RunAsNode fuse stay disabled |
-| §7 Extension channel \[OPEN\] | A per-agent Unix socket, or an alternative | A per-agent Unix socket with a ticket-scoped token; tools include outcomes and questions with options | Resolved (H14) |
-| §7 Tools | `next_task`, `report_result`, `file_issue`, `ask_human`, `read_board`, `post_note` | `get_ticket`, `file_ticket`, `ask_question`, `ask_and_wait`, `add_note`, `finish`, `defer`, `wait_for` | The engine dispatches tickets (orchestra's model), so agents don't pull work; outcomes are explicit (H13, H14) |
-| §8 Coordination | Agents claim work with leases | The engine dispatches and claims; leases kept engine-local for crash recovery | orchestra's model (H13) |
-| §8 Budgets | Token and cost budgets per task and run | Optional, off by default | Decided with the maintainer (H21) |
-| §9 Work graph | SQLite, git-ignored; sync deferred (Turso later) | SQLite as the live store plus continuous sync through `refs/fabrica/tickets`, one JSON file per ticket, merged per field; schema extended for orchestra's tickets (types, statuses, design, acceptance, notes, labels, questions with options, merged commit) | The backlog must travel with the repository and between engines (H11, H12) |
-| §3, §16 Windows | Out of v1 | The app on Windows x64 (engine remote or in WSL2); the engine stays macOS and Linux | Decided with the maintainer (H25) |
-| §12 Secrets | Electron `safeStorage` for API keys | Model credentials in the engine host's secret store; the app's `safeStorage` only for its own secrets (pairing tokens) | A remote engine must work with the app closed (H26) |
-| §12 RunAsNode fuse \[OPEN\] | SHOULD be disabled; conflicts with spawning Pi through Electron | Disabled | Pi runs on the engine's Node (H5) |
-| §12 Containers \[OPEN\] | A later option | A per-project option in v1 | Safe broad permissions on servers (H16) |
-| §13 Native inventory | Electron only | Plus the engine's Node runtime | H5 |
-| §17 On-disk names \[OPEN\] | Undecided | `fabrica`, `.fabrica/`, `refs/fabrica/tickets`, branches `fabrica/<id>` | Decided (§10.2) |
-| §17 Worktree lifecycle \[OPEN\] | Undecided | Kept when set aside, removed when merged; orchestra's locations | Decided (§10.2) |
-| §3 macOS builds, Linux scope \[OPEN\] | Undecided | Per-arch macOS builds; Windows arm64 and Linux armv7l not built; deb and rpm updated by hand | Smaller downloads; wait for demand (H39) |
-| §5 Type checker \[OPEN\] | `tsc` or `tsgo` | `tsgo`, with `tsc` as a fallback | Speed when agents type-check after every write (H40) |
-| §6 Event batching \[OPEN\] | About 50 ms | 50 ms, an engine setting; the run view at about 20 Hz | Decided (H40) |
-| §7 Models and credentials | API keys injected into each agent's environment at spawn | A model proxy in the engine holds every credential; agents get a per-agent token; subscriptions are signed in by the engine | OAuth tokens expire mid-session, and agents on a remote engine shouldn't hold keys (H29) |
-| §9 Beads interop | MAY ship after v1 | Beads JSONL import in v1, export later | Existing orchestra and tutti backlogs move over (H40) |
-| §10 Telemetry | Effect telemetry buffered in a SQLite outbox and shipped to ClickHouse, opt-in | Typed telemetry rows in the engine from M1, always on and local; DuckDB their query layer from M6, feeding the app's figures and Insights; export (Parquet, OTLP) optional, metadata only | The maintainer wants an embedded store that gathers data on the engine's host (H38), brought in once DuckDB 2.0 has settled (H65) |
-| §11 Look | Tailwind tokens: a neutral palette, one accent, light and dark themes; shadcn/ui's visual language as the reference | The Fabrica Console handoff's tokens and layout: three dark themes, Lichen Bright the default; the handoff first among the references | The maintainer's design handoff (H42) |
-| §11 Graph library \[OPEN\] | Cytoscape.js, undecided | Cytoscape.js with a dagre or ELK layout | Decided (H40) |
-| §13 Native inventory, §16 DuckDB | Out; deferred to an Insights panel | In, engine only, for telemetry | H38 |
+| Beads (`bd`) | Not used; its JSONL is imported (§11.6) | A Go binary with an embedded database to bundle and sign; with one writer, the engine's own work graph is cheap | Only an export to Beads is wanted |
+| Turso Database | The preferred later engine for the work graph | Concurrent writes, change data capture and local-first sync fit; pre-1.0, no darwin-x64 build, no Effect driver | It reaches 1.0 with every engine target built and its sync settled: then an Effect driver and a Layer swap (§11.6) |
+| libSQL | Deferred | Maintained, but new work goes to Turso Database; a native addon | Turso stalls and sync is needed |
+| LiveStore | Deferred | Beta; Effect SQL's reactive queries cover the live UI | Multi-device state beyond the tickets ref is needed |
+| DoltLite | Deferred | Commits, branches, diffs and merges inside the database itself | Field history beyond the ref's commits and events is needed |
+| PGlite or Postgres | Deferred | Useful only for a server-backed team version | A team or cloud mode is planned |
+| A shared live claim service | Not built | The run lease lets one engine run a project at a time (§11.5) | Several engines must run one project at once |
+| Hosted telemetry (ClickHouse) | Deferred | Telemetry stays on the engine's host (§21); OTLP export reaches a collector the user runs | A Fabrica-hosted service is planned |
+| chDB or clickhouse-local | Not used | Native binaries on every target | Never, for the engine's own telemetry |
+| React, React Flow, shadcn/ui, Web Awesome | Not used | Foldkit and the design handoff chosen (H28, H42) | Foldkit is replaced |
+| Interactive shells (`node-pty`) | Deferred | A native addon | Users need to type into agents' shells |
+| A Windows engine, Windows arm64, Linux armv7l, musl | Not built | §4 (H25, H39) | Demand |
+
+### 27.2 Changes to decisions
+
+A \[DECISION\] changed after 2026-10-29 is recorded here: what it was, what it is now, and why. None yet.
 
 ## 28. Open questions
 
@@ -1229,6 +1247,175 @@ Settled with the maintainer on 2026-10-21 (H29–H49), except where marked; the 
 
 - orchestra 0.9.1: `github.com/noesis-sol/orchestra` (docs: running, workers, setup, organs, dashboard, events; `skills/orchestra/SKILL.md`).
 - tutti: `github.com/noesis-sol/tutti` (spec `.orchestra/specs/tutti-spec.md`, `docs/parity.md`, the carry-over epic tutti-kkb; its changelog from 0.2.0 to 0.5.0, 2026-10-23 to 29; its design reviews tutti-axpo and tutti-rvzn; its speed scans tutti-ejkt, tutti-gr4z and tutti-0vbd; `docs/analytics.md`).
-- `stack.md` (2026-10-21) and its references: Pi (extensions, packages, `earendil-works/pi`, `sjunepark/pi-effect`), Effect v4 (SqlClient, Migrator, SqliteClient for Node, sql-clickhouse, RPC), Foldkit, the work-graph references (Beads, taskgraph, clu, OpenTasks), the deferred engines (Turso, libSQL, LiveStore), the Electron landscape.
-- The Fabrica Console design handoff (`design_handoff_hivemind_console`, 2026-10-21), kept under `design/console/`.
+- Pi: [extensions](https://pi.dev/docs/latest/extensions), [packages](https://pi.dev/docs/latest/packages), [earendil-works/pi](https://github.com/earendil-works/pi); for the Effect boundary, [sjunepark/pi-effect](https://github.com/sjunepark/pi-effect), [pi-effect-harness](https://pi.dev/packages/pi-effect-harness), [joelhooks/pi-effect](https://github.com/joelhooks/pi-effect).
+- Effect v4: [API reference](https://effect.website/docs/v4/api), [SqlClient](https://effect.website/docs/v4/api/effect/sql/SqlClient), [SqlModel](https://effect.website/docs/v4/api/effect/sql/SqlModel), [Migrator](https://effect.website/docs/v4/api/effect/sql/Migrator), [SqliteClient for Node](https://effect.website/docs/v4/api/sql-sqlite-node/SqliteClient), [SqliteMigrator for Node](https://effect.website/docs/v4/api/sql-sqlite-node/SqliteMigrator); source at [Effect-TS/effect](https://github.com/Effect-TS/effect).
+- Foldkit: [foldkit.dev](https://foldkit.dev/), [Get started](https://foldkit.dev/get-started), [AI-assisted development](https://foldkit.dev/ai/overview), [foldkit/foldkit](https://github.com/foldkit/foldkit).
+- Work-graph designs: [Beads](https://github.com/gastownhall/beads/) and [its architecture](https://beads.gascity.com/architecture), [taskgraph](https://github.com/BudEcosystem/taskgraph), [clu](https://github.com/Arjia-Labs/clu), [OpenTasks](https://github.com/alexngai/opentasks).
+- Deferred engines: [Turso Database](https://github.com/tursodatabase/turso/), [its TypeScript reference](https://docs.turso.tech/sdk/ts/reference), [libSQL](https://docs.turso.tech/libsql), [LiveStore](https://github.com/livestorejs/livestore).
+- The Electron landscape: [a 2026 audit of Electron apps](https://codenote.net/en/posts/famous-electron-apps-2026-research/), [agent orchestrator desktop apps](https://rywalker.com/research/t/electron).
+- The Fabrica Console design handoff (`design_handoff_hivemind_console`, 2026-10-21), kept under `design/console/` (Appendices A to C).
 - Added in the refinement: Pi's RPC mode, extension events and `pi-ai`'s OAuth sign-ins (Pi's docs and source at the pinned version; issue #7368 on `before_provider_request`); DuckDB's Node package (`@duckdb/node-api`) and its Appender; Effect RPC's socket and WebSocket protocols; Cytoscape.js's dagre and ELK layouts; `tsgo`; Playwright's Electron support.
+
+## Appendix A. The console design handoff
+
+The handoff as designed on 2026-10-21, under Fabrica's first name, Hivemind (`design_handoff_hivemind_console`), carried here so that the spec needs none of its files to be read. It is **high fidelity**: colours, type, spacing and radii are final, recreated pixel-accurately at its 1280 × 800 reference window. It drew a dashboard for supervising several coding agents: a sidebar of sessions, then ticket and system stats, a chat with the orchestrator, an activity history, and two ticket columns, one for work in progress and one for tickets that need a person. The same layout ships in three themes, **Lichen Bright** (the default), **Classic** and **Neon Grid**.
+
+Where Fabrica's console departs from it, §18.3 says so and wins; the departures are marked *(Fabrica: …)* below. Its HTML is a reference to recreate in Foldkit, not code to copy (its own suggestion of React doesn't apply, §18.2).
+
+### A.1 Layout
+
+```text
+┌ Title bar 38px ──────────────────────────────────────────────────────┐
+├ Sidebar 260px ─┬ Main (padding 20px 24px, column, gap 16px) ─────────┤
+│ Header         │ Ticket stats row (one compact strip)                 │
+│ Session list   │ ┌ Conversation agent (1fr) ──┬ History (320px) ┐ 156px│
+│                │ └────────────────────────────┴─────────────────┘      │
+│                │ ┌ In progress (1fr) ─────────┬ Needs your attention ┐ │
+│ [+ New session]│ │ scrolls                    │ (1fr) scrolls        │ │
+└────────────────┴──────────────────────────────────────────────────────┘
+```
+
+- The window is a flex column; the body a grid, `260px minmax(0,1fr)`.
+- The ticket columns are a grid, `minmax(0,1fr) minmax(0,1fr)` with a 16px gap. They take the remaining height (`flex:1; min-height:0`), and each column has `overflow:auto`.
+
+### A.2 Components
+
+**Title bar**
+
+- Height 38px, background `--side`, a 1px bottom border in `--line`, padding 0 14px, gap 8px.
+- Window controls: three 12×12 squares in `--c3`, `--c2` and `--c1`, with the theme's radius. *(Fabrica: dropped for the native controls, H46.)*
+- App name: 13px, weight 700, a 16px left margin. *(Fabrica: "Fabrica".)*
+- System stats, right-aligned with an 18px gap, 12px `--mono` in `--muted`, values in `--fg`:
+  - `MEM`: a 64×6 bar (track `--line`, fill `--c4`), then "11.2/32 GB";
+  - `CPU`: a 64×6 bar (fill `--c5`), then "47%";
+  - `CORES`: one 5×12 block per core with a 2px gap, busy cores `--c1` and idle ones `--line`, then "6/10".
+  *(Fabrica: the selected project's engine host, with warning colours, §18.3; the usage windows beside them, H90.)*
+- Search field: 260×24, a 1px `--line` border, radius `--rb`, the placeholder "Search tickets and sessions ⌘K" at 12px in `--muted`. *(Fabrica: it opens the command palette.)*
+
+**Sidebar** *(Fabrica: projects and their runs, H43)*
+
+- Background `--side`, a 1px right border in `--line`.
+- Header: padding 16px 16px 10px; the title ("Coding sessions"; *Fabrica: "Projects"*) at 13px, weight 800, on the left, the count at 12px in `--muted` on the right.
+- Row: a grid of `22px 1fr auto` with a 10px gap, padding 10px 16px.
+  - Chip: a 22×22 square in the row's colour, radius `--rb`, holding a 2-digit index at 11px, weight 800, in `--ink`.
+  - Name: 14px, weight 600, cut with an ellipsis.
+  - Branch: 12px `--mono` in `--muted`.
+  - Status label on the right, 12px: Running in `--c1`, Waiting in `--c2`, Idle with no colour.
+  - Selected row: background `--panel` and a 3px left border in `--c1`; other rows have a transparent left border.
+- Button pinned to the bottom (`margin-top:auto`): its container padded 12px 16px with a 1px top border in `--line`; the button padded 8px 12px, background `--c1`, its label ("+ New session"; *Fabrica: "+ Add project"*) at 13px, weight 700, in `--ink`, left-aligned, radius `--rb`, shadow `--glow1`, hover `brightness(1.08)`.
+
+**Ticket stats row**
+
+- A wrapping flex row with a 1px `--line` border, radius `--r`, background `--panel`.
+- Each item is padded 10px 18px with a 1px right divider: a value at 20px, weight 800, in its stat's colour, then a label at 12px, weight 700, in `--muted`, side by side on the baseline with an 8px gap.
+- Items: "7 Agents live" in `--c1`, "23 Tickets done" in `--c4`, "3 Needs you" in `--c2`, "1.2M Tokens" in `--c5`. *(Fabrica: live workers against the slots, done today, set aside, needs you, in queue, tokens, and the run's controls at its right end, §18.3.)*
+
+**Conversation agent panel** *(Fabrica: the run talk, H44)*
+
+- Background `--panel`, a 1px `--line` border, radius `--r`.
+- Header (padding 8px 12px, a bottom border): an 8×8 square in `--c5`, the agent's name at 13px, weight 800, "orchestrator" at 12px in `--muted`, and on the right the model and its context ("claude · 14k ctx") at 11px `--mono`.
+- Messages: a flex column with `justify-content:flex-end` and `overflow:auto`, padding 8px 12px, gap 6px, 12.5px text at line-height 1.35. Each row is a grid of `64px 1fr`; the author at 12px, weight 800: "You" in `--c1`, the agent in `--c5`.
+- Composer (padding 8px 12px, a top border): a "›" prompt in `--c1` `--mono`, weight 700, the placeholder "Ask the agents or give an instruction…", and a "⏎" key cap on the right.
+
+**History panel** (320px)
+
+- The conversation panel's styling.
+- Header: "History" on the left, "Today" on the right.
+- Rows: a grid of `40px 6px 1fr` with an 8px gap, padding 5px 12px, 12px text: a time in `--mono` `--muted`, a 6×6 dot in the event's colour, and the text on one line, cut.
+- Event colours: merged or a pull request `--c4`, an approval request `--c2`, a failure `--c3`, a session started `--c1`. *(Fabrica: organs and the run talk's actions in `--c5`, §18.3.)*
+
+**Column headers**
+
+- A 14px, weight 800 title and a 12px count, with 8px of bottom padding.
+- "In progress" has a 2px bottom border in `--c1`; "Needs your attention" one in `--c2`, its count in `--c2` too.
+
+**In-progress card**
+
+- Background `--panel`, a 1px `--line` border, radius `--r`, padding 12px 14px, a column with an 8px gap.
+- Row 1: the ID (12px `--mono`, `--muted`) and the title (14px, weight 700).
+- Row 2: a 4px progress bar, its track `--line`, its fill the agent's colour at the percentage done. *(Fabrica: the phase bar, no percentage, H45.)*
+- Row 3: 12px `--muted` text: the agent's name (weight 700, in its colour), the current step, and the elapsed time on the right.
+
+**Needs-attention card**
+
+- The same card, with no coloured left border.
+- Row 1: a kind tag (11px, weight 800, padding 2px 6px, radius `--rb`, its background the kind's colour, its text `--ink`), the ID, and "waiting 14m" on the right in `--c2`.
+- The title at 14px, weight 700; the reason at 13px in `--muted`.
+- Actions: a primary button (background `--c2`, text `--ink`, weight 700, 13px, padding 6px 12px, radius `--rb`, shadow `--glow2`) labelled by the kind, Approve, Answer or Review; and a ghost "Open session" button in `--fg`.
+- Kind colours: Approval `--c2`, Question `--c5`, Review `--c4`. *(Fabrica: also Your task in `--c2`, for a maintainer task, §18.3.)*
+
+### A.3 Behaviour
+
+- Selecting a sidebar row gives it the selected style and scopes the main area to it.
+- The primary action on an attention card resolves the request, and the ticket goes back to In progress; "Open session" focuses its session. *(Fabrica: the worker view.)*
+- The composer sends to the orchestrator; new messages appear at the bottom, and the list scrolls when it overflows.
+- The system stats refresh about every second; History adds new events at the top.
+- Hover: rows and cards lighten their background or border slightly; buttons take `brightness(1.08)`.
+- Focus: a 2px outline in `--c1` with a 2px offset.
+- The handoff left the "New session" flow undesigned. *(Fabrica: Add project, §10.1, and the screens of §18.4 wait for a second handoff, §28.)*
+
+### A.4 Tokens
+
+- **Roles**: `c1` running, `c2` needs attention, `c3` error, `c4` done, `c5` information.
+- **Surfaces**: `bg`, `side` and `panel`, with `line` for borders; text in `fg` and `muted`, and `ink` for text on coloured fills.
+- **Radii**: `r` for cards, `rb` for buttons and chips, `rw` for the window.
+- **Shadows**: `glow1` and `glow2`, `none` but in Neon Grid.
+- **Fonts**: Archivo (Lichen Bright), Inter (Classic), JetBrains Mono for everything in Neon Grid. The handoff names Google Fonts; Fabrica bundles them (§18.2).
+- **Spacing**: 4, 6, 8, 10, 12, 16, 18, 20 and 24px.
+- **Assets**: no images. The UI uses type, colour blocks and Unicode glyphs (›, ⏎, ⌘); Lucide where icons are added later.
+- One theme applies at a time, through `data-theme` on the root element. The values are Appendix B's.
+
+## Appendix B. The theme tokens
+
+`themes.css` as the handoff gives it, the only source of colours, fonts, radii and glows (§18.2). It is copied into `packages/ui` unchanged; this copy and `design/console/themes.css` are the same text.
+
+```css
+/* Hivemind console themes. Apply one by setting data-theme on the app root. */
+/* Role mapping: c1 = running, c2 = needs attention, c3 = error, c4 = done, c5 = info */
+
+[data-theme="neon-grid"] {
+  --bg: #05060B; --side: #030409; --panel: #0B0D18;
+  --line: rgba(255,46,155,0.24); --muted: #7A82A2; --fg: #E8ECF8;
+  --c1: #00E5FF; --c2: #FF2E9B; --c3: #FF3D3D; --c4: #39FF14; --c5: #FFB800;
+  --ink: #05060B;
+  --font: 'JetBrains Mono', ui-monospace, monospace;
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --r: 0px; --rb: 0px; --rw: 0px;
+  --glow1: 0 0 18px rgba(0,229,255,0.5);
+  --glow2: 0 0 18px rgba(255,46,155,0.55);
+}
+
+[data-theme="classic"] {
+  --bg: #1A1D21; --side: #19171D; --panel: #222529;
+  --line: rgba(255,255,255,0.1); --muted: #949BA4; --fg: #D1D2D3;
+  --c1: #2BAC76; --c2: #C2724E; --c3: #E5484D; --c4: #5B9BD5; --c5: #D4A574;
+  --ink: #FFFFFF;
+  --font: Inter, system-ui, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --r: 6px; --rb: 4px; --rw: 10px;
+  --glow1: none; --glow2: none;
+}
+
+[data-theme="lichen-bright"] {
+  --bg: oklch(0.19 0.025 140); --side: oklch(0.165 0.025 140); --panel: oklch(0.235 0.03 140);
+  --line: oklch(0.31 0.035 140); --muted: oklch(0.72 0.0375 140); --fg: oklch(0.94 0.015 140);
+  --c1: oklch(0.86 0.17 125); --c2: oklch(0.82 0.16 75); --c3: oklch(0.72 0.16 25);
+  --c4: oklch(0.82 0.11 190); --c5: oklch(0.78 0.1 295);
+  --ink: oklch(0.2 0.02 140);
+  --font: 'Archivo', system-ui, sans-serif;
+  --mono: ui-monospace, monospace;
+  --r: 0px; --rb: 0px; --rw: 0px;
+  --glow1: none; --glow2: none;
+}
+```
+
+## Appendix C. Where the design's files are
+
+| Files | Where | In the repository |
+|---|---|---|
+| `README.md` (the handoff, carried in Appendix A), `themes.css` (Appendix B), `Hivemind Console Kits.dc.html` (the three themes side by side, the primary reference), `Hivemind Console Reference.dc.html` (Lichen Bright alone, with its palette), `kits.png` and `reference.png` (the two references rendered at their size, which the UI look tests compare against, §24) | `design/console/` in the repository | Yes, committed |
+| The whole export: the README, `themes.css` and the two HTML references, with `support.js` and `_ds/…/styles.css`, which the HTML needs to open in a browser | `~/Desktop/design_handoff_hivemind_console/` on the maintainer's Mac | No: the design tool's runtime has no licence of ours, so it stays out of the public repository (§18.2) |
+| An earlier copy of `design/console/`, the PNGs included | `~/Projects/hivemind/design/console/` (the earlier repository, `noesis-sol/hivemind`) | No |
+
+To open an HTML reference, put it beside `support.js` and `_ds/` from the whole export. The screens the handoff doesn't draw wait for a second handoff (§18.4, §28).
+
