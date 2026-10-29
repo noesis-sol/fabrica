@@ -433,8 +433,6 @@ const known: ReadonlyMap<string, { ticket: string; held: number }> = new Map(
     const entry = (name: string, ticket: string, held: number) =>
       [`${theme} ${name}`, { ticket, held }] as const
     return [
-      entry('card height', 'fab-mgi.69', 84),
-      entry('card pitch', 'fab-mgi.69', 92),
       entry('history row height', 'fab-mgi.70', 26),
       entry('history', 'fab-mgi.70', 0.2),
     ]

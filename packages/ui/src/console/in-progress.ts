@@ -50,7 +50,7 @@ export interface Config<Message> extends Slices {
 }
 
 /** A card's height: its three rows and padding, whether or not its worker has an action (H80). */
-export const cardHeight = '84px'
+export const cardHeight = '86px'
 
 /** A ticket on the phase bar: the segment it is in, and whether it was handed back to its worker. */
 export interface OnBar {
