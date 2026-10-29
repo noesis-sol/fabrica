@@ -147,25 +147,30 @@ const meet = (x: Region, y: Region): string | undefined => {
 /** A place a footprint works on, and whether it is to change it. */
 interface Touch {
   readonly region: Region
-  /** A tracked file, whose contents may mention a function. */
-  readonly file: string | undefined
+  /** The tracked files it holds, whose contents may mention a function. */
+  readonly files: ReadonlyArray<string>
   readonly changes: boolean
 }
 
 const touchesOf = (footprint: Footprint): ReadonlyArray<Touch> => [
   ...footprint.places.map(place => ({
     region: regionOf(place),
-    file: Place.$is('File')(place) ? place.path : undefined,
+    files: Place.$match(place, {
+      File: ({ path }) => [path],
+      Folder: ({ files }) => files,
+      Glob: ({ files }) => files,
+      Added: () => [],
+    }),
     changes: true,
   })),
   ...footprint.changed.map(path => ({
     region: regionOf(Place.File({ path })),
-    file: path,
+    files: [path],
     changes: true,
   })),
   ...footprint.cited.map(path => ({
     region: regionOf(Place.File({ path })),
-    file: path,
+    files: [path],
     changes: false,
   })),
 ]
@@ -187,10 +192,8 @@ const sharedPaths = (
   )
   // A file of one that mentions a function the other names: the other is to change it there.
   const mentioned = (named: Footprint, other: ReadonlyArray<Touch>) =>
-    other.flatMap(({ file }) =>
-      file !== undefined && named.functions.some(fn => mentions(file, fn))
-        ? [file]
-        : [],
+    other.flatMap(({ files }) =>
+      files.filter(file => named.functions.some(fn => mentions(file, fn))),
     )
   return [...byPlace, ...mentioned(a, tb), ...mentioned(b, ta)]
 }
@@ -233,9 +236,7 @@ export const askedFiles = (
 ): ReadonlySet<string> => {
   const asked = new Set<string>()
   const files = (footprint: Footprint) =>
-    touchesOf(footprint).flatMap(({ file }) =>
-      file !== undefined && isSource(file) ? [file] : [],
-    )
+    touchesOf(footprint).flatMap(({ files }) => files.filter(isSource))
   for (const [a, b] of pairs) {
     if (sharedArea(a, b) !== undefined || sharedFunction(a, b) !== undefined)
       continue

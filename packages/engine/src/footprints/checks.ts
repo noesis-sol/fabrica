@@ -10,8 +10,9 @@ import { eachPathWord } from './text'
 // for the checks to pass without changing them, so they hold no tickets apart (744 of tutti's 862
 // held minutes were over a check script one ticket's acceptance named). A command runs the tracked
 // files it names (`scripts/check-fast.sh`, `node scripts/test-rerun.ts`), a package manager's
-// script of the root `package.json` (`pnpm run test`, `npm test`), and a script it runs runs what
-// its code names in turn; each file is read once, so a script calling itself ends.
+// script of the root `package.json` (`pnpm run test`, `npm test`), the root Makefile where it runs
+// make (`make check`), and a script or Makefile it runs runs what its code names in turn; each file
+// is read once, so a script calling itself ends.
 
 /** The scripts read for what they run in turn: the shell's, and files without an extension. */
 const scriptExtensions = setOf('sh bash zsh')
@@ -25,6 +26,12 @@ const isScript = (path: string): boolean => {
 // yarn lint. Its flags are passed over; a name the manifest has no script for runs nothing named.
 const scriptRun =
   /(?:^|[\s;&|(])(?:pnpm|npm|yarn|bun)(?:\s+--?[\w-]+(?:=\S+)?)*\s+(?:run\s+(?:--?[\w-]+(?:=\S+)?\s+)*)?([\w:.-]+)/gu
+
+// make running the root Makefile: make check, make -j4 test.
+const makeRun = /(?:^|[\s;&|(])g?make(?=\s|$)/u
+
+/** The names make reads its root Makefile by, in the order it looks for them. */
+const makefiles = ['GNUmakefile', 'makefile', 'Makefile']
 
 const Manifest = Schema.Struct({
   scripts: Schema.optional(Schema.Record(Schema.String, Schema.String)),
@@ -70,17 +77,22 @@ export const checkFiles = Effect.fn('Footprints.checkFiles')(function* (input: {
   const files = new Set<string>()
   const ranScripts = new Set<string>()
   const toRead: Array<string> = []
+  const add = (file: string) => {
+    if (files.has(file)) return
+    files.add(file)
+    if (isScript(file)) toRead.push(file)
+  }
+  const makefile = makefiles
+    .map(name => input.repository.tracked(name))
+    .find(file => file !== undefined)
   // What a command line, or a script's code, runs.
   const runs = (code: string) => {
     eachPathWord(code, ({ word, quoted }) => {
       const named = input.repository.named(word, quoted)
-      for (const file of named) {
-        if (files.has(file)) continue
-        files.add(file)
-        if (isScript(file)) toRead.push(file)
-      }
+      for (const file of named) add(file)
       return named.length > 0
     })
+    if (makefile !== undefined && makeRun.test(code)) add(makefile)
     for (const [, name] of code.matchAll(scriptRun)) {
       const script = name === undefined ? undefined : scripts.get(name)
       if (name === undefined || script === undefined || ranScripts.has(name))

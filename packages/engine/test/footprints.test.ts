@@ -97,6 +97,7 @@ const sources = new Map<string, string>([
     ].join('\n'),
   ],
   ['scripts/lint.sh', 'oxlint\n'],
+  ['Makefile', 'check:\n\tsh scripts/check-fast.sh\n'],
 ])
 
 /** A reader of `sources`, keeping each path it was asked for. */
@@ -452,6 +453,21 @@ describe('two footprints', () => {
       expected: 'holds on src/use.ts',
     },
     {
+      name: 'a function the code under a folder mentions counting',
+      files: ['src'],
+      expected: 'holds on src/loop.ts',
+    },
+    {
+      name: 'a function the code a glob matches mentions counting',
+      files: ['src/u*.ts'],
+      expected: 'holds on src/use.ts',
+    },
+    {
+      name: 'a folder whose code never mentions it',
+      files: ['src/ui'],
+      expected: 'clear',
+    },
+    {
       name: 'a function a document names not counting',
       files: ['docs/guide.md'],
       expected: 'clear',
@@ -488,6 +504,10 @@ describe('two footprints', () => {
         read: some.read,
       })
       expect(some.asked).toEqual(['src/use.ts'])
+      // A folder's tracked source files are read for it.
+      expect(
+        askedFiles([[named, footprintOf({ title: 'c', files: ['src/ui'] })]]),
+      ).toEqual(new Set(['src/ui/theme.ts', 'src/ui/view.ts']))
       // A pair already held apart by a function reads nothing either.
       expect(
         askedFiles([[named, footprintOf({ title: 'Call `refreshBranch`' })]]),
@@ -579,21 +599,40 @@ describe('code', () => {
 })
 
 describe('the check files', () => {
-  it.effect(
-    'are those the commands name and run, through scripts and the manifest',
-    () =>
-      Effect.gen(function* () {
-        const files = yield* checkFiles({
-          commands: ['scripts/check-fast.sh', 'make check'],
-          repository,
-          read: reader().read,
-        })
-        // README.md is named in a comment of the script, and runs nothing.
-        expect([...files].sort()).toEqual([
-          'scripts/check-fast.sh',
-          'scripts/lint.sh',
-          'scripts/test-rerun.ts',
-        ])
-      }),
+  it.effect.each([
+    {
+      name: 'a script it names, and what the script runs through the manifest',
+      commands: ['scripts/check-fast.sh'],
+      // README.md is named in a comment of the script, and runs nothing.
+      expected: [
+        'scripts/check-fast.sh',
+        'scripts/lint.sh',
+        'scripts/test-rerun.ts',
+      ],
+    },
+    {
+      name: 'the Makefile make runs, and what its recipes run',
+      commands: ['make check'],
+      expected: [
+        'Makefile',
+        'scripts/check-fast.sh',
+        'scripts/lint.sh',
+        'scripts/test-rerun.ts',
+      ],
+    },
+    {
+      name: 'a manifest script',
+      commands: ['pnpm test'],
+      expected: ['scripts/test-rerun.ts'],
+    },
+  ])('$name', ({ commands, expected }) =>
+    Effect.gen(function* () {
+      const files = yield* checkFiles({
+        commands,
+        repository,
+        read: reader().read,
+      })
+      expect([...files].sort()).toEqual(expected)
+    }),
   )
 })

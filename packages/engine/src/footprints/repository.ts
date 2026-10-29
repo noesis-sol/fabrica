@@ -17,12 +17,13 @@ import { basename, dirname, repoPath, sorted } from './names'
 /**
  * A place a ticket's `files` names: a tracked file, a tracked folder (every file under it, those
  * added there included), a glob (the files it matches from the root, those added later included),
- * or a name git doesn't track, a file or folder the ticket adds.
+ * or a name git doesn't track, a file or folder the ticket adds. A folder and a glob keep the
+ * tracked files they hold at Base, whose code may mention a function another ticket names.
  */
 export type Place = Data.TaggedEnum<{
   File: { readonly path: string }
-  Folder: { readonly path: string }
-  Glob: { readonly glob: Glob }
+  Folder: { readonly path: string; readonly files: ReadonlyArray<string> }
+  Glob: { readonly glob: Glob; readonly files: ReadonlyArray<string> }
   Added: { readonly path: string }
 }>
 export const Place = Data.taggedEnum<Place>()
@@ -80,10 +81,23 @@ export const makeRepository = (tracked: ReadonlyArray<string>): Repository => {
     place: entry => {
       const path = repoPath(nfc(entry))
       if (path === undefined) return []
-      if (isGlob(path)) return [Place.Glob({ glob: compileGlob(path) })]
+      if (isGlob(path)) {
+        const glob = compileGlob(path)
+        return [
+          Place.Glob({ glob, files: all.filter(file => glob.matches(file)) }),
+        ]
+      }
       const file = files.get(path)
       if (file !== undefined) return [Place.File({ path: file })]
-      if (folders.has(path)) return [Place.Folder({ path })]
+      if (folders.has(path))
+        return [
+          Place.Folder({
+            path,
+            files: [...files].flatMap(([clean, listed]) =>
+              clean.startsWith(`${path}/`) ? [listed] : [],
+            ),
+          }),
+        ]
       return [Place.Added({ path })]
     },
   }
