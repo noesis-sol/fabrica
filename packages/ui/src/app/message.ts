@@ -15,6 +15,8 @@ import * as Attention from '../console/attention'
 import * as History from '../console/history'
 import * as Stats from '../console/stats'
 import * as Engines from '../screens/engines'
+import * as Settings from '../screens/settings'
+import { Theme } from '../theme/theme'
 import { NotificationTarget } from './notify'
 import { Screen } from './screen'
 import {
@@ -48,6 +50,11 @@ export const Message = defineMessageUnion({
   GotHistoryMessage: { message: History.Message },
   /** A Message of the Engines and projects screen's. */
   GotEnginesMessage: { message: Engines.Message },
+  /** A Message of the Settings screen's. */
+  GotSettingsMessage: { message: Settings.Message },
+  /** A theme chosen, in Settings or the palette: applied at once, and kept as the install's (§18.2). */
+  ChoseTheme: { theme: Theme },
+  CompletedShowTheme: {},
 
   ConnectedToEngine: {
     engine: EngineId,

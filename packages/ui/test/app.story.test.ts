@@ -47,6 +47,7 @@ import { RunViewItem } from '../src/app/streams'
 import { runViewMessages } from '../src/app/subscriptions'
 import { WaitToReconnect, update } from '../src/app/update'
 import { layout, view } from '../src/app/view'
+import * as Settings from '../src/screens/settings'
 
 // The UI root (spec §18.1, §18.3, §18.5, Appendix A.1): routing between the screens, the keys drawn
 // from each screen's command list into the key help, the engine's frames decoded into the Model, and
@@ -117,6 +118,13 @@ describe('routing', () => {
       model(shown => {
         expect(shown.screen).toEqual(Screen.Settings())
       }),
+      // The Settings screen asks the engine for its settings as it opens.
+      Command.resolve(
+        Settings.LoadEngineSettings,
+        Settings.Message.FailedLoadEngineSettings({
+          reason: 'not connected to the engine',
+        }),
+      ),
       message(key('1', true)),
       model(shown => {
         expect(shown.screen).toEqual(Screen.Console())

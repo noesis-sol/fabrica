@@ -18,6 +18,7 @@ import {
   type SubscriptionEnvironment,
   makeSubscriptions,
 } from './subscriptions'
+import { type ThemeHostShape, layerThemeHost } from './theme-host'
 import { update } from './update'
 import { view } from './view'
 
@@ -34,6 +35,8 @@ export interface Environment extends SubscriptionEnvironment {
   readonly notifier: NotifierShape
   /** The app around the renderer: the desktop app's preload, or none in a browser. */
   readonly host: AppHostShape
+  /** Where the theme is shown and kept: the window the renderer runs in. */
+  readonly themeHost: ThemeHostShape
 }
 
 /** How the app names itself in its hello. */
@@ -81,6 +84,7 @@ export const program = (environment: Environment) => ({
   resources: Layer.mergeAll(
     layerNotifier(environment.notifier),
     Layer.succeed(AppHost, environment.host),
+    layerThemeHost(environment.themeHost),
   ),
   managedResources: makeManagedResources(environment),
 })

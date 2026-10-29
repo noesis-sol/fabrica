@@ -1,4 +1,4 @@
-import { Array, Effect, Option, Schema } from 'effect'
+import { Effect, Option, Schema } from 'effect'
 import { Command, Update } from 'foldkit'
 import { modifyFields } from 'foldkit/struct'
 
@@ -9,6 +9,7 @@ import * as History from '../console/history'
 import * as Sidebar from '../console/sidebar'
 import * as Stats from '../console/stats'
 import * as Engines from '../screens/engines'
+import * as Settings from '../screens/settings'
 import { dayOf, sameDay } from './clock'
 import { Connection, retryAfter } from './connection'
 import { commandFor, commandsFor } from './keys'
@@ -24,6 +25,7 @@ import {
   applyProjectEvents,
   applyRunView,
 } from './streams'
+import { ShowTheme, type ThemeHost } from './theme-host'
 
 // The root's update (spec §18.1): routing, the keys through the screen's command list, the
 // connection's lifecycle, each stream's items applied to the part of the Model they change, and the
@@ -35,7 +37,11 @@ export const WaitToReconnect = Command.define('WaitToReconnect', {
   execute: Effect.as(Effect.sleep(retryAfter), Message.WaitedToReconnect()),
 })
 
-type Return = Update.Return<Model, Message, Engines.Requires | Notifier>
+type Return = Update.Return<
+  Model,
+  Message,
+  Engines.Requires | Settings.Requires | Notifier | ThemeHost
+>
 
 /** The stats row's Messages, folded into its submodel; a run it started is watched afresh. */
 const foldStats = Update.foldChild({
@@ -142,12 +148,9 @@ const showScreen = (model: Model, screen: Screen): Model =>
 const projectName =
   (model: Model): Notify.ProjectName =>
   project =>
-    Option.match(
-      Array.findFirst(
-        Sidebar.rows(model.console.sidebar),
-        row => row.status.project === project,
-      ),
-      { onNone: () => project, onSome: row => row.status.name },
+    Option.getOrElse(
+      Sidebar.projectName(model.console.sidebar, project),
+      () => project,
     )
 
 /** `told`'s model as the Model's, and its notifications shown. */
@@ -219,16 +222,51 @@ const stepEngines = (
   }
 }
 
+const foldSettings = Update.foldChild({
+  update: Settings.update,
+  read: (model: Model) => Option.some(model.screens.settings),
+  write: (model: Model, settings: Settings.Model) =>
+    modifyFields(model, {
+      screens: screens => modifyFields(screens, { settings: () => settings }),
+    }),
+  toParentMessage: (message: Settings.Message) =>
+    Message.GotSettingsMessage({ message }),
+})
+
+/** The Settings screen asks again for the settings it shows: the engine's and the scope's (§18.4). */
+const openSettings = (model: Model): Return => {
+  const stepped = Settings.opened(model.screens.settings, model.scope)
+  return {
+    model: modifyFields(model, {
+      screens: screens =>
+        modifyFields(screens, { settings: () => stepped.model }),
+    }),
+    commands: Command.mapMessages(stepped.commands, message =>
+      Message.GotSettingsMessage({ message }),
+    ),
+  }
+}
+
 /**
  * Shows `screen`; a screen that wasn't shown already asks what it shows as it opens: the Engines
- * screen, its engine's status and credentials (§18.4).
+ * screen, its engine's status and credentials, and the Settings screen, its settings (§18.4).
  */
 const enterScreen = (model: Model, screen: Screen): Return => {
   const shown = showScreen(model, screen)
   return Screen.guards.Engines(screen) && !Screen.guards.Engines(model.screen)
     ? stepEngines(shown, Engines.opened)
-    : { model: shown }
+    : Screen.guards.Settings(screen) && !Screen.guards.Settings(model.screen)
+      ? openSettings(shown)
+      : { model: shown }
 }
+
+/** What the screen shown asks again of the engine just reached, or of the scope just chosen. */
+const reopenScreen = (model: Model): Return =>
+  Screen.guards.Engines(model.screen)
+    ? stepEngines(model, Engines.opened)
+    : Screen.guards.Settings(model.screen)
+      ? openSettings(model)
+      : { model }
 
 export const update = (model: Model, message: Message): Return =>
   Message.match<Return>(message, {
@@ -247,21 +285,32 @@ export const update = (model: Model, message: Message): Return =>
     DismissedOverlay: () => ({
       model: modifyFields(model, { overlay: () => Overlay.Closed() }),
     }),
-    SelectedScope: ({ project }) =>
-      sameScope(model.scope, project)
-        ? { model }
-        : foldRequests(
-            modifyFields(model, {
-              scope: () => project,
-              runView: () => Option.none(),
-              events: () => [],
-              attention: () => Option.none(),
-              focusedRequest: () => Option.none(),
-              backlog: () => Option.none(),
-              usage: () => Option.none(),
-            }),
-            Option.none(),
-          ),
+    SelectedScope: ({ project }) => {
+      if (sameScope(model.scope, project)) {
+        return { model }
+      }
+      const scoped = foldRequests(
+        modifyFields(model, {
+          scope: () => project,
+          runView: () => Option.none(),
+          events: () => [],
+          attention: () => Option.none(),
+          focusedRequest: () => Option.none(),
+          backlog: () => Option.none(),
+          usage: () => Option.none(),
+        }),
+        Option.none(),
+      )
+      // The Settings screen shows the new scope's settings.
+      if (Screen.guards.Settings(scoped.model.screen)) {
+        const reopened = openSettings(scoped.model)
+        return {
+          model: reopened.model,
+          commands: [...(scoped.commands ?? []), ...(reopened.commands ?? [])],
+        }
+      }
+      return scoped
+    },
     RequestedAddProject: () => {
       const entered = enterScreen(model, Screen.Engines())
       return {
@@ -276,15 +325,19 @@ export const update = (model: Model, message: Message): Return =>
     },
     GotHistoryMessage: ({ message }) => foldHistory(model, message),
     GotEnginesMessage: ({ message }) => foldEngines(model, message),
+    GotSettingsMessage: ({ message }) => foldSettings(model, message),
+    ChoseTheme: ({ theme }) => ({
+      model: modifyFields(model, { theme: () => Option.some(theme) }),
+      commands: [ShowTheme({ theme })],
+    }),
+    CompletedShowTheme: () => ({ model }),
 
     ConnectedToEngine: ({ engine, release, protocol }) => {
       const connected = modifyFields(model, {
         connection: () => Connection.Up({ engine, release, protocol }),
       })
-      // The Engines screen asks again what it shows of the engine just reached.
-      return Screen.guards.Engines(model.screen)
-        ? stepEngines(connected, Engines.opened)
-        : { model: connected }
+      // The screen shown asks again what it shows of the engine just reached.
+      return reopenScreen(connected)
     },
     LostEngine: () => ({
       model: modifyFields(model, { connection: () => Connection.Down() }),

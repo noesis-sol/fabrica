@@ -118,6 +118,16 @@ export const projectChip = (model: Model, project: ProjectId) =>
     row => chipOf(row.index),
   )
 
+/** The name of `project`, as its row has it; none while no row shows it. */
+export const projectName = (
+  model: Model,
+  project: ProjectId,
+): Option.Option<string> =>
+  Option.map(
+    Array.findFirst(rows(model), row => row.status.project === project),
+    row => row.status.name,
+  )
+
 /** A run's state in a word, and the role colour beside it: none while idle. */
 export const runLabel = (
   run: ProjectRunState,

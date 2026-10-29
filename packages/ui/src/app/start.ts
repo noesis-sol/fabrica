@@ -1,9 +1,9 @@
-import { Effect } from 'effect'
+import { Effect, Option } from 'effect'
 import { Runtime } from 'foldkit'
 
 import type { Platform } from '@fabrica/contracts'
 
-import { applyTheme, defaultTheme } from '../theme/theme'
+import { defaultTheme } from '../theme/theme'
 import { localTicks } from './clock'
 import { nextAnimationFrame } from './frame'
 import { appHostOf } from './host'
@@ -12,9 +12,10 @@ import { type NotifierShape, silentNotifier } from './notifier'
 import { receiveEnginePort } from './port'
 import { program } from './program'
 import { documentKeys } from './subscriptions'
+import { themeHostOf } from './theme-host'
 
 // Starting the renderer in a window, the one way both entries do (the app's and the renderer alone in
-// a browser): the theme on the root, the program with the window's frames, keys, engine port and the
+// a browser): the theme the install kept on the root, the program with the window's frames, keys, engine port and the
 // app around it, and the host's facts as its flags. The app's entry passes the preload's
 // notifications; the renderer alone shows none.
 
@@ -33,7 +34,9 @@ export const start = (
   target: Window,
   notifier: NotifierShape = silentNotifier,
 ): void => {
-  applyTheme(target.document.documentElement, defaultTheme)
+  const themeHost = themeHostOf(target)
+  const theme = Effect.runSync(themeHost.kept)
+  Effect.runSync(themeHost.show(Option.getOrElse(theme, () => defaultTheme)))
   const enginePort = receiveEnginePort(target)
   const application = Runtime.makeApplication({
     ...program({
@@ -43,6 +46,7 @@ export const start = (
       ticks: localTicks,
       notifier,
       host: appHostOf(target),
+      themeHost,
     }),
     container: target.document.getElementById('root'),
     devTools: { Message },
@@ -51,6 +55,10 @@ export const start = (
     flags: Effect.succeed({
       platform: platformOf(target.navigator.userAgent),
       release: appRelease,
+      ...Option.match(theme, {
+        onNone: () => ({}),
+        onSome: kept => ({ theme: kept }),
+      }),
     }),
   })
 }

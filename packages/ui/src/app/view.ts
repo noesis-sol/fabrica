@@ -31,6 +31,7 @@ import * as Review from '../screens/review'
 import * as Settings from '../screens/settings'
 import * as Talks from '../screens/talks'
 import * as Worker from '../screens/worker'
+import type { Theme } from '../theme/theme'
 import { Connection, isLive } from './connection'
 import {
   type KeyCommand,
@@ -350,6 +351,9 @@ const hintButton = (
     ],
   )
 
+/** Chooses a theme: made once, as the palette's theme commands do too. */
+const chooseTheme = (theme: Theme): Message => Message.ChoseTheme({ theme })
+
 const screenView = (model: Model, h: HtmlBuilder<Message>): Html =>
   Screen.match(model.screen, {
     Console: () => consoleView(model, h),
@@ -369,7 +373,18 @@ const screenView = (model: Model, h: HtmlBuilder<Message>): Html =>
         },
         toParentMessage: message => Message.GotEnginesMessage({ message }),
       }),
-    Settings: () => Settings.view(model.screens.settings, h),
+    Settings: () =>
+      Settings.view(
+        model.screens.settings,
+        {
+          projectName: Option.flatMap(model.scope, project =>
+            Sidebar.projectName(model.console.sidebar, project),
+          ),
+          theme: model.theme,
+          chooseTheme,
+        },
+        h,
+      ),
   })
 
 /** Above any screen but the console: its name and its hints, drawn from its command list. */

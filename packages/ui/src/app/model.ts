@@ -29,6 +29,7 @@ import * as Review from '../screens/review'
 import * as Settings from '../screens/settings'
 import * as Talks from '../screens/talks'
 import * as Worker from '../screens/worker'
+import { Theme } from '../theme/theme'
 import { Connection } from './connection'
 import * as Notify from './notify'
 import { Screen } from './screen'
@@ -52,6 +53,8 @@ export const Flags = Schema.Struct({
   platform: Platform,
   /** The app's release, said in its hello to the engine. */
   release: ReleaseVersion,
+  /** The theme this install chose, kept from its last choice; left out where it never chose one. */
+  theme: Schema.optionalKey(Theme),
 })
 export type Flags = typeof Flags.Type
 
@@ -82,6 +85,8 @@ export type Screens = typeof Screens.Type
 export const Model = Schema.Struct({
   platform: Platform,
   release: ReleaseVersion,
+  /** The theme this install chose (§18.2); none: the default. */
+  theme: Schema.Option(Theme),
   /** The connection attempt: each new one acquires the client afresh. */
   attempt: Schema.Int,
   connection: Connection,
@@ -122,6 +127,7 @@ export type Model = typeof Model.Type
 export const initialModel = (flags: Flags): Model => ({
   platform: flags.platform,
   release: flags.release,
+  theme: Option.fromUndefinedOr(flags.theme),
   attempt: 1,
   connection: Connection.Connecting(),
   screen: Screen.Console(),
