@@ -6,7 +6,12 @@ import {
   createLazy,
 } from 'foldkit/html'
 
-import type { Platform, ProjectId } from '@fabrica/contracts'
+import {
+  MergeQueue,
+  type Platform,
+  type ProjectId,
+  type TicketId,
+} from '@fabrica/contracts'
 
 import * as Attention from '../console/attention'
 import * as History from '../console/history'
@@ -95,6 +100,48 @@ const lazyStatsPart = (
 const lazyTalkPanel = createLazy()
 const lazyHistory = createLazy()
 const lazyInProgress = createLazy()
+
+/** Opens a card's worker view: made once, so the column's memo holds across renders. */
+const openWorker = (ticket: TicketId): Message =>
+  Message.RequestedScreen({ screen: Screen.Worker({ ticket }) })
+
+/** The In progress column's slices of the scoped run, the same values while no run is shown. */
+const noRun: InProgress.Slices = {
+  tickets: [],
+  workers: [],
+  queue: new MergeQueue({
+    merging: Option.none(),
+    train: Option.none(),
+    waiting: [],
+  }),
+  steps: [],
+}
+
+/** The In progress column, from the scoped run's tickets, workers, queue and steps, in its project's colour. */
+const inProgressView = (
+  inProgress: InProgress.Model,
+  tickets: InProgress.Slices['tickets'],
+  workers: InProgress.Slices['workers'],
+  queue: InProgress.Slices['queue'],
+  steps: InProgress.Slices['steps'],
+  role: Sidebar.Role,
+  now: Model['now'],
+  h: HtmlBuilder<Message>,
+): Html =>
+  InProgress.view(
+    inProgress,
+    { tickets, workers, queue, steps, now, role, open: openWorker },
+    h,
+  )
+
+/** The scoped run's project's colour, its sidebar chip's; `c1`, running, until the sidebar knows it. */
+const runRole = (model: Model): Sidebar.Role =>
+  Option.match(
+    Option.flatMap(model.runView, run =>
+      Sidebar.projectChip(model.console.sidebar, run.header.project),
+    ),
+    { onNone: () => 'c1', onSome: chip => chip.role },
+  )
 const lazyAttention = createLazy()
 const lazyUpNext = createLazy()
 
@@ -119,6 +166,7 @@ const historyView = (
 
 const consoleView = (model: Model, h: HtmlBuilder<Message>): Html => {
   const parts = model.console
+  const run = Option.getOrElse(model.runView, () => noRun)
   return h.div(
     [h.Class('flex min-h-0 flex-1 flex-col gap-16')],
     [
@@ -171,7 +219,18 @@ const consoleView = (model: Model, h: HtmlBuilder<Message>): Html => {
         [
           h.section(
             [h.AriaLabel('In progress'), h.Class(column)],
-            [lazyInProgress(InProgress.view<Message>, [parts.inProgress, h])],
+            [
+              lazyInProgress(inProgressView, [
+                parts.inProgress,
+                run.tickets,
+                run.workers,
+                run.queue,
+                run.steps,
+                runRole(model),
+                model.now,
+                h,
+              ]),
+            ],
           ),
           needsYou(model)
             ? h.section(
