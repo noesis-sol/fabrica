@@ -2,6 +2,7 @@ import { Option, Schema } from 'effect'
 import type { MessagePortMain, WebContents } from 'electron'
 
 import type { ReleaseVersion } from '@fabrica/contracts'
+import type { ServiceInstall } from '@fabrica/ui/host'
 import { DesktopNotification } from '@fabrica/ui/notify'
 import { Theme } from '@fabrica/ui/theme'
 
@@ -22,6 +23,8 @@ export interface MainActions {
   readonly pickFolder: () => Promise<FolderPick>
   readonly version: ReleaseVersion
   readonly updateStatus: () => UpdateStatus
+  /** Installs the local engine's login service, from the bundled distribution (spec §7.1). */
+  readonly installLoginService: () => Promise<ServiceInstall>
 }
 
 /** The part of `ipcMain` main uses; each listener gets the sending frame's URL (none once it has gone) and the values. */
@@ -108,6 +111,7 @@ export const registerIpc = ({
   onInvoke(channels.pickFolder, actions.pickFolder)
   onInvoke(channels.version, () => Promise.resolve(actions.version))
   onInvoke(channels.updateStatus, () => Promise.resolve(actions.updateStatus()))
+  onInvoke(channels.installLoginService, actions.installLoginService)
 }
 
 /** Hands the page in `contents` an engine port, which the preload passes on as a window message. */

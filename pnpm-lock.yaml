@@ -232,6 +232,9 @@ importers:
       '@fabrica/engine':
         specifier: workspace:*
         version: link:../../packages/engine
+      '@fabrica/engine-app':
+        specifier: workspace:*
+        version: link:../engine
       '@fabrica/testkit':
         specifier: workspace:*
         version: link:../../packages/testkit

@@ -10,6 +10,7 @@ const workspacePackages = [
   '@fabrica/client',
   '@fabrica/contracts',
   '@fabrica/engine',
+  '@fabrica/engine-app',
   '@fabrica/ui',
 ]
 

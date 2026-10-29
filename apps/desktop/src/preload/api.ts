@@ -1,6 +1,7 @@
 import { Option, Schema } from 'effect'
 
 import { ReleaseVersion } from '@fabrica/contracts'
+import { ServiceInstall, installLoginServiceMethod } from '@fabrica/ui/host'
 import {
   DesktopNotification,
   NotificationTarget,
@@ -13,8 +14,8 @@ import { Theme } from '@fabrica/ui/theme'
 // as an untrusted web page, so every value crossing is decoded with these schemas on both sides: by
 // the preload, from the page and from main, and by main, from the preload. The window controls, the
 // folder picker, the app's version, the update status, the system notifications and their clicks
-// (§18.5), and the engine port, which the preload hands to the page as a window message
-// (contextBridge can't carry a MessagePort).
+// (§18.5), installing the local engine's login service, and the engine port, which the preload hands
+// to the page as a window message (contextBridge can't carry a MessagePort).
 
 /** The IPC channels between main and the preload, each named once. */
 export const channels = {
@@ -28,6 +29,7 @@ export const channels = {
   updateStatusChanged: 'fabrica:update-status-changed',
   notify: 'fabrica:notify',
   notificationClicked: 'fabrica:notification-clicked',
+  installLoginService: 'fabrica:install-login-service',
   enginePort: 'fabrica:engine-port',
 } as const
 
@@ -77,6 +79,8 @@ export interface FabricaApi {
   ) => () => void
   /** System notifications, and the targets of those clicked. */
   readonly notifications: NotificationsApi
+  /** Installs the local engine as a login service, as the user chose (spec §7.1). */
+  readonly [installLoginServiceMethod]: () => Promise<ServiceInstall>
 }
 
 /** The part of `ipcRenderer` the API uses; a listener gets a message's value and the ports it carries. */
@@ -100,6 +104,7 @@ const decodeTheme = Schema.decodeUnknownSync(Theme)
 const decodeUpdateStatusOption = Schema.decodeUnknownOption(UpdateStatus)
 const decodeNotification = Schema.decodeUnknownSync(DesktopNotification)
 const decodeTargetOption = Schema.decodeUnknownOption(NotificationTarget)
+const decodeServiceInstall = Schema.decodeUnknownSync(ServiceInstall)
 
 /** The API over `ipc`: what the page passes is decoded before it is sent, what main answers before the page sees it. */
 export const makeApi = (ipc: PreloadIpc): FabricaApi => ({
@@ -125,6 +130,8 @@ export const makeApi = (ipc: PreloadIpc): FabricaApi => ({
         Option.map(decodeTargetOption(value), listener)
       }),
   },
+  [installLoginServiceMethod]: () =>
+    ipc.invoke(channels.installLoginService).then(decodeServiceInstall),
 })
 
 /** Hands the page each engine port main sends, as a window message of type `fabrica:engine-port`. */

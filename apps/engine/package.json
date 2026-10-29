@@ -5,6 +5,9 @@
   "description": "The engine's entry points: the daemon (fabrica serve) and the CLI.",
   "license": "MIT",
   "type": "module",
+  "exports": {
+    "./layout": "./src/layout.ts"
+  },
   "bin": {
     "fabrica": "./dist/main.js"
   },

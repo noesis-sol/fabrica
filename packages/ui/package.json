@@ -9,6 +9,7 @@
     ".": "./src/main.ts",
     "./styles.css": "./src/styles.css",
     "./theme": "./src/theme/theme.ts",
+    "./host": "./src/app/host.ts",
     "./port": "./src/app/port.ts",
     "./notify": "./src/app/notify.ts",
     "./window-colours": "./src/theme/windowColours.ts"

@@ -1,4 +1,4 @@
-import { Option, Schema } from 'effect'
+import { Effect, Option, Schema } from 'effect'
 import {
   BrowserWindow,
   type IpcMainEvent,
@@ -18,11 +18,18 @@ import {
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { ReleaseVersion } from '@fabrica/contracts'
+import { ServiceInstall } from '@fabrica/ui/host'
 import { type Theme, defaultTheme } from '@fabrica/ui/theme'
 import { windowColours } from '@fabrica/ui/window-colours'
 
+import { ConnectionTarget } from '../connection/target'
 import { FolderPick, UpdateStatus, channels } from '../preload/api'
 import { type MainIpc, registerIpc, sendEnginePort } from './ipc'
+import {
+  bundledLauncher,
+  ensureLocalEngine,
+  installLoginService,
+} from './local-engine'
 import { AppPage, isAppUrl } from './navigation'
 import { makeNotifications } from './notifications'
 import { type BrokeredPage, localTarget, makeBroker } from './ports'
@@ -30,9 +37,9 @@ import { guardPermissions, guardWebContents } from './security'
 import { makeUpdateStatusCell } from './updateStatus'
 import { titleBarOverlay, windowOptions } from './window'
 
-// Electron main (spec §5): the window, its title bar and its confinement, the preload's API, and the
-// connection process, to which it brokers each page's engine port. It runs no orchestration and stays
-// out of the data path.
+// Electron main (spec §5): the window, its title bar and its confinement, the preload's API, the
+// connection process, to which it brokers each page's engine port, and the local engine, started at
+// launch when none answers (§7.1). It runs no orchestration and stays out of the data path.
 
 const preload = fileURLToPath(new URL('../preload/index.cjs', import.meta.url))
 const connectionProcess = fileURLToPath(
@@ -41,6 +48,44 @@ const connectionProcess = fileURLToPath(
 
 /** How long main waits before starting a connection process that exited again. */
 const connectionRestartPause = 1_000
+
+const target = localTarget({
+  platform: process.platform,
+  home: app.getPath('home'),
+  environment: process.env,
+})
+
+/** The engine distribution the app bundles: a packaged app's only; a development build starts none. */
+const localEngine = {
+  launcher: app.isPackaged
+    ? Option.some(bundledLauncher(process.resourcesPath))
+    : Option.none(),
+  env: process.env,
+}
+
+/** Starts the local engine where none answers; the connection reaches it once it does. */
+const reachLocalEngine = ConnectionTarget.match(target, {
+  LocalSocket: ({ path }) =>
+    ensureLocalEngine({ socket: path, ...localEngine }).pipe(
+      Effect.asVoid,
+      Effect.catch(error =>
+        Effect.logWarning(`the local engine: ${error.message}`),
+      ),
+    ),
+  Unavailable: () => Effect.void,
+})
+
+const installService = (): Promise<ServiceInstall> =>
+  Effect.runPromise(
+    installLoginService(localEngine).pipe(
+      Effect.as(ServiceInstall.cases.Installed.make({})),
+      Effect.catch(error =>
+        Effect.succeed(
+          ServiceInstall.cases.Failed.make({ reason: error.reason }),
+        ),
+      ),
+    ),
+  )
 
 const broker = makeBroker<MessagePortMain>({
   spawn: onExit => {
@@ -55,11 +100,7 @@ const broker = makeBroker<MessagePortMain>({
     const { port1, port2 } = new MessageChannelMain()
     return { page: port1, relay: port2 }
   },
-  target: localTarget({
-    platform: process.platform,
-    home: app.getPath('home'),
-    environment: process.env,
-  }),
+  target,
 })
 
 const brokeredPage = (
@@ -219,10 +260,12 @@ if (!app.requestSingleInstanceLock()) {
       pickFolder,
       version,
       updateStatus: updateStatus.get,
+      installLoginService: installService,
     },
   })
 
   void app.whenReady().then(() => {
+    void Effect.runPromise(reachLocalEngine)
     guardPermissions(session.defaultSession)
     appWindow.show()
     app.on('activate', appWindow.show)

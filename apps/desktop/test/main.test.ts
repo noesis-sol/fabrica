@@ -4,6 +4,7 @@ import { MessageChannel } from 'node:worker_threads'
 import { describe, expect, it } from 'vitest'
 
 import { FuseV1Options } from '@electron/fuses'
+import { ServiceInstall } from '@fabrica/ui/host'
 
 import { appFuses, packedElectron } from '../build/fuses'
 import { type MainActions, type MainIpc, registerIpc } from '../src/main/ipc'
@@ -341,6 +342,8 @@ const recordingActions = () => {
       Promise.resolve(FolderPick.cases.Picked.make({ path: '/repo' })),
     version: '1.0.0',
     updateStatus: () => UpdateStatus.cases.Unavailable.make({}),
+    installLoginService: () =>
+      Promise.resolve(ServiceInstall.cases.Installed.make({})),
   }
   return { done, actions }
 }

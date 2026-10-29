@@ -1,5 +1,4 @@
 import { Effect } from 'effect'
-import { spawn } from 'node:child_process'
 
 import { Daemon } from '@fabrica/engine'
 
@@ -12,14 +11,17 @@ import { hostFacts, hostPaths } from './host'
  * Starts `fabrica serve` from this same program, detached from the bridge and its terminal, with the
  * bridge's environment: the engine's own environment, from which it builds every command's (§20.2).
  */
-const startDetached = Effect.sync(() => {
+const startServe = Effect.suspend(() => {
   const [entry] = process.argv.slice(1)
-  const child = spawn(
-    process.execPath,
-    [...process.execArgv, ...(entry === undefined ? [] : [entry]), 'serve'],
-    { detached: true, stdio: 'ignore', env: process.env },
-  )
-  child.unref()
+  return Daemon.startDetached({
+    command: process.execPath,
+    args: [
+      ...process.execArgv,
+      ...(entry === undefined ? [] : [entry]),
+      'serve',
+    ],
+    env: process.env,
+  })
 })
 
 export const bridge = Effect.gen(function* () {
@@ -28,7 +30,7 @@ export const bridge = Effect.gen(function* () {
     socket: paths.socket,
     input: process.stdin,
     output: process.stdout,
-    startEngine: startDetached,
+    startEngine: startServe,
   })
 }).pipe(
   // Its input is let go once the engine has closed the connection, so the process ends.
