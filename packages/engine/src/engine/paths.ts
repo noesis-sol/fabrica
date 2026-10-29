@@ -31,6 +31,10 @@ export interface EnginePaths {
   readonly certificate: string
   /** `<data>/tls-key.pem`: its private key, mode 0600. */
   readonly certificateKey: string
+  /** `<data>/telemetry.db`: the telemetry rows (§21). */
+  readonly telemetry: string
+  /** `<data>/telemetry.duckdb`: the telemetry query layer (§21). */
+  readonly telemetryQueries: string
 }
 
 /** The running engine's files, for the services and handlers that use them. */
@@ -80,6 +84,8 @@ export const pathsIn = (options: {
   logs: NodePath.join(options.data, 'logs'),
   certificate: NodePath.join(options.data, 'tls-certificate.pem'),
   certificateKey: NodePath.join(options.data, 'tls-key.pem'),
+  telemetry: NodePath.join(options.data, 'telemetry.db'),
+  telemetryQueries: NodePath.join(options.data, 'telemetry.duckdb'),
 })
 
 /**

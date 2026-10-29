@@ -20,6 +20,15 @@ export interface ProviderEntry {
   readonly baseUrl: string
 }
 
+/** The folder of a project's session folders: `<data>/projects/<id>/sessions/`. */
+export const sessionsFolder = ({
+  data,
+  project,
+}: {
+  readonly data: string
+  readonly project: ProjectId
+}): string => join(data, 'projects', project, 'sessions')
+
 /** A ticket's session folder, where Pi keeps its sessions: `<data>/projects/<id>/sessions/<ticket>/`. */
 export const sessionFolder = ({
   data,
@@ -29,7 +38,7 @@ export const sessionFolder = ({
   readonly data: string
   readonly project: ProjectId
   readonly ticket: TicketId
-}): string => join(data, 'projects', project, 'sessions', ticket)
+}): string => join(sessionsFolder({ data, project }), ticket)
 
 /** The session folder, made where it is missing. */
 export const makeSessionFolder = Effect.fn('PiAgent.makeSessionFolder')(

@@ -18,6 +18,7 @@
     "dist": "node build/dist.ts"
   },
   "dependencies": {
+    "@duckdb/node-api": "1.5.6-r.2",
     "@earendil-works/pi-coding-agent": "1.4.0",
     "@effect/platform-node": "4.0.0",
     "@fabrica/client": "workspace:*",

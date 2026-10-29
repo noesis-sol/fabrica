@@ -281,7 +281,6 @@ describe('the command line', () => {
     ['answer'],
     ['requires'],
     ['report'],
-    ['insights'],
   ]
 
   it.effect.each(notYet.map(command => command.join(' ')))(

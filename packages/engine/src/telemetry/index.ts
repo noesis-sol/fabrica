@@ -1,6 +1,21 @@
-// Telemetry (spec §21, H65): typed rows recorded in the engine's own SQLite store, and its metrics.
+// Telemetry (spec §21, H65): typed rows recorded in the engine's own SQLite store, and its metrics;
+// DuckDB the query layer over them, with the named queries.
 export { batchesWritten, observe, prunesRun, rowsLost } from './metrics'
+export {
+  QueryLayerFailed,
+  TelemetryDb,
+  type TelemetryDbShape,
+  makeTelemetryDb,
+  telemetryDbLayer,
+} from './duckdb'
 export { telemetryMigrations } from './migrations'
+export {
+  type Sources,
+  findEventStream,
+  findSessionFiles,
+  readSummary,
+  runNamedQuery,
+} from './queries'
 export { type RetentionSettings, cutoffOf, dayOf, prune } from './retention'
 export {
   type HandBackKind,
