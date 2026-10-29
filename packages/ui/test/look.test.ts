@@ -432,12 +432,7 @@ const known: ReadonlyMap<string, { ticket: string; held: number }> = new Map(
   themes.flatMap(theme => {
     const entry = (name: string, ticket: string, held: number) =>
       [`${theme} ${name}`, { ticket, held }] as const
-    const wraps = theme === 'neon-grid'
     return [
-      // The run controls make the stats row taller (in Neon Grid they wrap), and all under it lower.
-      entry('stats row height', 'fab-mgi.67', wraps ? 98 : 52),
-      entry('talk row top', 'fab-mgi.67', wraps ? 172 : 126),
-      entry('ticket columns top', 'fab-mgi.67', wraps ? 344 : 298),
       entry('project row height', 'fab-mgi.68', 59),
       entry('card height', 'fab-mgi.69', 84),
       entry('card pitch', 'fab-mgi.69', 92),

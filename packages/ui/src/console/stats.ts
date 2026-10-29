@@ -1041,12 +1041,15 @@ const item = (
       h.span(
         [
           h.DataAttribute('value', ''),
-          h.Class(`font-extrabold ${roleText[role]}`),
+          h.Class(`leading-none font-extrabold ${roleText[role]}`),
           h.Style({ fontSize: '20px' }),
         ],
         [value],
       ),
-      h.span([h.Class('text-xs font-bold text-muted')], [label]),
+      h.span(
+        [h.Class('text-xs font-bold whitespace-nowrap text-muted')],
+        [label],
+      ),
       ...after,
     ],
   )
@@ -1135,10 +1138,16 @@ const figures = (
   ]
 }
 
-const primaryButton =
-  'rounded-button bg-c1 px-12 py-6 text-sm font-bold text-ink shadow-glow1 hover:brightness-[1.08] disabled:opacity-60'
-const ghostButton =
-  'rounded-button border border-line px-12 py-6 text-sm text-fg hover:brightness-[1.08] disabled:opacity-60'
+const primaryLook =
+  'rounded-button bg-c1 font-bold text-ink shadow-glow1 hover:brightness-[1.08] disabled:opacity-60'
+const ghostLook =
+  'rounded-button border border-line text-fg hover:brightness-[1.08] disabled:opacity-60'
+const primaryButton = `${primaryLook} px-12 py-6 text-sm`
+const ghostButton = `${ghostLook} px-12 py-6 text-sm`
+// The row's own controls are smaller, so that they keep to the handoff's 44px strip, on one line
+// beside its six items in every theme (Neon Grid's monospace the widest).
+const rowPrimaryButton = `${primaryLook} px-8 py-4 text-xs`
+const rowGhostButton = `${ghostLook} px-8 py-4 text-xs`
 
 const modeMenu = (project: ProjectId, h: HtmlBuilder<Message>): Html =>
   h.ul(
@@ -1195,7 +1204,7 @@ const typingForm = (
         h.Autofocus(true),
         h.OnInput(text => Message.TypedModeText({ text })),
         h.Class(
-          'rounded-button border border-line bg-bg px-8 py-4 text-sm text-fg',
+          'rounded-button border border-line bg-bg px-8 py-4 text-xs text-fg',
         ),
       ]),
       typing.mode === 'spec'
@@ -1213,14 +1222,14 @@ const typingForm = (
           )
         : h.empty,
       h.button(
-        [h.Type('submit'), h.Disabled(!ready), h.Class(primaryButton)],
+        [h.Type('submit'), h.Disabled(!ready), h.Class(rowPrimaryButton)],
         ['Start'],
       ),
       h.button(
         [
           h.Type('button'),
           h.OnClick(Message.CancelledControls()),
-          h.Class(ghostButton),
+          h.Class(rowGhostButton),
         ],
         ['Cancel'],
       ),
@@ -1246,7 +1255,7 @@ const idleControls = (
               h.AriaExpanded(Controls.guards.ChoosingMode(model.controls)),
               h.Disabled(Request.guards.Pending(model.request)),
               h.OnClick(Message.ClickedStartRun()),
-              h.Class(primaryButton),
+              h.Class(rowPrimaryButton),
             ],
             [Request.guards.Pending(model.request) ? 'Starting…' : 'Start run'],
           ),
@@ -1289,7 +1298,7 @@ const runningControls = (
             h.Type('button'),
             h.Disabled(busy),
             h.OnClick(Message.ClickedUndrain({ project })),
-            h.Class(ghostButton),
+            h.Class(rowGhostButton),
           ],
           ['Undrain'],
         )
@@ -1298,7 +1307,7 @@ const runningControls = (
             h.Type('button'),
             h.Disabled(busy),
             h.OnClick(Message.ClickedDrain({ project })),
-            h.Class(ghostButton),
+            h.Class(rowGhostButton),
           ],
           ['Drain'],
         ),
@@ -1310,7 +1319,7 @@ const runningControls = (
               h.Disabled(busy),
               h.OnClick(Message.ConfirmedStop({ project })),
               h.Class(
-                'rounded-button bg-c3 px-12 py-6 text-sm font-bold text-ink hover:brightness-[1.08]',
+                'rounded-button bg-c3 px-8 py-4 text-xs font-bold text-ink hover:brightness-[1.08]',
               ),
             ],
             ['Stop the run'],
@@ -1319,7 +1328,7 @@ const runningControls = (
             [
               h.Type('button'),
               h.OnClick(Message.CancelledControls()),
-              h.Class(ghostButton),
+              h.Class(rowGhostButton),
             ],
             ['Keep running'],
           ),
@@ -1330,7 +1339,7 @@ const runningControls = (
               h.Type('button'),
               h.Disabled(busy),
               h.OnClick(Message.ClickedStop()),
-              h.Class(ghostButton),
+              h.Class(rowGhostButton),
             ],
             ['Stop'],
           ),
@@ -1360,8 +1369,8 @@ const controls = (
         [
           h.Role('group'),
           h.AriaLabel('Run controls'),
-          h.Class('ml-auto flex items-center gap-8'),
-          h.Style({ padding: '6px 12px' }),
+          h.Class('ml-auto flex items-center gap-6'),
+          h.Style({ padding: '6px 8px' }),
         ],
         Option.match(inputs.run, {
           onNone: () => [idleControls(model, project, h)],
