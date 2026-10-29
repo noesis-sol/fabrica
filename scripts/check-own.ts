@@ -23,6 +23,9 @@ import { Data, Option } from 'effect'
 // A change to the project's setup (isSetupFile: a package.json, the lockfile, a tsconfig, the
 // linter's and formatter's settings, the root vitest.config.ts, scripts/check-fast.sh) runs
 // scripts/check-fast.sh whole instead, and so does a branch with no main to start from.
+// The vendored source under repos/ (isVendored: Foldkit, Effect and Pi, spec §23) is read-only
+// reference that no check covers, so a change there counts for nothing, its package.json files
+// included.
 //
 // A pass is kept by tree (H89), under the worktree's own git dir, never tracked: the tree it ran on
 // (HEAD's, with the uncommitted and untracked files) and the test files that passed there. A run on
@@ -329,11 +332,17 @@ export interface Earlier {
   readonly since: ReadonlyArray<string>
 }
 
+/** A file of the vendored source under repos/, which the checks leave out (spec §23). */
+export const isVendored = (file: string): boolean => file.startsWith('repos/')
+
+const checked = (files: ReadonlyArray<string>): ReadonlyArray<string> =>
+  files.filter(file => !isVendored(file))
+
 /**
  * What a run on `tree` does, `sinceBase` being what changed since main: nothing on a tree that passed
  * already, the whole check after a change to the setup, else the steps on what changed since the
  * earlier pass (or main), and the tests the change since main touches but those that passed at the
- * earlier pass and that nothing since touches.
+ * earlier pass and that nothing since touches. Vendored files are left out of both changes.
  */
 export const standOn = (input: {
   readonly tree: string
@@ -341,7 +350,12 @@ export const standOn = (input: {
   readonly earlier: Option.Option<Earlier>
   readonly sources: Sources
 }): Plan => {
-  const { tree, sinceBase, earlier, sources } = input
+  const { tree, sources } = input
+  const sinceBase = checked(input.sinceBase)
+  const earlier = Option.map(input.earlier, ({ pass, since }) => ({
+    pass,
+    since: checked(since),
+  }))
   if (Option.isSome(earlier) && earlier.value.pass.tree === tree) {
     return Plan.Reused({ pass: earlier.value.pass })
   }
