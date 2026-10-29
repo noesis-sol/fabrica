@@ -2,6 +2,12 @@
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "extends": ["./node_modules/@foldkit/oxlint-plugin/recommended.json"],
   "plugins": ["typescript"],
+  "jsPlugins": [
+    {
+      "name": "fabrica",
+      "specifier": "./scripts/lint-source.ts"
+    }
+  ],
   "categories": {
     "correctness": "error"
   },
@@ -28,8 +34,18 @@
         "ignoreDeclarationSort": true,
         "ignoreCase": false
       }
-    ]
+    ],
+    "fabrica/no-raw-controls": "error",
+    "fabrica/no-built-replacement": "error"
   },
+  "overrides": [
+    {
+      "files": ["**/*.test.ts", "**/*.test.tsx"],
+      "rules": {
+        "fabrica/no-env-in-tests": "error"
+      }
+    }
+  ],
   "ignorePatterns": [
     "dist/",
     "out/",

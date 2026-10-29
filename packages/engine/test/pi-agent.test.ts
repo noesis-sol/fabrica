@@ -368,7 +368,7 @@ const capture = () => {
 describe('Pi RPC records', () => {
   it.effect('are split on LF only, a U+2028 and a split character kept', () =>
     Effect.gen(function* () {
-      const text = '{"a":"x y"}\n{"b":"é"}\n{"c":1}'
+      const text = '{"a":"x\u2028y"}\n{"b":"é"}\n{"c":1}'
       const bytes = Buffer.from(text, 'utf8')
       const cut = bytes.indexOf(Buffer.from('é')) + 1
       const lines = yield* Stream.make(
@@ -376,7 +376,7 @@ describe('Pi RPC records', () => {
         bytes.subarray(5, cut),
         bytes.subarray(cut),
       ).pipe(splitRecords, Stream.runCollect)
-      expect(lines).toEqual(['{"a":"x y"}', '{"b":"é"}', '{"c":1}'])
+      expect(lines).toEqual(['{"a":"x\u2028y"}', '{"b":"é"}', '{"c":1}'])
     }),
   )
 

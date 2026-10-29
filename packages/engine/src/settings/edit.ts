@@ -163,7 +163,7 @@ export const editSettingsText = (options: {
       ? JSON.stringify(inner)
       : JSON.stringify(inner, null, style.step).replaceAll(
           '\n',
-          `${style.eol}${indent}`,
+          () => `${style.eol}${indent}`,
         )
 
   /** A property written as `beside` is (its colon's spacing), else as the file's first. */

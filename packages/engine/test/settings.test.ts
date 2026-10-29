@@ -410,8 +410,7 @@ describe('editSettingsText', () => {
       expect(
         yield* edit(file, 'budgets', Option.some({ run: { usd: 20 } })),
       ).toBe(
-        file.replace(
-          '"pnpm-lock.yaml"]\n',
+        file.replace('"pnpm-lock.yaml"]\n', () =>
           [
             '"pnpm-lock.yaml"],',
             '    "budgets": {',
