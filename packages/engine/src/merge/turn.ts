@@ -20,6 +20,8 @@ export interface MergeConfig {
   readonly checkTimeout: Duration.Input
   /** The project's `setup_files`. */
   readonly setupFiles: ReadonlyArray<string>
+  /** `merge.train`: 1 lets the next ticket in line be checked beside the merge check, 0 never. */
+  readonly train: number
   /** The merge check's share of the machine's cores, at least 1. */
   readonly cores: number
   /** Who the queue's changes to the work graph are made by: the engine. */

@@ -1,7 +1,9 @@
-import { Context, Data, Effect, Layer } from 'effect'
+import { Context, Data, Effect, Layer, Option } from 'effect'
 import { basename, matchesGlob } from 'node:path'
 
-import type { TicketId } from '@fabrica/contracts'
+import type { CommitHash, TicketId } from '@fabrica/contracts'
+
+import type { CantTell, GitShape } from '../git'
 
 // The setup a merge's rebase calls for (spec §13.7 step 4, §13.8): whether a rebase changed a setup
 // file, and the port the queue runs the setup through. The port does nothing until the run's setup
@@ -18,6 +20,33 @@ export const isSetupFile = (
   patterns.some(pattern =>
     matchesGlob(pattern.includes('/') ? path : basename(path), pattern),
   )
+
+/**
+ * The setup files a rebase onto `onto` brought into the worktree from Base: those changed from `since`,
+ * the branch's merge base before it, to `onto`; none without a merge base.
+ */
+export const setupFilesBrought = (
+  git: GitShape,
+  {
+    worktree,
+    onto,
+    since,
+    patterns,
+  }: {
+    readonly worktree: string
+    readonly onto: CommitHash
+    readonly since: Option.Option<CommitHash>
+    readonly patterns: ReadonlyArray<string>
+  },
+): Effect.Effect<ReadonlyArray<string>, CantTell> =>
+  Option.match(since, {
+    onNone: () => Effect.succeed<ReadonlyArray<string>>([]),
+    onSome: from =>
+      Effect.map(
+        git.changedFiles({ repo: worktree, branch: onto, base: from }),
+        files => files.filter(file => isSetupFile(file, patterns)),
+      ),
+  })
 
 /** What a merge's setup came to. */
 export type SetupOutcome = Data.TaggedEnum<{

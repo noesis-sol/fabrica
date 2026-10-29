@@ -104,6 +104,11 @@ export interface GitShape {
   readonly abortRebase: (input: {
     readonly worktree: string
   }) => Effect.Effect<AbortOutcome, CantTell | GitFailed>
+  /** Puts the worktree's branch, index and files back at the commit `to`, dropping what moved them since. */
+  readonly resetTo: (input: {
+    readonly worktree: string
+    readonly to: CommitHash
+  }) => Effect.Effect<void, GitFailed>
   /** Fast-forwards the branch `base`, checked out in `checkout`, to the commit `to`, by its hash. */
   readonly fastForward: (input: {
     readonly checkout: string
@@ -665,6 +670,19 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
       exit.code === 0 ? Effect.void : unexpected(command.args, exit),
     )
 
+  const resetTo = Effect.fn('Git.resetTo')(function* ({
+    worktree,
+    to,
+  }: {
+    readonly worktree: string
+    readonly to: CommitHash
+  }) {
+    yield* writeOnly({
+      cwd: worktree,
+      args: ['reset', '--hard', '--quiet', '--end-of-options', to, '--'],
+    })
+  })
+
   const addWorktree = Effect.fn('Git.addWorktree')(function* ({
     repo,
     path,
@@ -754,6 +772,7 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     worktrees,
     rebase,
     abortRebase,
+    resetTo,
     fastForward,
     addWorktree,
     addWorktreeOn,

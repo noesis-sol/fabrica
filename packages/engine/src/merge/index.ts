@@ -13,6 +13,8 @@ export {
   SetupOutcome,
   isSetupFile,
   noSetup,
+  setupFilesBrought,
 } from './setup'
 export { Step, makeMachine, stepName } from './steps'
+export { MachineHold, type MergeTrain, makeTrain } from './train'
 export type { MergeConfig, MergeTurn } from './turn'

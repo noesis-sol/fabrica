@@ -6,7 +6,7 @@ import {
   type MergeStep,
 } from '@fabrica/contracts'
 
-import { CheckOutcome, Checks, Leftovers, NotRun } from '../checks'
+import { CheckOutcome, Leftovers, NotRun } from '../checks'
 import {
   CantTell,
   FastForwardOutcome,
@@ -34,8 +34,8 @@ import {
   mayGoRound,
 } from './hygiene'
 import { MergeOutcome, MergeUpdate } from './outcome'
-import { MergeSetup, SetupOutcome, isSetupFile } from './setup'
-import { besideCheck, checkedAhead } from './train'
+import { MergeSetup, SetupOutcome, setupFilesBrought } from './setup'
+import type { MergeTrain } from './train'
 import type { MergeTurn } from './turn'
 
 // A merge as a machine of named steps, one handler each (spec §13.7, H59, H62, H71): enter, locate,
@@ -111,10 +111,12 @@ const describeNotRun = NotRun.$match({
   LogNotKept: ({ error }) => `its log couldn't be kept: ${error.message}`,
 })
 
-/** The machine, on the services the engine runs it with: `run` takes a ticket's turn to its end. */
-export const makeMachine = Effect.gen(function* () {
+/**
+ * The machine, on the services the engine runs it with and the queue's `train`: `run` takes a ticket's
+ * turn to its end.
+ */
+export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
   const git = yield* Git
-  const checks = yield* Checks
   const graph = yield* WorkGraph
   const setup = yield* MergeSetup
   const worktrees = yield* Worktrees
@@ -157,6 +159,8 @@ export const makeMachine = Effect.gen(function* () {
     const { ticket, path } = turn.worktree
     if (CommandSetting.guards.Unset(turn.config.checkFast))
       return done(MergeOutcome.NoMergeCheck({ ticket }))
+    const stranded = yield* train.arrive(turn)
+    if (Option.isSome(stranded)) return done(stranded.value)
     yield* git.abortRebase({ worktree: path })
     const status = yield* git.status({ worktree: path })
     if (!isClean(status)) {
@@ -188,31 +192,6 @@ export const makeMachine = Effect.gen(function* () {
     return Step.Rebase({ rounds, onto: base, since })
   })
 
-  /** The setup files the rebase brought in from Base, from `since` to `onto`. */
-  const setupFilesBrought = (
-    turn: MergeTurn,
-    {
-      onto,
-      since,
-    }: {
-      readonly onto: CommitHash
-      readonly since: Option.Option<CommitHash>
-    },
-  ) =>
-    Option.match(since, {
-      onNone: () => Effect.succeed<ReadonlyArray<string>>([]),
-      onSome: from =>
-        Effect.map(
-          git.changedFiles({
-            repo: turn.worktree.path,
-            branch: onto,
-            base: from,
-          }),
-          files =>
-            files.filter(file => isSetupFile(file, turn.config.setupFiles)),
-        ),
-    })
-
   const rebase = Effect.fn('MergeQueue.rebase')(function* (
     turn: MergeTurn,
     {
@@ -233,7 +212,12 @@ export const makeMachine = Effect.gen(function* () {
         Effect.gen(function* () {
           // Every commit of the branch was on Base already: nothing is left to merge.
           if (head === onto) return done(MergeOutcome.NoChange({ ticket }))
-          const files = yield* setupFilesBrought(turn, { onto, since })
+          const files = yield* setupFilesBrought(git, {
+            worktree: path,
+            onto,
+            since,
+            patterns: turn.config.setupFiles,
+          })
           if (files.length > 0) {
             const ready = yield* setup.run({ ticket, worktree: path, files })
             if (SetupOutcome.$is('Failed')(ready))
@@ -289,7 +273,7 @@ export const makeMachine = Effect.gen(function* () {
       readonly head: CommitHash
     },
   ) {
-    const { ticket, path } = turn.worktree
+    const { ticket } = turn.worktree
     const confirm = (checked: CommitHash, unchecked: boolean): Step =>
       Step.Confirm({ rounds, onto, checked, unchecked })
     return yield* CommandSetting.match(turn.config.checkFast, {
@@ -298,25 +282,7 @@ export const makeMachine = Effect.gen(function* () {
       None: (): Effect.Effect<Step> => Effect.succeed(confirm(head, true)),
       Command: ({ command }): Effect.Effect<Step> =>
         Effect.gen(function* () {
-          const ahead = yield* checkedAhead({ turn, onto, head })
-          if (Option.isSome(ahead)) return confirm(ahead.value, false)
-          const outcome = yield* besideCheck(
-            turn,
-            checks.run({
-              suite: 'merge',
-              ticket: Option.some(ticket),
-              command,
-              worktree: path,
-              checkout: turn.config.home.checkout,
-              timeLimit: turn.config.checkTimeout,
-              cores: turn.config.cores,
-              passedAt: Option.none(),
-              nice: Option.none(),
-            }),
-          )
-          yield* turn.publish(
-            MergeUpdate.Check({ ticket, record: outcome.record }),
-          )
+          const outcome = yield* train.check({ turn, onto, head, command })
           return yield* CheckOutcome.$match(outcome, {
             Passed: ({ left }) =>
               Leftovers.$match(left, {
