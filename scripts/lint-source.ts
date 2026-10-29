@@ -13,6 +13,11 @@
 //                                 corrupted when it holds one (tutti's init and `$$`); the lint
 //                                 can't tell where a value came from, so it refuses every built one.
 //                                 Pass a function returning the value: its result is taken as is.
+//   fabrica/no-colour-literals:   a colour written in a string of the renderer's source: a hex colour,
+//                                 a CSS colour function (rgb(), oklch() and the rest), or a class of
+//                                 Tailwind's own palette. Colours come from themes.css's variables
+//                                 through Tailwind's theme (spec §18.2). .oxlintrc.json turns it on
+//                                 for the renderer; the colour-literals test checks its CSS files.
 // Each rule reads only the file it lints; the plugin imports nothing at run time.
 import type { RuleTester } from 'oxlint/plugins-dev'
 
@@ -146,10 +151,52 @@ const noBuiltReplacement: Rule = {
   }),
 }
 
+/** Colours written as text: hex colours, CSS colour functions (color-mix() mixes the theme's
+ *  variables, so it isn't one), and the utilities of Tailwind's own palette, with any variant. */
+const colourPatterns: ReadonlyArray<RegExp> = [
+  /(?<![\w&#])#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})(?![\w-])/i,
+  /\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/i,
+  /(?<![\w-])(?:bg|text|border(?:-[xytrblse])?|outline|ring|ring-offset|divide|fill|stroke|from|via|to|decoration|placeholder|caret|accent|shadow|inset-shadow|inset-ring|drop-shadow|text-shadow)-(?:(?:slate|gray|zinc|neutral|stone|mauve|olive|mist|taupe|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-(?:50|[1-9]00|950)|white|black)(?![\w-])/,
+]
+
+/** The first colour literal in `text`, if it holds one. */
+export const colourLiteralIn = (text: string): string | undefined => {
+  for (const pattern of colourPatterns) {
+    const found = pattern.exec(text)
+    if (found !== null) {
+      return found[0]
+    }
+  }
+  return undefined
+}
+
+const colourMessage = (colour: string): string =>
+  `colour literal ${colour}: use the theme's colours (themes.css's variables, through Tailwind's theme)`
+
+const noColourLiterals: Rule = {
+  meta: { type: 'problem' },
+  create: context => ({
+    Literal: node => {
+      const colour =
+        typeof node.value === 'string' ? colourLiteralIn(node.value) : undefined
+      if (colour !== undefined) {
+        context.report({ message: colourMessage(colour), node })
+      }
+    },
+    TemplateElement: node => {
+      const colour = colourLiteralIn(node.value.cooked ?? node.value.raw)
+      if (colour !== undefined) {
+        context.report({ message: colourMessage(colour), node })
+      }
+    },
+  }),
+}
+
 export const rules = {
   'no-raw-controls': noRawControls,
   'no-env-in-tests': noEnvInTests,
   'no-built-replacement': noBuiltReplacement,
+  'no-colour-literals': noColourLiterals,
 }
 
 export default { meta: { name: 'fabrica' }, rules }

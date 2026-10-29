@@ -1,0 +1,63 @@
+/* Tailwind's theme over themes.css's variables (spec §18.2, Appendix A.4): its colours, radii,
+   shadows and fonts are the theme's and nothing else, so a class of Tailwind's own palette draws
+   nothing; spacing keeps to the handoff's steps, named by their pixels (p-12 is 12px). `inline`
+   makes each utility read the variable itself, so switching data-theme on the root restyles it. */
+@theme inline {
+  --color-*: initial;
+  --color-bg: var(--bg);
+  --color-side: var(--side);
+  --color-panel: var(--panel);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-ink: var(--ink);
+  --color-c1: var(--c1);
+  --color-c2: var(--c2);
+  --color-c3: var(--c3);
+  --color-c4: var(--c4);
+  --color-c5: var(--c5);
+
+  --radius-*: initial;
+  --radius-card: var(--r);
+  --radius-button: var(--rb);
+  --radius-window: var(--rw);
+
+  --shadow-*: initial;
+  --shadow-glow1: var(--glow1);
+  --shadow-glow2: var(--glow2);
+
+  --font-sans: var(--font);
+  --font-mono: var(--mono);
+
+  --spacing: initial;
+  --spacing-0: 0px;
+  --spacing-4: 4px;
+  --spacing-6: 6px;
+  --spacing-8: 8px;
+  --spacing-10: 10px;
+  --spacing-12: 12px;
+  --spacing-16: 16px;
+  --spacing-18: 18px;
+  --spacing-20: 20px;
+  --spacing-24: 24px;
+}
+
+/* The handoff's surface, hover and focus (Appendix A.3): the page in the theme's background and
+   text, buttons a little brighter under the pointer, and focus a 2px outline in --c1 with a 2px
+   offset, so focus never rests on colour alone. */
+@layer base {
+  html {
+    background-color: var(--bg);
+    color: var(--fg);
+    font-family: var(--font);
+  }
+
+  button:not(:disabled):hover {
+    filter: brightness(1.08);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--c1);
+    outline-offset: 2px;
+  }
+}

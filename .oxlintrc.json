@@ -44,6 +44,18 @@
       "rules": {
         "fabrica/no-env-in-tests": "error"
       }
+    },
+    {
+      "files": ["packages/ui/**", "apps/desktop/src/renderer/**"],
+      "rules": {
+        "fabrica/no-colour-literals": "error"
+      }
+    },
+    {
+      "files": ["packages/ui/test/contrast.test.ts"],
+      "rules": {
+        "fabrica/no-colour-literals": "off"
+      }
     }
   ],
   "ignorePatterns": [

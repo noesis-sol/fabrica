@@ -28,6 +28,7 @@
     "out",
     "repos",
     "design",
+    "packages/ui/src/theme/themes.css",
     "docs",
     "*.tsbuildinfo",
     "pnpm-lock.yaml",

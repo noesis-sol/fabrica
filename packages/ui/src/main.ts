@@ -46,16 +46,13 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   body: h.div(
     [
       h.Class(
-        'min-h-screen bg-white flex flex-col items-center justify-center gap-6 p-6',
+        'min-h-screen bg-bg flex flex-col items-center justify-center gap-24 p-24',
       ),
     ],
     [
-      h.p(
-        [h.Class('text-6xl font-bold text-gray-800')],
-        [model.count.toString()],
-      ),
+      h.p([h.Class('text-6xl font-bold text-fg')], [model.count.toString()]),
       h.div(
-        [h.Class('flex flex-wrap justify-center gap-4')],
+        [h.Class('flex flex-wrap justify-center gap-16')],
         [
           Button.view(
             {
@@ -92,4 +89,5 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
 
 // STYLE
 
-const buttonStyle = 'bg-black text-white hover:bg-gray-700 px-4 py-2 transition'
+const buttonStyle =
+  'bg-c1 text-ink font-bold rounded-button shadow-glow1 px-16 py-8 transition'

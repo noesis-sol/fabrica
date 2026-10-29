@@ -1,0 +1,37 @@
+/* Hivemind console themes. Apply one by setting data-theme on the app root. */
+/* Role mapping: c1 = running, c2 = needs attention, c3 = error, c4 = done, c5 = info */
+
+[data-theme="neon-grid"] {
+  --bg: #05060B; --side: #030409; --panel: #0B0D18;
+  --line: rgba(255,46,155,0.24); --muted: #7A82A2; --fg: #E8ECF8;
+  --c1: #00E5FF; --c2: #FF2E9B; --c3: #FF3D3D; --c4: #39FF14; --c5: #FFB800;
+  --ink: #05060B;
+  --font: 'JetBrains Mono', ui-monospace, monospace;
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --r: 0px; --rb: 0px; --rw: 0px;
+  --glow1: 0 0 18px rgba(0,229,255,0.5);
+  --glow2: 0 0 18px rgba(255,46,155,0.55);
+}
+
+[data-theme="classic"] {
+  --bg: #1A1D21; --side: #19171D; --panel: #222529;
+  --line: rgba(255,255,255,0.1); --muted: #949BA4; --fg: #D1D2D3;
+  --c1: #2BAC76; --c2: #C2724E; --c3: #E5484D; --c4: #5B9BD5; --c5: #D4A574;
+  --ink: #FFFFFF;
+  --font: Inter, system-ui, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --r: 6px; --rb: 4px; --rw: 10px;
+  --glow1: none; --glow2: none;
+}
+
+[data-theme="lichen-bright"] {
+  --bg: oklch(0.19 0.025 140); --side: oklch(0.165 0.025 140); --panel: oklch(0.235 0.03 140);
+  --line: oklch(0.31 0.035 140); --muted: oklch(0.72 0.0375 140); --fg: oklch(0.94 0.015 140);
+  --c1: oklch(0.86 0.17 125); --c2: oklch(0.82 0.16 75); --c3: oklch(0.72 0.16 25);
+  --c4: oklch(0.82 0.11 190); --c5: oklch(0.78 0.1 295);
+  --ink: oklch(0.2 0.02 140);
+  --font: 'Archivo', system-ui, sans-serif;
+  --mono: ui-monospace, monospace;
+  --r: 0px; --rb: 0px; --rw: 0px;
+  --glow1: none; --glow2: none;
+}
