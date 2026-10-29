@@ -1,7 +1,7 @@
 import { Schema } from 'effect'
 import { Rpc, RpcGroup } from 'effect/rpc'
 
-import { ProviderName } from '../events'
+import { ProviderName, Utilization } from '../events'
 import { ProjectId, RunId } from '../ids'
 import { ProjectSettings } from '../settings'
 import { Text } from '../ticket'
@@ -65,9 +65,7 @@ export class UsageWindow extends Schema.Class<UsageWindow>('UsageWindow')({
   /** `five_hour`, `seven_day`, … as the provider names it. */
   window: Text,
   /** The share of the window used, from 0 to 1. */
-  utilization: Schema.Finite.check(
-    Schema.isBetween({ minimum: 0, maximum: 1 }),
-  ),
+  utilization: Utilization,
   resetsAt: Schema.OptionFromNullOr(Moment),
 }) {}
 

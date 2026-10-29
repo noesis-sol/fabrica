@@ -28,7 +28,7 @@ const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 const Usd = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
 
 /** A share, from 0 to 1. */
-const Utilization = Schema.Finite.check(
+export const Utilization = Schema.Finite.check(
   Schema.isBetween({ minimum: 0, maximum: 1 }),
 )
 
