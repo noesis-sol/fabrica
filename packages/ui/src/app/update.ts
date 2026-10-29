@@ -69,6 +69,7 @@ export const update = (model: Model, message: Message): Return =>
         runView: () => Option.none(),
         attention: () => Option.none(),
         backlog: () => Option.none(),
+        usage: () => Option.none(),
       }),
     }),
 
@@ -86,6 +87,7 @@ export const update = (model: Model, message: Message): Return =>
         attention: () => Option.none(),
         backlog: () => Option.none(),
         load: () => Option.none(),
+        usage: () => Option.none(),
       }),
     }),
     FailedToConnect: ({ reason }) => ({

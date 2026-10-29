@@ -1,0 +1,18 @@
+/* The console's title bar (spec §18.3, H46, H90): the bar is the window's drag region and its
+   controls aren't, marked by data-app-region (titlebar.ts); a window narrower than the 1280px
+   reference keeps the tighter usage window alone. */
+[data-app-region='drag'] {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+[data-app-region='no-drag'] {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+@media (max-width: 1200px) {
+  [data-usage-window='other'] {
+    display: none;
+  }
+}

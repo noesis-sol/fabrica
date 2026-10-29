@@ -2,3 +2,4 @@
 @import './theme/themes.css';
 @import './theme/fonts.css';
 @import './theme/tokens.css';
+@import './console/titlebar.css';

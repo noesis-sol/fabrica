@@ -129,6 +129,12 @@ const consoleView = (model: Model, h: HtmlBuilder<Message>): Html => {
   )
 }
 
+/** Whether the scoped run holds on a usage limit: its banner then takes the usage windows' place (§18.3). */
+const usageHeld = (model: Model): boolean =>
+  Option.exists(model.runView, runView =>
+    runView.holds.some(hold => hold.kind === 'USAGE_LIMIT'),
+  )
+
 const keyCap = (label: string, h: HtmlBuilder<Message>): Html =>
   h.kbd(
     [h.Class('rounded-button border border-line px-4 font-mono text-xs')],
@@ -310,6 +316,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
       h.header(
         [
           h.AriaLabel('Title bar'),
+          h.DataAttribute('app-region', 'drag' satisfies Titlebar.AppRegion),
           h.Class('flex items-center gap-8 border-b border-line bg-side'),
           h.Style({ height: layout.titleBarHeight, padding: '0 14px' }),
         ],
@@ -317,6 +324,10 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
           Titlebar.view(
             model.console.titlebar,
             {
+              platform: model.platform,
+              load: model.load,
+              usage: model.usage,
+              usageHeld: usageHeld(model),
               search: {
                 hint: Option.getOrElse(
                   keyLabel(openPalette, model.platform),

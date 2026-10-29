@@ -9,6 +9,7 @@ import {
   ReleaseVersion,
   RunView,
   Ticket,
+  UsageWindow,
 } from '@fabrica/contracts'
 
 import * as Attention from '../console/attention'
@@ -93,6 +94,8 @@ export const Model = Schema.Struct({
   backlog: Schema.Option(Schema.Array(Ticket)),
   /** The engine host's load. */
   load: Schema.Option(HostLoad),
+  /** The scoped project's provider account's usage windows, from the model proxy (§12.9, H90). */
+  usage: Schema.Option(Schema.Array(UsageWindow)),
   console: ConsoleParts,
   screens: Screens,
 })
@@ -110,6 +113,7 @@ export const initialModel = (flags: Flags): Model => ({
   attention: Option.none(),
   backlog: Option.none(),
   load: Option.none(),
+  usage: Option.none(),
   console: {
     titlebar: Titlebar.init(),
     sidebar: Sidebar.init(),

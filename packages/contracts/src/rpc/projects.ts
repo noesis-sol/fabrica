@@ -1,10 +1,11 @@
 import { Schema } from 'effect'
 import { Rpc, RpcGroup } from 'effect/rpc'
 
+import { ProviderName } from '../events'
 import { ProjectId, RunId } from '../ids'
 import { ProjectSettings } from '../settings'
 import { Text } from '../ticket'
-import { Count, Ordinal, optional } from './common'
+import { Count, Moment, Ordinal, optional } from './common'
 import { ProjectNotFound } from './errors'
 import { keyedPatch, resume, streamItem } from './stream'
 
@@ -54,6 +55,21 @@ export class ProjectStatus extends Schema.Class<ProjectStatus>('ProjectStatus')(
     ready: Count,
   },
 ) {}
+
+/**
+ * One of the usage windows of a project's provider account, its latest figure as the model proxy read
+ * it from the provider's responses (§12.9, H90): the title bar shows them (§18.3).
+ */
+export class UsageWindow extends Schema.Class<UsageWindow>('UsageWindow')({
+  provider: ProviderName,
+  /** `five_hour`, `seven_day`, … as the provider names it. */
+  window: Text,
+  /** The share of the window used, from 0 to 1. */
+  utilization: Schema.Finite.check(
+    Schema.isBetween({ minimum: 0, maximum: 1 }),
+  ),
+  resetsAt: Schema.OptionFromNullOr(Moment),
+}) {}
 
 /** What `init` wrote, in order. */
 export class Initialized extends Schema.Class<Initialized>('Initialized')({
