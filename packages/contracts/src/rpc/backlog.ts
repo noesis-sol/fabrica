@@ -96,10 +96,18 @@ export const NotReady = Schema.TaggedUnion({
 }).annotate({ identifier: 'NotReady' })
 export type NotReady = typeof NotReady.Type
 
+/** A reason a ticket isn't ready, with the words the log and the console say it in (H81). */
+export class NotReadyReason extends Schema.Class<NotReadyReason>(
+  'NotReadyReason',
+)({
+  reason: NotReady,
+  words: Text,
+}) {}
+
 /** `tickets.why`'s answer. */
 export const Why = Schema.TaggedUnion({
   ready: {},
-  not_ready: { reasons: Schema.NonEmptyArray(NotReady) },
+  not_ready: { reasons: Schema.NonEmptyArray(NotReadyReason) },
 })
 export type Why = typeof Why.Type
 
@@ -120,6 +128,10 @@ const inProject = Schema.Union([ProjectNotFound, TicketNotFound, Refused])
 
 /** The patch to the backlog: a deleted ticket by its ID. */
 export const BacklogPatch = keyedPatch(Ticket, TicketId)
+
+/** The backlog stream's items: every ticket, then patches. */
+export const BacklogItem = streamItem(Schema.Array(Ticket), BacklogPatch)
+export type BacklogItem = typeof BacklogItem.Type
 
 export const BacklogRpcs = RpcGroup.make(
   Rpc.make('tickets.list', {
@@ -190,7 +202,7 @@ export const BacklogRpcs = RpcGroup.make(
   }),
   Rpc.make('tickets.watch', {
     payload: { project: ProjectId, resume },
-    success: streamItem(Schema.Array(Ticket), BacklogPatch),
+    success: BacklogItem,
     error: ProjectNotFound,
     stream: true,
   }),

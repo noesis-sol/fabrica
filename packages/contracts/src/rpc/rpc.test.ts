@@ -524,19 +524,40 @@ const samples: Record<string, Samples> = {
       {
         _tag: 'not_ready',
         reasons: [
-          { _tag: 'blocked', by: other, status: 'in_progress' },
-          { _tag: 'closed_unmerged', by: other },
-          { _tag: 'filed_from_unmerged', ticket: other },
-          { _tag: 'deferred', until: at },
-          { _tag: 'not_dispatched', type: 'epic' },
-          { _tag: 'set_aside', reason: 'MERGE_CONFLICT' },
           {
-            _tag: 'held_back',
-            reason: 'solo',
-            detail: 'waits for the solo ticket fa-c3d4',
+            reason: { _tag: 'blocked', by: other, status: 'in_progress' },
+            words: 'waits for fa-c3d4 to merge: it is in progress',
           },
-          { _tag: 'closed' },
-          { _tag: 'in_progress' },
+          {
+            reason: { _tag: 'closed_unmerged', by: other },
+            words: 'waits for fa-c3d4 to merge: it is closed but not merged',
+          },
+          {
+            reason: { _tag: 'filed_from_unmerged', ticket: other },
+            words: 'waits for fa-c3d4, the ticket it was filed from, to merge',
+          },
+          {
+            reason: { _tag: 'deferred', until: at },
+            words: 'it is deferred',
+          },
+          {
+            reason: { _tag: 'not_dispatched', type: 'epic' },
+            words: 'it is an epic',
+          },
+          {
+            reason: { _tag: 'set_aside', reason: 'MERGE_CONFLICT' },
+            words: 'it was set aside in this run',
+          },
+          {
+            reason: {
+              _tag: 'held_back',
+              reason: 'solo',
+              detail: 'waits for the solo ticket fa-c3d4',
+            },
+            words: 'waits for the solo ticket fa-c3d4',
+          },
+          { reason: { _tag: 'closed' }, words: 'it is closed' },
+          { reason: { _tag: 'in_progress' }, words: 'it is in progress' },
         ],
       },
     ],

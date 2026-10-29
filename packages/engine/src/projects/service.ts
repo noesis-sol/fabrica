@@ -37,7 +37,12 @@ import {
   ticketBranch,
 } from '../git'
 import type { SettingsProblems } from '../settings'
-import { WorkGraph, type WorkGraphShape, sqliteLayer } from '../workgraph'
+import {
+  type OnBase,
+  WorkGraph,
+  type WorkGraphShape,
+  sqliteLayer,
+} from '../workgraph'
 import { ProjectCheck, checkProject } from './check'
 import {
   clonePath,
@@ -105,6 +110,10 @@ export interface ProjectsShape {
   readonly workGraph: (
     project: ProjectId,
   ) => Effect.Effect<WorkGraphShape, ProjectNotFound | WorkGraphUnopened>
+  /** Whether a closed ticket of the project is on its Base, as the ready rule asks it (§13.3). */
+  readonly onBase: (
+    project: ProjectId,
+  ) => Effect.Effect<OnBase, ProjectNotFound>
   /** The projects' rows (§18.3), as a snapshot or the patches after `resume`, then each change. */
   readonly watchStatus: (
     resume: Option.Option<Resume>,
@@ -124,14 +133,16 @@ const reasonOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
 /** Whether the closed blocker `ticket` is on Base: its branch merged into it. A failure to tell is no. */
-const onBaseOf = (git: GitShape, record: ProjectRecord) => (ticket: TicketId) =>
-  git
-    .isOnBase({
-      repo: record.path,
-      branch: `refs/heads/${ticketBranch(ticket)}`,
-      base: `refs/heads/${record.base}`,
-    })
-    .pipe(Effect.orElseSucceed(() => false))
+const onBaseOf =
+  (git: GitShape, record: ProjectRecord): OnBase =>
+  (ticket: TicketId) =>
+    git
+      .isOnBase({
+        repo: record.path,
+        branch: `refs/heads/${ticketBranch(ticket)}`,
+        base: `refs/heads/${record.base}`,
+      })
+      .pipe(Effect.orElseSucceed(() => false))
 
 /** The Projects service on Git, the engine's files and engine.db, its work graphs held in the layer's scope. */
 export const make = Effect.gen(function* () {
@@ -458,6 +469,8 @@ export const make = Effect.gen(function* () {
     settings,
     setSettings,
     workGraph: project => Effect.flatMap(find(project), open),
+    onBase: project =>
+      Effect.map(find(project), record => onBaseOf(git, record)),
     watchStatus: statusFeed.watch,
   })
 })
