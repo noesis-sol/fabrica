@@ -88,8 +88,10 @@ export const secondsSince = (
 export const sayElapsed = (
   since: DateTime.DateTime,
   now: DateTime.DateTime,
-): string => {
-  const seconds = secondsSince(since, now)
+): string => sayDuration(secondsSince(since, now))
+
+/** A length of time in whole seconds, as the console says one: `12s`, `3m 05s`, `1h 02m`. */
+export const sayDuration = (seconds: number): string => {
   const minutes = Math.floor(seconds / 60)
   const hours = Math.floor(minutes / 60)
   return hours > 0

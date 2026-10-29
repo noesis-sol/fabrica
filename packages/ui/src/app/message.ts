@@ -19,6 +19,7 @@ import * as Stats from '../console/stats'
 import * as TalkPanel from '../console/talk-panel'
 import * as Backlog from '../screens/backlog'
 import * as Engines from '../screens/engines'
+import * as Insights from '../screens/insights'
 import * as Palette from '../screens/palette'
 import * as Review from '../screens/review'
 import * as Settings from '../screens/settings'
@@ -69,6 +70,8 @@ export const Message = defineMessageUnion({
   GotEnginesMessage: { message: Engines.Message },
   /** A Message of the Settings screen's. */
   GotSettingsMessage: { message: Settings.Message },
+  /** A Message of the Insights screen's. */
+  GotInsightsMessage: { message: Insights.Message },
   /** A theme chosen, in Settings or the palette: applied at once, and kept as the install's (§18.2). */
   ChoseTheme: { theme: Theme },
   CompletedShowTheme: {},

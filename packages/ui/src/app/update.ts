@@ -19,6 +19,7 @@ import * as Stats from '../console/stats'
 import * as TalkPanel from '../console/talk-panel'
 import * as Backlog from '../screens/backlog'
 import * as Engines from '../screens/engines'
+import * as Insights from '../screens/insights'
 import * as Palette from '../screens/palette'
 import * as Review from '../screens/review'
 import * as Settings from '../screens/settings'
@@ -77,6 +78,7 @@ type Return = Update.Return<
   Message,
   | Engines.Requires
   | Settings.Requires
+  | Insights.Requires
   | Review.Requires
   | EngineConnectionService
   | Notifier
@@ -526,6 +528,31 @@ const openSettings = (model: Model): Return => {
   }
 }
 
+const foldInsights = Update.foldChild({
+  update: Insights.update,
+  read: (model: Model) => Option.some(model.screens.insights),
+  write: (model: Model, insights: Insights.Model) =>
+    modifyFields(model, {
+      screens: screens => modifyFields(screens, { insights: () => insights }),
+    }),
+  toParentMessage: (message: Insights.Message) =>
+    Message.GotInsightsMessage({ message }),
+})
+
+/** The Insights screen asks again for the scope's telemetry (§18.4, §21). */
+const openInsights = (model: Model): Return => {
+  const stepped = Insights.opened(model.screens.insights, model.scope)
+  return {
+    model: modifyFields(model, {
+      screens: screens =>
+        modifyFields(screens, { insights: () => stepped.model }),
+    }),
+    commands: Command.mapMessages(stepped.commands, message =>
+      Message.GotInsightsMessage({ message }),
+    ),
+  }
+}
+
 const foldBacklog = Update.foldChild({
   update: Backlog.update,
   read: (model: Model) => Option.some(model.screens.backlog),
@@ -570,8 +597,9 @@ const tellBacklog = (
 
 /**
  * Shows `screen`; a screen that wasn't shown already asks what it shows as it opens: the Engines
- * screen, its engine's status and credentials; the Settings screen, its settings; the Review screen,
- * the scope's report, log and diff (§18.4); the Backlog screen starts afresh.
+ * screen, its engine's status and credentials; the Settings screen, its settings; the Insights screen,
+ * the scope's telemetry; the Review screen, the scope's report, log and diff (§18.4); the Backlog
+ * screen starts afresh.
  */
 const enterScreen = (model: Model, screen: Screen): Return => {
   const shown = showScreen(model, screen)
@@ -579,11 +607,14 @@ const enterScreen = (model: Model, screen: Screen): Return => {
     ? stepEngines(shown, Engines.opened)
     : Screen.guards.Settings(screen) && !Screen.guards.Settings(model.screen)
       ? openSettings(shown)
-      : Screen.guards.Review(screen) && !Screen.guards.Review(model.screen)
-        ? reviewScope(shown)
-        : Screen.guards.Backlog(screen) && !Screen.guards.Backlog(model.screen)
-          ? { model: openBacklog(shown) }
-          : { model: shown }
+      : Screen.guards.Insights(screen) && !Screen.guards.Insights(model.screen)
+        ? openInsights(shown)
+        : Screen.guards.Review(screen) && !Screen.guards.Review(model.screen)
+          ? reviewScope(shown)
+          : Screen.guards.Backlog(screen) &&
+              !Screen.guards.Backlog(model.screen)
+            ? { model: openBacklog(shown) }
+            : { model: shown }
 }
 
 /** What the screen shown asks again of the engine just reached, or of the scope just chosen. */
@@ -592,9 +623,11 @@ const reopenScreen = (model: Model): Return =>
     ? stepEngines(model, Engines.opened)
     : Screen.guards.Settings(model.screen)
       ? openSettings(model)
-      : Screen.guards.Review(model.screen)
-        ? reviewScope(model)
-        : { model }
+      : Screen.guards.Insights(model.screen)
+        ? openInsights(model)
+        : Screen.guards.Review(model.screen)
+          ? reviewScope(model)
+          : { model }
 
 export const update = (model: Model, message: Message): Return =>
   Message.match<Return>(message, {
@@ -668,13 +701,15 @@ export const update = (model: Model, message: Message): Return =>
         }),
         Option.none(),
       )
-      // The Settings screen shows the new scope's settings; the Review screen follows the scope to its
-      // project.
+      // The Settings and Insights screens show the new scope's settings and telemetry; the Review screen
+      // follows the scope to its project.
       const reopened = Screen.guards.Settings(scoped.model.screen)
         ? Option.some(openSettings(scoped.model))
-        : Screen.guards.Review(scoped.model.screen)
-          ? Option.some(reviewScope(scoped.model))
-          : Option.none()
+        : Screen.guards.Insights(scoped.model.screen)
+          ? Option.some(openInsights(scoped.model))
+          : Screen.guards.Review(scoped.model.screen)
+            ? Option.some(reviewScope(scoped.model))
+            : Option.none()
       return andThen(
         Option.match(reopened, {
           onNone: () => scoped,
@@ -714,6 +749,7 @@ export const update = (model: Model, message: Message): Return =>
         : folded
     },
     GotSettingsMessage: ({ message }) => foldSettings(model, message),
+    GotInsightsMessage: ({ message }) => foldInsights(model, message),
     ChoseTheme: ({ theme }) => ({
       model: modifyFields(model, { theme: () => Option.some(theme) }),
       commands: [ShowTheme({ theme })],

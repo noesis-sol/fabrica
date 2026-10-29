@@ -20,6 +20,7 @@ import {
   EngineHello,
   EngineId,
   EngineRpcs,
+  InsightsQuery,
   ProjectId,
   RunHeader,
   RunRpcs,
@@ -47,6 +48,7 @@ import { RunViewItem } from '../src/app/streams'
 import { runViewMessages } from '../src/app/subscriptions'
 import { WaitToReconnect, update } from '../src/app/update'
 import { layout, view } from '../src/app/view'
+import * as Insights from '../src/screens/insights'
 import * as Settings from '../src/screens/settings'
 
 // The UI root (spec §18.1, §18.3, §18.5, Appendix A.1): routing between the screens, the keys drawn
@@ -71,6 +73,31 @@ const connected: Model = {
 
 const key = (pressed: string, mod = false) =>
   Message.PressedKey({ key: pressed, mod, alt: false, inField: false })
+
+/** The Insights screen's requests as it opens, each answered that the engine doesn't serve it. */
+const insightsUnserved = [
+  [
+    Insights.LoadSummary,
+    Insights.Message.FailedLoadSummary({
+      project: Option.none(),
+      reason: 'not served',
+    }),
+  ] as const,
+  ...Insights.Panel.literals.map(
+    panel =>
+      [
+        Insights.RunQuery,
+        Insights.Message.FailedQuery({
+          panel,
+          query: InsightsQuery.cases.cost_per_merged_ticket.make({
+            project: Option.none(),
+            since: Option.none(),
+          }),
+          reason: 'not served',
+        }),
+      ] as const,
+  ),
+]
 
 describe('routing', () => {
   test('the app opens on the console, connecting', () => {
@@ -172,6 +199,7 @@ describe('routing', () => {
       update,
       given({ ...start, overlay: Overlay.Palette() }),
       message(Message.RequestedScreen({ screen: Screen.Insights() })),
+      Command.resolveAll(...insightsUnserved),
       model(shown => {
         expect(shown.screen).toEqual(Screen.Insights())
         expect(shown.overlay).toEqual(Overlay.Closed())

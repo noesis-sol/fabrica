@@ -24,6 +24,7 @@ import {
 import { describe, expect, test } from '@effect/vitest'
 import {
   EngineId,
+  InsightsQuery,
   ProjectId,
   ProjectRunState,
   ProjectStatus,
@@ -46,6 +47,7 @@ import { Screen } from '../src/app/screen'
 import { ShowTheme } from '../src/app/theme-host'
 import { paletteEntries, update } from '../src/app/update'
 import { view } from '../src/app/view'
+import * as Insights from '../src/screens/insights'
 import * as Palette from '../src/screens/palette'
 
 // The command palette (spec §18.5, §18.3's title bar): ⌘K opens it over any screen, listing exactly
@@ -200,6 +202,31 @@ const allScreens: ReadonlyArray<Screen> = [
 
 const commandEntries = (shown: Model) =>
   paletteEntries(shown).filter(entry => entry.group === 'command')
+
+/** The Insights screen's requests as it opens, each answered that the engine doesn't serve it. */
+const insightsUnserved = [
+  [
+    Insights.LoadSummary,
+    Insights.Message.FailedLoadSummary({
+      project: Option.none(),
+      reason: 'not served',
+    }),
+  ] as const,
+  ...Insights.Panel.literals.map(
+    panel =>
+      [
+        Insights.RunQuery,
+        Insights.Message.FailedQuery({
+          panel,
+          query: InsightsQuery.cases.cost_per_merged_ticket.make({
+            project: Option.none(),
+            since: Option.none(),
+          }),
+          reason: 'not served',
+        }),
+      ] as const,
+  ),
+]
 
 describe('the palette lists exactly the bound commands', () => {
   test("each screen's commands, from its one list, with their keys, but the palette's own", () => {
@@ -390,6 +417,7 @@ describe('running a command', () => {
       given(connected),
       message(key('k', { mod: true })),
       message(Message.RanPaletteEntry({ id: 'go.Insights' })),
+      StoryCommand.resolveAll(...insightsUnserved),
       model(shown => {
         expect(shown.screen).toEqual(Screen.Insights())
         expect(shown.overlay).toEqual(Overlay.Closed())

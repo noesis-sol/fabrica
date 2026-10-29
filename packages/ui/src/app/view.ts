@@ -416,7 +416,19 @@ const screenView = (model: Model, h: HtmlBuilder<Message>): Html =>
         model: model.screens.review,
         toParentMessage: message => Message.GotReviewMessage({ message }),
       }),
-    Insights: () => Insights.view(model.screens.insights, h),
+    Insights: () =>
+      h.submodel({
+        slotId: 'insights',
+        view: Insights.view,
+        model: model.screens.insights,
+        viewInputs: {
+          projectName: Option.flatMap(model.scope, project =>
+            Sidebar.projectName(model.console.sidebar, project),
+          ),
+          today: model.today,
+        },
+        toParentMessage: message => Message.GotInsightsMessage({ message }),
+      }),
     Engines: () =>
       h.submodel({
         slotId: 'engines',
