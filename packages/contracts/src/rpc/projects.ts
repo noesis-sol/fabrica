@@ -10,8 +10,8 @@ import { ProjectNotFound } from './errors'
 import { keyedPatch, resume, streamItem } from './stream'
 
 // The Projects group (spec §8.1, §10): adding a checkout on the engine's host or a clone of a URL,
-// listing and removing projects, their settings, `init`, and the stream of their status that the
-// sidebar shows (§18.3).
+// listing and removing projects, the user's trust in each (§12.1), their settings, `init`, and the
+// stream of their status that the sidebar shows (§18.3).
 
 /** Where a project comes from (§10.1): a checkout the engine can read, or a git URL it clones. */
 export const ProjectSource = Schema.TaggedUnion({
@@ -33,6 +33,8 @@ export class ProjectInfo extends Schema.Class<ProjectInfo>('ProjectInfo')({
   base: Text,
   /** Its settings exist (§10.1): `init` has run. */
   setUp: Schema.Boolean,
+  /** The user trusts it, so its agents load its own Pi settings and packages (§12.1, §20.2). */
+  trusted: Schema.Boolean,
 }) {}
 
 /** A project's run, as its sidebar row says it (§18.3): Idle, Running, or Waiting on the maintainer. */
@@ -50,6 +52,8 @@ export class ProjectStatus extends Schema.Class<ProjectStatus>('ProjectStatus')(
     name: Text,
     base: Text,
     setUp: Schema.Boolean,
+    /** The user trusts it (§12.1, §20.2). */
+    trusted: Schema.Boolean,
     run: ProjectRunState,
     /** Tickets ready to run. */
     ready: Count,
@@ -114,6 +118,15 @@ export const ProjectRpcs = RpcGroup.make(
   /** Forgets the project; a registered checkout stays where it is. */
   Rpc.make('projects.remove', {
     payload: { project: ProjectId },
+    error: ProjectNotFound,
+  }),
+  /**
+   * Gives or takes back the user's trust in the project (§12.1, §20.2): its agents started from then
+   * on load its own Pi settings and packages only while it is trusted. The maintainer's alone: no
+   * agent's control tool asks it.
+   */
+  Rpc.make('projects.trust', {
+    payload: { project: ProjectId, trusted: Schema.Boolean },
     error: ProjectNotFound,
   }),
   Rpc.make('projects.settings.get', {

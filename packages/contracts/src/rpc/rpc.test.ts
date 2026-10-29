@@ -70,6 +70,7 @@ const projectInfo = {
   url: null,
   base: 'main',
   setUp: true,
+  trusted: false,
 }
 
 const projectStatus = {
@@ -77,6 +78,7 @@ const projectStatus = {
   name: 'app',
   base: 'main',
   setUp: true,
+  trusted: true,
   run: { _tag: 'waiting', run, overnight: true, needsYou: 2 },
   ready: 4,
 }
@@ -397,6 +399,13 @@ const samples: Record<string, Samples> = {
   },
   'projects.list': { success: [[projectInfo]] },
   'projects.remove': { payload: [{ project }], error: [notFound] },
+  'projects.trust': {
+    payload: [
+      { project, trusted: true },
+      { project, trusted: false },
+    ],
+    error: [notFound],
+  },
   'projects.settings.get': {
     payload: [{ project }],
     success: [{ concurrent: 3, check_fast: 'scripts/check-fast.sh' }],
@@ -985,6 +994,7 @@ describe('the protocol’s groups', () => {
       'projects.add',
       'projects.list',
       'projects.remove',
+      'projects.trust',
       'projects.settings.get',
       'projects.settings.set',
       'projects.init',

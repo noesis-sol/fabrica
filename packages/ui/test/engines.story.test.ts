@@ -60,6 +60,7 @@ const addedInfo = (setUp: boolean, origin: 'registered' | 'cloned') =>
         : Option.none(),
     base: 'main',
     setUp,
+    trusted: false,
   })
 
 const editingForm = (shown: Engines.Model): Engines.AddForm =>
@@ -307,6 +308,7 @@ describe('the screen in the app', () => {
       name: 'fabrica',
       base: 'main',
       setUp: true,
+      trusted: false,
       run: { _tag: 'idle' },
       ready: 0,
     })

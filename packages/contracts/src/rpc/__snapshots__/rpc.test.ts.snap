@@ -2046,6 +2046,9 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         "setUp": {
           "type": "boolean",
         },
+        "trusted": {
+          "type": "boolean",
+        },
         "url": {
           "anyOf": [
             {
@@ -2066,6 +2069,7 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         "url",
         "base",
         "setUp",
+        "trusted",
       ],
       "type": "object",
     },
@@ -2849,12 +2853,16 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         "setUp": {
           "type": "boolean",
         },
+        "trusted": {
+          "type": "boolean",
+        },
       },
       "required": [
         "project",
         "name",
         "base",
         "setUp",
+        "trusted",
         "run",
         "ready",
       ],
@@ -7974,6 +7982,34 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         "type": "null",
       },
       "tag": "projects.remove",
+    },
+    {
+      "error": {
+        "$ref": "#/$defs/ProjectNotFoundEncoded",
+      },
+      "group": "projects",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "project": {
+            "pattern": "^\\S+$",
+            "type": "string",
+          },
+          "trusted": {
+            "type": "boolean",
+          },
+        },
+        "required": [
+          "project",
+          "trusted",
+        ],
+        "type": "object",
+      },
+      "stream": false,
+      "success": {
+        "type": "null",
+      },
+      "tag": "projects.trust",
     },
     {
       "error": {

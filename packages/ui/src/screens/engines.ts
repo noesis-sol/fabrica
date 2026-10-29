@@ -16,6 +16,7 @@ import {
   ProjectId,
   ProjectInfo,
   ProjectSource,
+  type ProjectStatus,
   ProviderName,
   Text,
 } from '@fabrica/contracts'
@@ -30,11 +31,13 @@ import { AppHost, ServiceInstall } from '../app/host'
 import { type EngineProjects, runLabel } from '../console/sidebar'
 
 // The Engines and projects screen (spec §18.4, §10.1, §20.3): the known engines with their versions
-// and status, each engine's projects, Add project, and the engine's credentials, listed by name.
+// and status, each engine's projects, whether the user trusts each (§12.1), Add project, and the
+// engine's credentials, listed by name.
 // The app reaches its local engine through the connection; the SSH, WSL2 and TLS engines and Add
 // engine join it with remote engines (§9.2). A project is added as a checkout on the engine's host,
 // by its path, or as a clone of a git URL, which the engine checks and, where `.fabrica/` is missing,
-// offers to set up (`init`). Credentials are set by name and removed, never shown (§20.3); the key a
+// offers to set up (`init`). A project is trusted or untrusted from its row, the words beside the
+// list saying what trusting it lets its own files do. Credentials are set by name and removed, never shown (§20.3); the key a
 // form holds is redacted, so no log or trace of the Model shows it. The local engine runs at login
 // when the user chooses, which the app around the renderer installs (§7.1).
 
@@ -113,6 +116,9 @@ export const Model = Schema.Struct({
     .schema,
   credentialForm: CredentialForm,
   credentialSave: CredentialSave,
+  /** The project whose trust is being changed, and what the last change said where it failed. */
+  trusting: Schema.Option(ProjectId),
+  trustProblem: Schema.Option(Schema.String),
   /** The credential being removed, and what the last removal said where it failed. */
   removing: Schema.Option(CredentialName),
   removeProblem: Schema.Option(Schema.String),
@@ -137,6 +143,8 @@ export const init = (): Model => ({
   credentials: AsyncData.Idle(),
   credentialForm: emptyCredentialForm,
   credentialSave: CredentialSave.Editing({ problem: Option.none() }),
+  trusting: Option.none(),
+  trustProblem: Option.none(),
   removing: Option.none(),
   removeProblem: Option.none(),
   loginService: LoginService.NotAsked(),
@@ -165,6 +173,9 @@ export const Message = defineMessageUnion({
     written: Schema.Array(Text),
   },
   DismissedAdded: {},
+  RequestedTrust: { project: ProjectId, trusted: Schema.Boolean },
+  SucceededTrust: { project: ProjectId },
+  FailedTrust: { project: ProjectId, reason: Schema.String },
 
   ChangedCredentialName: { name: Schema.String },
   ChoseValueKind: { kind: ValueKind },
@@ -235,6 +246,21 @@ export const SetUpProject = Command.define('SetUpProject', {
     ).pipe(
       Effect.catch(reason =>
         Effect.succeed(Message.FailedSetUp({ project, reason, written: [] })),
+      ),
+    ),
+})
+
+/** Gives or takes back the user's trust in the project; its row comes back changed on the status stream. */
+export const SetProjectTrust = Command.define('SetProjectTrust', {
+  args: { project: ProjectId, trusted: Schema.Boolean },
+  messages: [Message.SucceededTrust, Message.FailedTrust],
+  execute: ({ project, trusted }) =>
+    requestEngine(client =>
+      client.rpc['projects.trust']({ project, trusted }),
+    ).pipe(
+      Effect.as(Message.SucceededTrust({ project })),
+      Effect.catch(reason =>
+        Effect.succeed(Message.FailedTrust({ project, reason })),
       ),
     ),
 })
@@ -506,6 +532,26 @@ export const update = (model: Model, message: Message): Return =>
     }),
     DismissedAdded: () => ({
       model: modifyFields(model, { added: () => Option.none() }),
+    }),
+    RequestedTrust: ({ project, trusted }) =>
+      Option.isSome(model.trusting)
+        ? { model }
+        : {
+            model: modifyFields(model, {
+              trusting: () => Option.some(project),
+              trustProblem: () => Option.none(),
+            }),
+            commands: [SetProjectTrust({ project, trusted })],
+          },
+    SucceededTrust: () => ({
+      model: modifyFields(model, { trusting: () => Option.none() }),
+    }),
+    FailedTrust: ({ project, reason }) => ({
+      model: modifyFields(model, {
+        trusting: () => Option.none(),
+        trustProblem: () =>
+          Option.some(`Couldn't change the trust in ${project}: ${reason}`),
+      }),
     }),
 
     ChangedCredentialName: ({ name }) => ({
@@ -969,6 +1015,57 @@ const addedView = (added: Added, h: HtmlBuilder<Message>): Html => {
   )
 }
 
+/** What trusting a project lets its own files do, beside the projects' list (§12.1, §20.2). */
+export const trustWords =
+  "Trusting a project lets its agents load its own .pi/ settings and packages: code from the project's files, run with your permissions. Trust only a project whose files you trust; a change reaches its agents as they next start."
+
+const trustWordsId = 'project-trust-words'
+
+/** A project's trust, in a word, and the button that changes it. */
+const trustControl = (
+  model: Model,
+  project: ProjectStatus,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.span(
+    [h.Class('flex items-center gap-8')],
+    [
+      h.span(
+        [
+          h.DataAttribute('trusted', project.trusted ? 'true' : 'false'),
+          h.Class(`text-xs ${project.trusted ? 'text-c4' : 'text-muted'}`),
+        ],
+        [project.trusted ? 'Trusted' : 'Untrusted'],
+      ),
+      h.button(
+        [
+          h.Type('button'),
+          h.AriaLabel(
+            project.trusted
+              ? `Stop trusting ${project.name}`
+              : `Trust ${project.name}`,
+          ),
+          h.AriaDescribedBy(trustWordsId),
+          h.OnClick(
+            Message.RequestedTrust({
+              project: project.project,
+              trusted: !project.trusted,
+            }),
+          ),
+          h.Disabled(Option.isSome(model.trusting)),
+          h.Class(quietButton),
+        ],
+        [
+          Option.contains(model.trusting, project.project)
+            ? 'Changing…'
+            : project.trusted
+              ? 'Untrust'
+              : 'Trust',
+        ],
+      ),
+    ],
+  )
+
 const projectsView = (
   model: Model,
   inputs: ViewInputs,
@@ -1025,7 +1122,7 @@ const projectsView = (
                 [
                   h.Class('grid items-center gap-10 text-sm'),
                   h.Style({
-                    gridTemplateColumns: 'minmax(0,1fr) auto auto',
+                    gridTemplateColumns: 'minmax(0,1fr) auto auto auto',
                     padding: '6px 16px',
                   }),
                 ],
@@ -1047,9 +1144,20 @@ const projectsView = (
                     ? h.span([])
                     : h.span([h.Class('text-xs text-c2')], ['Not set up']),
                   h.span([h.Class('text-xs text-muted')], [state.word]),
+                  trustControl(model, project, h),
                 ],
               )
             }),
+          ),
+      Option.match(model.trustProblem, {
+        onNone: () => h.empty,
+        onSome: text => problemLine(text, h),
+      }),
+      projects.length === 0
+        ? h.empty
+        : h.p(
+            [h.Id(trustWordsId), h.Class('text-xs text-muted')],
+            [trustWords],
           ),
     ],
   )

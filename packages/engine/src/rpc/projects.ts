@@ -7,10 +7,10 @@ import { describeProblem } from '../settings'
 import { notImplemented } from './not-implemented'
 
 // The Projects group's handlers (spec §8.1, §10) on the daemon's Projects service: adding a checkout
-// or a clone, listing and removing projects, their settings and the status stream. A settings file
-// that can't be read or doesn't decode is the project's to fix, a defect of the request that met it;
-// settings a client sends that would leave the file invalid are refused with every problem. `init`
-// is its own ticket's (M5).
+// or a clone, listing and removing projects, the user's trust in each, their settings and the status
+// stream. A settings file that can't be read or doesn't decode is the project's to fix, a defect of
+// the request that met it; settings a client sends that would leave the file invalid are refused with
+// every problem. `init` is its own ticket's (M5).
 
 /** The Projects group's handlers. */
 export const projectsHandlers = ProjectRpcs.toLayer(
@@ -20,6 +20,8 @@ export const projectsHandlers = ProjectRpcs.toLayer(
       'projects.add': ({ source, name }) => projects.add({ source, name }),
       'projects.list': () => projects.list,
       'projects.remove': ({ project }) => projects.remove(project),
+      'projects.trust': ({ project, trusted }) =>
+        projects.setTrusted({ project, trusted }),
       'projects.settings.get': ({ project }) =>
         projects
           .settings(project)

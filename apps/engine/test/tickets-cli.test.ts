@@ -37,6 +37,7 @@ describe('projectHolding', () => {
       url: Option.none(),
       base: 'main',
       setUp: false,
+      trusted: false,
     })
   const projects = [info('app', '/src/app'), info('lib', '/src/app/vendor/lib')]
 

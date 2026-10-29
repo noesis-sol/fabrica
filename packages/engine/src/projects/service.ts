@@ -97,7 +97,8 @@ export interface ProjectsShape {
   ) => Effect.Effect<ProjectRecord, ProjectNotFound>
   /**
    * Keeps whether the user trusts the project (§12.1, §20.2): its agents started from then on load
-   * its own Pi settings and packages only while it is trusted. A project is added untrusted.
+   * its own Pi settings and packages only while it is trusted. A project is added untrusted. Its row
+   * is sent again with it.
    */
   readonly setTrusted: (options: {
     readonly project: ProjectId
@@ -187,6 +188,7 @@ export const make = Effect.gen(function* () {
           url: record.url,
           base: record.base,
           setUp,
+          trusted: record.trusted,
         }),
     )
 
@@ -292,6 +294,7 @@ export const make = Effect.gen(function* () {
         name: record.name,
         base: record.base,
         setUp,
+        trusted: record.trusted,
         run: ProjectRunState.cases.idle.make({}),
         ready,
       })
@@ -440,8 +443,9 @@ export const make = Effect.gen(function* () {
     readonly project: ProjectId
     readonly trusted: boolean
   }) {
-    yield* find(options.project)
+    const record = yield* find(options.project)
     yield* withSql(updateTrust(options))
+    yield* refresh({ ...record, trusted: options.trusted })
   })
 
   const settings = Effect.fn('Projects.settings')(function* (

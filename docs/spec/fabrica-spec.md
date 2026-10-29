@@ -326,7 +326,7 @@ The engine samples its host's load every few seconds for the console's system st
 | Engine | `version`, `status`, `settings`, `stop`, `update` | engine status, load |
 | Hosts and tokens | `tokens.create`, `tokens.list`, `tokens.revoke` | |
 | Secrets | `credentials.set`, `credentials.list` (names only), `credentials.remove`, `credentials.login` (a subscription's OAuth sign-in, run by the engine, §20.3) | a login's progress (the sign-in URL or device code to show) |
-| Projects | `projects.add` (path or URL), `list`, `remove`, `settings.get`, `settings.set`, `init` | project status |
+| Projects | `projects.add` (path or URL), `list`, `remove`, `trust` (the maintainer's alone, §12.1), `settings.get`, `settings.set`, `init` | project status |
 | Backlog | `tickets.list`, `show`, `create`, `update`, `close`, `dep.add`, `dep.remove`, `label`, `note`, `ready`, `why` (what holds a ticket back), `import` (Beads JSONL, §11.6) | backlog changes |
 | Runs | `run.start` (mode, flags), `run.stop`, `run.drain`, `run.undrain`, `run.status`, `run.preflight` | the run view (§8.3), the run's events |
 | Workers | `worker.message`, `worker.interrupt`, `worker.release` | a worker's transcript |
@@ -951,7 +951,7 @@ orchestra-coyp's list \[DECISION\]: `requires` in the project's settings, each e
 | Backlog | Epics and tickets, their dependencies (the graph), what is ready and why the rest isn't (`tickets.why`), questions, deferred tickets, the tickets a run finished; read-only (editing in the app comes later; the CLI and the run talk cover it) |
 | Review | A ticket's branch diff, a run's merged diff, run reports, the log |
 | Insights | From the engine's telemetry (§21): tokens and cost per model, ticket, run and project; time per phase (working, checks, the merge queue, hand-backs, holds); check durations and failures; hand-back and set-aside rates; models compared on similar tickets |
-| Engines and projects | Known engines (local, SSH, WSL2, TLS), their versions and status; Add engine (§9.2); projects per engine; credentials and sign-ins (§20.3) |
+| Engines and projects | Known engines (local, SSH, WSL2, TLS), their versions and status; Add engine (§9.2); projects per engine, each trusted or not (§12.1); credentials and sign-ins (§20.3) |
 | Settings | The project's, the engine's and the app's settings (the theme among them), with their sources |
 
 ### 18.5 Desktop rules
@@ -972,7 +972,7 @@ Each screen's keys are one list of commands, from which its bindings, its hints,
 | `fabrica engine status\|stop\|update\|version` | The engine |
 | `fabrica token create\|list\|revoke` | Pairing tokens |
 | `fabrica credentials set\|list\|remove\|login` | Model credentials in the engine's secret store |
-| `fabrica project add <path\|url>\|list\|remove` | Projects |
+| `fabrica project add <path\|url>\|list\|remove\|trust\|untrust` | Projects; `trust` lets a project's own Pi settings and packages load in its agents (§12.1) |
 | `fabrica init` | Sets a project up (scout, checks, setup, requirements, rules) |
 | `fabrica run [--tickets\|--ticket <id>\|--spec <file\|url> [--refine]\|--feature "<text>"\|--overnight] [--limit N] [--concurrent N] [--model …] [--auto-answer[=<duration>]] [--offline] [--wait]` | Starts a run |
 | `fabrica run status\|drain\|undrain\|stop` | A run |

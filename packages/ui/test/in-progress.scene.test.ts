@@ -75,6 +75,7 @@ const connected: Model = update(
               name: id,
               base: 'main',
               setUp: true,
+              trusted: false,
               run: ProjectRunState.cases.running.make({
                 run: RunId.make('r-1'),
                 overnight: false,

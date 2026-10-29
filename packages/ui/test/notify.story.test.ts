@@ -59,6 +59,7 @@ const status = (id: ProjectId, name: string, state: ProjectRunState) =>
     name,
     base: 'main',
     setUp: true,
+    trusted: false,
     run: state,
     ready: 0,
   })

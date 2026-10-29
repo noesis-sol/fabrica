@@ -59,7 +59,15 @@ const status = (
   base: string,
   run: ProjectRunState,
 ): ProjectStatus =>
-  new ProjectStatus({ project, name, base, setUp: true, run, ready: 0 })
+  new ProjectStatus({
+    project,
+    name,
+    base,
+    setUp: true,
+    trusted: false,
+    run,
+    ready: 0,
+  })
 
 const idle = ProjectRunState.cases.idle.make({})
 const running = (overnight: boolean) =>
@@ -411,6 +419,7 @@ const handlers = served.toLayer({
   'projects.add': notServed,
   'projects.list': notServed,
   'projects.remove': notServed,
+  'projects.trust': notServed,
   'projects.settings.get': notServed,
   'projects.settings.set': notServed,
   'projects.init': notServed,

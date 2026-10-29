@@ -166,6 +166,7 @@ layer(layerToolbox({ tools: ['git'] }), { excludeTestServices: true })(
             `origin   cloned from file://${repo.remote}`,
             'base     main',
             'set up   no: it has no .fabrica/settings.json yet; set it up with `fabrica init`',
+            "trusted  no: its own .pi/ settings and packages don't load; trust it with `fabrica project trust clone`",
           ].join('\n'),
         )
 
@@ -179,8 +180,8 @@ layer(layerToolbox({ tools: ['git'] }), { excludeTestServices: true })(
         const text = yield* fabrica(socket, 'project', 'list')
         expect(text.out.join('\n')).toBe(
           [
-            `work   main  not set up  ${repo.work}`,
-            `clone  main  not set up  ${clonePath}`,
+            `work   main  not set up  untrusted  ${repo.work}`,
+            `clone  main  not set up  untrusted  ${clonePath}`,
           ].join('\n'),
         )
 
