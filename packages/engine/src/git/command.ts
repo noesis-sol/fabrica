@@ -30,12 +30,12 @@ const READ_ENVIRONMENT: Readonly<Record<string, string>> = {
 }
 
 /**
- * What network commands (clone, fetch, push) add: they reach the host's ssh-agent (the runner passes
- * them `SSH_AUTH_SOCK`), and ssh runs in batch mode, so a key the agent doesn't hold, a passphrase or
- * an unknown host key fails the command instead of asking.
+ * What network commands (clone, fetch, push) add where the host's git configuration names no ssh
+ * command of its own (`core.sshCommand`): ssh in batch mode, so a key the agent doesn't hold, a
+ * passphrase or an unknown host key fails the command instead of asking. A host's own ssh command is
+ * kept as it is, since it may choose a key or wrap ssh; it never asks either, having no terminal.
  */
-const NETWORK_ENVIRONMENT: Readonly<Record<string, string>> = {
-  ...GIT_ENVIRONMENT,
+const BATCH_SSH: Readonly<Record<string, string>> = {
   GIT_SSH_COMMAND: 'ssh -o BatchMode=yes',
 }
 
@@ -128,10 +128,6 @@ export const makeCommands = ({
   /** A command that writes: run once. */
   const write = (command: GitCommand) => runIn(GIT_ENVIRONMENT, command)
 
-  /** A command that reaches a remote (clone, fetch, push): run once, with the host's ssh-agent. */
-  const network = (command: GitCommand) =>
-    runIn(NETWORK_ENVIRONMENT, command, true)
-
   /** A command that only reads, run as `read`'s attempts are. */
   const query = (command: GitCommand) => runIn(READ_ENVIRONMENT, command)
 
@@ -164,6 +160,30 @@ export const makeCommands = ({
         command: args.join(' '),
         reason: `exit ${exit.code}: ${exit.stderr.trim() || exit.stdout.trim()}`,
       }),
+    )
+
+  /** Whether the host's git configuration, as git in `cwd` reads it, names its own ssh command. */
+  const ownSshCommand = (cwd: string): Effect.Effect<boolean, GitFailed> => {
+    const args = ['config', '--get', 'core.sshCommand']
+    return Effect.flatMap(query({ cwd, args }), exit =>
+      // 1: the key is unset.
+      exit.code === 0 || exit.code === 1
+        ? Effect.succeed(exit.code === 0)
+        : unexpected(args, exit),
+    )
+  }
+
+  /**
+   * A command that reaches a remote (clone, fetch, push): run once, with the host's ssh-agent (the
+   * runner passes it `SSH_AUTH_SOCK`), and ssh in batch mode unless the host names its own.
+   */
+  const network = (command: GitCommand) =>
+    Effect.flatMap(ownSshCommand(command.cwd), own =>
+      runIn(
+        own ? GIT_ENVIRONMENT : { ...GIT_ENVIRONMENT, ...BATCH_SSH },
+        command,
+        true,
+      ),
     )
 
   /** A read's command, its outcome as the runner gave it: for a read that tells why git didn't run. */
