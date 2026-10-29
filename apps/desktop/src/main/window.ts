@@ -1,11 +1,12 @@
-import { Option } from 'effect'
+import { Data, Option } from 'effect'
 import type { BrowserWindowConstructorOptions, TitleBarOverlay } from 'electron'
 
 import type { WindowColours } from '@fabrica/ui/window-colours'
 
 // The app's window (spec §18.2, §18.3, §20.1): one window at the handoff's 1280 × 800 reference, its
 // title bar the design's 38px bar with the system's own controls in it, and the page sandboxed and
-// isolated from the preload.
+// isolated from the preload. On macOS, where the app outlives its window, closing the window hides it
+// until the app quits: its page goes on deciding the notifications to tell (§18.5) while nobody sees it.
 
 /** The handoff's reference window. */
 export const referenceSize = { width: 1280, height: 800 } as const
@@ -34,6 +35,25 @@ export const titleBarOverlay = (
       height: titleBarHeight,
     }),
   })
+
+/** What closing the app's window does. */
+export type WindowClose = Data.TaggedEnum<{
+  /** Hide it, its page kept: macOS's app, not quitting. */
+  Hide: {}
+  /** Close it, its page gone. */
+  Close: {}
+}>
+export const WindowClose = Data.taggedEnum<WindowClose>()
+
+/** What closing the app's window on `platform` does, while the app is `quitting` or not. */
+export const windowClose = ({
+  platform,
+  quitting,
+}: {
+  readonly platform: NodeJS.Platform
+  readonly quitting: boolean
+}): WindowClose =>
+  platform === 'darwin' && !quitting ? WindowClose.Hide() : WindowClose.Close()
 
 /** The window's title bar on `platform`. */
 const titleBar = (
@@ -77,5 +97,7 @@ export const windowOptions = ({
     navigateOnDragDrop: false,
     safeDialogs: true,
     spellcheck: false,
+    // A hidden or minimized window's page keeps its timers, which read on for its notifications.
+    backgroundThrottling: false,
   },
 })

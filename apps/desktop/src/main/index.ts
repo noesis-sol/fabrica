@@ -45,7 +45,12 @@ import {
   noUpdateCheck,
   updateChannel,
 } from './updates'
-import { titleBarOverlay, windowOptions } from './window'
+import {
+  WindowClose,
+  titleBarOverlay,
+  windowClose,
+  windowOptions,
+} from './window'
 
 // Electron main (spec §5): the window, its title bar and its confinement, the preload's API, the
 // connection process, to which it brokers each page's engine port, and the local engine, started at
@@ -162,10 +167,21 @@ const openExternal = (url: string): void => {
   void shell.openExternal(url)
 }
 
-/** The app's one window: made when first shown, again after it closes (macOS keeps the app). */
+/** The app's one window: made when first shown, again after it closes; on macOS hidden when closed. */
 const makeAppWindow = () => {
   let current: BrowserWindow | undefined
   let theme: Theme = defaultTheme
+  let quitting = false
+
+  /** Hides `window`, out of full screen first: a full-screen window hidden leaves its space black. */
+  const hide = (window: BrowserWindow): void => {
+    if (window.isFullScreen()) {
+      window.once('leave-full-screen', () => window.hide())
+      window.setFullScreen(false)
+    } else {
+      window.hide()
+    }
+  }
 
   const create = (): BrowserWindow => {
     const window = new BrowserWindow(
@@ -179,6 +195,18 @@ const makeAppWindow = () => {
     broker.attach(brokeredPage(window.webContents))
     const stopUpdates = updateStatus.subscribe(status =>
       window.webContents.send(channels.updateStatusChanged, status),
+    )
+    window.on('close', event =>
+      WindowClose.$match(
+        windowClose({ platform: process.platform, quitting }),
+        {
+          Hide: () => {
+            event.preventDefault()
+            hide(window)
+          },
+          Close: () => undefined,
+        },
+      ),
     )
     window.on('closed', () => {
       stopUpdates()
@@ -199,8 +227,15 @@ const makeAppWindow = () => {
         if (current.isMinimized()) {
           current.restore()
         }
+        if (!current.isVisible()) {
+          current.show()
+        }
         current.focus()
       }
+    },
+    /** Lets the window close as the app quits, rather than hide. */
+    quit: (): void => {
+      quitting = true
     },
     /** Colours the window and its title bar for the theme the page shows, now and when next made. */
     setTheme: (next: Theme): void => {
@@ -311,6 +346,8 @@ if (!app.requestSingleInstanceLock()) {
     appWindow.show()
     app.on('activate', appWindow.show)
   })
+
+  app.on('before-quit', appWindow.quit)
 
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
