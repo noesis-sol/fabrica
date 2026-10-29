@@ -7,6 +7,7 @@ import {
   ProjectRunState,
   ProjectStatus,
   type ProjectStatusItem,
+  type RunId,
   applyKeyedPatch,
 } from '@fabrica/contracts'
 
@@ -134,6 +135,21 @@ export const isOvernight = (run: ProjectRunState): boolean =>
     running: ({ overnight }) => overnight,
     waiting: ({ overnight }) => overnight,
   })
+
+/** The run going in `project`, as its row says it: Running or Waiting; none while idle or unknown. */
+export const goingRun = (
+  model: Model,
+  project: ProjectId,
+): Option.Option<RunId> =>
+  Option.flatMap(
+    Array.findFirst(rows(model), row => row.status.project === project),
+    row =>
+      ProjectRunState.match(row.status.run, {
+        idle: () => Option.none(),
+        running: ({ run }) => Option.some(run),
+        waiting: ({ run }) => Option.some(run),
+      }),
+  )
 
 /** The line under a project's name: its Base, and its engine's name where more than one is known. */
 export const baseLine = (row: Row, enginesKnown: number): string =>

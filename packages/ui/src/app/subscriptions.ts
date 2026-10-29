@@ -17,6 +17,7 @@ import {
   type Ticket,
 } from '@fabrica/contracts'
 
+import * as Sidebar from '../console/sidebar'
 import {
   type EngineConnectionService,
   type EngineSession,
@@ -211,6 +212,16 @@ export const projectMessages = (
     Stream.catch(() => Stream.empty),
   )
 
+/**
+ * The run whose view the scoped project's watch follows: the one its sidebar row shows going, wherever
+ * it was started (the app, the CLI, the run talk), else the one the view shows, so a run's end keeps
+ * its last view rather than watching afresh.
+ */
+const viewedRun = (model: Model, project: ProjectId): Option.Option<RunId> =>
+  Option.orElse(Sidebar.goingRun(model.console.sidebar, project), () =>
+    Option.map(model.runView, view => view.header.run),
+  )
+
 /** The services the subscriptions use: the engine connection, and the notifier. */
 type Services = EngineConnectionService | Notifier
 
@@ -232,12 +243,20 @@ export const makeSubscriptions = ({
       },
     ),
     runView: entry(
-      { project: Schema.Option(ProjectId), watch: Schema.Int },
       {
-        modelToDependencies: model => ({
-          project: isLive(model.connection) ? model.scope : Option.none(),
-          watch: model.runWatch,
-        }),
+        project: Schema.Option(ProjectId),
+        run: Schema.Option(RunId),
+        watch: Schema.Int,
+      },
+      {
+        modelToDependencies: model => {
+          const project = isLive(model.connection) ? model.scope : Option.none()
+          return {
+            project,
+            run: Option.flatMap(project, scoped => viewedRun(model, scoped)),
+            watch: model.runWatch,
+          }
+        },
         dependenciesToStream: ({ project }) =>
           Option.match(project, {
             onNone: () => Stream.empty,
