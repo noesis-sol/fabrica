@@ -6889,6 +6889,10 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
           ],
           "type": "object",
         },
+        "doneToday": {
+          "minimum": 0,
+          "type": "integer",
+        },
         "live": {
           "minimum": 0,
           "type": "integer",
@@ -6930,6 +6934,7 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         "live",
         "slots",
         "counts",
+        "doneToday",
         "tokens",
         "costUsd",
       ],

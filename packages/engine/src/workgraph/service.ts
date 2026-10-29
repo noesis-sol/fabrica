@@ -294,6 +294,13 @@ export interface WorkGraphShape {
     id: TicketId,
   ) => Effect.Effect<ReadonlyArray<TicketEvent>, StoreFailed>
   /**
+   * How many tickets were merged (closed as done, with their merged commit) or closed with no change
+   * at or after `since`, by their last close: whichever run closed them, or none.
+   */
+  readonly doneSince: (
+    since: DateTime.Utc,
+  ) => Effect.Effect<number, StoreFailed>
+  /**
    * Subscribes to the events appended from now on: once it returns, every event appended is on the
    * stream, in order, until the scope closes.
    */

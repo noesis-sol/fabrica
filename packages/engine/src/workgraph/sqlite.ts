@@ -1151,6 +1151,20 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
     },
   )
 
+  const doneSince: WorkGraphShape['doneSince'] = Effect.fn(
+    'WorkGraph.doneSince',
+  )(function* (since) {
+    const rows = yield* read(
+      'doneSince',
+      sql<{
+        readonly done: number
+      }>`SELECT count(*) AS done FROM tickets WHERE status = 'closed'
+        AND (resolution = 'no_change' OR (resolution = 'done' AND merged_commit IS NOT NULL))
+        AND (SELECT max(at) FROM events WHERE events.ticket_id = tickets.id AND events.type = 'closed') >= ${DateTime.toEpochMillis(since)}`,
+    )
+    return rows[0]?.done ?? 0
+  })
+
   const lastSeq = read(
     'changes',
     Effect.map(
@@ -1217,6 +1231,7 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
     importTickets,
     delete: deleteTicket,
     history,
+    doneSince,
     changes,
   })
 })

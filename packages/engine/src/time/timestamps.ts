@@ -18,3 +18,12 @@ export const localNow: Effect.Effect<
   never,
   DateTime.CurrentTimeZone
 > = Effect.map(DateTime.nowInCurrentZone, formatLocalTime)
+
+/** The start of today in the current zone, read from Effect's `Clock`: the host's local midnight in the engine. */
+export const startOfToday: Effect.Effect<
+  DateTime.Utc,
+  never,
+  DateTime.CurrentTimeZone
+> = Effect.map(DateTime.nowInCurrentZone, now =>
+  DateTime.toUtc(DateTime.startOf(now, 'day')),
+)

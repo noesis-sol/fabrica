@@ -103,6 +103,7 @@ const runJson = {
       carried_over: 0,
       done: 23,
     },
+    doneToday: 23,
     tokens: {
       input: 200_000,
       output: 50_000,

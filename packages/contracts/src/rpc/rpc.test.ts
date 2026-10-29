@@ -211,6 +211,7 @@ const view = {
       carried_over: 0,
       done: 5,
     },
+    doneToday: 5,
     tokens: { input: 10, output: 20, cache_write: 30, cache_read: 40 },
     costUsd: 1.25,
   },

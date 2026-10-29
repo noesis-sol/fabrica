@@ -1,4 +1,5 @@
 // The work graph (spec §11): the tracker interface and its local SQLite store.
+export { doneToday } from './done-today'
 export * from './errors'
 export { checkPrefix, ticketIdRandomLength } from './ids'
 export {

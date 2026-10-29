@@ -257,6 +257,7 @@ const runView = Schema.decodeUnknownSync(Schema.toCodecJson(RunView))({
       carried_over: 0,
       done: 23,
     },
+    doneToday: 23,
     tokens: {
       input: 900_000,
       output: 300_000,

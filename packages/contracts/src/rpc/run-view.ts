@@ -72,6 +72,11 @@ export class Totals extends Schema.Class<Totals>('Totals')({
   live: Count,
   slots: Count,
   counts: Counts,
+  /**
+   * The project's tickets merged or closed with no change since the engine host's local midnight,
+   * whichever run did them (`counts.done` is this run's alone): the stats row's Done today.
+   */
+  doneToday: Count,
   tokens: Tokens,
   costUsd: Schema.OptionFromNullOr(Usd),
 }) {}

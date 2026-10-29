@@ -98,6 +98,7 @@ const runView = decodeRunView({
       carried_over: 0,
       done: 0,
     },
+    doneToday: 0,
     tokens: { input: 0, output: 0, cache_write: 0, cache_read: 0 },
     costUsd: null,
   },

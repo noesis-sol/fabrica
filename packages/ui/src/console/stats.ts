@@ -1073,7 +1073,7 @@ const figures = (
     item(
       {
         name: 'done',
-        value: String(totals.counts.done),
+        value: String(totals.doneToday),
         label: 'Done today',
         role: 'c4',
       },

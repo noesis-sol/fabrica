@@ -207,6 +207,7 @@ const runView = (rows: ReadonlyArray<object>): RunView =>
         carried_over: 0,
         done: 2,
       },
+      doneToday: 2,
       tokens: { input: 0, output: 0, cache_write: 0, cache_read: 0 },
       costUsd: null,
     },
