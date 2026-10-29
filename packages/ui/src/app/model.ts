@@ -7,6 +7,7 @@ import {
   Platform,
   ProjectId,
   ReleaseVersion,
+  RunEvents,
   RunView,
   Ticket,
   UsageWindow,
@@ -88,6 +89,8 @@ export const Model = Schema.Struct({
   scope: Schema.Option(ProjectId),
   /** The scoped project's run view, while it has a run. */
   runView: Schema.Option(RunView),
+  /** The scoped project's run's events, newest first, as History shows them. */
+  events: Schema.Option(RunEvents),
   /** The scope's open attention requests. */
   attention: Schema.Option(Schema.Array(AttentionRequest)),
   /** The scoped project's tickets, while the Backlog screen shows them. */
@@ -98,6 +101,8 @@ export const Model = Schema.Struct({
   usage: Schema.Option(Schema.Array(UsageWindow)),
   /** The time now in the viewer's zone, from the clock's ticks (spec §18.3, H80). */
   now: Schema.Option(Schema.DateTimeZoned),
+  /** The start of the viewer's day, from the same ticks: kept until the day changes (§7.7). */
+  today: Schema.Option(Schema.DateTimeZoned),
   /** Bumped to watch the scoped project's run view afresh: a run started from the app. */
   runWatch: Schema.Int,
   console: ConsoleParts,
@@ -114,11 +119,13 @@ export const initialModel = (flags: Flags): Model => ({
   overlay: Overlay.Closed(),
   scope: Option.none(),
   runView: Option.none(),
+  events: Option.none(),
   attention: Option.none(),
   backlog: Option.none(),
   load: Option.none(),
   usage: Option.none(),
   now: Option.none(),
+  today: Option.none(),
   runWatch: 0,
   console: {
     titlebar: Titlebar.init(),

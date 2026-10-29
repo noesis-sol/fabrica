@@ -10,11 +10,13 @@ import {
   UpdateSide,
 } from '@fabrica/contracts'
 
+import * as History from '../console/history'
 import * as Stats from '../console/stats'
 import { Screen } from './screen'
 import {
   AttentionItem,
   BacklogItem,
+  EventsItem,
   LoadItem,
   RunViewItem,
   itemsOf,
@@ -39,6 +41,7 @@ export const Message = defineMessageUnion({
   SelectedScope: { project: Schema.Option(ProjectId) },
   /** The sidebar's "+ Add project": the engines screen's add-project flow (§10.1). */
   RequestedAddProject: {},
+  GotHistoryMessage: { message: History.Message },
 
   ConnectedToEngine: {
     engine: EngineId,
@@ -58,6 +61,7 @@ export const Message = defineMessageUnion({
   ReceivedRunView: { project: ProjectId, items: itemsOf(RunViewItem) },
   /** The project's run view ended: no run, or the project gone. */
   EndedRunView: { project: ProjectId, reason: Schema.String },
+  ReceivedEvents: { project: ProjectId, items: itemsOf(EventsItem) },
   ReceivedAttention: { items: itemsOf(AttentionItem) },
   ReceivedBacklog: { project: ProjectId, items: itemsOf(BacklogItem) },
   ReceivedLoad: { items: itemsOf(LoadItem) },

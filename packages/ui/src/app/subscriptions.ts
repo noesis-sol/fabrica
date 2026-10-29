@@ -10,6 +10,8 @@ import {
   ProjectId,
   type ProjectStatus,
   type ProjectStatusPatch,
+  type RunEvent,
+  RunId,
   type RunView,
   type RunViewPatch,
   type Ticket,
@@ -97,6 +99,24 @@ export const runViewMessages = (
     Stream.catch(error =>
       Stream.make(Message.EndedRunView({ project, reason: reasonOf(error) })),
     ),
+  )
+
+/** The run's events, a frame's at a time; the stream ends with the run, its events kept. */
+export const eventMessages = (
+  client: EngineClientShape,
+  { project, run }: { readonly project: ProjectId; readonly run: RunId },
+  nextFrame: Effect.Effect<void>,
+): Stream.Stream<Message> =>
+  watchOf<ReadonlyArray<RunEvent>, ReadonlyArray<RunEvent>>(client)(resume =>
+    client.rpc['run.watchEvents']({
+      project,
+      run: Option.some(run),
+      resume,
+    }),
+  ).pipe(
+    perFrame(nextFrame),
+    Stream.map(items => Message.ReceivedEvents({ project, items })),
+    Stream.catch(() => Stream.empty),
   )
 
 /** The open attention requests, of one project or every one. */
@@ -188,6 +208,27 @@ export const makeSubscriptions = ({
             onNone: () => Stream.empty,
             onSome: project =>
               withClient(client => runViewMessages(client, project, nextFrame)),
+          }),
+      },
+    ),
+    events: entry(
+      {
+        run: Schema.Option(Schema.Struct({ project: ProjectId, run: RunId })),
+      },
+      {
+        modelToDependencies: model => ({
+          run: isLive(model.connection)
+            ? Option.map(model.runView, view => ({
+                project: view.header.project,
+                run: view.header.run,
+              }))
+            : Option.none(),
+        }),
+        dependenciesToStream: ({ run }) =>
+          Option.match(run, {
+            onNone: () => Stream.empty,
+            onSome: of =>
+              withClient(client => eventMessages(client, of, nextFrame)),
           }),
       },
     ),

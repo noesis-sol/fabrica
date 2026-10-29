@@ -4,8 +4,10 @@ import { modifyFields } from 'foldkit/struct'
 
 import { ProjectId } from '@fabrica/contracts'
 
+import * as History from '../console/history'
 import * as Sidebar from '../console/sidebar'
 import * as Stats from '../console/stats'
+import { dayOf, sameDay } from './clock'
 import {
   Connection,
   type EngineConnectionService,
@@ -18,6 +20,7 @@ import { Screen } from './screen'
 import {
   applyAttention,
   applyBacklog,
+  applyEvents,
   applyLoad,
   applyRunView,
 } from './streams'
@@ -51,6 +54,17 @@ const foldStats = Update.foldChild({
           : model,
       }),
     }),
+})
+
+const foldHistory = Update.foldChild({
+  update: History.update,
+  read: (model: Model) => Option.some(model.console.history),
+  write: (model: Model, history: History.Model) =>
+    modifyFields(model, {
+      console: parts => modifyFields(parts, { history: () => history }),
+    }),
+  toParentMessage: (message: History.Message) =>
+    Message.GotHistoryMessage({ message }),
 })
 
 /** Whether the Model's overlay is open. */
@@ -100,6 +114,7 @@ export const update = (model: Model, message: Message): Return =>
         : modifyFields(model, {
             scope: () => project,
             runView: () => Option.none(),
+            events: () => Option.none(),
             attention: () => Option.none(),
             backlog: () => Option.none(),
             usage: () => Option.none(),
@@ -108,6 +123,7 @@ export const update = (model: Model, message: Message): Return =>
     RequestedAddProject: () => ({
       model: showScreen(model, Screen.Engines()),
     }),
+    GotHistoryMessage: ({ message }) => foldHistory(model, message),
 
     ConnectedToEngine: ({ engine, release, protocol }) => ({
       model: modifyFields(model, {
@@ -120,6 +136,7 @@ export const update = (model: Model, message: Message): Return =>
     ReleasedEngine: () => ({
       model: modifyFields(model, {
         runView: () => Option.none(),
+        events: () => Option.none(),
         attention: () => Option.none(),
         backlog: () => Option.none(),
         load: () => Option.none(),
@@ -158,6 +175,14 @@ export const update = (model: Model, message: Message): Return =>
       Option.contains(model.scope, project)
         ? { model: modifyFields(model, { runView: () => Option.none() }) }
         : { model },
+    ReceivedEvents: ({ project, items }) =>
+      Option.contains(model.scope, project)
+        ? {
+            model: modifyFields(model, {
+              events: events => applyEvents(events, items),
+            }),
+          }
+        : { model },
     ReceivedAttention: ({ items }) => ({
       model: modifyFields(model, {
         attention: attention => applyAttention(attention, items),
@@ -184,7 +209,13 @@ export const update = (model: Model, message: Message): Return =>
       }),
     }),
     Ticked: ({ now }) => ({
-      model: modifyFields(model, { now: () => Option.some(now) }),
+      model: modifyFields(model, {
+        now: () => Option.some(now),
+        today: today =>
+          Option.exists(today, day => sameDay(now, day))
+            ? today
+            : Option.some(dayOf(now)),
+      }),
     }),
 
     GotStatsMessage: ({ message }) => foldStats(model, message),

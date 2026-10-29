@@ -8,6 +8,8 @@ import {
   BacklogPatch,
   HostLoad,
   type Resume,
+  type RunEvent,
+  RunEvents,
   RunView,
   RunViewPatch,
   Ticket,
@@ -29,6 +31,7 @@ export const AttentionItem = streamItem(
 )
 export const BacklogItem = streamItem(Schema.Array(Ticket), BacklogPatch)
 export const LoadItem = streamItem(HostLoad, HostLoad)
+export const EventsItem = streamItem(RunEvents, RunEvents)
 
 /**
  * The client's resumed stream of `S` snapshots and `P` patches, subscribed through `subscribe`: the
@@ -81,6 +84,22 @@ export const applyBacklog = (
 ): Option.Option<ReadonlyArray<Ticket>> =>
   applyItems(current, items, (tickets, patch) =>
     applyKeyedPatch(tickets, patch, byId),
+  )
+
+/**
+ * The run's events, kept newest first as History shows them (§18.3): a snapshot is the run's events
+ * so far, a patch the events since, in the order they were written; each goes on at the top.
+ */
+export const applyEvents = (
+  current: Option.Option<ReadonlyArray<RunEvent>>,
+  items: Array.NonEmptyReadonlyArray<typeof EventsItem.Type>,
+): Option.Option<ReadonlyArray<RunEvent>> =>
+  Array.reduce(items, current, (events, item) =>
+    item._tag === 'snapshot'
+      ? Option.some(Array.reverse(item.value))
+      : Option.map(events, before =>
+          Array.appendAll(Array.reverse(item.value), before),
+        ),
   )
 
 /** A load sample replaces the one before. */

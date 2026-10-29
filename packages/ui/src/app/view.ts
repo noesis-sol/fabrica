@@ -106,6 +106,17 @@ const column = 'flex min-h-0 flex-col gap-8 overflow-auto'
 const needsYou = (model: Model): boolean =>
   Option.exists(model.attention, requests => requests.length > 0)
 
+const toHistoryMessage = (message: History.Message): Message =>
+  Message.GotHistoryMessage({ message })
+
+const historyView = (
+  history: History.Model,
+  events: Model['events'],
+  today: Model['today'],
+  h: HtmlBuilder<Message>,
+): Html =>
+  History.view(history, { events, today, toParentMessage: toHistoryMessage }, h)
+
 const consoleView = (model: Model, h: HtmlBuilder<Message>): Html => {
   const parts = model.console
   return h.div(
@@ -140,7 +151,14 @@ const consoleView = (model: Model, h: HtmlBuilder<Message>): Html => {
           ),
           h.section(
             [h.AriaLabel('History'), h.Class(panel)],
-            [lazyHistory(History.view<Message>, [parts.history, h])],
+            [
+              lazyHistory(historyView, [
+                parts.history,
+                model.events,
+                model.today,
+                h,
+              ]),
+            ],
           ),
         ],
       ),
