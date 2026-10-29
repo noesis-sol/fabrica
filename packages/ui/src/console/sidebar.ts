@@ -294,7 +294,15 @@ const projectRow = <Message>(
             [h.Class('truncate font-semibold'), h.Style({ fontSize: '14px' })],
             [status.name],
           ),
-          h.span([h.Class('truncate font-mono text-xs text-muted')], [base]),
+          // The Base's line is 19.4px, so that the row is the handoff's 62.4px (Appendix A.2) and the
+          // Base sits under the name where the reference draws it.
+          h.span(
+            [
+              h.Class('truncate font-mono text-xs text-muted'),
+              h.Style({ lineHeight: '19.4px' }),
+            ],
+            [base],
+          ),
         ],
       ),
       h.span(

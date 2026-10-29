@@ -328,7 +328,7 @@ const partsOf = (
     x: 0,
     y: Math.round(sidebar.rowsTop + sidebar.row * index),
     width: sidebar.width - 1,
-    height: 59,
+    height: Math.floor(sidebar.row),
   })
   const titleRect = { x: 0, y: 0, width, height: 37 }
   return {
@@ -361,8 +361,8 @@ const partsOf = (
       reference: rowRect(index),
       // The chip, in the project's colour by its index (§18.3), and the run's state.
       masks: [
-        { x: 14, y: 0, width: 28, height: 59 },
-        { x: 180, y: 0, width: 79, height: 59 },
+        { x: 14, y: 0, width: 28, height: Math.floor(sidebar.row) },
+        { x: 180, y: 0, width: 79, height: Math.floor(sidebar.row) },
       ],
     })),
     'sidebar footer': [
@@ -433,7 +433,6 @@ const known: ReadonlyMap<string, { ticket: string; held: number }> = new Map(
     const entry = (name: string, ticket: string, held: number) =>
       [`${theme} ${name}`, { ticket, held }] as const
     return [
-      entry('project row height', 'fab-mgi.68', 59),
       entry('card height', 'fab-mgi.69', 84),
       entry('card pitch', 'fab-mgi.69', 92),
       entry('history row height', 'fab-mgi.70', 26),
