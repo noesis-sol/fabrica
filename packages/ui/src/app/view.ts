@@ -11,7 +11,6 @@ import {
   MergeQueue,
   type Platform,
   type ProjectId,
-  type TicketId,
   type TicketRow,
 } from '@fabrica/contracts'
 
@@ -39,12 +38,12 @@ import {
   keyHelp,
   keyLabel,
   openPalette,
-  paletteCommands,
+  paletteOverlayKeys,
 } from './keys'
 import { Message } from './message'
 import { type Model, Overlay } from './model'
 import { Screen, screenTitle } from './screen'
-import { modelCommands } from './update'
+import { modelCommands, openWorker, paletteEntries } from './update'
 
 // The app's frame (spec §18.3, Appendix A.1), at the handoff's 1280 × 800 reference window: a 38px
 // title bar over a grid of the 260px sidebar and the main column (padded 20 × 24 px, its parts 16px
@@ -103,10 +102,6 @@ const lazyStatsPart = (
 const lazyTalkPanel = createLazy()
 const lazyHistory = createLazy()
 const lazyInProgress = createLazy()
-
-/** Opens a card's worker view: made once, so the column's memo holds across renders. */
-const openWorker = (ticket: TicketId): Message =>
-  Message.RequestedScreen({ screen: Screen.Worker({ ticket }) })
 
 /** The In progress column's slices of the scoped run, the same values while no run is shown. */
 const noRun: InProgress.Slices = {
@@ -505,18 +500,28 @@ const keyHelpView = (model: Model, h: HtmlBuilder<Message>): Html =>
     h,
   )
 
+const toPaletteMessage = (message: Palette.Message): Message =>
+  Message.GotPaletteMessage({ message })
+
+const runPaletteEntry = (id: string): Message => Message.RanPaletteEntry({ id })
+
 const paletteView = (model: Model, h: HtmlBuilder<Message>): Html =>
   dialog(
     'Command palette',
     [
       Palette.view(
         model.screens.palette,
-        paletteCommands(modelCommands(model)).map(command => ({
-          id: command.id,
-          title: command.title,
-          key: Option.getOrUndefined(keyLabel(command, model.platform)),
-          run: command.message,
-        })),
+        {
+          entries: paletteEntries(model),
+          keys: paletteOverlayKeys.flatMap(command =>
+            Option.match(keyLabel(command, model.platform), {
+              onNone: () => [],
+              onSome: key => [{ id: command.id, title: command.title, key }],
+            }),
+          ),
+          toParentMessage: toPaletteMessage,
+          run: runPaletteEntry,
+        },
         h,
       ),
     ],

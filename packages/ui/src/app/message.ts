@@ -16,6 +16,7 @@ import * as History from '../console/history'
 import * as Stats from '../console/stats'
 import * as Backlog from '../screens/backlog'
 import * as Engines from '../screens/engines'
+import * as Palette from '../screens/palette'
 import * as Review from '../screens/review'
 import * as Settings from '../screens/settings'
 import { Theme } from '../theme/theme'
@@ -43,6 +44,14 @@ export const Message = defineMessageUnion({
   },
   RequestedScreen: { screen: Screen },
   RequestedPalette: {},
+  /** A Message of the command palette's: its query changed. */
+  GotPaletteMessage: { message: Palette.Message },
+  /** The palette's selection moved `by` places. */
+  MovedPaletteSelection: { by: Schema.Int },
+  /** The palette's selected entry run: Enter in its search field. */
+  RanPaletteSelection: {},
+  /** The palette's entry `id` run: a click on it. */
+  RanPaletteEntry: { id: Schema.String },
   RequestedKeyHelp: {},
   DismissedOverlay: {},
   /** A project chosen in the sidebar, or none for every project. */

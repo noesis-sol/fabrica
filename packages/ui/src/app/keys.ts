@@ -16,6 +16,8 @@ import { Screen, screenTitle } from './screen'
 export interface Chord {
   readonly key: string
   readonly mod: boolean
+  /** A plain key that runs its command while focus is in a text field too, as the palette's arrows do. */
+  readonly inField?: boolean
 }
 
 /** One command: what it says, its key where it has one, whether the screen hints at it, and what it sends. */
@@ -32,6 +34,8 @@ const plain = (key: string): Option.Option<Chord> =>
   Option.some({ key, mod: false })
 const withMod = (key: string): Option.Option<Chord> =>
   Option.some({ key, mod: true })
+const fieldKey = (key: string): Option.Option<Chord> =>
+  Option.some({ key, mod: false, inField: true })
 
 const goTo = (
   screen: Screen,
@@ -141,13 +145,47 @@ const closeOverlay: KeyCommand = {
   message: Message.DismissedOverlay(),
 }
 
+/** The palette's own keys, answered from its search field: they move through its entries and run one. */
+const paletteKeys: ReadonlyArray<KeyCommand> = [
+  {
+    id: 'palette.next',
+    title: 'Next',
+    chord: fieldKey('ArrowDown'),
+    hint: false,
+    message: Message.MovedPaletteSelection({ by: 1 }),
+  },
+  {
+    id: 'palette.previous',
+    title: 'Previous',
+    chord: fieldKey('ArrowUp'),
+    hint: false,
+    message: Message.MovedPaletteSelection({ by: -1 }),
+  },
+  {
+    id: 'palette.run',
+    title: 'Run',
+    chord: fieldKey('Enter'),
+    hint: false,
+    message: Message.RanPaletteSelection(),
+  },
+]
+
+/** The keys the open palette answers to, as its foot names them: its own, then Escape's. */
+export const paletteOverlayKeys: ReadonlyArray<KeyCommand> = [
+  ...paletteKeys,
+  closeOverlay,
+]
+
 /** The screen's command list: an open overlay's commands first, so its keys win, then the screen's, then everyone's. */
 export const commandsFor = (options: {
   readonly screen: Screen
   readonly overlayOpen: boolean
+  /** The open overlay is the palette, whose own keys come first. */
+  readonly paletteOpen?: boolean
   /** The attention column's drawn options, which keys 1–9 answer while no overlay covers them. */
   readonly options?: KeyedOptions
 }): ReadonlyArray<KeyCommand> => [
+  ...(options.overlayOpen && options.paletteOpen === true ? paletteKeys : []),
   ...(options.overlayOpen ? [closeOverlay] : []),
   ...ofScreen(
     options.screen,
@@ -169,7 +207,10 @@ const matches = (chord: Chord, pressed: Pressed): boolean =>
   chord.key.toLowerCase() === pressed.key.toLowerCase() &&
   chord.mod === pressed.mod &&
   !pressed.alt &&
-  (chord.mod || chord.key === 'Escape' || !pressed.inField)
+  (chord.mod ||
+    chord.key === 'Escape' ||
+    chord.inField === true ||
+    !pressed.inField)
 
 /** The command a key runs: the first in the list whose chord it is. */
 export const commandFor = (
@@ -180,14 +221,19 @@ export const commandFor = (
     Option.exists(command.chord, chord => matches(chord, pressed)),
   )
 
+/** The named keys, as a key cap writes them. */
+const keyNames: Readonly<Record<string, string>> = {
+  Escape: 'Esc',
+  ArrowDown: '↓',
+  ArrowUp: '↑',
+  Enter: '⏎',
+}
+
 /** A chord as the platform writes it: `⌘K` on macOS, `Ctrl+K` elsewhere. */
 export const chordLabel = (chord: Chord, platform: Platform): string => {
   const key =
-    chord.key === 'Escape'
-      ? 'Esc'
-      : chord.key.length === 1
-        ? chord.key.toUpperCase()
-        : chord.key
+    keyNames[chord.key] ??
+    (chord.key.length === 1 ? chord.key.toUpperCase() : chord.key)
   if (!chord.mod) {
     return key
   }
@@ -218,7 +264,7 @@ export const keyHelp = (
       first.chord.value.mod === second.chord.value.mod,
   )
 
-/** The palette's entries: every command but the palette itself. */
+/** The palette's commands: every command of the list but the palette itself. */
 export const paletteCommands = (
   commands: ReadonlyArray<KeyCommand>,
 ): ReadonlyArray<KeyCommand> =>

@@ -1,4 +1,4 @@
-import { Duration, Effect, Option, Schema } from 'effect'
+import { Array, Duration, Effect, Option, Schema } from 'effect'
 import { Command, Update } from 'foldkit'
 import { modifyFields } from 'foldkit/struct'
 
@@ -8,6 +8,8 @@ import {
   ProjectId,
   RunId,
   type Ticket,
+  type TicketId,
+  type TicketRow,
 } from '@fabrica/contracts'
 
 import * as Attention from '../console/attention'
@@ -16,11 +18,13 @@ import * as Sidebar from '../console/sidebar'
 import * as Stats from '../console/stats'
 import * as Backlog from '../screens/backlog'
 import * as Engines from '../screens/engines'
+import * as Palette from '../screens/palette'
 import * as Review from '../screens/review'
 import * as Settings from '../screens/settings'
+import { themeTitle, themes } from '../theme/theme'
 import { dayOf, sameDay } from './clock'
 import { Connection, retryAfter } from './connection'
-import { commandFor, commandsFor } from './keys'
+import { commandFor, commandsFor, keyLabel, paletteCommands } from './keys'
 import { Message } from './message'
 import { type Model, Overlay } from './model'
 import { type Notifier, ShowNotification } from './notifier'
@@ -190,8 +194,131 @@ export const modelCommands = (model: Model) =>
   commandsFor({
     screen: model.screen,
     overlayOpen: isOverlayOpen(model),
+    paletteOpen: Overlay.guards.Palette(model.overlay),
     options: Attention.keyedOptions(model.console.attention),
   })
+
+/** Opens a ticket's worker view: made once, so the In progress column's memo holds across renders. */
+export const openWorker = (ticket: TicketId): Message =>
+  Message.RequestedScreen({ screen: Screen.Worker({ ticket }) })
+
+/**
+ * The palette's entries (§18.5): the screen's own command list as it is with no overlay open, but the
+ * palette's own command; then every project, the scoped run's tickets (and the Backlog's, while it
+ * shows them) and its workers, each opening its worker view; then the themes.
+ */
+export const paletteEntries = (
+  model: Model,
+): ReadonlyArray<Palette.Entry<Message>> => {
+  const commands = paletteCommands(
+    commandsFor({
+      screen: model.screen,
+      overlayOpen: false,
+      options: Attention.keyedOptions(model.console.attention),
+    }),
+  ).map((command): Palette.Entry<Message> => ({
+    id: command.id,
+    group: 'command',
+    title: command.title,
+    key: keyLabel(command, model.platform),
+    run: command.message,
+  }))
+  const enginesKnown = model.console.sidebar.engines.length
+  const projects: ReadonlyArray<Palette.Entry<Message>> = [
+    {
+      id: 'project.all',
+      group: 'project',
+      title: 'All projects',
+      key: Option.none(),
+      run: Message.SelectedScope({ project: Option.none() }),
+    },
+    ...Sidebar.rows(model.console.sidebar).map(
+      (row): Palette.Entry<Message> => ({
+        id: `project.${row.status.project}`,
+        group: 'project',
+        title:
+          enginesKnown > 1
+            ? `${row.status.name} · ${row.engine.name}`
+            : row.status.name,
+        key: Option.none(),
+        run: Message.SelectedScope({
+          project: Option.some(row.status.project),
+        }),
+      }),
+    ),
+  ]
+  const runTickets: ReadonlyArray<TicketRow> = Option.match(model.runView, {
+    onNone: () => [],
+    onSome: run => run.tickets,
+  })
+  const known: ReadonlyArray<{
+    readonly ticket: TicketId
+    readonly title: string
+  }> = [
+    ...runTickets.map(row => ({ ticket: row.ticket, title: row.title })),
+    ...Option.match(model.backlog, {
+      onNone: () => [],
+      onSome: backlog =>
+        backlog.map(ticket => ({ ticket: ticket.id, title: ticket.title })),
+    }),
+  ]
+  const tickets = Array.dedupeWith(
+    known,
+    (first, second) => first.ticket === second.ticket,
+  ).map(({ ticket, title }): Palette.Entry<Message> => ({
+    id: `ticket.${ticket}`,
+    group: 'ticket',
+    title: `${ticket} ${title}`,
+    key: Option.none(),
+    run: openWorker(ticket),
+  }))
+  const workers = Option.match(model.runView, {
+    onNone: () => [],
+    onSome: run => run.workers,
+  }).map((worker): Palette.Entry<Message> => ({
+    id: `worker.${worker.ticket}`,
+    group: 'worker',
+    title: Option.match(
+      Array.findFirst(runTickets, row => row.ticket === worker.ticket),
+      {
+        onNone: () => `${worker.ticket} · ${worker.model}`,
+        onSome: row => `${worker.ticket} ${row.title} · ${worker.model}`,
+      },
+    ),
+    key: Option.none(),
+    run: openWorker(worker.ticket),
+  }))
+  const themeEntries = themes.map((theme): Palette.Entry<Message> => ({
+    id: `theme.${theme}`,
+    group: 'theme',
+    title: themeTitle(theme),
+    key: Option.none(),
+    run: Message.ChoseTheme({ theme }),
+  }))
+  return [...commands, ...projects, ...tickets, ...workers, ...themeEntries]
+}
+
+const writePalette = (model: Model, palette: Palette.Model): Model =>
+  modifyFields(model, {
+    screens: screens => modifyFields(screens, { palette: () => palette }),
+  })
+
+/**
+ * Runs a palette entry where there is one, while the palette is open: it closes, then the entry's
+ * Message is sent. Enter on a focused entry runs the selection, and its click then finds it closed.
+ */
+const runPaletteEntry = (
+  model: Model,
+  entry: Option.Option<Palette.Entry<Message>>,
+): Return =>
+  Option.match(
+    Option.filter(entry, () => Overlay.guards.Palette(model.overlay)),
+    {
+      onNone: () => ({ model }),
+      onSome: ({ run }) =>
+        update(modifyFields(model, { overlay: () => Overlay.Closed() }), run),
+    },
+  )
 
 const sameScreen = Schema.toEquivalence(Screen)
 
@@ -391,8 +518,38 @@ export const update = (model: Model, message: Message): Return =>
       }),
     RequestedScreen: ({ screen }) => enterScreen(model, screen),
     RequestedPalette: () => ({
-      model: modifyFields(model, { overlay: () => Overlay.Palette() }),
+      model: writePalette(
+        modifyFields(model, { overlay: () => Overlay.Palette() }),
+        Palette.init(),
+      ),
     }),
+    GotPaletteMessage: ({ message }) => ({
+      model: writePalette(
+        model,
+        Palette.update(model.screens.palette, message),
+      ),
+    }),
+    MovedPaletteSelection: ({ by }) => ({
+      model: writePalette(
+        model,
+        Palette.moved(
+          model.screens.palette,
+          by,
+          Palette.matching(paletteEntries(model), model.screens.palette.query)
+            .length,
+        ),
+      ),
+    }),
+    RanPaletteSelection: () =>
+      runPaletteEntry(
+        model,
+        Palette.selected(model.screens.palette, paletteEntries(model)),
+      ),
+    RanPaletteEntry: ({ id }) =>
+      runPaletteEntry(
+        model,
+        Array.findFirst(paletteEntries(model), entry => entry.id === id),
+      ),
     RequestedKeyHelp: () => ({
       model: modifyFields(model, { overlay: () => Overlay.KeyHelp() }),
     }),
