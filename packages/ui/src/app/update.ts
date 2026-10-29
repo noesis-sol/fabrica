@@ -1,8 +1,13 @@
-import { Effect, Option, Schema } from 'effect'
+import { Duration, Effect, Option, Schema } from 'effect'
 import { Command, Update } from 'foldkit'
 import { modifyFields } from 'foldkit/struct'
 
-import { type AttentionRef, ProjectId } from '@fabrica/contracts'
+import {
+  type AttentionRef,
+  type NoRun,
+  ProjectId,
+  RunId,
+} from '@fabrica/contracts'
 
 import * as Attention from '../console/attention'
 import * as History from '../console/history'
@@ -35,6 +40,23 @@ import { ShowTheme, type ThemeHost } from './theme-host'
 export const WaitToReconnect = Command.define('WaitToReconnect', {
   messages: [Message.WaitedToReconnect],
   execute: Effect.as(Effect.sleep(retryAfter), Message.WaitedToReconnect()),
+})
+
+/**
+ * How long a run view watch that ended NoRun waits before watching again, while the project's row shows
+ * a run going: the row can show a run before the engine has its view.
+ */
+export const rewatchAfter = Duration.seconds(1)
+
+/** Waits before watching the project's run view again, for the run its row showed going. */
+export const WaitToRewatchRunView = Command.define('WaitToRewatchRunView', {
+  args: { project: ProjectId, run: RunId },
+  messages: [Message.WaitedToRewatchRunView],
+  execute: ({ project, run }) =>
+    Effect.as(
+      Effect.sleep(rewatchAfter),
+      Message.WaitedToRewatchRunView({ project, run }),
+    ),
 })
 
 type Return = Update.Return<
@@ -382,10 +404,34 @@ export const update = (model: Model, message: Message): Return =>
             }),
           }
         : { model },
-    EndedRunView: ({ project }) =>
-      Option.contains(model.scope, project)
-        ? { model: modifyFields(model, { runView: () => Option.none() }) }
-        : { model },
+    EndedRunView: ({ project, reason }) => {
+      if (!Option.contains(model.scope, project)) {
+        return { model }
+      }
+      const ended = modifyFields(model, { runView: () => Option.none() })
+      const going =
+        reason === ('NoRun' satisfies NoRun['_tag'])
+          ? Sidebar.goingRun(model.console.sidebar, project)
+          : Option.none()
+      return Option.match(going, {
+        onNone: () => ({ model: ended }),
+        onSome: run => ({
+          model: ended,
+          commands: [WaitToRewatchRunView({ project, run })],
+        }),
+      })
+    },
+    WaitedToRewatchRunView: ({ project, run }) => ({
+      model:
+        Option.contains(model.scope, project) &&
+        Option.contains(
+          Sidebar.goingRun(model.console.sidebar, project),
+          run,
+        ) &&
+        Option.isNone(model.runView)
+          ? modifyFields(model, { runWatch: watch => watch + 1 })
+          : model,
+    }),
     ReceivedEvents: ({ project, items }) =>
       Option.isNone(model.scope) || Option.contains(model.scope, project)
         ? {

@@ -117,7 +117,10 @@ export const Model = Schema.Struct({
   now: Schema.Option(Schema.DateTimeZoned),
   /** The start of the viewer's day, from the same ticks: kept until the day changes (§7.7). */
   today: Schema.Option(Schema.DateTimeZoned),
-  /** Bumped to watch the scoped project's run view afresh: a run started from the app. */
+  /**
+   * Bumped to watch the scoped project's run view afresh: a run started from the app, or a watch that
+   * ended NoRun while the project's row showed a run going, tried again after a pause.
+   */
   runWatch: Schema.Int,
   console: ConsoleParts,
   screens: Screens,

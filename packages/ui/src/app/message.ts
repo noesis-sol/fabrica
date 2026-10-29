@@ -74,6 +74,8 @@ export const Message = defineMessageUnion({
   ReceivedRunView: { project: ProjectId, items: itemsOf(RunViewItem) },
   /** The project's run view ended: no run, or the project gone. */
   EndedRunView: { project: ProjectId, reason: Schema.String },
+  /** The pause after the project's run view ended NoRun while its row showed `run` going. */
+  WaitedToRewatchRunView: { project: ProjectId, run: RunId },
   ReceivedEvents: { project: ProjectId, items: itemsOf(EventsItem) },
   ReceivedAttention: { items: itemsOf(AttentionItem) },
   ReceivedBacklog: { project: ProjectId, items: itemsOf(BacklogItem) },
