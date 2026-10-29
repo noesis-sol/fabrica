@@ -3,7 +3,7 @@ import { access, readFile } from 'node:fs/promises'
 import * as NodePath from 'node:path'
 
 import { NodeServices } from '@effect/platform-node'
-import { describe, expect, it, layer } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import { EngineHost, protocolVersion } from '@fabrica/contracts'
 import { Daemon } from '@fabrica/engine'
 import {
