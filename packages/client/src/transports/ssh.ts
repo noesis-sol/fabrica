@@ -354,7 +354,8 @@ const hostKeyQuestion = (
   if (host === null) {
     return Option.none()
   }
-  const fingerprint = /key fingerprint is (\S+?)\.?$/mu.exec(prompt)
+  // OpenSSH 10 writes `fingerprint is: SHA256:…`; earlier ones `fingerprint is SHA256:….`.
+  const fingerprint = /key fingerprint is:? (\S+?)\.?$/mu.exec(prompt)
   return Option.some({
     host: host[1] ?? '',
     fingerprint: Option.fromNullishOr(fingerprint?.[1]),

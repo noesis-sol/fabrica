@@ -103,10 +103,13 @@ if (mode === 'bridge') {
     'Host key verification failed.',
     '',
   ].join('\\n'), 255)
-} else if (mode === 'unknown') {
+} else if (mode === 'unknown' || mode === 'unknown-10') {
+  // OpenSSH 10 writes the fingerprint after a colon, with no full stop.
   const answer = ask([
     "The authenticity of host 'server-1 (192.0.2.7)' can't be established.",
-    'ED25519 key fingerprint is SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU.',
+    mode === 'unknown'
+      ? 'ED25519 key fingerprint is SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU.'
+      : 'ED25519 key fingerprint is: SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU',
     'This key is not known by any other names.',
     'Are you sure you want to continue connecting (yes/no/[fingerprint])? ',
   ].join('\\n'))
@@ -452,11 +455,11 @@ describe('the SSH bridge', () => {
       }),
     )
 
-    it.effect(
-      "relays an unknown host's fingerprint and connects once it is accepted",
-      () =>
+    it.effect.each(['unknown', 'unknown-10'])(
+      "relays an unknown host's fingerprint and connects once it is accepted (%s)",
+      mode =>
         Effect.gen(function* () {
-          const { env, dir, runs } = yield* setUp('unknown')
+          const { env, dir, runs } = yield* setUp(mode)
           const { prompts, hostKeys } = yield* makePrompts({ hostKey: true })
           const client = yield* clientOver(
             env,
