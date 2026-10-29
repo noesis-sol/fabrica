@@ -30,14 +30,17 @@ const READ_ENVIRONMENT: Readonly<Record<string, string>> = {
 }
 
 /**
- * What network commands (clone, fetch, push) add where the host's git configuration names no ssh
+ * What network commands (clone, fetch, push) run with where the host's git configuration names no ssh
  * command of its own (`core.sshCommand`): ssh in batch mode, so a key the agent doesn't hold, a
- * passphrase or an unknown host key fails the command instead of asking. A host's own ssh command is
- * kept as it is, since it may choose a key or wrap ssh; it never asks either, having no terminal.
+ * passphrase or an unknown host key fails the command instead of asking. It is configuration, not
+ * `GIT_SSH_COMMAND`, so the host's own `GIT_SSH_COMMAND`, which git ranks over any configuration,
+ * still wins. A host's own ssh command is kept as it is, since it may choose a key or wrap ssh; it
+ * never asks either, having no terminal.
  */
-const BATCH_SSH: Readonly<Record<string, string>> = {
-  GIT_SSH_COMMAND: 'ssh -o BatchMode=yes',
-}
+const BATCH_SSH: ReadonlyArray<string> = [
+  '-c',
+  'core.sshCommand=ssh -o BatchMode=yes',
+]
 
 /** How the git service runs its commands. */
 export interface GitConfig {
@@ -83,7 +86,7 @@ export const makeCommands = ({
 }) => {
   /**
    * Runs `git <args>` in `cwd` with `environment` over the allowlisted one, as the runner ends it; a
-   * `network` command with the host's ssh-agent too.
+   * `network` command with the host's transport too.
    */
   const invoke = (
     environment: Readonly<Record<string, string>>,
@@ -174,14 +177,15 @@ export const makeCommands = ({
   }
 
   /**
-   * A command that reaches a remote (clone, fetch, push): run once, with the host's ssh-agent (the
-   * runner passes it `SSH_AUTH_SOCK`), and ssh in batch mode unless the host names its own.
+   * A command that reaches a remote (clone, fetch, push): run once, with the host's transport (the
+   * runner passes it the ssh-agent, the host's ssh command, proxies and CA certificates), and ssh in
+   * batch mode unless the host names its own.
    */
   const network = (command: GitCommand) =>
     Effect.flatMap(ownSshCommand(command.cwd), own =>
       runIn(
-        own ? GIT_ENVIRONMENT : { ...GIT_ENVIRONMENT, ...BATCH_SSH },
-        command,
+        GIT_ENVIRONMENT,
+        own ? command : { ...command, args: [...BATCH_SSH, ...command.args] },
         true,
       ),
     )

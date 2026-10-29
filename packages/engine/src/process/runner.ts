@@ -54,7 +54,7 @@ interface Invocation {
   readonly cwd: string
   /** Variables beyond the engine's allowlisted ones, over them (git's local variables are dropped). */
   readonly env?: Readonly<Record<string, string>>
-  /** Whether it reaches a remote (git's clone, fetch and push): it also gets the host's ssh-agent. */
+  /** Whether it reaches a remote (git's clone, fetch and push): it also gets the host's transport. */
   readonly network?: boolean
   /** The nice value a worker's command runs at (`worker_nice`); without one, the engine's own. */
   readonly nice?: number

@@ -23,11 +23,32 @@ const ALLOWED: ReadonlySet<string> = new Set([
 ])
 
 /**
- * What a command reaching a remote also gets, where the engine has it (spec §10.1, §10.3): the host's
- * ssh-agent, which holds the keys a clone, fetch or push of an SSH URL signs in with. Only git's network
- * commands get it, never an agent's or a check's command.
+ * What a command reaching a remote also gets, where the engine has it (spec §10.1, §10.3, §11.7): the
+ * host's own transport, so a clone, fetch or push signs in and connects as the host's own git would.
+ * The ssh-agent holding the keys an SSH URL signs in with; the host's own ssh command and its kind,
+ * which git ranks over `core.sshCommand`; curl's proxies, as curl reads them (never `HTTP_PROXY`,
+ * which curl ignores, since a CGI server sets it from a request's `Proxy` header); and the CA
+ * certificates an HTTPS URL's server is checked against. Only git's network commands get them,
+ * never an agent's or a check's command. What would ask is never passed (`SSH_ASKPASS`, `GIT_ASKPASS`,
+ * `DISPLAY`), since a network command fails instead of asking; nor is `GIT_SSH`, which git ranks
+ * under the batch-mode ssh command the engine names where the host names none.
  */
-const NETWORK: ReadonlySet<string> = new Set(['SSH_AUTH_SOCK'])
+const NETWORK: ReadonlySet<string> = new Set([
+  'SSH_AUTH_SOCK',
+  'GIT_SSH_COMMAND',
+  'GIT_SSH_VARIANT',
+  'http_proxy',
+  'https_proxy',
+  'HTTPS_PROXY',
+  'all_proxy',
+  'ALL_PROXY',
+  'no_proxy',
+  'NO_PROXY',
+  'GIT_SSL_CAINFO',
+  'GIT_SSL_CAPATH',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+])
 
 /** The locale's categories: `LC_ALL`, `LC_CTYPE` and the rest. */
 const LOCALE = /^LC_[A-Z]+$/
