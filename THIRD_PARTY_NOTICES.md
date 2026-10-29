@@ -3,7 +3,8 @@
 Fabrica is MIT-licensed (`LICENSE`). Its app and its engine distribution bundle the components below, each
 under its own licence (spec §20.5). The app carries this file, and the licence files that must travel with a
 component, in its resources' `licenses/` folder, and Electron's and Chromium's where Electron has them; the engine distribution carries Node's `node/LICENSE`, and Pi
-with its dependencies as their packages ship them, each with its own licence file, under `lib/pi/`.
+with its dependencies as their packages ship them, each with its own licence file, under `lib/pi/`, and DuckDB with
+its dependency the same way under `lib/engine/node_modules/`.
 
 ## The app
 
@@ -40,7 +41,8 @@ The macOS and Linux apps embed it, and the Windows app installs it in WSL2 (spec
 | Effect (`effect`, `@effect/platform-node`, `@effect/platform-node-shared`, `@effect/sql-sqlite-node`) | 4.0.0 | MIT | Effectful Technologies Inc |
 | TypeBox (in the extension) | 1.3.27 | MIT | Haydn Paterson |
 | ws | 8.22.0 | MIT | Einar Otto Stangvik |
-| DuckDB (`@duckdb/node-api`, the telemetry query layer, spec §21) | when bundled | MIT | Stichting DuckDB Foundation |
+| DuckDB (`@duckdb/node-api`, `@duckdb/node-bindings` and the target's `@duckdb/node-bindings-<platform>-<arch>`, the telemetry query layer, spec §21) | 1.5.6-r.2 | MIT | Stichting DuckDB Foundation |
+| detect-libc (DuckDB's) | 2.1.2 | Apache-2.0 | Lovell Fuller and contributors |
 
 ## The licences
 
@@ -78,6 +80,12 @@ The Blue Oak Model License 1.0.0, <https://blueoakcouncil.org/license/1.0.0>, un
 gives each contributor's permission to do everything with the software that would otherwise infringe their
 copyright or patents, on the condition that everyone who gets a copy of any part of it from you also gets the
 text of the licence or a link to it.
+
+### Apache License 2.0
+
+The Apache License 2.0, <https://www.apache.org/licenses/LICENSE-2.0>, under which detect-libc is licensed, lets
+anyone use, reproduce and distribute the work, on the condition that a copy of the licence goes with it: detect-libc's
+`LICENSE` travels in its package, under the engine distribution's `lib/engine/node_modules/`.
 
 ### SIL Open Font License 1.1
 

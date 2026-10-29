@@ -1,6 +1,6 @@
 // `pnpm --filter @fabrica/engine-app dist [target…|all]`: builds the engine distribution (spec §22.1)
 // for the targets it names, this host's when it names none, into `apps/engine/out`, and prints each
-// archive's size and the unpacked distribution's (§22.5).
+// archive's size, the unpacked distribution's, and DuckDB's part of it (§22.4, §22.5).
 //
 // Node runs this file itself, stripping its types: relative imports name their `.ts` files.
 
@@ -46,8 +46,11 @@ const megabytes = (bytes: number) => `${(bytes / 1_000_000).toFixed(1)} MB`
 
 const program = Effect.gen(function* () {
   const targets = yield* targetsOf(process.argv.slice(2))
-  const lock = yield* Effect.promise(() =>
-    readFile(NodePath.join(repository, 'mise.lock'), 'utf8'),
+  const [lock, lockfile] = yield* Effect.promise(() =>
+    Promise.all([
+      readFile(NodePath.join(repository, 'mise.lock'), 'utf8'),
+      readFile(NodePath.join(repository, 'pnpm-lock.yaml'), 'utf8'),
+    ]),
   )
   const out = NodePath.join(app, 'out')
   for (const target of targets) {
@@ -65,6 +68,7 @@ const program = Effect.gen(function* () {
       target,
       version,
       node,
+      lockfile,
       app,
       extension: NodePath.join(repository, 'packages', 'pi-extension'),
       out,
@@ -72,7 +76,7 @@ const program = Effect.gen(function* () {
       env: process.env,
     })
     yield* Console.log(
-      `${NodePath.relative(repository, made.archive)}: ${megabytes(made.archiveBytes)}, unpacked ${megabytes(made.unpackedBytes)}, sha256 ${made.sha256}`,
+      `${NodePath.relative(repository, made.archive)}: ${megabytes(made.archiveBytes)}, unpacked ${megabytes(made.unpackedBytes)} (DuckDB ${megabytes(made.duckDbBytes)}), sha256 ${made.sha256}`,
     )
   }
   yield* Console.log(

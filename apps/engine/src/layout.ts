@@ -24,6 +24,13 @@ export const DISTRIBUTION_LAYOUT = {
   nodeLicense: 'node/LICENSE',
   /** The engine bundle: `apps/engine` and `packages/engine`, migrations included. */
   bundle: 'lib/engine/main.js',
+  /**
+   * The folder DuckDB is installed in, the bundle's, whose import of it Node resolves there: its
+   * `node_modules`, laid out as pnpm laid it out, with the target's native package.
+   */
+  duckDbFolder: 'lib/engine',
+  /** DuckDB's package, `@duckdb/node-api`, which the engine imports when it opens its query layer. */
+  duckDb: 'lib/engine/node_modules/@duckdb/node-api',
   /** The folder Pi is installed in: its `node_modules`, laid out as pnpm laid it out. */
   piFolder: 'lib/pi',
   /** Pi's package. */

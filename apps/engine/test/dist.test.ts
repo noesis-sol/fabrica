@@ -1,131 +1,47 @@
-import { Context, Effect, Layer, Option } from 'effect'
+import { Effect, Option } from 'effect'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import {
-  access,
-  lstat,
-  mkdir,
-  readFile,
-  symlink,
-  writeFile,
-} from 'node:fs/promises'
+import { access, lstat, readFile, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it, layer } from '@effect/vitest'
-import { Toolbox, layerToolbox, runCommand, tempFolder } from '@fabrica/testkit'
+import { Toolbox, runCommand, tempFolder } from '@fabrica/testkit'
 
 import {
-  type Distribution,
   DistributionFailure,
   type Download,
-  buildDistribution,
   fetchPinned,
   nodePin,
   sha256Of,
 } from '../build/distribution'
 import packageJson from '../package.json' with { type: 'json' }
-import {
-  DISTRIBUTION_LAYOUT,
-  ENGINE_TARGETS,
-  distributionName,
-} from '../src/layout'
+import { DISTRIBUTION_LAYOUT, ENGINE_TARGETS } from '../src/layout'
+import { Built, layerBuilt, repository } from './built-distribution'
 
-// The engine distribution (spec §22.1): built once for the file, from the repository's engine, Pi and
-// extension, with a fixture standing in for Node's archive: a link to the Node running the tests, so
-// any host builds and runs any target's archive, and nothing is downloaded. The archive is unpacked
-// outside the repository and run there, as an install would.
-
-const app = fileURLToPath(new URL('..', import.meta.url))
-const repository = join(app, '..', '..')
-
-const TARGET = 'linux-arm64'
-const VERSION = '9.8.7-test'
-const NAME = distributionName({ version: VERSION, target: TARGET })
-const NODE_TOP = `node-v26.13.0-${TARGET}`
-
-/** A download the build must not make: the cache holds the pinned file. */
-const offline: Download = url =>
-  Effect.fail(DistributionFailure.Download({ url, message: 'offline' }))
-
-/** A built distribution, and the folder its archive was unpacked into. */
-class Built extends Context.Service<
-  Built,
-  {
-    readonly made: Distribution
-    readonly out: string
-    readonly root: string
-  }
->()('Built') {}
-
-const layerBuilt = Layer.effect(
-  Built,
-  Effect.gen(function* () {
-    const tools = yield* Toolbox
-    const [fixture, out, unpacked] = yield* Effect.all([
-      tempFolder('dist-node'),
-      tempFolder('dist-out'),
-      tempFolder('dist-unpacked'),
-    ])
-    const cache = join(out, 'cache')
-    yield* Effect.promise(async () => {
-      await mkdir(join(fixture, NODE_TOP, 'bin'), { recursive: true })
-      await mkdir(cache)
-      await symlink(process.execPath, join(fixture, NODE_TOP, 'bin', 'node'))
-      await writeFile(join(fixture, NODE_TOP, 'LICENSE'), "Node's licence\n")
-    })
-    const nodeArchive = join(cache, `${NODE_TOP}.tar.gz`)
-    yield* runCommand({
-      command: 'tar',
-      args: ['-czf', nodeArchive, '-C', fixture, NODE_TOP],
-      cwd: fixture,
-      env: tools.env(),
-    })
-    const made = yield* buildDistribution({
-      target: TARGET,
-      version: VERSION,
-      node: {
-        url: `https://nodejs.org/dist/v26.13.0/${NODE_TOP}.tar.gz`,
-        sha256: yield* Effect.promise(() => sha256Of(nodeArchive)),
-      },
-      app,
-      extension: join(repository, 'packages', 'pi-extension'),
-      out,
-      download: offline,
-      env: tools.env(),
-    })
-    yield* runCommand({
-      command: 'tar',
-      args: ['-xzf', made.archive, '-C', unpacked],
-      cwd: unpacked,
-      env: tools.env(),
-    })
-    return { made, out, root: join(unpacked, NAME) }
-  }),
-).pipe(Layer.provideMerge(layerToolbox({ tools: ['tar', 'gzip', 'readlink'] })))
+// The engine distribution (spec §22.1), built once for the file as built-distribution.ts says.
 
 layer(layerBuilt, { timeout: '3 minutes' })('the engine distribution', it => {
   it.effect('names its archive for its version and target', () =>
     Effect.gen(function* () {
-      const { made, out } = yield* Built
-      expect(made.archive).toBe(join(out, `${NAME}.tar.gz`))
+      const { made, name, out } = yield* Built
+      expect(made.archive).toBe(join(out, `${name}.tar.gz`))
     }),
   )
 
   it.effect("lists the archive's checksum in checksums.txt", () =>
     Effect.gen(function* () {
-      const { made } = yield* Built
+      const { made, name } = yield* Built
       const [listed, actual] = yield* Effect.promise(() =>
         Promise.all([readFile(made.checksums, 'utf8'), sha256Of(made.archive)]),
       )
       expect(made.sha256).toBe(actual)
-      expect(listed).toBe(`${actual}  ${NAME}.tar.gz\n`)
+      expect(listed).toBe(`${actual}  ${name}.tar.gz\n`)
     }),
   )
 
   it.effect('holds one folder, named as the archive', () =>
     Effect.gen(function* () {
-      const { made } = yield* Built
+      const { made, name } = yield* Built
       const tools = yield* Toolbox
       const listing = yield* runCommand({
         command: 'tar',
@@ -134,10 +50,10 @@ layer(layerBuilt, { timeout: '3 minutes' })('the engine distribution', it => {
         env: tools.env(),
       })
       const entries = listing.split('\n').filter(entry => entry !== '')
-      expect(entries.filter(entry => !entry.startsWith(`${NAME}/`))).toEqual([])
+      expect(entries.filter(entry => !entry.startsWith(`${name}/`))).toEqual([])
       // No AppleDouble files, which macOS's tar adds for extended attributes.
       expect(entries.filter(entry => entry.includes('/._'))).toEqual([])
-      // Pi's source maps and type declarations are left out: nothing reads them.
+      // Pi's and DuckDB's source maps and type declarations are left out: nothing reads them.
       expect(
         entries.filter(entry => /\.(map|d\.ts|d\.mts|d\.cts)$/.test(entry)),
       ).toEqual([])
@@ -265,7 +181,8 @@ describe('nodePin', () => {
               `^https://nodejs\\.org/dist/v[0-9.]+/node-v[0-9.]+-${target}\\.tar\\.gz$`,
             ),
           )
-          expect(pin.sha256).toMatch(/^[0-9a-f]{64}$/)
+          expect(pin.hash).toBe('sha256')
+          expect(pin.checksum).toMatch(/^[0-9a-f]{64}$/)
         }
       }),
   )
@@ -283,7 +200,8 @@ describe('nodePin', () => {
     expect(nodePin(lock, 'darwin-arm64')).toEqual(
       Option.some({
         url: 'https://nodejs.org/dist/v1.0.0/node-v1.0.0-darwin-arm64.tar.gz',
-        sha256: 'a'.repeat(64),
+        hash: 'sha256',
+        checksum: 'a'.repeat(64),
       }),
     )
     expect(nodePin(lock, 'linux-x64')).toEqual(Option.none())
@@ -310,7 +228,7 @@ describe('fetchPinned', () => {
   it.effect('downloads a file missing from the cache, and keeps it', () =>
     Effect.gen(function* () {
       const cache = yield* tempFolder('dist-cache')
-      const pin = { url, sha256: sha256('node') }
+      const pin = { url, hash: 'sha256' as const, checksum: sha256('node') }
       const { calls, download } = writing('node')
       const file = yield* fetchPinned({ pin, cache, download })
       expect(file).toBe(join(cache, NODE))
@@ -327,7 +245,7 @@ describe('fetchPinned', () => {
         yield* Effect.promise(() => writeFile(join(cache, NODE), 'stale'))
         const { calls, download } = writing('node')
         yield* fetchPinned({
-          pin: { url, sha256: sha256('node') },
+          pin: { url, hash: 'sha256', checksum: sha256('node') },
           cache,
           download,
         })
@@ -338,12 +256,13 @@ describe('fetchPinned', () => {
   it.effect("refuses a download that isn't the pinned file, and drops it", () =>
     Effect.gen(function* () {
       const cache = yield* tempFolder('dist-cache')
-      const pin = { url, sha256: sha256('node') }
+      const pin = { url, hash: 'sha256' as const, checksum: sha256('node') }
       const { download } = writing('not node')
       const failure = yield* Effect.flip(fetchPinned({ pin, cache, download }))
       expect(failure).toEqual(
         DistributionFailure.ChecksumMismatch({
           file: NODE,
+          hash: 'sha256',
           expected: sha256('node'),
           actual: sha256('not node'),
         }),

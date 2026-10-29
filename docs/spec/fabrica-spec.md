@@ -1068,7 +1068,7 @@ Anything with native code MUST appear here, with its CPU baseline: whether its x
 | Node runtime (engine distribution) | Yes, per engine target | In (new) |
 | SQLite | None; built into Node (`node:sqlite`) | In |
 | Pi coding agent | Unknown | \[VERIFY\] all four engine targets |
-| DuckDB (`@duckdb/node-api`) | Yes, prebuilt per platform (63 MB each) | In, engine only, from M6 (H65): prebuilt for macOS and Linux, x64 and arm64 \[VERIFY each and glibc's floor\]; its `json` and `sqlite` extensions bundled, never downloaded at run time; signed with the engine distribution on macOS |
+| DuckDB (`@duckdb/node-api`) | Yes, prebuilt per platform (at 1.5.6, unpacked: 64 MB Linux arm64, 72 MB Linux x64, 118 MB macOS) | In, engine only, from M6 (H65): prebuilt for macOS and Linux, x64 and arm64 \[VERIFY each and glibc's floor\]; its `json` and `sqlite` extensions bundled, never downloaded at run time; signed with the engine distribution on macOS |
 | Monaco, xterm.js, Cytoscape.js (with dagre or ELK) | None | In |
 | OpenSSH client | System's, not bundled | Required on clients for remote engines; the bridge runs over it (§8.2) |
 | WSL2 | System's, not bundled | Optional on Windows, for a local engine (§7.6) |
@@ -1085,7 +1085,7 @@ Anything with native code MUST appear here, with its CPU baseline: whether its x
 - **Release notes** are the version's changelog section, cut after the last whole entry within 120,000 characters with a line linking to the rest: GitHub refuses a Release's notes over 125,000 characters, as it refused tutti's first (253,019).
 - **Build provenance** (`actions/attest`) needs a public repository or a paid plan; the repository is public before the first release (H49).
 - **The install script** is attached to each release and fetched from `releases/latest/download/`, so it matches the archives it downloads. It installs into `~/.local/bin` by default, saying how to put it on the PATH; installs the arm64 build under Rosetta (`sysctl.proc_translated`); and checks the host's CPU against the native inventory's baselines (§22.4).
-- **Size:** the engine distribution has a size budget, checked in CI \[OPEN the number; Node, Pi and DuckDB's 63 MB per platform make most of it\].
+- **Size:** the engine distribution has a size budget, checked in CI \[OPEN the number; Node, Pi and DuckDB make most of it: at Fabrica 0.0.0 with DuckDB 1.5.6, 87–99 MB as archives, 279–333 MB unpacked, of which DuckDB 64–118 MB\].
 - **Tag after every target's check** (H87): a release is tagged only once main's check has passed on each engine target in CI; a job the CI provider couldn't place is rerun first (GitHub had no macOS runner for one, 2026-10-28), as the release workflow's own check may run on one platform only.
 - A release commit pushed alone skips CI's duplicate check through the workflow's own gate (its subject, and that it changes only the changelog and the version), never through GitHub's skip marker, which a commit message must never contain, even to name it: GitHub skips every push workflow for that commit (tutti-ac2x).
 - **Changelog entries are one file per ticket** (`changes/<ticket>.md`), gathered into `CHANGELOG.md` at release: tutti's union-merged `CHANGELOG.md` kept both versions of an entry a later commit reworded, and its releases each had duplicates to drop by hand.
