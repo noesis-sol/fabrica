@@ -341,6 +341,33 @@ describe('the command line', () => {
     }),
   )
 
+  /** Stubs given the flags §19 writes for them, and the command each names. */
+  const withFlags: ReadonlyArray<readonly [line: string, command: string]> = [
+    ['run --tickets', 'run'],
+    ['run --ticket fab-1 --limit 3 --concurrent 2 --model m --wait', 'run'],
+    ['run --spec docs/spec.md --refine --auto-answer', 'run'],
+    ['run --feature add-x --auto-answer=30m --offline', 'run'],
+    ['run --overnight --auto-answer --json', 'run'],
+    ['requires --markdown', 'requires'],
+    ['tickets import --beads issues.jsonl', 'tickets import'],
+  ]
+
+  it.effect.each(withFlags)(
+    'says `fabrica %s` isn’t built yet, its §19 flags taken',
+    ([line, command]) =>
+      Effect.gen(function* () {
+        const { exit, out, err } = yield* fabrica(
+          '/nowhere',
+          ...line.split(' '),
+        )
+        expect(Exit.isFailure(exit)).toBe(true)
+        expect(out).toStrictEqual([])
+        expect(err).toStrictEqual([
+          `fabrica: \`fabrica ${command}\` is not in ${versionLine} yet`,
+        ])
+      }),
+  )
+
   it.effect('lists every command group of §19 in its help', () =>
     Effect.gen(function* () {
       const { exit, out } = yield* fabrica('/nowhere', '--help')
