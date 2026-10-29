@@ -26,6 +26,7 @@
     "node_modules",
     "dist",
     "out",
+    "apps/desktop/stage",
     "repos",
     "design",
     "packages/ui/src/theme/themes.css",

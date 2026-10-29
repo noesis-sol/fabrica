@@ -1,0 +1,107 @@
+# The app's packages (spec §22.2, §4): dmg and zip per macOS architecture (Developer ID, hardened runtime,
+# notarised, every Mach-O signed), AppImage, deb and rpm for Linux x64 and arm64, and NSIS for Windows x64
+# (Authenticode). Each is built on its own platform and architecture (.github/workflows/app.yml): one
+# architecture per run, `pnpm --filter @fabrica/desktop run package --<arch>`.
+#
+# The app carries no node_modules: electron-vite bundles everything main, the preload and the renderer
+# import (electron.vite.config.ts), so `files` is the build's output and the manifest. Electron's release
+# comes through @electron/get, from the cache the electron package's install filled, checked against its
+# release's SHASUMS256.txt (§20.4).
+#
+# The hooks: beforePack stages the engine distribution the app embeds (build/engine.ts), which
+# extraResources copy into its resources; afterPack flips the fuses (§20.1, build/fuses.ts), before
+# anything is signed, since flipping changes the binary.
+#
+# Signing runs only where its secrets are (§20.5). macOS: CSC_LINK and CSC_KEY_PASSWORD (the Developer ID
+# Application certificate, a base64 .p12, and its password), and for notarisation APPLE_ID,
+# APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID. Windows: WIN_CSC_LINK and WIN_CSC_KEY_PASSWORD (the
+# Authenticode certificate); electron-updater checks an update is signed by the same publisher. Without
+# them, the packages are built unsigned (CSC_IDENTITY_AUTO_DISCOVERY=false keeps a keychain's identity
+# out of a build that has no secrets).
+appId: solutions.noesis.fabrica
+productName: Fabrica
+copyright: Copyright © 2026 Michael Michailidis
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - out/**/*
+  - '!out/**/*.map'
+  - package.json
+
+npmRebuild: false
+asar: true
+
+beforePack: ./build/engine.ts
+afterPack: ./build/fuses.ts
+
+artifactName: Fabrica-${version}-${os}-${arch}.${ext}
+
+# The third-party notices (§20.5, THIRD_PARTY_NOTICES.md), and the licence files that travel with their
+# components, in every app's resources (electron-builder keeps Electron's and Chromium's, LICENSE.electron.txt
+# and LICENSES.chromium.html, beside the app, in its resources on macOS); each platform's own
+# extraResources below add the engine.
+extraResources:
+  - from: ../../THIRD_PARTY_NOTICES.md
+    to: licenses/THIRD_PARTY_NOTICES.md
+  - from: ../../packages/ui/src/theme/fonts
+    to: licenses
+    filter:
+      - OFL-*.txt
+  - from: ../../packages/ui/node_modules/monaco-editor/ThirdPartyNotices.txt
+    to: licenses/monaco-editor-ThirdPartyNotices.txt
+  - from: ../../packages/ui/node_modules/foldkit/THIRD-PARTY-NOTICES.md
+    to: licenses/foldkit-THIRD-PARTY-NOTICES.md
+
+# The app's updates (electron-updater, src/main/updates.ts) read the public GitHub Releases (§20.5).
+publish:
+  provider: github
+  owner: noesis-sol
+  repo: fabrica
+  releaseType: release
+
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.developer-tools
+  # The pinned Electron's floor (spike fab-mgi.2.6).
+  minimumSystemVersion: '13.0'
+  hardenedRuntime: true
+  # Electron's V8 needs what the engine's Node needs under the hardened runtime: one file says it.
+  entitlements: ../engine/build/entitlements.plist
+  entitlementsInherit: ../engine/build/entitlements.plist
+  extraResources:
+    - from: stage/engine
+      to: engine
+
+dmg:
+  # A dmg is a download; the app updates from the zip.
+  writeUpdateInfo: false
+
+linux:
+  target:
+    - AppImage
+    - deb
+    - rpm
+  category: Development
+  # Not `fabrica`, the engine's command (§19), which the deb and rpm would link into /usr/bin.
+  executableName: fabrica-app
+  maintainer: Michael Michailidis
+  synopsis: Runs a backlog of tickets with coding agents side by side
+  extraResources:
+    - from: stage/engine
+      to: engine
+
+win:
+  target:
+    - nsis
+  extraResources:
+    - from: stage/engine
+      to: engine-release
+
+nsis:
+  oneClick: true
+  perMachine: false

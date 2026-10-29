@@ -4,20 +4,13 @@ import { fileURLToPath } from 'node:url'
 import { foldkit } from '@foldkit/vite-plugin'
 import tailwindcss from '@tailwindcss/vite'
 
-// The workspace's packages are TypeScript sources, so main bundles them rather than loading them
-// from node_modules at run time.
-const workspacePackages = [
-  '@fabrica/client',
-  '@fabrica/contracts',
-  '@fabrica/engine',
-  '@fabrica/engine-app',
-  '@fabrica/ui',
-]
-
 export default defineConfig({
   main: {
     build: {
-      externalizeDeps: { exclude: workspacePackages },
+      // The packaged app carries no node_modules (electron-builder.yml): main bundles every module it
+      // imports, the workspace's TypeScript sources and electron-updater among them; Electron and Node's
+      // own modules aside.
+      externalizeDeps: false,
       rollupOptions: {
         // Beside main, the connection process (spec §5): the utilityProcess main forks, built from
         // the same sources to out/main/connection.js.

@@ -38,8 +38,8 @@ What this project needs of the machine, from `"requires"` in `.tutti/settings.js
   - check: `[ "$(MISE_EXEC_AUTO_INSTALL=0 mise exec pnpm@12.16.1 -- pnpm --version 2>/dev/null)" = 12.16.1 ]`
   - install: `mise install pnpm@12.16.1`
 - **electron**
-  - check: `MISE_EXEC_AUTO_INSTALL=0 mise exec -- pnpm --filter @fabrica/ui exec node -e "const fs = require('node:fs'); const path = require('node:path'); const dir = path.dirname(require.resolve('electron/package.json')); const file = path.join(dir, 'path.txt'); process.exit(fs.existsSync(file) && fs.existsSync(path.join(dir, 'dist', fs.readFileSync(file, 'utf8'))) ? 0 : 1)" >/dev/null 2>&1`
-  - install: `mise exec -- pnpm --filter @fabrica/ui exec node -e "require('electron')"`
+  - check: `MISE_EXEC_AUTO_INSTALL=0 mise exec -- pnpm --filter @fabrica/ui --filter @fabrica/desktop exec node -e "const fs = require('node:fs'); const path = require('node:path'); const dir = path.dirname(require.resolve('electron/package.json')); const file = path.join(dir, 'path.txt'); process.exit(fs.existsSync(file) && fs.existsSync(path.join(dir, 'dist', fs.readFileSync(file, 'utf8'))) ? 0 : 1)" >/dev/null 2>&1`
+  - install: `mise exec -- pnpm --filter @fabrica/ui --filter @fabrica/desktop exec node -e "require('electron')"`
 - **xvfb-linux** (only on Linux)
   - check: `[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] || command -v xvfb-run >/dev/null`
   - by hand: Install Xvfb (Ubuntu: sudo apt-get install xvfb): on a machine without a display, scripts/check-fast.sh runs its suites under xvfb-run for the UI look test's Electron window.

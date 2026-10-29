@@ -11,6 +11,8 @@ node_modules/
 dist/
 out/
 *.tsbuildinfo
+# The engine distribution the app being packaged embeds, staged by apps/desktop/build/engine.ts
+apps/desktop/stage/
 .DS_Store
 
 # The UI look test's captures, written on each run for review (spec §24)

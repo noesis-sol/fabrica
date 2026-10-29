@@ -4,18 +4,17 @@
   "private": true,
   "description": "The Electron app: main, preload and the renderer.",
   "license": "MIT",
+  "author": "Michael Michailidis",
+  "homepage": "https://github.com/noesis-sol/fabrica",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "typecheck": "tsgo --noEmit -p tsconfig.node.json && tsgo --noEmit -p tsconfig.connection.json && tsgo --noEmit -p tsconfig.web.json",
     "typecheck:tsc": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.connection.json && tsc --noEmit -p tsconfig.web.json",
-    "build": "electron-vite build"
-  },
-  "dependencies": {
-    "@fabrica/ui": "workspace:*",
-    "effect": "4.0.0",
-    "foldkit": "0.169.0"
+    "build": "electron-vite build",
+    "package": "electron-vite build && electron-builder --config electron-builder.yml --publish never",
+    "smoke": "vitest run --config vitest.smoke.config.ts"
   },
   "devDependencies": {
     "@effect/platform-node": "4.0.0",
@@ -25,11 +24,17 @@
     "@fabrica/engine": "workspace:*",
     "@fabrica/engine-app": "workspace:*",
     "@fabrica/testkit": "workspace:*",
+    "@fabrica/ui": "workspace:*",
     "@foldkit/devtools": "0.169.0",
     "@foldkit/vite-plugin": "0.28.0",
     "@tailwindcss/vite": "4.3.3",
+    "effect": "4.0.0",
     "electron": "45.1.0",
+    "electron-builder": "26.18.0",
+    "electron-updater": "6.8.11",
     "electron-vite": "6.0.0",
+    "foldkit": "0.169.0",
+    "playwright-core": "1.64.1",
     "tailwindcss": "4.3.3",
     "vite": "8.3.5"
   }

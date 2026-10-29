@@ -67,6 +67,7 @@
   "ignorePatterns": [
     "dist/",
     "out/",
+    "apps/desktop/stage/",
     "node_modules/",
     "repos/",
     "design/",

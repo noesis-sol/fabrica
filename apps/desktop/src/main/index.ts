@@ -15,6 +15,8 @@ import {
   shell,
   utilityProcess,
 } from 'electron'
+import { AppImageUpdater, MacUpdater, NsisUpdater } from 'electron-updater'
+import { homedir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { ReleaseVersion } from '@fabrica/contracts'
@@ -35,6 +37,14 @@ import { makeNotifications } from './notifications'
 import { type BrokeredPage, localTarget, makeBroker } from './ports'
 import { guardPermissions, guardWebContents } from './security'
 import { makeUpdateStatusCell } from './updateStatus'
+import {
+  UpdateChannel,
+  type Updater,
+  followUpdates,
+  fromAppUpdater,
+  noUpdateCheck,
+  updateChannel,
+} from './updates'
 import { titleBarOverlay, windowOptions } from './window'
 
 // Electron main (spec §5): the window, its title bar and its confinement, the preload's API, the
@@ -49,9 +59,11 @@ const connectionProcess = fileURLToPath(
 /** How long main waits before starting a connection process that exited again. */
 const connectionRestartPause = 1_000
 
+// The home folder as the engine the app starts and the CLI read it (node:os, which follows HOME), so all
+// three find one socket: Electron's own on macOS ignores HOME.
 const target = localTarget({
   platform: process.platform,
-  home: app.getPath('home'),
+  home: homedir(),
   environment: process.env,
 })
 
@@ -128,6 +140,23 @@ const version = Schema.decodeUnknownSync(ReleaseVersion)(app.getVersion())
 const updateStatus = makeUpdateStatusCell(
   UpdateStatus.cases.Unavailable.make({}),
 )
+
+/** The updater this build updates itself with, made once the app is ready: none leaves the status Unavailable. */
+const makeUpdater = (): Option.Option<Updater> =>
+  UpdateChannel.$match(
+    updateChannel({
+      platform: process.platform,
+      packaged: app.isPackaged,
+      appImage: Option.fromUndefinedOr(process.env['APPIMAGE']),
+      checksOff: app.commandLine.hasSwitch(noUpdateCheck),
+    }),
+    {
+      Mac: () => Option.some(fromAppUpdater(new MacUpdater())),
+      Nsis: () => Option.some(fromAppUpdater(new NsisUpdater())),
+      AppImage: () => Option.some(fromAppUpdater(new AppImageUpdater())),
+      None: () => Option.none(),
+    },
+  )
 
 const openExternal = (url: string): void => {
   void shell.openExternal(url)
@@ -268,6 +297,16 @@ if (!app.requestSingleInstanceLock()) {
 
   void app.whenReady().then(() => {
     void Effect.runPromise(reachLocalEngine)
+    Option.map(makeUpdater(), updater =>
+      followUpdates({
+        updater,
+        status: updateStatus,
+        every: (interval, check) => {
+          const timer = setInterval(check, interval)
+          return () => clearInterval(timer)
+        },
+      }),
+    )
     guardPermissions(session.defaultSession)
     appWindow.show()
     app.on('activate', appWindow.show)
