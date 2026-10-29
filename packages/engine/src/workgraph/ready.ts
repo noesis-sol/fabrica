@@ -115,6 +115,15 @@ const progressOf = (ticket: Ticket): Progress =>
       ? 'merged'
       : 'asks_git'
 
+/** Whether the ticket counts as open: open, or deferred until a time that has come. `claim` takes such a ticket. */
+export const isDueOpen = (ticket: Ticket, now: DateTime.Utc): boolean =>
+  ticket.status === 'open' ||
+  (ticket.status === 'deferred' &&
+    Option.match(ticket.deferUntil, {
+      onNone: () => false,
+      onSome: until => DateTime.isLessThanOrEqualTo(until, now),
+    }))
+
 /** The reasons of the ticket's own: its status, its type, whether this run set it aside. */
 const ownReasons = (
   ticket: Ticket,
@@ -124,11 +133,7 @@ const ownReasons = (
   ...(ticket.status === 'in_progress' || ticket.status === 'closed'
     ? [WaitReason.NotOpen({ status: ticket.status })]
     : []),
-  ...(ticket.status === 'deferred' &&
-  Option.match(ticket.deferUntil, {
-    onNone: () => true,
-    onSome: until => DateTime.isGreaterThan(until, now),
-  })
+  ...(ticket.status === 'deferred' && !isDueOpen(ticket, now)
     ? [WaitReason.Deferred({ until: ticket.deferUntil })]
     : []),
   ...(isWorkerType(ticket.type)

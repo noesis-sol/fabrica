@@ -39,6 +39,7 @@ import { migrate } from './migrations'
 import {
   blockedTickets,
   finishedEpics,
+  isDueOpen,
   readyTickets,
   whyWaiting,
 } from './ready'
@@ -472,13 +473,15 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
       return yield* mutate(
         'claim',
         Effect.gen(function* () {
+          const at = yield* now
           const claimed = yield* transition({
             id,
             operation: 'claim',
-            allowed: ticket => ticket.status === 'open',
+            allowed: ticket => isDueOpen(ticket, at),
             change: () => ({
               status: 'in_progress',
               assignee: Option.some(assignee),
+              deferUntil: Option.none(),
             }),
             event: { _tag: 'claimed', assignee },
             actor,

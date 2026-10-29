@@ -16,6 +16,7 @@ import {
 import {
   type OnBase,
   TicketNotFound,
+  TransitionRefused,
   WaitReason,
   WorkGraph,
   describeWait,
@@ -187,9 +188,19 @@ describe('ready', () => {
         WaitReason.Deferred({ until: Option.some(until) }),
       ])
 
+      expect(
+        yield* Effect.flip(
+          graph.claim({ id: timed.id, assignee, actor: maintainer }),
+        ),
+      ).toBeInstanceOf(TransitionRefused)
+
       yield* TestClock.adjust(Duration.minutes(1))
       expect(yield* readyIds()).toEqual([timed.id])
       expect(yield* why(timed)).toEqual([])
+      // What ready gives, a worker can claim.
+      const claimed = yield* claim(timed)
+      expect(claimed.status).toBe('in_progress')
+      expect(claimed.deferUntil).toEqual(Option.none())
     }).pipe(Effect.provide(graphLayer)),
   )
 

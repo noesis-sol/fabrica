@@ -8,3 +8,5 @@
 - `WorkGraph.closeEpics` closes each epic whose children are all closed and merged, nested epics in
   the same call; `close` returns the ticket with the tickets it blocks that aren't closed, which it
   offers to close with it (§11.1).
+- `claim` takes a deferred ticket whose `defer_until` has come, as `ready` gives it, by the same rule
+  (`isDueOpen`), and clears its `defer_until`.
