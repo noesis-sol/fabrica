@@ -1,0 +1,19 @@
+{
+  "name": "@fabrica/testkit",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The shared test kit: temp git repositories, an airtight PATH and environment, injected host facts, and the test runner's worker count and reruns.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit -p tsconfig.json",
+    "typecheck:tsc": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@fabrica/contracts": "workspace:*",
+    "effect": "4.0.0"
+  }
+}

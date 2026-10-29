@@ -1,4 +1,5 @@
 export * from './events'
+export * from './host'
 export * from './ids'
 export * from './json-schema'
 export * from './phases'

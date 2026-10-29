@@ -148,7 +148,7 @@ suite fails. One step at a time, from the root:
 pnpm typecheck        # tsgo --noEmit in every package (pnpm typecheck:tsc runs tsc instead)
 pnpm lint             # oxlint, with @foldkit/oxlint-plugin
 pnpm format           # oxfmt, writing; pnpm format:check only checks
-pnpm test             # every package's tests (Vitest projects)
+pnpm test             # every package's tests (Vitest projects), failed ones rerun (scripts/test-rerun.ts)
 pnpm build            # every package's build
 ```
 
@@ -162,8 +162,10 @@ pnpm --filter @fabrica/desktop dev                 # the app, with the renderer'
 pnpm --filter @fabrica/ui dev                      # the renderer alone, in a browser
 ```
 
-Test files run side by side in `FABRICA_CORES` workers (the check scripts set it from `TUTTI_CORES`), or
-half the machine's cores without it.
+Test files run side by side in `FABRICA_CORES` workers (the check scripts set it from `TUTTI_CORES`), every
+core on CI, or half the machine's cores elsewhere. `pnpm test` reruns each file's failed tests together in one
+process and prints `FLAKY: <file> > <test>` for a test that passes on its rerun. Shared test helpers live in
+`@fabrica/testkit`.
 
 Dependencies are pinned to exact versions (`saveExact` in `pnpm-workspace.yaml`): add one with
 `pnpm add --filter <package> <name>@<version>`. `effect` and every `@effect/*` package stay on one version,
@@ -181,6 +183,8 @@ One TypeScript monorepo, pnpm workspaces (spec §6):
 - `packages/pi-extension`: the first-party Pi package loaded into every agent.
 - `packages/client`: the RPC client and connection management, shared by the app and the CLI.
 - `packages/ui`: the renderer, a Foldkit program.
+- `packages/testkit`: the shared test kit (temp git repositories, an airtight PATH and environment, injected
+  host facts) and the test runner's worker count and reruns.
 
 The spec is `docs/spec/fabrica-spec.md`; the console's design handoff is under `design/console/`.
 

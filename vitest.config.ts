@@ -1,10 +1,13 @@
-import { availableParallelism } from 'node:os'
 import { defineConfig } from 'vitest/config'
 
-// Test files run side by side in as many workers as the run's share of the cores
-// (FABRICA_CORES), or half the machine's without one (spec §24).
-const cores = Number.parseInt(process.env['FABRICA_CORES'] ?? '', 10)
+import {
+  testWorkers,
+  workerFactsOfProcess,
+} from './packages/testkit/src/workers.ts'
 
+// Test files run side by side in as many workers as the run's share of the cores (FABRICA_CORES),
+// every core on CI, or half the machine's (spec §24). A test's default time limit allows for a loaded
+// machine; a failed or timed-out test is rerun by scripts/test-rerun.ts, which `pnpm test` runs.
 export default defineConfig({
   test: {
     projects: [
@@ -12,8 +15,7 @@ export default defineConfig({
       'packages/*/vitest.config.ts',
       'scripts/vitest.config.ts',
     ],
-    maxWorkers:
-      cores > 0 ? cores : Math.max(1, Math.floor(availableParallelism() / 2)),
+    maxWorkers: testWorkers(workerFactsOfProcess()),
     passWithNoTests: true,
     testTimeout: 15_000,
   },

@@ -16,7 +16,7 @@
     "lint": "oxlint --deny-warnings",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
-    "test": "vitest run",
+    "test": "node scripts/test-rerun.ts",
     "check:own": "node scripts/check-own.ts",
     "build": "pnpm --recursive --workspace-concurrency=${FABRICA_CORES:-4} run build"
   },

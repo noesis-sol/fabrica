@@ -291,6 +291,15 @@ importers:
         specifier: 4.0.0
         version: 4.0.0
 
+  packages/testkit:
+    dependencies:
+      '@fabrica/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      effect:
+        specifier: 4.0.0
+        version: 4.0.0
+
   packages/ui:
     dependencies:
       '@effect/platform-browser':
