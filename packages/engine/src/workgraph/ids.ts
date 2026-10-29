@@ -17,10 +17,14 @@ export const ticketIdRandomLength = 11
 /** The length of a note ID: notes from every ticket share one table, so it draws more. */
 const noteIdLength = 16
 
-const drawBase36 = (length: number): Effect.Effect<string> =>
+/** `length` random lower-case base36 characters. */
+export const drawBase36 = (length: number): Effect.Effect<string> =>
   Effect.map(
     Effect.all(
-      Array.from({ length }, () => Random.nextIntBetween(0, alphabet.length)),
+      // Effect's upper bound is inclusive unless half open: index 36 would be no character at all.
+      Array.from({ length }, () =>
+        Random.nextIntBetween(0, alphabet.length, { halfOpen: true }),
+      ),
     ),
     indices => indices.map(index => alphabet[index]).join(''),
   )

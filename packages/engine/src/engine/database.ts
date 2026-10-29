@@ -1,10 +1,11 @@
-import { Clock, Context, Data, Effect, Layer, Option, Random } from 'effect'
+import { Clock, Context, Data, Effect, Layer, Option } from 'effect'
 import { Reactivity } from 'effect/reactivity'
 import { SqlClient } from 'effect/sql'
 
 import { SqliteClient } from '@effect/sql-sqlite-node'
 import { EngineId, decodeEngineSettings } from '@fabrica/contracts'
 
+import { drawBase36 } from '../workgraph/ids'
 import { type Migrations, migrate, statements } from '../workgraph/migrations'
 
 // The engine's own database (spec §7.2): `<data>/engine.db`, the engine's state across its projects:
@@ -65,17 +66,9 @@ export class StoredSettingsInvalid extends Data.TaggedError(
   }
 }
 
-const idAlphabet = '0123456789abcdefghijklmnopqrstuvwxyz'
-
 /** A new engine ID: `engine-` and 16 random base36 characters. */
-const drawEngineId = Effect.map(
-  Effect.all(
-    Array.from({ length: 16 }, () =>
-      Random.nextIntBetween(0, idAlphabet.length),
-    ),
-  ),
-  indices =>
-    EngineId.make(`engine-${indices.map(index => idAlphabet[index]).join('')}`),
+export const drawEngineId = Effect.map(drawBase36(16), random =>
+  EngineId.make(`engine-${random}`),
 )
 
 /** The engine's ID: the one it drew at its first start, drawn and kept now where it has none. */
