@@ -145,6 +145,22 @@ const runRole = (model: Model): Sidebar.Role =>
     { onNone: () => 'c1', onSome: chip => chip.role },
   )
 const lazyAttention = createLazy()
+
+/** The attention column, a Submodel: given the scope's requests, the time and the connection. */
+const attentionPart = (
+  attention: Attention.Model,
+  requests: Model['attention'],
+  now: Model['now'],
+  live: boolean,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.submodel({
+    slotId: 'attention',
+    model: attention,
+    view: Attention.view,
+    viewInputs: { requests, now, live },
+    toParentMessage: message => Message.GotAttentionMessage({ message }),
+  })
 const lazyUpNext = createLazy()
 
 const noRequests: ReadonlyArray<AttentionRequest> = []
@@ -247,7 +263,15 @@ const consoleView = (model: Model, h: HtmlBuilder<Message>): Html => {
           needsYou(model)
             ? h.section(
                 [h.AriaLabel('Needs your attention'), h.Class(column)],
-                [lazyAttention(Attention.view<Message>, [parts.attention, h])],
+                [
+                  lazyAttention(attentionPart, [
+                    parts.attention,
+                    model.attention,
+                    model.now,
+                    isLive(model.connection),
+                    h,
+                  ]),
+                ],
               )
             : h.section(
                 [h.AriaLabel('Up next'), h.Class(column)],

@@ -2,6 +2,7 @@ import { Array, Option } from 'effect'
 
 import type { Platform } from '@fabrica/contracts'
 
+import * as Attention from '../console/attention'
 import { Message } from './message'
 import { Screen, screenTitle } from './screen'
 
@@ -79,10 +80,30 @@ const backToConsole: KeyCommand = {
   message: Message.RequestedScreen({ screen: Screen.Console() }),
 }
 
+/** The options keys 1–9 answer, with the request they answer: those of the question whose options are drawn. */
+export type KeyedOptions = ReturnType<typeof Attention.keyedOptions>
+
+/** Keys 1–9, each answering the drawn question with the option at its place (§18.3); the column guards them (§15.1). */
+const answerKeys = (options: KeyedOptions): ReadonlyArray<KeyCommand> =>
+  Option.match(options, {
+    onNone: () => [],
+    onSome: ({ key, options }) =>
+      options.map(shown => ({
+        id: `answer.${shown.place + 1}`,
+        title: `Answer: ${shown.option.label}`,
+        chord: plain(String(shown.place + 1)),
+        hint: false,
+        message: Message.PressedAnswerKey({ key, place: shown.place }),
+      })),
+  })
+
 /** Each screen's own commands; the screens' tickets add theirs here. */
-const ofScreen = (screen: Screen): ReadonlyArray<KeyCommand> =>
+const ofScreen = (
+  screen: Screen,
+  options: KeyedOptions,
+): ReadonlyArray<KeyCommand> =>
   Screen.match(screen, {
-    Console: () => [],
+    Console: () => answerKeys(options),
     Worker: () => [backToConsole],
     Talks: () => [backToConsole],
     Backlog: () => [backToConsole],
@@ -104,9 +125,14 @@ const closeOverlay: KeyCommand = {
 export const commandsFor = (options: {
   readonly screen: Screen
   readonly overlayOpen: boolean
+  /** The attention column's drawn options, which keys 1–9 answer while no overlay covers them. */
+  readonly options?: KeyedOptions
 }): ReadonlyArray<KeyCommand> => [
   ...(options.overlayOpen ? [closeOverlay] : []),
-  ...ofScreen(options.screen),
+  ...ofScreen(
+    options.screen,
+    options.overlayOpen ? Option.none() : (options.options ?? Option.none()),
+  ),
   ...everywhere,
 ]
 

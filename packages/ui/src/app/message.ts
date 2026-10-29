@@ -11,6 +11,7 @@ import {
   UpdateSide,
 } from '@fabrica/contracts'
 
+import * as Attention from '../console/attention'
 import * as History from '../console/history'
 import * as Stats from '../console/stats'
 import { NotificationTarget } from './notify'
@@ -77,6 +78,9 @@ export const Message = defineMessageUnion({
   Ticked: { now: Schema.DateTimeZoned },
 
   GotStatsMessage: { message: Stats.Message },
+  GotAttentionMessage: { message: Attention.Message },
+  /** A key 1–9 for the option at `place` (from 0) of the attention request `key`'s drawn options. */
+  PressedAnswerKey: { key: Schema.String, place: Schema.Int },
 
   /** Every project's attention requests, read for those to notify (§18.5). */
   ReceivedAttentionToNotify: { items: itemsOf(AttentionItem) },

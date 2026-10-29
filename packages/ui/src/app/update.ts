@@ -4,6 +4,7 @@ import { modifyFields } from 'foldkit/struct'
 
 import { type AttentionRef, ProjectId } from '@fabrica/contracts'
 
+import * as Attention from '../console/attention'
 import * as History from '../console/history'
 import * as Sidebar from '../console/sidebar'
 import * as Stats from '../console/stats'
@@ -70,13 +71,59 @@ const foldHistory = Update.foldChild({
     Message.GotHistoryMessage({ message }),
 })
 
+const writeAttention = (model: Model, attention: Attention.Model): Model =>
+  modifyFields(model, {
+    console: parts => modifyFields(parts, { attention: () => attention }),
+  })
+
+const toAttentionMessage = (message: Attention.Message): Message =>
+  Message.GotAttentionMessage({ message })
+
+/** The attention column's Messages, folded into its submodel; a card's buttons open their screens. */
+const foldAttention = Update.foldChild({
+  update: Attention.update,
+  read: (model: Model) => Option.some(model.console.attention),
+  write: writeAttention,
+  toParentMessage: toAttentionMessage,
+  foldOutMessage: (outMessage: Attention.OutMessage) => (model: Model) => ({
+    model: showScreen(
+      model,
+      Attention.OutMessage.match(outMessage, {
+        OpenedAnswerTalk: () => Screen.Talks(),
+        OpenedReview: () => Screen.Review(),
+        OpenedSession: ({ ticket }) => Screen.Worker({ ticket }),
+      }),
+    ),
+  }),
+})
+
+/** The attention column kept in step with the Model's requests, after they change. */
+const foldRequests = Update.foldChild({
+  update: Attention.receivedRequests,
+  read: (model: Model) => Option.some(model.console.attention),
+  write: writeAttention,
+  toParentMessage: toAttentionMessage,
+})
+
+/** A key 1–9, applied by the attention column to the request it names. */
+const foldAnswerKey = Update.foldChild({
+  update: Attention.pressedOptionKey,
+  read: (model: Model) => Option.some(model.console.attention),
+  write: writeAttention,
+  toParentMessage: toAttentionMessage,
+})
+
 /** Whether the Model's overlay is open. */
 export const isOverlayOpen = (model: Model): boolean =>
   !Overlay.guards.Closed(model.overlay)
 
 /** The command list of the screen shown, with its overlay's. */
 export const modelCommands = (model: Model) =>
-  commandsFor({ screen: model.screen, overlayOpen: isOverlayOpen(model) })
+  commandsFor({
+    screen: model.screen,
+    overlayOpen: isOverlayOpen(model),
+    options: Attention.keyedOptions(model.console.attention),
+  })
 
 const sameScreen = Schema.toEquivalence(Screen)
 
@@ -162,19 +209,21 @@ export const update = (model: Model, message: Message): Return =>
     DismissedOverlay: () => ({
       model: modifyFields(model, { overlay: () => Overlay.Closed() }),
     }),
-    SelectedScope: ({ project }) => ({
-      model: sameScope(model.scope, project)
-        ? model
-        : modifyFields(model, {
-            scope: () => project,
-            runView: () => Option.none(),
-            events: () => Option.none(),
-            attention: () => Option.none(),
-            focusedRequest: () => Option.none(),
-            backlog: () => Option.none(),
-            usage: () => Option.none(),
-          }),
-    }),
+    SelectedScope: ({ project }) =>
+      sameScope(model.scope, project)
+        ? { model }
+        : foldRequests(
+            modifyFields(model, {
+              scope: () => project,
+              runView: () => Option.none(),
+              events: () => Option.none(),
+              attention: () => Option.none(),
+              focusedRequest: () => Option.none(),
+              backlog: () => Option.none(),
+              usage: () => Option.none(),
+            }),
+            Option.none(),
+          ),
     RequestedAddProject: () => ({
       model: showScreen(model, Screen.Engines()),
     }),
@@ -188,18 +237,20 @@ export const update = (model: Model, message: Message): Return =>
     LostEngine: () => ({
       model: modifyFields(model, { connection: () => Connection.Down() }),
     }),
-    ReleasedEngine: () => ({
-      model: modifyFields(model, {
-        runView: () => Option.none(),
-        events: () => Option.none(),
-        attention: () => Option.none(),
-        backlog: () => Option.none(),
-        load: () => Option.none(),
-        usage: () => Option.none(),
-        console: parts =>
-          modifyFields(parts, { sidebar: () => Sidebar.init() }),
-      }),
-    }),
+    ReleasedEngine: () =>
+      foldRequests(
+        modifyFields(model, {
+          runView: () => Option.none(),
+          events: () => Option.none(),
+          attention: () => Option.none(),
+          backlog: () => Option.none(),
+          load: () => Option.none(),
+          usage: () => Option.none(),
+          console: parts =>
+            modifyFields(parts, { sidebar: () => Sidebar.init() }),
+        }),
+        Option.none(),
+      ),
     FailedToConnect: ({ reason }) => ({
       model: modifyFields(model, {
         connection: () => Connection.Failed({ reason }),
@@ -238,11 +289,12 @@ export const update = (model: Model, message: Message): Return =>
             }),
           }
         : { model },
-    ReceivedAttention: ({ items }) => ({
-      model: modifyFields(model, {
+    ReceivedAttention: ({ items }) => {
+      const received = modifyFields(model, {
         attention: attention => applyAttention(attention, items),
-      }),
-    }),
+      })
+      return foldRequests(received, received.attention)
+    },
     ReceivedBacklog: ({ project, items }) =>
       Option.contains(model.scope, project)
         ? {
@@ -302,6 +354,8 @@ export const update = (model: Model, message: Message): Return =>
     }),
 
     GotStatsMessage: ({ message }) => foldStats(model, message),
+    GotAttentionMessage: ({ message }) => foldAttention(model, message),
+    PressedAnswerKey: ({ key, place }) => foldAnswerKey(model, { key, place }),
 
     CompletedShowNotification: () => ({ model }),
     ClickedNotification: ({ target }) =>
