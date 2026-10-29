@@ -20,6 +20,10 @@ export const CommitHash = Schema.String.check(
 ).pipe(Schema.brand('CommitHash'))
 export type CommitHash = typeof CommitHash.Type
 
+/** A note on a ticket; notes from two engines merge as a union by this ID (spec §11.4). */
+export const NoteId = Opaque.pipe(Schema.brand('NoteId'))
+export type NoteId = typeof NoteId.Type
+
 /** A worker's or a talk's Pi session. */
 export const SessionId = Opaque.pipe(Schema.brand('SessionId'))
 export type SessionId = typeof SessionId.Type
