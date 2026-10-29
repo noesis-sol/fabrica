@@ -5798,6 +5798,26 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
       ],
       "type": "object",
     },
+    "TalkNotOpenedEncoded": {
+      "additionalProperties": true,
+      "properties": {
+        "_tag": {
+          "enum": [
+            "TalkNotOpened",
+          ],
+          "type": "string",
+        },
+        "reason": {
+          "pattern": "\\S",
+          "type": "string",
+        },
+      },
+      "required": [
+        "_tag",
+        "reason",
+      ],
+      "type": "object",
+    },
     "TicketDetailEncoded": {
       "additionalProperties": true,
       "properties": {
@@ -10426,7 +10446,14 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
     },
     {
       "error": {
-        "$ref": "#/$defs/ProjectNotFoundEncoded",
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ProjectNotFoundEncoded",
+          },
+          {
+            "$ref": "#/$defs/TalkNotOpenedEncoded",
+          },
+        ],
       },
       "group": "talks",
       "payload": {

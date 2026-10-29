@@ -37,6 +37,15 @@ export class OpenedTalk extends Schema.Class<OpenedTalk>('OpenedTalk')({
   model: ModelName,
 }) {}
 
+/**
+ * The talk couldn't be opened, in words: no model for it, its mode not in this release, its agent
+ * refused to start.
+ */
+export class TalkNotOpened extends Schema.TaggedError<TalkNotOpened>()(
+  'TalkNotOpened',
+  { reason: Text },
+) {}
+
 /** No open talk with that ID. */
 export class TalkNotFound extends Schema.TaggedError<TalkNotFound>()(
   'TalkNotFound',
@@ -52,7 +61,7 @@ export const TalkRpcs = RpcGroup.make(
       model: optional(ModelChoice),
     },
     success: OpenedTalk,
-    error: ProjectNotFound,
+    error: Schema.Union([ProjectNotFound, TalkNotOpened]),
   }),
   Rpc.make('talk.send', {
     payload: { talk: TalkId, text: Text },

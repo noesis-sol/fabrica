@@ -69,11 +69,13 @@ export const PiEvent = Schema.Union([
   kind('turn_start', {}),
   kind('turn_end', {}),
   kind('message_start', { message: PiMessage }),
-  kind('message_update', {}),
+  /** A message streamed: `assistantMessageEvent` is the model's event, a text or thinking delta among them. */
+  kind('message_update', { assistantMessageEvent: optional(Schema.Unknown) }),
   kind('message_end', { message: PiMessage }),
   kind('tool_execution_start', {
     toolCallId: Schema.String,
     toolName: Schema.String,
+    args: optional(Schema.Unknown),
   }),
   kind('tool_execution_update', {
     toolCallId: Schema.String,
@@ -83,6 +85,7 @@ export const PiEvent = Schema.Union([
     toolCallId: Schema.String,
     toolName: Schema.String,
     isError: Schema.Boolean,
+    result: optional(Schema.Unknown),
   }),
   /** The agent has settled: its turn is over, and nothing more will run until it is sent a command. */
   kind('agent_settled', { aborted: Schema.Boolean }),

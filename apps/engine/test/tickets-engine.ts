@@ -27,7 +27,7 @@ const host = new EngineHost({
 })
 
 /** The engine's git, run with the toolbox's PATH and home. */
-const gitOf = (tools: Tools) =>
+export const gitOf = (tools: Tools) =>
   Git.layer({
     timeLimit: Duration.minutes(1),
     readRetries: { times: 0, spacing: Duration.zero },

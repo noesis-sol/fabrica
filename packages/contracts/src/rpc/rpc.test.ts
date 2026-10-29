@@ -805,7 +805,13 @@ const samples: Record<string, Samples> = {
       },
     ],
     success: [{ talk: 't-1', session: 's-2', model }],
-    error: [notFound],
+    error: [
+      notFound,
+      {
+        _tag: 'TalkNotOpened',
+        reason: "the project's settings name no model: give the talk one",
+      },
+    ],
   },
   'talk.send': {
     payload: [{ talk: 't-1', text: 'Next question.' }],

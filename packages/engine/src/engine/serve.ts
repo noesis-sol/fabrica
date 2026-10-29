@@ -15,6 +15,12 @@ import {
 import { localRpcServer, removeStaleSocket } from '../rpc/server'
 import { listenTls } from '../rpc/tls'
 import { PairingTokens, pairingTokensLayer } from '../rpc/tokens'
+import {
+  TalkAgents,
+  TalkModes,
+  refusingTalkAgents,
+  registeredModes,
+} from '../talks'
 import { Updater, layerRefusing } from '../update/service'
 import { engineDatabaseLayer, storedEngineSettings } from './database'
 import { acquireEngineLock } from './lock'
@@ -36,8 +42,8 @@ import { Engine, type EngineFacts, engineLayer } from './service'
  * The daemon's services, which every group's handler file may use as it builds its handlers and the
  * service layers it provides itself: the Engine, its lifetimes (a run's resources go in
  * `EngineScopes.runs`), its files, engine.db (`SqlClient`), whose tables their groups' handlers
- * read and write, its Git, its projects with their work graphs, and its Updater. A handler file that
- * needs another service provides it in its own file.
+ * read and write, its Git, its projects with their work graphs, its Updater, and its talks' agents
+ * and modes. A handler file that needs another service provides it in its own file.
  */
 export type DaemonServices =
   | Engine
@@ -49,6 +55,8 @@ export type DaemonServices =
   | Projects
   | Updater
   | PairingTokens
+  | TalkAgents
+  | TalkModes
 
 /** The TLS listener's settings (§9.3), as the engine's settings and `fabrica serve`'s flags name them. */
 export interface ListenSettings {
@@ -73,6 +81,11 @@ export interface ServeOptions extends EngineFacts {
   readonly update?: Layer.Layer<Updater>
   /** `fabrica serve`'s flags for the TLS listener, each over the engine's setting of the same name. */
   readonly listen?: ListenSettings
+  /**
+   * Talks' agents and modes (§15.4); where none are given, the modes this release has, on agents that
+   * are refused until the model proxy can give them their credentials.
+   */
+  readonly talks?: Layer.Layer<TalkAgents | TalkModes>
 }
 
 /** The listener's settings: each flag given, else the engine's setting; none from settings that don't decode. */
@@ -127,6 +140,14 @@ const listenerCertificate = (paths: EnginePaths, settings: ListenSettings) => {
   })
 }
 
+/** The talks' agents where none are given: a talk's agent reaches its model only through the model proxy. */
+const talksRefused = Layer.merge(
+  registeredModes,
+  refusingTalkAgents(
+    "this engine can't start a talk's agent yet: talks reach their model through the model proxy, which it doesn't have",
+  ),
+)
+
 /** Starts the engine in the current scope and returns it once its socket takes connections. */
 export const startEngine = Effect.fn('Engine.start')(function* (
   options: ServeOptions,
@@ -170,6 +191,7 @@ export const startEngine = Effect.fn('Engine.start')(function* (
     options.update ??
       layerRefusing('this engine was started with nowhere to install updates'),
   )
+  const talks = yield* Layer.build(options.talks ?? talksRefused)
   const services: Context.Context<DaemonServices> = Context.mergeAll(
     database,
     scopes,
@@ -179,6 +201,7 @@ export const startEngine = Effect.fn('Engine.start')(function* (
     projects,
     updater,
     tokens,
+    talks,
   )
   yield* Layer.buildWithScope(
     localRpcServer(
