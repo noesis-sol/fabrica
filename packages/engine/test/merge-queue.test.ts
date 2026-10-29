@@ -520,7 +520,7 @@ describe('the merge queue', () => {
           'docs/d.md': 'd\n',
         })
         const { outcome } = yield* mergeOne(config(checkout), worktree)
-        expect(outcome._tag).toBe('Merged')
+        expect(outcome?._tag).toBe('Merged')
         expect(yield* Ref.get(calls)).toEqual([['packages/x/package.json']])
       }).pipe(Effect.scoped, Effect.provide(services(recording)))
     }),
