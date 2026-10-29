@@ -118,21 +118,31 @@ export const ResultKind = Schema.Literals([
 ])
 export type ResultKind = typeof ResultKind.Type
 
+/** The metadata keys the engine reads. */
+const metadataFields = {
+  /** The files it will change: its footprint (§13.4). */
+  files: Schema.OptionFromOptionalKey(Schema.Array(Text)),
+  /** The spec it is part of. */
+  spec: Schema.OptionFromOptionalKey(Text),
+  /** The files the predictor expects it to change, when it names none (§16). */
+  predicted_files: Schema.OptionFromOptionalKey(Schema.Array(Text)),
+  result_kind: Schema.OptionFromOptionalKey(ResultKind),
+}
+
+/** Any other key: the rest record leaves the engine's keys to their fields, so their decoded values aren't checked as JSON. */
+const OtherMetadataKey = Schema.String.check(
+  Schema.makeFilter((key: string) =>
+    Object.hasOwn(metadataFields, key) ? "one of the engine's keys" : undefined,
+  ),
+)
+
 /**
  * A ticket's metadata, a JSON object: the keys the engine reads, each optional, and any others kept
  * as they are (an import's, a project's own).
  */
 export const TicketMetadata = Schema.StructWithRest(
-  Schema.Struct({
-    /** The files it will change: its footprint (§13.4). */
-    files: Schema.OptionFromOptionalKey(Schema.Array(Text)),
-    /** The spec it is part of. */
-    spec: Schema.OptionFromOptionalKey(Text),
-    /** The files the predictor expects it to change, when it names none (§16). */
-    predicted_files: Schema.OptionFromOptionalKey(Schema.Array(Text)),
-    result_kind: Schema.OptionFromOptionalKey(ResultKind),
-  }),
-  [Schema.Record(Schema.String, Schema.Unknown)],
+  Schema.Struct(metadataFields),
+  [Schema.Record(OtherMetadataKey, Schema.Unknown)],
 )
 export type TicketMetadata = typeof TicketMetadata.Type
 

@@ -1,0 +1,117 @@
+import { Schema } from 'effect'
+import { Rpc, RpcGroup } from 'effect/rpc'
+
+import { ProjectId, RunId } from '../ids'
+import { ProjectSettings } from '../settings'
+import { Text } from '../ticket'
+import { Count, Ordinal, optional } from './common'
+import { ProjectNotFound } from './errors'
+import { keyedPatch, resume, streamItem } from './stream'
+
+// The Projects group (spec §8.1, §10): adding a checkout on the engine's host or a clone of a URL,
+// listing and removing projects, their settings, `init`, and the stream of their status that the
+// sidebar shows (§18.3).
+
+/** Where a project comes from (§10.1): a checkout the engine can read, or a git URL it clones. */
+export const ProjectSource = Schema.TaggedUnion({
+  path: { path: Text },
+  url: { url: Text },
+})
+export type ProjectSource = typeof ProjectSource.Type
+
+/** A project on the engine. */
+export class ProjectInfo extends Schema.Class<ProjectInfo>('ProjectInfo')({
+  id: ProjectId,
+  name: Text,
+  /** Its checkout, on the engine's host. */
+  path: Text,
+  origin: Schema.Literals(['registered', 'cloned']),
+  /** The remote it was cloned from. */
+  url: Schema.OptionFromNullOr(Text),
+  /** Its Base branch. */
+  base: Text,
+  /** Its settings exist (§10.1): `init` has run. */
+  setUp: Schema.Boolean,
+}) {}
+
+/** A project's run, as its sidebar row says it (§18.3): Idle, Running, or Waiting on the maintainer. */
+export const ProjectRunState = Schema.TaggedUnion({
+  idle: {},
+  running: { run: RunId, overnight: Schema.Boolean },
+  waiting: { run: RunId, overnight: Schema.Boolean, needsYou: Ordinal },
+})
+export type ProjectRunState = typeof ProjectRunState.Type
+
+/** A project's row in the sidebar. */
+export class ProjectStatus extends Schema.Class<ProjectStatus>('ProjectStatus')(
+  {
+    project: ProjectId,
+    name: Text,
+    base: Text,
+    setUp: Schema.Boolean,
+    run: ProjectRunState,
+    /** Tickets ready to run. */
+    ready: Count,
+  },
+) {}
+
+/** What `init` wrote, in order. */
+export class Initialized extends Schema.Class<Initialized>('Initialized')({
+  written: Schema.Array(Text),
+}) {}
+
+/** The project couldn't be added: the path isn't a checkout, the clone failed. */
+export class AddFailed extends Schema.TaggedError<AddFailed>()('AddFailed', {
+  reason: Text,
+}) {}
+
+/** `init` failed; it lists what it had written (H62), and the project is as it was or set up. */
+export class InitFailed extends Schema.TaggedError<InitFailed>()('InitFailed', {
+  reason: Text,
+  written: Schema.Array(Text),
+}) {}
+
+/** The settings given aren't valid: every problem, as the settings file's would be. */
+export class InvalidSettings extends Schema.TaggedError<InvalidSettings>()(
+  'InvalidSettings',
+  { problems: Schema.NonEmptyArray(Text) },
+) {}
+
+/** A project's settings, named once in the JSON Schema. */
+const Settings = ProjectSettings.annotate({ identifier: 'ProjectSettings' })
+
+/** The patch to the project rows: a removed project by its ID. */
+export const ProjectStatusPatch = keyedPatch(ProjectStatus, ProjectId)
+
+export const ProjectRpcs = RpcGroup.make(
+  Rpc.make('projects.add', {
+    payload: { source: ProjectSource, name: optional(Text) },
+    success: ProjectInfo,
+    error: AddFailed,
+  }),
+  Rpc.make('projects.list', { success: Schema.Array(ProjectInfo) }),
+  /** Forgets the project; a registered checkout stays where it is. */
+  Rpc.make('projects.remove', {
+    payload: { project: ProjectId },
+    error: ProjectNotFound,
+  }),
+  Rpc.make('projects.settings.get', {
+    payload: { project: ProjectId },
+    success: Settings,
+    error: ProjectNotFound,
+  }),
+  Rpc.make('projects.settings.set', {
+    payload: { project: ProjectId, settings: Settings },
+    error: Schema.Union([ProjectNotFound, InvalidSettings]),
+  }),
+  Rpc.make('projects.init', {
+    payload: { project: ProjectId },
+    success: Initialized,
+    error: Schema.Union([ProjectNotFound, InitFailed]),
+  }),
+  Rpc.make('projects.watchStatus', {
+    payload: { resume },
+    success: streamItem(Schema.Array(ProjectStatus), ProjectStatusPatch),
+    stream: true,
+  }),
+)

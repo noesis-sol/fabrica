@@ -38,6 +38,18 @@ export type SessionId = typeof SessionId.Type
 export const MessageId = Opaque.pipe(Schema.brand('MessageId'))
 export type MessageId = typeof MessageId.Type
 
+/** A talk the engine runs with the maintainer (spec §15.4). */
+export const TalkId = Opaque.pipe(Schema.brand('TalkId'))
+export type TalkId = typeof TalkId.Type
+
+/** A permission request from the gate (spec §12.6, §15.1); an answer carries it. */
+export const PermissionId = Opaque.pipe(Schema.brand('PermissionId'))
+export type PermissionId = typeof PermissionId.Type
+
+/** One tool call in a session's transcript, as Pi names it. */
+export const ToolCallId = Opaque.pipe(Schema.brand('ToolCallId'))
+export type ToolCallId = typeof ToolCallId.Type
+
 /** A project registered with an engine. */
 export const ProjectId = Opaque.pipe(Schema.brand('ProjectId'))
 export type ProjectId = typeof ProjectId.Type
