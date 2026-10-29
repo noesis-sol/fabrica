@@ -1,5 +1,6 @@
 import {
   Console,
+  Deferred,
   Effect,
   Exit,
   Layer,
@@ -65,8 +66,15 @@ const reply = (message: string): ReadonlyArray<Agent.PiEvent> => [
   { type: 'agent_settled', aborted: false },
 ]
 
-/** Talks whose agents play the script, counting those closed; only the feature talk is served. */
-const scriptedTalks = (closed: Ref.Ref<number>) =>
+/**
+ * Talks whose agents play the script, counting those closed and saying when one is gone; the feature
+ * talk waits for the maintainer, the refine talk opens on its spec, no other is served. The prompt
+ * "bye" ends the agent, as Pi exiting by itself does.
+ */
+const scriptedTalks = (options: {
+  readonly closed: Ref.Ref<number>
+  readonly gone: Deferred.Deferred<void>
+}) =>
   Layer.merge(
     Layer.succeed(Talks.TalkModes)({
       feature: {
@@ -74,6 +82,12 @@ const scriptedTalks = (closed: Ref.Ref<number>) =>
         instructions: 'Talk the feature through.',
         tools: [],
         opening: () => Effect.succeedNone,
+      },
+      refine: {
+        keep: false,
+        instructions: 'Refine the spec.',
+        tools: [],
+        opening: ({ context }) => Effect.succeedSome(`Refine ${context.spec}`),
       },
     }),
     Layer.succeed(Talks.TalkAgents)({
@@ -83,7 +97,10 @@ const scriptedTalks = (closed: Ref.Ref<number>) =>
           yield* Effect.addFinalizer(() =>
             Effect.andThen(
               PubSub.shutdown(events),
-              Ref.update(closed, n => n + 1),
+              Effect.andThen(
+                Ref.update(options.closed, n => n + 1),
+                Deferred.succeed(options.gone, undefined),
+              ),
             ),
           )
           return {
@@ -93,7 +110,9 @@ const scriptedTalks = (closed: Ref.Ref<number>) =>
               Stream.fromSubscription,
             ),
             prompt: message =>
-              PubSub.publishAll(events, reply(message)).pipe(Effect.asVoid),
+              message === 'bye'
+                ? PubSub.shutdown(events)
+                : PubSub.publishAll(events, reply(message)).pipe(Effect.asVoid),
             steer: () => Effect.void,
           }
         }),
@@ -101,7 +120,11 @@ const scriptedTalks = (closed: Ref.Ref<number>) =>
   )
 
 /** `fabrica <args>` with the local engine at `socket` and `input` on stdin: its exit and what it printed. */
-const talk = (socket: string, input: string, ...args: ReadonlyArray<string>) =>
+const talk = (
+  socket: string,
+  input: string | Stream.Stream<string>,
+  ...args: ReadonlyArray<string>
+) =>
   Effect.gen(function* () {
     const out: Array<string> = []
     const err: Array<string> = []
@@ -116,7 +139,9 @@ const talk = (socket: string, input: string, ...args: ReadonlyArray<string>) =>
       Effect.provideService(Console.Console, console),
       Effect.provide(
         Stdio.layerTest({
-          stdin: Stream.make(new TextEncoder().encode(input)),
+          stdin: (typeof input === 'string' ? Stream.make(input) : input).pipe(
+            Stream.map(text => new TextEncoder().encode(text)),
+          ),
         }),
       ),
       Effect.provide([
@@ -138,17 +163,18 @@ const talkEngine = Effect.gen(function* () {
     socketFolder: NodePath.join(root, 'd'),
   })
   const closed = yield* Ref.make(0)
+  const gone = yield* Deferred.make<void>()
   yield* Daemon.startEngine({
     paths,
     host,
     release: '1.2.3',
     git: gitOf(tools),
-    talks: scriptedTalks(closed),
+    talks: scriptedTalks({ closed, gone }),
   })
   const repo = yield* makeGitRepo(tools)
   const added = yield* talk(paths.socket, '', 'project', 'add', repo.work)
   expect(added.exit).toStrictEqual(Exit.void)
-  return { socket: paths.socket, closed }
+  return { socket: paths.socket, closed, gone }
 })
 
 // The engine runs on the live clock: its sockets and its git's time limits are real.
@@ -189,6 +215,59 @@ layer(layerToolbox({ tools: ['git'] }), { excludeTestServices: true })(
           ])
           expect(yield* Ref.get(closed)).toBe(1)
         }).pipe(Effect.scoped),
+    )
+
+    it.effect(
+      'waits for the answer to the talk’s opening before it closes the talk',
+      () =>
+        Effect.gen(function* () {
+          const { socket, closed } = yield* talkEngine
+          const { exit, out } = yield* talk(
+            socket,
+            '',
+            'talk',
+            'refine',
+            'docs/spec.md',
+            '--project',
+            'work',
+            '--model',
+            'anthropic/claude-opus-5-5',
+          )
+          expect(exit).toStrictEqual(Exit.void)
+          expect(out.slice(1)).toStrictEqual([
+            'fabrica: Refine docs/spec.md',
+            'On it:',
+            'Adding Refine docs/spec.md.',
+            '→ get_ticket {"id":"fa-a1b2"}',
+            '✗ get_ticket failed',
+          ])
+          expect(yield* Ref.get(closed)).toBe(1)
+        }).pipe(Effect.scoped),
+    )
+
+    it.effect('says the talk has ended when a line comes after it', () =>
+      Effect.gen(function* () {
+        const { socket, gone } = yield* talkEngine
+        const { exit, out, err } = yield* talk(
+          socket,
+          Stream.concat(
+            Stream.make('bye\n'),
+            // The next line once the talk's agent has ended and the engine has let the talk go.
+            Stream.fromEffect(Effect.as(Deferred.await(gone), 'after\n')),
+          ),
+          'talk',
+          'feature',
+          '--project',
+          'work',
+          '--model',
+          'anthropic/claude-opus-5-5',
+        )
+        expect(Exit.isFailure(exit)).toBe(true)
+        expect(Exit.hasDies(exit)).toBe(false)
+        expect(out[1]).toBe('> bye')
+        expect(err).toHaveLength(1)
+        expect(err[0]).toMatch(/^fabrica: the talk talk-\S+ has ended$/u)
+      }).pipe(Effect.scoped),
     )
 
     it.effect('prints each transcript entry as JSON with --json', () =>

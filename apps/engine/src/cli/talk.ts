@@ -28,14 +28,16 @@ import { projectFlag, refused, withProject } from './tickets-project'
 // in the project (`--project`, or the one whose checkout holds this folder), on the project's model or
 // `--model`, prints its transcript as it comes, and sends each line read from stdin as the
 // maintainer's message. At the end of stdin (Ctrl-D) it waits for the talk's answer to the last
-// message, then closes the talk; a kept talk (the run talk) keeps its session for the next open.
+// message (the engine's opening prompt among them), then closes the talk; a kept talk (the run talk) keeps its session for the next open.
 // The model's text is printed a line at a time, its tool calls as `→ <tool> <input>`, a tool that
-// failed as `✗ <tool> failed`, the engine's messages as `fabrica: <text>`, and the maintainer's own
+// failed as `✗ <tool> failed`, the engine's messages (its opening prompt, its notices) as `fabrica: <text>`, and the maintainer's own
 // messages, where stdin isn't a terminal that shows them already, as `> <text>`. With `--json`, each
 // transcript entry is one line of JSON.
 
 /** Where the talk stands, as the terminal reads it. */
 interface Standing {
+  /** The transcript's snapshot has been read, so what the talk was doing as it opened is known. */
+  readonly read: boolean
   /** Messages this command sent. */
   readonly sent: number
   /** The maintainer's messages the transcript has shown. */
@@ -45,8 +47,8 @@ interface Standing {
 }
 
 /** Whether every message sent has been answered. */
-const answered = ({ sent, shown, waiting }: Standing): boolean =>
-  shown >= sent && !waiting
+const answered = ({ read, sent, shown, waiting }: Standing): boolean =>
+  read && shown >= sent && !waiting
 
 const modelFlag = Flag.String('model').pipe(
   Flag.withDescription(
@@ -102,16 +104,12 @@ const makePrinter = Effect.fn('Cli.talkPrinter')(function* (
       Effect.andThen(
         flushPartial,
         role === 'user'
-          ? Effect.andThen(
-              stand(now => ({ ...now, shown: now.shown + 1, waiting: true })),
-              echo ? lines('> ', text) : Effect.void,
-            )
+          ? echo
+            ? lines('> ', text)
+            : Effect.void
           : role === 'engine'
             ? lines('fabrica: ', text)
-            : Effect.andThen(
-                stand(now => ({ ...now, waiting: true })),
-                Ref.set(partial, text),
-              ),
+            : Ref.set(partial, text),
       ),
     text: ({ delta }) =>
       Effect.gen(function* () {
@@ -138,23 +136,20 @@ const makePrinter = Effect.fn('Cli.talkPrinter')(function* (
         : Effect.flatMap(Ref.get(tools), current =>
             Console.log(`✗ ${sanitiseLine(current.get(id) ?? id)} failed`),
           ),
-    turn_end: () =>
-      Effect.andThen(
-        flushPartial,
-        stand(now => ({ ...now, waiting: false })),
-      ),
+    turn_end: () => flushPartial,
   })
 
-  /** Keeps where the talk stands from an entry, as `--json` prints it whole. */
+  /**
+   * Keeps where the talk stands from an entry: every message (the maintainer's, the engine's opening
+   * prompt or notice, the model's) waits for the turn's end.
+   */
   const standOn = TranscriptEntry.match<Effect.Effect<void>>({
     message: ({ role }) =>
-      role === 'engine'
-        ? Effect.void
-        : stand(now => ({
-            ...now,
-            shown: role === 'user' ? now.shown + 1 : now.shown,
-            waiting: true,
-          })),
+      stand(now => ({
+        ...now,
+        shown: role === 'user' ? now.shown + 1 : now.shown,
+        waiting: true,
+      })),
     text: () => Effect.void,
     thinking: () => Effect.void,
     tool_call: () => Effect.void,
@@ -164,12 +159,10 @@ const makePrinter = Effect.fn('Cli.talkPrinter')(function* (
   })
 
   const print = (entry: TranscriptEntry) =>
-    json
-      ? Effect.andThen(
-          Console.log(JSON.stringify(encodeEntry(entry))),
-          standOn(entry),
-        )
-      : text(entry)
+    Effect.andThen(
+      json ? Console.log(JSON.stringify(encodeEntry(entry))) : text(entry),
+      standOn(entry),
+    )
 
   return { print, flush: flushPartial }
 })
@@ -187,6 +180,7 @@ const talkOn = (options: {
     const stdio = yield* Stdio.Stdio
     const json = yield* Json
     const standing = yield* SubscriptionRef.make<Standing>({
+      read: false,
       sent: 0,
       shown: 0,
       waiting: false,
@@ -214,12 +208,17 @@ const talkOn = (options: {
           resume: Option.none(),
         }).pipe(
           Stream.runForEach(item =>
-            Effect.forEach(item.value, printer.print, { discard: true }),
+            Effect.andThen(
+              Effect.forEach(item.value, printer.print, { discard: true }),
+              SubscriptionRef.update(standing, now => ({ ...now, read: true })),
+            ),
           ),
           Effect.andThen(printer.flush),
           Effect.forkScoped,
         )
+        // Stdin's own errors are the terminal's; a message the engine refuses fails the command.
         yield* stdio.stdin.pipe(
+          Stream.orDie,
           Stream.decodeText(),
           Stream.splitLines,
           Stream.filter(line => line.trim() !== ''),
@@ -232,7 +231,6 @@ const talkOn = (options: {
               client.rpc['talk.send']({ talk: opened.talk, text }),
             ),
           ),
-          Effect.orDie,
         )
         // Every message answered, or the talk ended.
         yield* Effect.raceFirst(

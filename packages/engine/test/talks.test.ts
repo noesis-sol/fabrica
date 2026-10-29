@@ -360,9 +360,10 @@ describe('talks', () => {
         expect(opened.model).toBe('anthropic/claude-opus-5-5')
         expect(opened.session).toBe(`s-${opened.talk}`)
         const { untilTurnEnd } = yield* watch(client, opened.talk)
-        expect(yield* untilTurnEnd).toStrictEqual(
-          answered('In Work: Dark mode'),
-        )
+        expect(yield* untilTurnEnd).toStrictEqual([
+          'engine: In Work: Dark mode',
+          ...answered('In Work: Dark mode'),
+        ])
 
         const [started] = yield* Ref.get(script.started)
         expect(started).toMatchObject({
@@ -452,7 +453,9 @@ describe('talks', () => {
           model: Option.none(),
         })
         const { items, untilTurnEnd } = yield* watch(client, talk)
-        expect(entriesOf(yield* Queue.take(items))).toStrictEqual([])
+        expect(entriesOf(yield* Queue.take(items)).map(line)).toStrictEqual([
+          'engine: In Work: wait for it',
+        ])
         yield* Deferred.await(script.held)
         // The deltas wait for the flush, 50 ms after the first of them.
         expect(yield* Queue.size(items)).toBe(0)

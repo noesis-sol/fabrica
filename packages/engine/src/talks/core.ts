@@ -121,7 +121,10 @@ export interface TalkModeOf<M extends TalkMode> {
   readonly keep: boolean
   readonly instructions: string
   readonly tools: ReadonlyArray<AnyTool>
-  /** The prompt a new session opens with; none waits for the maintainer's first message. */
+  /**
+   * The prompt a new session opens with, the engine's message in the transcript; none waits for the
+   * maintainer's first message.
+   */
   readonly opening: (options: {
     readonly context: TalkContextOf<M>
     readonly project: ProjectRecord
@@ -468,7 +471,12 @@ export const make = Effect.fn('Talks.make')(function* (config: TalksConfig) {
     )
     yield* Scope.addFinalizer(scope, feed.end)
     yield* Ref.update(talks, current => new Map(current).set(talk, open))
-    if (Option.isSome(first)) yield* deliver(open, first.value)
+    // The opening is the engine's message in the transcript, so a client sees a turn is due.
+    if (Option.isSome(first))
+      yield* Effect.andThen(
+        engineMessage(feed, first.value),
+        deliver(open, first.value),
+      )
     return open.opened
   })
 
