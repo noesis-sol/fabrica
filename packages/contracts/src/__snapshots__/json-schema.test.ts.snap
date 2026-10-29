@@ -336,35 +336,46 @@ exports[`the tools’ JSON Schema > file_ticket matches its snapshot 1`] = `
 
 exports[`the tools’ JSON Schema > finish (contract_changed) matches its snapshot 1`] = `
 {
-  "description": "Ends your work: your commits are on the branch and check_own passed on the tree you finish, with nothing uncommitted or untracked in the worktree. The verifier then checks your change, and the merge queue merges it.",
+  "description": "Ends your work: your commits are on the branch and check_own passed on the tree you finish, with nothing uncommitted or untracked in the worktree; where the project's check_own is "none", give checkOwn "none" and it finishes unchecked. The verifier then checks your change, and the merge queue merges it.",
   "parameters": {
     "additionalProperties": false,
     "properties": {
       "checkOwn": {
-        "additionalProperties": false,
-        "properties": {
-          "commit": {
-            "description": "The commit you are finishing, HEAD.",
-            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "commit": {
+                "description": "The commit you are finishing, HEAD.",
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "type": "string",
+              },
+              "output": {
+                "description": "The file the check wrote its whole output to.",
+                "pattern": "\\S",
+                "type": "string",
+              },
+              "tree": {
+                "description": "The tree check_own passed on, the tree you are finishing: HEAD's, as nothing is left uncommitted.",
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "type": "string",
+              },
+            },
+            "required": [
+              "tree",
+              "commit",
+              "output",
+            ],
+            "type": "object",
+          },
+          {
+            "description": "Only where the project's check_own is "none" (check_own says so): no pass is recorded, and your work finishes unchecked.",
+            "enum": [
+              "none",
+            ],
             "type": "string",
           },
-          "output": {
-            "description": "The file the check wrote its whole output to.",
-            "pattern": "\\S",
-            "type": "string",
-          },
-          "tree": {
-            "description": "The tree check_own passed on, the tree you are finishing: HEAD's, as nothing is left uncommitted.",
-            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
-            "type": "string",
-          },
-        },
-        "required": [
-          "tree",
-          "commit",
-          "output",
         ],
-        "type": "object",
       },
       "result": {
         "additionalProperties": false,
@@ -418,35 +429,46 @@ exports[`the tools’ JSON Schema > finish (contract_changed) matches its snapsh
 
 exports[`the tools’ JSON Schema > finish (decision_recorded) matches its snapshot 1`] = `
 {
-  "description": "Ends your work: your commits are on the branch and check_own passed on the tree you finish, with nothing uncommitted or untracked in the worktree. The verifier then checks your change, and the merge queue merges it.",
+  "description": "Ends your work: your commits are on the branch and check_own passed on the tree you finish, with nothing uncommitted or untracked in the worktree; where the project's check_own is "none", give checkOwn "none" and it finishes unchecked. The verifier then checks your change, and the merge queue merges it.",
   "parameters": {
     "additionalProperties": false,
     "properties": {
       "checkOwn": {
-        "additionalProperties": false,
-        "properties": {
-          "commit": {
-            "description": "The commit you are finishing, HEAD.",
-            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "commit": {
+                "description": "The commit you are finishing, HEAD.",
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "type": "string",
+              },
+              "output": {
+                "description": "The file the check wrote its whole output to.",
+                "pattern": "\\S",
+                "type": "string",
+              },
+              "tree": {
+                "description": "The tree check_own passed on, the tree you are finishing: HEAD's, as nothing is left uncommitted.",
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "type": "string",
+              },
+            },
+            "required": [
+              "tree",
+              "commit",
+              "output",
+            ],
+            "type": "object",
+          },
+          {
+            "description": "Only where the project's check_own is "none" (check_own says so): no pass is recorded, and your work finishes unchecked.",
+            "enum": [
+              "none",
+            ],
             "type": "string",
           },
-          "output": {
-            "description": "The file the check wrote its whole output to.",
-            "pattern": "\\S",
-            "type": "string",
-          },
-          "tree": {
-            "description": "The tree check_own passed on, the tree you are finishing: HEAD's, as nothing is left uncommitted.",
-            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
-            "type": "string",
-          },
-        },
-        "required": [
-          "tree",
-          "commit",
-          "output",
         ],
-        "type": "object",
       },
       "result": {
         "additionalProperties": false,
@@ -486,35 +508,46 @@ exports[`the tools’ JSON Schema > finish (decision_recorded) matches its snaps
 
 exports[`the tools’ JSON Schema > finish (migration_added) matches its snapshot 1`] = `
 {
-  "description": "Ends your work: your commits are on the branch and check_own passed on the tree you finish, with nothing uncommitted or untracked in the worktree. The verifier then checks your change, and the merge queue merges it.",
+  "description": "Ends your work: your commits are on the branch and check_own passed on the tree you finish, with nothing uncommitted or untracked in the worktree; where the project's check_own is "none", give checkOwn "none" and it finishes unchecked. The verifier then checks your change, and the merge queue merges it.",
   "parameters": {
     "additionalProperties": false,
     "properties": {
       "checkOwn": {
-        "additionalProperties": false,
-        "properties": {
-          "commit": {
-            "description": "The commit you are finishing, HEAD.",
-            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "commit": {
+                "description": "The commit you are finishing, HEAD.",
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "type": "string",
+              },
+              "output": {
+                "description": "The file the check wrote its whole output to.",
+                "pattern": "\\S",
+                "type": "string",
+              },
+              "tree": {
+                "description": "The tree check_own passed on, the tree you are finishing: HEAD's, as nothing is left uncommitted.",
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "type": "string",
+              },
+            },
+            "required": [
+              "tree",
+              "commit",
+              "output",
+            ],
+            "type": "object",
+          },
+          {
+            "description": "Only where the project's check_own is "none" (check_own says so): no pass is recorded, and your work finishes unchecked.",
+            "enum": [
+              "none",
+            ],
             "type": "string",
           },
-          "output": {
-            "description": "The file the check wrote its whole output to.",
-            "pattern": "\\S",
-            "type": "string",
-          },
-          "tree": {
-            "description": "The tree check_own passed on, the tree you are finishing: HEAD's, as nothing is left uncommitted.",
-            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
-            "type": "string",
-          },
-        },
-        "required": [
-          "tree",
-          "commit",
-          "output",
         ],
-        "type": "object",
       },
       "result": {
         "additionalProperties": false,
@@ -554,35 +587,46 @@ exports[`the tools’ JSON Schema > finish (migration_added) matches its snapsho
 
 exports[`the tools’ JSON Schema > finish (summary) matches its snapshot 1`] = `
 {
-  "description": "Ends your work: your commits are on the branch and check_own passed on the tree you finish, with nothing uncommitted or untracked in the worktree. The verifier then checks your change, and the merge queue merges it.",
+  "description": "Ends your work: your commits are on the branch and check_own passed on the tree you finish, with nothing uncommitted or untracked in the worktree; where the project's check_own is "none", give checkOwn "none" and it finishes unchecked. The verifier then checks your change, and the merge queue merges it.",
   "parameters": {
     "additionalProperties": false,
     "properties": {
       "checkOwn": {
-        "additionalProperties": false,
-        "properties": {
-          "commit": {
-            "description": "The commit you are finishing, HEAD.",
-            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "commit": {
+                "description": "The commit you are finishing, HEAD.",
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "type": "string",
+              },
+              "output": {
+                "description": "The file the check wrote its whole output to.",
+                "pattern": "\\S",
+                "type": "string",
+              },
+              "tree": {
+                "description": "The tree check_own passed on, the tree you are finishing: HEAD's, as nothing is left uncommitted.",
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "type": "string",
+              },
+            },
+            "required": [
+              "tree",
+              "commit",
+              "output",
+            ],
+            "type": "object",
+          },
+          {
+            "description": "Only where the project's check_own is "none" (check_own says so): no pass is recorded, and your work finishes unchecked.",
+            "enum": [
+              "none",
+            ],
             "type": "string",
           },
-          "output": {
-            "description": "The file the check wrote its whole output to.",
-            "pattern": "\\S",
-            "type": "string",
-          },
-          "tree": {
-            "description": "The tree check_own passed on, the tree you are finishing: HEAD's, as nothing is left uncommitted.",
-            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
-            "type": "string",
-          },
-        },
-        "required": [
-          "tree",
-          "commit",
-          "output",
         ],
-        "type": "object",
       },
       "result": {
         "additionalProperties": false,
@@ -617,35 +661,46 @@ exports[`the tools’ JSON Schema > finish (summary) matches its snapshot 1`] = 
 
 exports[`the tools’ JSON Schema > finish matches its snapshot 1`] = `
 {
-  "description": "Ends your work: your commits are on the branch and check_own passed on the tree you finish, with nothing uncommitted or untracked in the worktree. The verifier then checks your change, and the merge queue merges it.",
+  "description": "Ends your work: your commits are on the branch and check_own passed on the tree you finish, with nothing uncommitted or untracked in the worktree; where the project's check_own is "none", give checkOwn "none" and it finishes unchecked. The verifier then checks your change, and the merge queue merges it.",
   "parameters": {
     "additionalProperties": false,
     "properties": {
       "checkOwn": {
-        "additionalProperties": false,
-        "properties": {
-          "commit": {
-            "description": "The commit you are finishing, HEAD.",
-            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "commit": {
+                "description": "The commit you are finishing, HEAD.",
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "type": "string",
+              },
+              "output": {
+                "description": "The file the check wrote its whole output to.",
+                "pattern": "\\S",
+                "type": "string",
+              },
+              "tree": {
+                "description": "The tree check_own passed on, the tree you are finishing: HEAD's, as nothing is left uncommitted.",
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "type": "string",
+              },
+            },
+            "required": [
+              "tree",
+              "commit",
+              "output",
+            ],
+            "type": "object",
+          },
+          {
+            "description": "Only where the project's check_own is "none" (check_own says so): no pass is recorded, and your work finishes unchecked.",
+            "enum": [
+              "none",
+            ],
             "type": "string",
           },
-          "output": {
-            "description": "The file the check wrote its whole output to.",
-            "pattern": "\\S",
-            "type": "string",
-          },
-          "tree": {
-            "description": "The tree check_own passed on, the tree you are finishing: HEAD's, as nothing is left uncommitted.",
-            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
-            "type": "string",
-          },
-        },
-        "required": [
-          "tree",
-          "commit",
-          "output",
         ],
-        "type": "object",
       },
       "result": {
         "anyOf": [

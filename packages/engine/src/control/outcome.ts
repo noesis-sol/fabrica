@@ -9,9 +9,18 @@ import type { CheckRecord } from '../checks'
 // the merge queue, a freed slot, a resume once a question is answered). The work graph already holds
 // each one's effect when it is published.
 
+/** What a `finish` stood on: a `check_own` pass on HEAD's tree, or none, the project's `check_own` being `"none"` (H62). */
+export type OwnCheck = Data.TaggedEnum<{
+  /** `check_own` passed on the tree finished. */
+  Passed: { readonly pass: CheckOwnPass }
+  /** The project's `check_own` is `"none"`: the work finished unchecked, and says so. */
+  Unchecked: {}
+}>
+export const OwnCheck = Data.taggedEnum<OwnCheck>()
+
 export type Outcome = Data.TaggedEnum<{
-  /** `finish`: the worktree clean, `check_own` passed on HEAD's tree, the result recorded on the ticket. */
-  Finished: { readonly result: TicketResult; readonly checkOwn: CheckOwnPass }
+  /** `finish`: the worktree clean, what `check_own` came to on HEAD's tree, the result recorded on the ticket. */
+  Finished: { readonly result: TicketResult; readonly checkOwn: OwnCheck }
   /** `defer`: the ticket set aside, its worktree and session kept, the reason its note. */
   Deferred: { readonly reason: string }
   /** `wait_for`: the ticket linked as blocked by `ticket`, which must merge first. */

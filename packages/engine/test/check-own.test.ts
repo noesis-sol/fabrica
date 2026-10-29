@@ -328,7 +328,8 @@ describe('check_own', () => {
         const none = yield* harness(CommandSetting.cases.None.make({}))
         expect(yield* none.client.check_own({})).toEqual({
           _tag: 'not_run',
-          reason: 'the project\'s check_own is "none"',
+          reason:
+            'the project\'s check_own is "none": finish with checkOwn "none", unchecked',
         })
       }),
     ),

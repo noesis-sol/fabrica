@@ -281,7 +281,7 @@ export const CheckOwnRan = Schema.TaggedUnion({
   failed: { tree: TreeHash, exit: Text, output: Text },
   /** Its time limit (`check_timeout`) ran out, and it was ended. */
   timed_out: { tree: TreeHash, output: Text },
-  /** It didn't run: the project sets no `check_own`, or the command couldn't start or keep its output. */
+  /** It didn't run: the project sets no `check_own` or sets it `"none"`, or the command couldn't start or keep its output. */
   not_run: { reason: Text },
 })
 export type CheckOwnRan = typeof CheckOwnRan.Type
@@ -312,9 +312,19 @@ export class CheckOwnPass extends Schema.Class<CheckOwnPass>('CheckOwnPass')({
   }),
 }) {}
 
+/** What `finish` stands on: a `check_own` pass, or `"none"` where the project's `check_own` is `"none"` and nothing records one (H62). */
+export const FinishCheckOwn = Schema.Union([
+  CheckOwnPass,
+  Schema.Literal('none').annotate({
+    description:
+      'Only where the project\'s check_own is "none" (check_own says so): no pass is recorded, and your work finishes unchecked.',
+  }),
+])
+export type FinishCheckOwn = typeof FinishCheckOwn.Type
+
 const finishParameters = <Result extends Schema.Top>(result: Result) =>
   Schema.Struct({
-    checkOwn: CheckOwnPass,
+    checkOwn: FinishCheckOwn,
     result: result.annotate({
       description:
         "The hand-off: a summary, plus the fields the ticket's result_kind asks for; the tickets depending on yours read it.",
@@ -325,7 +335,8 @@ export const FinishParameters = finishParameters(TicketResult)
 
 const finishDescription =
   'Ends your work: your commits are on the branch and check_own passed on the tree you finish, ' +
-  'with nothing uncommitted or untracked in the worktree. The verifier then checks your change, ' +
+  'with nothing uncommitted or untracked in the worktree; where the project\'s check_own is "none", ' +
+  'give checkOwn "none" and it finishes unchecked. The verifier then checks your change, ' +
   'and the merge queue merges it.'
 
 export const FinishTool = {

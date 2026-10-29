@@ -303,8 +303,7 @@ describe('finish', () => {
   it.effect('gives check_own’s pass and a result', () =>
     Effect.gen(function* () {
       const finished = yield* decodeArguments(FinishTool)(finish)
-      expect(finished.checkOwn.tree).toBe(tree)
-      expect(finished.checkOwn.commit).toBe(commit)
+      expect(finished.checkOwn).toMatchObject({ tree, commit })
       expect(finished.result._tag).toBe('summary')
     }),
   )

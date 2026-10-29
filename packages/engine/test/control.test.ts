@@ -59,6 +59,7 @@ import {
   type CheckOwnRun,
   ControlServer,
   Outcome,
+  OwnCheck,
   type PermissionRequest,
   checkOwnPassesLayer,
   layer as controlLayer,
@@ -665,7 +666,10 @@ describe('finish', () => {
           const { ticket } = yield* graph.show(own)
           expect(ticket.result).toEqual(Option.some(summary))
           expect(yield* nextOutcome).toEqual(
-            Outcome.Finished({ result: summary, checkOwn }),
+            Outcome.Finished({
+              result: summary,
+              checkOwn: OwnCheck.Passed({ pass: checkOwn }),
+            }),
           )
         }),
       ),

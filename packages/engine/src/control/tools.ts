@@ -20,6 +20,7 @@ import {
   Filed,
   type FiledLink,
   type Files,
+  type FinishCheckOwn,
   LinkedTicket,
   Noted,
   type PermissionAsked,
@@ -52,7 +53,7 @@ import type {
   TransitionRefused,
   WorkGraphShape,
 } from '../workgraph'
-import { Outcome } from './outcome'
+import { Outcome, OwnCheck } from './outcome'
 import type { AttentionShape, CheckOwnPassesShape } from './ports'
 import { inScope } from './token'
 
@@ -397,7 +398,8 @@ export const makeTools = (context: ToolContext) => {
       None: () =>
         Effect.succeed(
           CheckOwnRan.cases.not_run.make({
-            reason: 'the project\'s check_own is "none"',
+            reason:
+              'the project\'s check_own is "none": finish with checkOwn "none", unchecked',
           }),
         ),
       Command: ({ command }) => runCheckOwn(command),
@@ -407,12 +409,62 @@ export const makeTools = (context: ToolContext) => {
       Effect.withSpan('Control.check_own'),
     )
 
+  /** The pass `finish` stands on: given for HEAD, and recorded on HEAD's tree. */
+  const standOn = Effect.fn('Control.standOn')(function* (pass: CheckOwnPass) {
+    const [head, tree] = yield* Effect.all(
+      [
+        git.commitHash({ repo: context.worktree, revision: 'HEAD' }),
+        git.treeHash({ repo: context.worktree, revision: 'HEAD' }),
+      ],
+      { concurrency: 2 },
+    )
+    if (!Option.contains(head, pass.commit))
+      return yield* refuse.invalid(
+        `${pass.commit} isn't HEAD (${Option.getOrElse(head, () => 'none')}): finish the commit the worktree is on`,
+      )
+    if (!Option.contains(tree, pass.tree))
+      return yield* refuse.invalid(
+        `${pass.tree} isn't HEAD's tree (${Option.getOrElse(tree, () => 'none')})`,
+      )
+    if (!(yield* context.passes.passed({ ticket, tree: pass.tree })))
+      return yield* Effect.fail(
+        ToolRefusal.cases.check_own_not_passed.make({ tree: pass.tree }),
+      )
+    return OwnCheck.Passed({ pass })
+  })
+
+  /** What `finish` stands on, as the project's `check_own` asks: a pass, or none where it is `"none"` (H62). */
+  const ownCheck = (given: FinishCheckOwn) =>
+    CommandSetting.match<Effect.Effect<OwnCheck, ToolRefusal | CantTell>>(
+      context.checkOwn.command,
+      {
+        None: () =>
+          given === 'none'
+            ? Effect.succeed(OwnCheck.Unchecked())
+            : refuse.invalid(
+                'the project\'s check_own is "none", so no pass is recorded: finish with checkOwn "none"',
+              ),
+        Unset: () =>
+          given === 'none'
+            ? refuse.invalid(
+                "the project's check_own isn't set, so nothing records a pass and nothing finishes: defer",
+              )
+            : standOn(given),
+        Command: () =>
+          given === 'none'
+            ? refuse.invalid(
+                "the project's check_own is set: run check_own after your last change, and finish with its pass",
+              )
+            : standOn(given),
+      },
+    )
+
   const finish = (input: {
-    readonly checkOwn: CheckOwnPass
+    readonly checkOwn: FinishCheckOwn
     readonly result: TicketResult
   }) =>
     Effect.gen(function* () {
-      const { checkOwn, result } = input
+      const { result } = input
       const [detail, status] = yield* Effect.all(
         [own, git.status({ worktree: context.worktree })],
         { concurrency: 2 },
@@ -429,31 +481,13 @@ export const makeTools = (context: ToolContext) => {
           }),
         )
       if (!isClean(status)) return yield* refuse.dirty(status)
-      const [head, tree] = yield* Effect.all(
-        [
-          git.commitHash({ repo: context.worktree, revision: 'HEAD' }),
-          git.treeHash({ repo: context.worktree, revision: 'HEAD' }),
-        ],
-        { concurrency: 2 },
-      )
-      if (!Option.contains(head, checkOwn.commit))
-        return yield* refuse.invalid(
-          `${checkOwn.commit} isn't HEAD (${Option.getOrElse(head, () => 'none')}): finish the commit the worktree is on`,
-        )
-      if (!Option.contains(tree, checkOwn.tree))
-        return yield* refuse.invalid(
-          `${checkOwn.tree} isn't HEAD's tree (${Option.getOrElse(tree, () => 'none')})`,
-        )
-      if (!(yield* context.passes.passed({ ticket, tree: checkOwn.tree })))
-        return yield* Effect.fail(
-          ToolRefusal.cases.check_own_not_passed.make({ tree: checkOwn.tree }),
-        )
+      const checked = yield* ownCheck(input.checkOwn)
       yield* graph.update({
         id: ticket,
         changes: { result: Option.some(result) },
         actor,
       })
-      yield* publish(Outcome.Finished({ result, checkOwn }))
+      yield* publish(Outcome.Finished({ result, checkOwn: checked }))
       return ended
     }).pipe(engineFault('finish'), Effect.withSpan('Control.finish'))
 
