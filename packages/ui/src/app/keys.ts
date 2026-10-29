@@ -105,6 +105,15 @@ const answerKeys = (options: KeyedOptions): ReadonlyArray<KeyCommand> =>
       })),
   })
 
+/** The answer talk, opened in the talk panel by the maintainer's key (§15.3, §18.5). */
+const answerTalk: KeyCommand = {
+  id: 'talk.answer',
+  title: 'Open the answer talk',
+  chord: plain('a'),
+  hint: false,
+  message: Message.RequestedAnswerTalk(),
+}
+
 /** The Review screen's views, each a key (§18.4). */
 const reviewKeys: ReadonlyArray<KeyCommand> = (
   [
@@ -130,7 +139,7 @@ const ofScreen = (
   options: KeyedOptions,
 ): ReadonlyArray<KeyCommand> =>
   Screen.match(screen, {
-    Console: () => answerKeys(options),
+    Console: () => [...answerKeys(options), answerTalk],
     Worker: () => [backToConsole],
     Talks: () => [backToConsole],
     Backlog: () => [backToConsole],

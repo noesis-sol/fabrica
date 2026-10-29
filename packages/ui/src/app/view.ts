@@ -100,6 +100,23 @@ const lazyStatsPart = (
   h: HtmlBuilder<Message>,
 ): Html => statsPart(stats, { project, live, run, now }, h)
 const lazyTalkPanel = createLazy()
+
+/** The talk panel, a Submodel: given the scope, the connection and the projects by name. */
+const talkPanelPart = (
+  talkPanel: TalkPanel.Model,
+  scope: Model['scope'],
+  live: boolean,
+  sidebar: Sidebar.Model,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.submodel({
+    slotId: 'talk-panel',
+    model: talkPanel,
+    view: TalkPanel.view,
+    viewInputs: { scope, live, projects: TalkPanel.projectNames(sidebar) },
+    toParentMessage: message => Message.GotTalkPanelMessage({ message }),
+  })
+
 const lazyHistory = createLazy()
 const lazyInProgress = createLazy()
 
@@ -236,7 +253,15 @@ const consoleView = (model: Model, h: HtmlBuilder<Message>): Html => {
         [
           h.section(
             [h.AriaLabel('Run talk'), h.Class(panel)],
-            [lazyTalkPanel(TalkPanel.view<Message>, [parts.talkPanel, h])],
+            [
+              lazyTalkPanel(talkPanelPart, [
+                parts.talkPanel,
+                model.scope,
+                isLive(model.connection),
+                parts.sidebar,
+                h,
+              ]),
+            ],
           ),
           h.section(
             [h.AriaLabel('History'), h.Class(panel)],
@@ -353,7 +378,24 @@ const screenView = (model: Model, h: HtmlBuilder<Message>): Html =>
   Screen.match(model.screen, {
     Console: () => consoleView(model, h),
     Worker: ({ ticket }) => Worker.view(model.screens.worker, ticket, h),
-    Talks: () => Talks.view(model.screens.talks, h),
+    Talks: () =>
+      h.submodel({
+        slotId: 'talks',
+        view: Talks.view,
+        model: model.screens.talks,
+        viewInputs: {
+          scope: model.scope,
+          live: isLive(model.connection),
+          run: TalkPanel.runTalk(model.console.talkPanel),
+          answer: TalkPanel.answerTalk(model.console.talkPanel),
+          projectName: project =>
+            Option.getOrElse(
+              Sidebar.projectName(model.console.sidebar, project),
+              () => project,
+            ),
+        },
+        toParentMessage: message => Message.GotTalksMessage({ message }),
+      }),
     Backlog: () =>
       h.submodel({
         slotId: 'backlog',

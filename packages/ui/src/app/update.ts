@@ -16,14 +16,20 @@ import * as Attention from '../console/attention'
 import * as History from '../console/history'
 import * as Sidebar from '../console/sidebar'
 import * as Stats from '../console/stats'
+import * as TalkPanel from '../console/talk-panel'
 import * as Backlog from '../screens/backlog'
 import * as Engines from '../screens/engines'
 import * as Palette from '../screens/palette'
 import * as Review from '../screens/review'
 import * as Settings from '../screens/settings'
+import * as Talks from '../screens/talks'
 import { themeTitle, themes } from '../theme/theme'
 import { dayOf, sameDay } from './clock'
-import { Connection, retryAfter } from './connection'
+import {
+  Connection,
+  type EngineConnectionService,
+  retryAfter,
+} from './connection'
 import { commandFor, commandsFor, keyLabel, paletteCommands } from './keys'
 import { Message } from './message'
 import { type Model, Overlay } from './model'
@@ -69,7 +75,12 @@ export const WaitToRewatchRunView = Command.define('WaitToRewatchRunView', {
 type Return = Update.Return<
   Model,
   Message,
-  Engines.Requires | Settings.Requires | Review.Requires | Notifier | ThemeHost
+  | Engines.Requires
+  | Settings.Requires
+  | Review.Requires
+  | EngineConnectionService
+  | Notifier
+  | ThemeHost
 >
 
 /** The stats row's Messages, folded into its submodel; a run it started is watched afresh. */
@@ -149,6 +160,74 @@ const reviewScope = (model: Model): Return =>
     }),
   )
 
+const writeTalkPanel = (model: Model, talkPanel: TalkPanel.Model): Model =>
+  modifyFields(model, {
+    console: parts => modifyFields(parts, { talkPanel: () => talkPanel }),
+  })
+
+/** The talk panel's own Model changed, and its Commands lifted, by `step`. */
+const stepTalkPanel = (
+  model: Model,
+  step: (
+    talkPanel: TalkPanel.Model,
+  ) => Update.Return<
+    TalkPanel.Model,
+    TalkPanel.Message,
+    EngineConnectionService
+  >,
+): Return => {
+  const stepped = step(model.console.talkPanel)
+  return {
+    model: writeTalkPanel(model, stepped.model),
+    commands: Command.mapMessages(stepped.commands, message =>
+      Message.GotTalkPanelMessage({ message }),
+    ),
+  }
+}
+
+const writeTalks = (model: Model, talks: Talks.Model): Model =>
+  modifyFields(model, {
+    screens: screens => modifyFields(screens, { talks: () => talks }),
+  })
+
+/** The Talks screen's own Model changed, and its Commands lifted, by `step`. */
+const stepTalks = (
+  model: Model,
+  step: (
+    talks: Talks.Model,
+  ) => Update.Return<Talks.Model, Talks.Message, EngineConnectionService>,
+): Return => {
+  const stepped = step(model.screens.talks)
+  return {
+    model: writeTalks(model, stepped.model),
+    commands: Command.mapMessages(stepped.commands, message =>
+      Message.GotTalksMessage({ message }),
+    ),
+  }
+}
+
+/** `first`, then `next` on its model, their commands together. */
+const andThen = (first: Return, next: (model: Model) => Return): Return => {
+  const second = next(first.model)
+  return {
+    model: second.model,
+    commands: [...(first.commands ?? []), ...(second.commands ?? [])],
+  }
+}
+
+/** The talk panel for the scope: its run talk, and an answer talk only for a project in scope. */
+const scopeTalkPanel = (model: Model): Return =>
+  stepTalkPanel(model, talkPanel => TalkPanel.scoped(talkPanel, model.scope))
+
+/** The answer talk opened by the maintainer, on `project` or the first with questions. */
+const requestAnswerTalk = (
+  model: Model,
+  project: Option.Option<ProjectId>,
+): Return =>
+  stepTalkPanel(model, talkPanel =>
+    TalkPanel.requestedAnswerTalk(talkPanel, project),
+  )
+
 /** The attention column's Messages, folded into its submodel; a card's buttons open their screens. */
 const foldAttention = Update.foldChild({
   update: Attention.update,
@@ -157,7 +236,15 @@ const foldAttention = Update.foldChild({
   toParentMessage: toAttentionMessage,
   foldOutMessage: (outMessage: Attention.OutMessage) => (model: Model) =>
     Attention.OutMessage.match<Return>(outMessage, {
-      OpenedAnswerTalk: () => ({ model: showScreen(model, Screen.Talks()) }),
+      // "Talk it through": the answer talk opened on the question's project, shown on the Talks screen.
+      OpenedAnswerTalk: ({ project }) =>
+        requestAnswerTalk(
+          writeTalks(
+            showScreen(model, Screen.Talks()),
+            Talks.showConsoleTalk(model.screens.talks, 'answer'),
+          ),
+          Option.some(project),
+        ),
       // A set-aside ticket's Review opens its branch diff (§18.3).
       OpenedReview: ({ project, ticket }) =>
         stepReview(showScreen(model, Screen.Review()), review =>
@@ -588,13 +675,16 @@ export const update = (model: Model, message: Message): Return =>
         : Screen.guards.Review(scoped.model.screen)
           ? Option.some(reviewScope(scoped.model))
           : Option.none()
-      return Option.match(reopened, {
-        onNone: () => scoped,
-        onSome: again => ({
-          model: again.model,
-          commands: [...(scoped.commands ?? []), ...(again.commands ?? [])],
+      return andThen(
+        Option.match(reopened, {
+          onNone: () => scoped,
+          onSome: again => ({
+            model: again.model,
+            commands: [...(scoped.commands ?? []), ...(again.commands ?? [])],
+          }),
         }),
-      })
+        scopeTalkPanel,
+      )
     },
     RequestedAddProject: () => {
       const entered = enterScreen(model, Screen.Engines())
@@ -642,7 +732,11 @@ export const update = (model: Model, message: Message): Return =>
           load: () => Option.none(),
           usage: () => Option.none(),
           console: parts =>
-            modifyFields(parts, { sidebar: () => Sidebar.init() }),
+            modifyFields(parts, {
+              sidebar: () => Sidebar.init(),
+              talkPanel: () => TalkPanel.init(),
+            }),
+          screens: screens => modifyFields(screens, { talks: Talks.init }),
         }),
         Option.none(),
       ),
@@ -712,7 +806,18 @@ export const update = (model: Model, message: Message): Return =>
       const received = modifyFields(model, {
         attention: attention => applyAttention(attention, items),
       })
-      return foldRequests(received, received.attention)
+      return andThen(foldRequests(received, received.attention), requested =>
+        Option.match(requested.attention, {
+          onNone: () => ({ model: requested }),
+          onSome: requests =>
+            stepTalkPanel(requested, talkPanel =>
+              TalkPanel.receivedQuestions(
+                talkPanel,
+                TalkPanel.openQuestions(requests),
+              ),
+            ),
+        }),
+      )
     },
     ReceivedBacklog: ({ project, items }) => {
       if (!Option.contains(model.scope, project)) return { model }
@@ -774,6 +879,34 @@ export const update = (model: Model, message: Message): Return =>
     GotStatsMessage: ({ message }) => foldStats(model, message),
     GotAttentionMessage: ({ message }) => foldAttention(model, message),
     PressedAnswerKey: ({ key, place }) => foldAnswerKey(model, { key, place }),
+    GotTalkPanelMessage: ({ message }) =>
+      stepTalkPanel(model, talkPanel =>
+        TalkPanel.update(talkPanel, message, {
+          scope: model.scope,
+          projects: TalkPanel.projectNames(model.console.sidebar),
+        }),
+      ),
+    GotTalksMessage: ({ message }) =>
+      stepTalks(model, talks => Talks.update(talks, message)),
+    RequestedAnswerTalk: () => requestAnswerTalk(model, Option.none()),
+    ReceivedTranscript: ({ talk, items }) => ({
+      model: writeTalks(
+        writeTalkPanel(
+          model,
+          TalkPanel.receivedTranscript(model.console.talkPanel, talk, items),
+        ),
+        Talks.receivedTranscript(model.screens.talks, talk, items),
+      ),
+    }),
+    EndedTranscript: ({ talk }) => ({
+      model: writeTalks(
+        writeTalkPanel(
+          model,
+          TalkPanel.endedTranscript(model.console.talkPanel, talk),
+        ),
+        Talks.endedTranscript(model.screens.talks, talk),
+      ),
+    }),
 
     CompletedShowNotification: () => ({ model }),
     ClickedNotification: ({ target }) =>

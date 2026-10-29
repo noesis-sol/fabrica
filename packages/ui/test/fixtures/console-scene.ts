@@ -5,6 +5,7 @@ import {
   AttentionRequest,
   EngineId,
   HostLoad,
+  MessageId,
   ProjectId,
   ProjectRunState,
   ProjectStatus,
@@ -12,6 +13,7 @@ import {
   RunId,
   RunView,
   StreamEpoch,
+  TalkId,
   UsageWindow,
   protocolVersion,
 } from '@fabrica/contracts'
@@ -25,13 +27,14 @@ import { layerThemeHost, themeHostOf } from '../../src/app/theme-host'
 import { update } from '../../src/app/update'
 import { view } from '../../src/app/view'
 import * as Sidebar from '../../src/console/sidebar'
+import * as TalkPanel from '../../src/console/talk-panel'
 import { Theme, applyTheme, defaultTheme } from '../../src/theme/theme'
 
 // The console's scene for the look test (spec §18.2, §24): fixture data as close to the handoff's
 // reference (design/console/reference.png) as Fabrica's model allows, so that what still differs is
 // the look and not the content. Seven projects named as the reference names its sessions, the first
-// selected with a run of four tickets in progress, the reference's four History events, its three
-// attention cards, and its title bar's host load. Fabrica's own departures (the "All projects" row, the
+// selected with a run of four tickets in progress, the reference's conversation as its run talk, the
+// reference's four History events, its three attention cards, and its title bar's host load. Fabrica's own departures (the "All projects" row, the
 // stats row's items and run controls, the usage windows, native window controls, lower-case ticket IDs)
 // are the spec's, and the look test masks them.
 
@@ -333,6 +336,35 @@ const events: ReadonlyArray<RunEvent> = [
   }),
 ]
 
+/** The reference's conversation, as the selected project's run talk, with the context it used. */
+const talkPanel: TalkPanel.Model = {
+  ...TalkPanel.init(),
+  run: TalkPanel.Run.Open({
+    conversation: {
+      talk: TalkId.make('t-run'),
+      project,
+      mode: 'run',
+      model: 'claude',
+      lines: [
+        {
+          _tag: 'said',
+          id: MessageId.make('m-1'),
+          role: 'user',
+          text: 'Hold the indexer work until the sessions-table migration is approved.',
+        },
+        {
+          _tag: 'said',
+          id: MessageId.make('m-2'),
+          role: 'assistant',
+          text: 'Paused Agent 03 on ENG-398. Resumes once ENG-377 is approved.',
+        },
+      ],
+      context: Option.some(14_000),
+      ended: false,
+    },
+  }),
+}
+
 /** The scene's Model: connected, the first project selected, every stream's latest value in. */
 export const consoleScene = (): Model => {
   const base = initialModel({ platform: 'darwin', release: '0.0.0' })
@@ -356,6 +388,7 @@ export const consoleScene = (): Model => {
     events: [{ project, events: [...events].reverse() }],
     console: {
       ...base.console,
+      talkPanel,
       sidebar: Sidebar.receivedProjects(base.console.sidebar, {
         engine,
         name: 'local',

@@ -44,6 +44,7 @@ import type { AttentionItem } from '../src/app/streams'
 import { modelCommands, update } from '../src/app/update'
 import { view } from '../src/app/view'
 import * as Attention from '../src/console/attention'
+import * as TalkPanel from '../src/console/talk-panel'
 import * as Review from '../src/screens/review'
 
 // The console's Needs your attention column (spec §15.1, §18.3, H62, H92; Appendix A.2), from fixture
@@ -588,6 +589,14 @@ describe('a question', () => {
             ticket: TicketId.make('fa-q1'),
           }),
         ),
+      ),
+      // The answer talk is opened on the question's project, by the maintainer's action.
+      StoryCommand.resolve(
+        TalkPanel.OpenAnswerTalk({ project }),
+        TalkPanel.Message.FailedOpenAnswerTalk({
+          project,
+          reason: 'NotImplemented',
+        }),
       ),
       model(shown => {
         expect(shown.screen).toEqual(Screen.Talks())

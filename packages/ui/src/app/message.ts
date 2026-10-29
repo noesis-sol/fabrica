@@ -8,17 +8,21 @@ import {
   ProtocolVersion,
   ReleaseVersion,
   RunId,
+  TalkId,
+  TranscriptItem,
   UpdateSide,
 } from '@fabrica/contracts'
 
 import * as Attention from '../console/attention'
 import * as History from '../console/history'
 import * as Stats from '../console/stats'
+import * as TalkPanel from '../console/talk-panel'
 import * as Backlog from '../screens/backlog'
 import * as Engines from '../screens/engines'
 import * as Palette from '../screens/palette'
 import * as Review from '../screens/review'
 import * as Settings from '../screens/settings'
+import * as Talks from '../screens/talks'
 import { Theme } from '../theme/theme'
 import { NotificationTarget } from './notify'
 import { Screen } from './screen'
@@ -110,6 +114,16 @@ export const Message = defineMessageUnion({
   GotAttentionMessage: { message: Attention.Message },
   /** A key 1–9 for the option at `place` (from 0) of the attention request `key`'s drawn options. */
   PressedAnswerKey: { key: Schema.String, place: Schema.Int },
+  /** A Message of the console's talk panel. */
+  GotTalkPanelMessage: { message: TalkPanel.Message },
+  /** A Message of the Talks screen's. */
+  GotTalksMessage: { message: Talks.Message },
+  /** The maintainer's key for the answer talk (§15.3, §18.5): it takes the talk panel. */
+  RequestedAnswerTalk: {},
+  /** A frame of a talk's transcript, for the panel or the Talks screen that holds the talk. */
+  ReceivedTranscript: { talk: TalkId, items: itemsOf(TranscriptItem) },
+  /** A talk's transcript ended: the engine no longer has the talk. */
+  EndedTranscript: { talk: TalkId },
 
   /** Every project's attention requests, read for those to notify (§18.5). */
   ReceivedAttentionToNotify: { items: itemsOf(AttentionItem) },

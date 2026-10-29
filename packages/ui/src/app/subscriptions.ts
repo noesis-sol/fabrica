@@ -1,4 +1,4 @@
-import { type DateTime, Effect, Option, Schema, Stream } from 'effect'
+import { Array, type DateTime, Effect, Option, Schema, Stream } from 'effect'
 import { Subscription } from 'foldkit'
 
 import { type EngineClientShape, Link } from '@fabrica/client'
@@ -14,10 +14,14 @@ import {
   RunId,
   type RunView,
   type RunViewPatch,
+  TalkId,
   type Ticket,
+  type TranscriptEntry,
 } from '@fabrica/contracts'
 
 import * as Sidebar from '../console/sidebar'
+import * as TalkPanel from '../console/talk-panel'
+import * as Talks from '../screens/talks'
 import {
   type EngineConnectionService,
   type EngineSession,
@@ -38,9 +42,10 @@ import { watchOf } from './streams'
 // The streams the app listens to (spec §18.1, §18.5): the keys, the client's link, and the engine's
 // streams, each subscribed only while a part that draws it is shown: the run view and attention for
 // the console's scope, History's events (under All projects, every project's run going), the backlog while its screen is open, the host's load while connected. Each
-// stream's items go on once per animation frame, so a burst of patches costs one update. For the
-// app's notifications (§18.5), every project's attention requests and the events of each run going,
-// while connected, and the clicks on the notifications shown.
+// stream's items go on once per animation frame, so a burst of patches costs one update. The scope's
+// run talk is opened as the scope changes, and every talk the app holds has its transcript watched.
+// For the app's notifications (§18.5), every project's attention requests and the events of each run
+// going, while connected, and the clicks on the notifications shown.
 
 /** What the subscriptions need from their host, injected so tests drive them. */
 export interface SubscriptionEnvironment {
@@ -192,6 +197,28 @@ export const runEventMessages = (
     Stream.catch(() => Stream.empty),
     Stream.concat(Stream.make(Message.EndedRunEvents({ project, run }))),
   )
+
+/** A talk's transcript, a frame's entries at a time; its end, when the engine no longer has the talk. */
+export const transcriptMessages = (
+  client: EngineClientShape,
+  talk: TalkId,
+  nextFrame: Effect.Effect<void>,
+): Stream.Stream<Message> =>
+  watchOf<ReadonlyArray<TranscriptEntry>, ReadonlyArray<TranscriptEntry>>(
+    client,
+  )(resume => client.rpc['talk.watchTranscript']({ talk, resume })).pipe(
+    perFrame(nextFrame),
+    Stream.map(items => Message.ReceivedTranscript({ talk, items })),
+    Stream.catch(() => Stream.empty),
+    Stream.concat(Stream.make(Message.EndedTranscript({ talk }))),
+  )
+
+/** The talks the app holds, the console's and the Talks screen's, each once. */
+const heldTalks = (model: Model): ReadonlyArray<TalkId> =>
+  Array.dedupe([
+    ...TalkPanel.heldTalks(model.console.talkPanel),
+    ...Talks.heldTalks(model.screens.talks),
+  ])
 
 /** The engine's projects and their runs' states, for the sidebar's rows. */
 export const projectMessages = (
@@ -389,6 +416,43 @@ export const makeSubscriptions = ({
             : withClient(client =>
                 Stream.mergeAll(
                   runs.map(run => runEventMessages(client, run, nextFrame)),
+                  { concurrency: 'unbounded' },
+                ),
+              ),
+      },
+    ),
+    runTalk: entry(
+      { project: Schema.Option(ProjectId) },
+      {
+        modelToDependencies: model => ({
+          project: isLive(model.connection) ? model.scope : Option.none(),
+        }),
+        dependenciesToStream: ({ project }) =>
+          Option.match(project, {
+            onNone: () => Stream.empty,
+            onSome: project =>
+              Stream.fromEffect(
+                Effect.map(TalkPanel.openRunTalk(project), message =>
+                  Message.GotTalkPanelMessage({ message }),
+                ),
+              ),
+          }),
+      },
+    ),
+    transcripts: entry(
+      { talks: Schema.Array(TalkId) },
+      {
+        modelToDependencies: model => ({
+          talks: isLive(model.connection) ? heldTalks(model) : [],
+        }),
+        dependenciesToStream: ({ talks }) =>
+          talks.length === 0
+            ? Stream.empty
+            : withClient(client =>
+                Stream.mergeAll(
+                  talks.map(talk =>
+                    transcriptMessages(client, talk, nextFrame),
+                  ),
                   { concurrency: 'unbounded' },
                 ),
               ),

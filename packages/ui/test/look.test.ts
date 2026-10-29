@@ -58,21 +58,36 @@ interface Size {
  */
 const references: Record<
   Theme,
-  { readonly file: string; readonly content: Rect }
+  {
+    readonly file: string
+    readonly content: Rect
+    /**
+     * Where the reference draws the run talk's messages: from the top of their pane (reference.png's
+     * HTML, padded 10px under the header's 38px), or from its bottom, as kits.png and Appendix A.2
+     * have them, and as the page does.
+     */
+    readonly talkMessages: 'top' | 'bottom'
+  }
 > = {
   'lichen-bright': {
     file: 'reference.png',
     content: { x: 66, y: 388, width: 1276, height: 796 },
+    talkMessages: 'top',
   },
   'neon-grid': {
     file: 'kits.png',
     content: { x: 65, y: 361, width: 1278, height: 798 },
+    talkMessages: 'bottom',
   },
   classic: {
     file: 'kits.png',
     content: { x: 65, y: 1364, width: 1278, height: 798 },
+    talkMessages: 'bottom',
   },
 }
+
+/** Where reference.png's run talk draws its first message, under the panel's top. */
+const talkMessagesTop = 49
 
 /** The handoff's console in a window of `size`, as the references draw it. */
 const handoffOf = ({ width, height }: Size) => {
@@ -105,6 +120,7 @@ const projectRows =
 const statsRow = '[data-layout="stats-row"]'
 const talkRow = '[data-layout="talk-row"]'
 const talkPanel = 'section[aria-label="Run talk"]'
+const talkLines = `${talkPanel} [data-line]`
 const historyPanel = 'section[aria-label="History"]'
 const historyRows = `${historyPanel} [role="listitem"]`
 const ticketColumns = '[data-layout="ticket-columns"]'
@@ -122,6 +138,7 @@ const selectors = [
   statsRow,
   talkRow,
   talkPanel,
+  talkLines,
   historyPanel,
   historyRows,
   ticketColumns,
@@ -222,10 +239,65 @@ const placed = (rect: Rect, at: { x: number; y: number }): Rect => ({
   y: Math.round(at.y),
 })
 
+/** The talk panel's header and composer, and its messages where each reference draws them. */
+const runTalkPieces = (
+  boxes: Boxes,
+  talkRect: Rect,
+  talkMessages: 'top' | 'bottom',
+): ReadonlyArray<Piece> => {
+  const panel = boxOf(boxes, talkPanel)
+  const first = boxOf(boxes, talkLines)
+  const last = boxOf(boxes, talkLines, 1)
+  const header = { ...talkRect, height: 38 }
+  const composer = {
+    ...talkRect,
+    y: talkRect.y + talkRect.height - 41,
+    height: 41,
+  }
+  const messages = {
+    ...talkRect,
+    y: talkRect.y + Math.round(first.y - panel.y),
+    height: Math.round(last.y + last.height - first.y),
+  }
+  return [
+    {
+      page: placed(header, panel),
+      reference: header,
+      // "Fabrica" where the handoff has "Hivemind", and the note after it.
+      masks: [{ x: 26, y: 0, width: 160, height: 38 }],
+    },
+    {
+      page: placed(messages, { x: panel.x, y: first.y }),
+      reference:
+        talkMessages === 'top'
+          ? { ...messages, y: talkRect.y + talkMessagesTop }
+          : messages,
+      // The agent's name, "Fabrica" where the handoff has "Hivemind".
+      masks: [
+        {
+          x: 0,
+          y: Math.round(last.y - first.y) - 2,
+          width: 12 + 64,
+          height: Math.round(last.height) + 4,
+        },
+      ],
+    },
+    {
+      page: placed(composer, {
+        x: panel.x,
+        y: panel.y + talkRect.height - 41,
+      }),
+      reference: composer,
+      masks: [],
+    },
+  ]
+}
+
 /** The console's parts, each a piece or a few, as the page and the reference draw them. */
 const partsOf = (
   boxes: Boxes,
   handoff: Handoff,
+  talkMessages: 'top' | 'bottom',
 ): Record<string, ReadonlyArray<Piece>> => {
   const { width, height, main, column, cards, sidebar } = handoff
   const talkRect = {
@@ -301,13 +373,7 @@ const partsOf = (
         masks: [{ x: 14, y: 9, width: 150, height: 40 }],
       },
     ],
-    'run talk': [
-      {
-        page: placed(talkRect, boxOf(boxes, talkPanel)),
-        reference: talkRect,
-        masks: [],
-      },
-    ],
+    'run talk': runTalkPieces(boxes, talkRect, talkMessages),
     history: [
       {
         page: placed(historyRect, boxOf(boxes, historyPanel)),
@@ -377,8 +443,6 @@ const known: ReadonlyMap<string, { ticket: string; held: number }> = new Map(
       entry('card pitch', 'fab-mgi.69', 92),
       entry('history row height', 'fab-mgi.70', 26),
       entry('history', 'fab-mgi.70', 0.2),
-      // The run talk isn't drawn yet: the panel is empty.
-      entry('run talk', 'fab-mgi.7.13', 0.15),
     ]
   }),
 )
@@ -662,7 +726,7 @@ describe('the console look', () => {
         }),
       )
       const parts: ReadonlyArray<Finding> = Object.entries(
-        partsOf(boxes, handoff),
+        partsOf(boxes, handoff, reference.talkMessages),
       ).map(([name, pieces]) => {
         const compared = pieces.map(piece => compare(image, drawn, piece))
         writeFileSync(
