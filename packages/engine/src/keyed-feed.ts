@@ -68,11 +68,9 @@ const same = (a: unknown, b: unknown): boolean =>
   JSON.stringify(a) === JSON.stringify(b)
 
 /** A feed whose first items are `options.items`. */
-export const makeKeyedFeed = Effect.fn('KeyedFeed.make')(function* <
-  A,
-  K,
-  Item,
->(options: KeyedFeedOptions<A, K, Item>) {
+export const makeKeyedFeed = Effect.fn('KeyedFeed.make')(function* <A, K, Item>(
+  options: KeyedFeedOptions<A, K, Item>,
+) {
   const { keyOf } = options
   const epoch = StreamEpoch.make(`${options.name}-${yield* drawBase36(12)}`)
   const state = yield* Ref.make<FeedState<A, K>>({
@@ -164,9 +162,7 @@ export const makeKeyedFeed = Effect.fn('KeyedFeed.make')(function* <
               }),
             ],
             PatchesAfter: ({ after }) =>
-              current.patches
-                .filter(patch => patch.seq > after)
-                .map(patchItem),
+              current.patches.filter(patch => patch.seq > after).map(patchItem),
           })
           return Stream.concat(
             Stream.fromIterable(first),
