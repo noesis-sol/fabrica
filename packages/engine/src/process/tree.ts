@@ -104,6 +104,16 @@ export interface TreeHost {
   readonly self: number
 }
 
+/** Whether any process is left in the group `pgid`: a signal 0 reaches it, or would but for permission. */
+export const groupHasMembers = (pgid: number): boolean => {
+  try {
+    process.kill(-pgid, 0)
+    return true
+  } catch (error) {
+    return Reflect.get(Object(error), 'code') === 'EPERM'
+  }
+}
+
 const signalGroup = (pgid: number, signal: NodeJS.Signals): void => {
   try {
     process.kill(-pgid, signal)
@@ -118,18 +128,21 @@ const POLL = Duration.millis(25)
 /**
  * Ends the tree of the command whose process is `pid`, a group leader: terminates every group in it,
  * waits up to `grace` for the tree to go, and kills what is left. A command that has exited already
- * still has its group's members found, those it left behind.
+ * still has its group's members found, those it left behind; `holders`, the processes holding its
+ * pipes, are part of its tree wherever they moved.
  */
 export const endTree = Effect.fn('ProcessTree.end')(function* ({
   host,
   pid,
+  holders,
   grace,
 }: {
   readonly host: TreeHost
   readonly pid: number
+  readonly holders: ReadonlyArray<number>
   readonly grace: Duration.Input
 }) {
-  const pids = new Set([pid])
+  const pids = new Set([pid, ...holders])
   const groups = new Set([pid])
   // Lists the tree, adding what it finds to those known, and signals each of its groups: a process
   // that left the tree's groups is reached through its own.

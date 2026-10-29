@@ -1,5 +1,6 @@
 export * from './deadlines'
 export * from './environment'
+export * from './holders'
 export * from './outcome'
 export * from './path'
 export * from './priority'

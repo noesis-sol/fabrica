@@ -3,6 +3,7 @@ import {
   Deferred,
   Duration,
   Effect,
+  Exit,
   Layer,
   Option,
   Queue,
@@ -16,6 +17,7 @@ import type { Readable } from 'node:stream'
 
 import { Deadlines, type DeadlinesShape } from './deadlines'
 import { commandEnvironment } from './environment'
+import { type PipeHolders, hostHolders, pipeFd } from './holders'
 import {
   CommandOutcome,
   ExitStatus,
@@ -31,7 +33,13 @@ import {
   effectiveNice,
   hostPriority,
 } from './priority'
-import { type ProcessRow, type TreeHost, endTree, listProcesses } from './tree'
+import {
+  type ProcessRow,
+  type TreeHost,
+  endTree,
+  groupHasMembers,
+  listProcesses,
+} from './tree'
 
 // The engine's one module for starting external commands (spec §12.1, §20.2, H61, H73, H74, H85):
 // git, checks, setups and agents all start theirs here. Each command is found on the PATH it will run
@@ -103,6 +111,8 @@ export interface RunnerConfig {
   readonly listProcesses: Effect.Effect<
     Option.Option<ReadonlyArray<ProcessRow>>
   >
+  /** Finds the processes holding a command's pipes, those its tree no longer reaches. */
+  readonly pipeHolders: PipeHolders
   /** The engine's own process ID. */
   readonly self: number
   /** How long a terminated tree has before what is left is killed. */
@@ -119,6 +129,7 @@ export const hostConfig = (): RunnerConfig => ({
   enginePriority: getPriority(),
   priority: hostPriority,
   listProcesses,
+  pipeHolders: hostHolders({ platform: process.platform, self: process.pid }),
   self: process.pid,
   killGrace: Duration.seconds(5),
   outputGrace: Duration.seconds(2),
@@ -272,8 +283,25 @@ export const make = Effect.fn('ProcessRunner.make')(function* (
     deadlines,
     self: config.self,
   }
-  const endCommand = (pid: number) =>
-    endTree({ host: tree, pid, grace: config.killGrace })
+  /**
+   * Ends a spawned command's tree, unless it has exited, its pipes have closed and nothing is left in
+   * its group; then closes the engine's ends of its pipes.
+   */
+  const endSpawned = (spawned: Spawned) =>
+    Effect.gen(function* () {
+      const open = [spawned.stdout, spawned.stderr].flatMap(readable =>
+        Option.toArray(pipeFd(readable)),
+      )
+      const exited = Deferred.isDoneUnsafe(spawned.exited)
+      if (exited && open.length === 0 && !groupHasMembers(spawned.pid)) return
+      const holders = yield* config.pipeHolders(open)
+      yield* endTree({
+        host: tree,
+        pid: spawned.pid,
+        holders,
+        grace: config.killGrace,
+      })
+    }).pipe(Effect.ensuring(Effect.sync(() => destroyPipes(spawned))))
 
   /** The environment and file of an invocation, or why it can't start. */
   const resolve = Effect.fnUntraced(function* (invocation: Invocation) {
@@ -311,15 +339,9 @@ export const make = Effect.fn('ProcessRunner.make')(function* (
   const run = Effect.fn('ProcessRunner.run')(
     function* (command: Command) {
       const { environment, file } = yield* resolve(command)
-      // Whether the command exited and its pipes closed: only then is there no tree left to end.
-      const settled = { clean: false }
       const spawned = yield* Effect.acquireRelease(
         spawnChild({ file, invocation: command, environment, stdin: 'null' }),
-        spawned =>
-          Effect.ensuring(
-            settled.clean ? Effect.void : endCommand(spawned.pid),
-            Effect.sync(() => destroyPipes(spawned)),
-          ),
+        endSpawned,
       )
       const limit = command.outputLimit ?? DEFAULT_OUTPUT_LIMIT
       const cut = Deferred.makeUnsafe<OutputStream>()
@@ -359,14 +381,12 @@ export const make = Effect.fn('ProcessRunner.make')(function* (
             Deferred.await(stdout.closed),
             Deferred.await(stderr.closed),
           ]),
-          () => {
-            settled.clean = true
-            return CommandOutcome.Exited({
+          () =>
+            CommandOutcome.Exited({
               status,
               stdout: text(stdout),
               stderr: text(stderr),
-            })
-          },
+            }),
         ),
         Effect.map(deadlines.sleep(config.outputGrace), () =>
           CommandOutcome.Exited({
@@ -399,11 +419,8 @@ export const make = Effect.fn('ProcessRunner.make')(function* (
           if (begun.ending) return Deferred.await(ended)
           begun.ending = true
           return Effect.ensuring(
-            endCommand(spawned.pid),
-            Effect.sync(() => {
-              destroyPipes(spawned)
-              Deferred.doneUnsafe(ended, Effect.void)
-            }),
+            endSpawned(spawned),
+            Deferred.done(ended, Exit.void),
           )
         }),
       )

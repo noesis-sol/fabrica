@@ -24,10 +24,12 @@ import {
   type RunnerConfig,
   StartFailure,
   commandEnvironment,
+  hostHolders,
   hostPriority,
   layer,
   layerClock,
   listProcesses,
+  parseLsof,
   parseProcessTable,
   treeOf,
 } from '../src/process'
@@ -56,6 +58,17 @@ if (ready !== undefined) {
 setInterval(() => {}, 1000)
 `
 
+/** A script that starts a grandchild in a group of its own, holding its stdout, says its pid, and exits. */
+const DETACHER = `import { spawn } from 'node:child_process'
+const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+  detached: true,
+  stdio: ['ignore', 'inherit', 'ignore'],
+})
+grandchild.unref()
+process.stdout.write(grandchild.pid + '\\n')
+`
+let detacher = ''
+
 beforeAll(() => {
   root = mkdtempSync(join(tmpdir(), 'fabrica-process-'))
   bin = join(root, 'bin')
@@ -64,6 +77,8 @@ beforeAll(() => {
   chmodSync(join(bin, 'stub-tool'), 0o755)
   grandparent = join(root, 'grandparent.mjs')
   writeFileSync(grandparent, GRANDPARENT)
+  detacher = join(root, 'detacher.mjs')
+  writeFileSync(detacher, DETACHER)
 })
 
 const PATH = () => `${dirname(process.execPath)}:/usr/bin:/bin`
@@ -81,6 +96,8 @@ const config = (overrides: Partial<RunnerConfig> = {}): RunnerConfig => ({
   enginePriority: 0,
   priority: hostPriority,
   listProcesses,
+  // Where the host finds who holds a pipe is a platform fact (spec §24): lsof on macOS, /proc on Linux.
+  pipeHolders: hostHolders({ platform: process.platform, self: process.pid }),
   self: process.pid,
   killGrace: Duration.seconds(2),
   outputGrace: Duration.millis(200),
@@ -208,6 +225,17 @@ describe('the process tree', () => {
       groups: new Set([100]),
     }).map(r => r.pid)
     expect(pids.toSorted((a, b) => a - b)).toEqual([100, 101, 102, 103, 104])
+  })
+})
+
+describe('the holders of a pipe', () => {
+  it('reads lsof output into each process’s devices and names', () => {
+    expect(parseLsof('p10\nf1\nd0xab\nn->0xcd\np11\nf0\nn/dev/null\n')).toEqual(
+      [
+        { pid: 10, devices: ['0xab'], names: ['->0xcd'] },
+        { pid: 11, devices: [], names: ['/dev/null'] },
+      ],
+    )
   })
 })
 
@@ -343,6 +371,43 @@ describe('ProcessRunner.run', () => {
         })
         if (outcome._tag !== 'Exited') return yield* Effect.die(outcome)
         expect(outcome.status).toEqual(ExitStatus.Code({ code: 0 }))
+        const [sleeper = 0] = pidsOf(outcome.stdout)
+        expect(sleeper).toBeGreaterThan(0)
+        expect(yield* alive(sleeper)).toBe(false)
+      }).pipe(Effect.provide(runner())),
+  )
+
+  it.live(
+    'ends a child in a group of its own still holding the pipes after its parent exited',
+    () =>
+      Effect.gen(function* () {
+        const { run } = yield* ProcessRunner
+        const outcome = yield* run({
+          command: 'node',
+          args: [detacher],
+          cwd: root,
+          timeLimit: HOUR,
+        })
+        if (outcome._tag !== 'Exited') return yield* Effect.die(outcome)
+        expect(outcome.status).toEqual(ExitStatus.Code({ code: 0 }))
+        const [detached = 0] = pidsOf(outcome.stdout)
+        expect(detached).toBeGreaterThan(0)
+        expect(yield* alive(detached)).toBe(false)
+      }).pipe(Effect.provide(runner())),
+  )
+
+  it.live(
+    'ends what a command left in its group, though it closed its pipes',
+    () =>
+      Effect.gen(function* () {
+        const { run } = yield* ProcessRunner
+        const outcome = yield* run({
+          command: 'sh',
+          args: ['-c', 'sleep 600 >/dev/null 2>&1 & echo $!'],
+          cwd: root,
+          timeLimit: HOUR,
+        })
+        if (outcome._tag !== 'Exited') return yield* Effect.die(outcome)
         const [sleeper = 0] = pidsOf(outcome.stdout)
         expect(sleeper).toBeGreaterThan(0)
         expect(yield* alive(sleeper)).toBe(false)
