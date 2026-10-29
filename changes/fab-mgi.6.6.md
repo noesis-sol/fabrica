@@ -9,3 +9,7 @@
   `~/.local/share/fabrica/engine/<version>/`, runs its `--version`, relinks `~/.local/bin/fabrica`, and
   runs `fabrica service install`, which starts the engine. On an update the old engine winds its runs
   down and stops first.
+- The Engines screen has "+ Add engine": it takes an SSH destination, has the app check the host, shows
+  what it found and proposes, and installs or updates the engine only once the user agrees. An engine
+  that refuses the app's version at connect is offered its update on this machine the same way, and the
+  connection is tried again once it is updated; an app too old for its engine is told to update itself.

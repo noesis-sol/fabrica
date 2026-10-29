@@ -699,7 +699,20 @@ export const update = (model: Model, message: Message): Return =>
       }
     },
     GotHistoryMessage: ({ message }) => foldHistory(model, message),
-    GotEnginesMessage: ({ message }) => foldEngines(model, message),
+    GotEnginesMessage: ({ message }) => {
+      const folded = foldEngines(model, message)
+      // This machine's engine updated: a connection it refused is tried again.
+      return Engines.reconnectsAfter(message) &&
+        Connection.guards.Refused(folded.model.connection)
+        ? {
+            ...folded,
+            model: modifyFields(folded.model, {
+              attempt: attempt => attempt + 1,
+              connection: () => Connection.Connecting(),
+            }),
+          }
+        : folded
+    },
     GotSettingsMessage: ({ message }) => foldSettings(model, message),
     ChoseTheme: ({ theme }) => ({
       model: modifyFields(model, { theme: () => Option.some(theme) }),

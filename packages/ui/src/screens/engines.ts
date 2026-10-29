@@ -1,4 +1,4 @@
-import { DateTime, Effect, Option, Redacted, Schema } from 'effect'
+import { DateTime, Effect, Match, Option, Redacted, Schema } from 'effect'
 import { Command, type Update } from 'foldkit'
 import * as AsyncData from 'foldkit/asyncData'
 import type { Html, HtmlBuilder } from 'foldkit/html'
@@ -7,6 +7,17 @@ import { defineTaggedUnion } from 'foldkit/schema'
 import { modifyFields } from 'foldkit/struct'
 import { defineView } from 'foldkit/submodel'
 
+import {
+  CheckAnswer,
+  EngineHost,
+  EngineInstalled,
+  HostCheck,
+  InstallAnswer,
+  InstallConsent,
+  InstallPlan,
+  SshDestination,
+  consentFor,
+} from '@fabrica/client'
 import {
   CommandLine,
   CredentialInfo,
@@ -33,8 +44,12 @@ import { type EngineProjects, runLabel } from '../console/sidebar'
 // The Engines and projects screen (spec §18.4, §10.1, §20.3): the known engines with their versions
 // and status, each engine's projects, whether the user trusts each (§12.1), Add project, and the
 // engine's credentials, listed by name.
-// The app reaches its local engine through the connection; the SSH, WSL2 and TLS engines and Add
-// engine join it with remote engines (§9.2). A project is added as a checkout on the engine's host,
+// The app reaches its local engine through the connection; the SSH, WSL2 and TLS engines join it with
+// remote engines. Add engine takes an SSH destination and has the app check the host (its system, the
+// engine there and its version), then install the app's engine there, or update an older one, only
+// once the user agrees to what the check proposes (§9.2). An engine that refuses the app's version at
+// connect is offered its update the same way, on this machine (§8.4); an app too old for its engine is
+// told to update itself. A project is added as a checkout on the engine's host,
 // by its path, or as a clone of a git URL, which the engine checks and, where `.fabrica/` is missing,
 // offers to set up (`init`). A project is trusted or untrusted from its row, the words beside the
 // list saying what trusting it lets its own files do. Credentials are set by name and removed, never shown (§20.3); the key a
@@ -107,6 +122,29 @@ export const LoginService = defineTaggedUnion({
 })
 export type LoginService = typeof LoginService.Type
 
+/** Where installing an engine on a host stands (§9.2): checked, agreed to, installed. */
+export const SetupStep = defineTaggedUnion({
+  Checking: {},
+  /** What the check found and proposes, for the user to agree to. */
+  Checked: { check: HostCheck },
+  Installing: { consent: InstallConsent },
+  Installed: { installed: EngineInstalled },
+  Failed: { reason: Schema.String },
+})
+export type SetupStep = typeof SetupStep.Type
+
+/** Add engine, and the update offered to an engine that refused the app at connect (§9.2, §8.4). */
+export const EngineSetup = defineTaggedUnion({
+  Closed: {},
+  /** The host's SSH destination, as typed. */
+  Editing: {
+    destination: Schema.String,
+    problem: Schema.Option(Schema.String),
+  },
+  Running: { host: EngineHost, step: SetupStep },
+})
+export type EngineSetup = typeof EngineSetup.Type
+
 export const Model = Schema.Struct({
   /** The local engine's status, asked as the screen opens. */
   status: AsyncData.Schema(EngineStatus, Schema.String).schema,
@@ -123,6 +161,7 @@ export const Model = Schema.Struct({
   removing: Schema.Option(CredentialName),
   removeProblem: Schema.Option(Schema.String),
   loginService: LoginService,
+  engineSetup: EngineSetup,
 })
 export type Model = typeof Model.Type
 
@@ -148,6 +187,7 @@ export const init = (): Model => ({
   removing: Option.none(),
   removeProblem: Option.none(),
   loginService: LoginService.NotAsked(),
+  engineSetup: EngineSetup.Closed(),
 })
 
 export const Message = defineMessageUnion({
@@ -191,6 +231,18 @@ export const Message = defineMessageUnion({
 
   RequestedLoginService: {},
   CompletedLoginService: { outcome: ServiceInstall },
+
+  OpenedAddEngine: {},
+  ChangedEngineDestination: { destination: Schema.String },
+  SubmittedAddEngine: {},
+  /** The update offered to the engine that refused the app at connect: this machine's. */
+  RequestedEngineUpdate: {},
+  CompletedEngineCheck: { host: EngineHost, answer: CheckAnswer },
+  /** The user agreed to what the check proposes. */
+  ConsentedInstall: {},
+  CompletedEngineInstall: { host: EngineHost, answer: InstallAnswer },
+  RetriedEngineCheck: {},
+  ClosedEngineSetup: {},
 })
 export type Message = typeof Message.Type
 
@@ -309,6 +361,43 @@ export const InstallLoginService = Command.define('InstallLoginService', {
     )
     return Message.CompletedLoginService({ outcome })
   }),
+})
+
+/** What checking and installing engines say where no app is around the renderer to do it. */
+export const noAppToInstallEngines = 'only the desktop app installs engines'
+
+export const CheckEngine = Command.define('CheckEngine', {
+  args: { host: EngineHost },
+  messages: [Message.CompletedEngineCheck],
+  execute: ({ host }) =>
+    Effect.gen(function* () {
+      const app = yield* AppHost
+      const answer = yield* Option.match(app.checkEngine, {
+        onNone: () =>
+          Effect.succeed(
+            CheckAnswer.cases.Failed.make({ reason: noAppToInstallEngines }),
+          ),
+        onSome: check => check(host),
+      })
+      return Message.CompletedEngineCheck({ host, answer })
+    }),
+})
+
+export const InstallEngine = Command.define('InstallEngine', {
+  args: { host: EngineHost, consent: InstallConsent },
+  messages: [Message.CompletedEngineInstall],
+  execute: ({ host, consent }) =>
+    Effect.gen(function* () {
+      const app = yield* AppHost
+      const answer = yield* Option.match(app.installEngine, {
+        onNone: () =>
+          Effect.succeed(
+            InstallAnswer.cases.Failed.make({ reason: noAppToInstallEngines }),
+          ),
+        onSome: install => install({ host, consent }),
+      })
+      return Message.CompletedEngineInstall({ host, answer })
+    }),
 })
 
 /** What the screen's Commands need: the engine connection, and the app around the renderer. */
@@ -442,6 +531,67 @@ const setAddedSetup = (model: Model, project: ProjectId, setup: Setup): Model =>
         current => ({ ...current, setup }),
       ).pipe(Option.orElse(() => added)),
   })
+
+const decodeDestination = Schema.decodeUnknownOption(SshDestination)
+
+/** Whether two hosts are the same one. */
+export const sameHost = (a: EngineHost, b: EngineHost): boolean =>
+  EngineHost.match(a, {
+    Local: () => EngineHost.guards.Local(b),
+    Ssh: ({ destination }) =>
+      EngineHost.guards.Ssh(b) && b.destination === destination,
+  })
+
+/** Whether the setup is waiting on the app: a check or an install under way, which nothing else interrupts. */
+const busy = (setup: EngineSetup): boolean =>
+  EngineSetup.guards.Running(setup) &&
+  (SetupStep.guards.Checking(setup.step) ||
+    SetupStep.guards.Installing(setup.step))
+
+/** The host is checked: the setup running on it, and the check asked. */
+const startCheck = (model: Model, host: EngineHost): Return => ({
+  model: modifyFields(model, {
+    engineSetup: () =>
+      EngineSetup.Running({ host, step: SetupStep.Checking() }),
+  }),
+  commands: [CheckEngine({ host })],
+})
+
+/** The setup's step moved on by `next`, where it is running on `host`; any other setup is kept. */
+const stepSetup = (
+  model: Model,
+  host: EngineHost,
+  next: (step: SetupStep) => Option.Option<SetupStep>,
+): Model =>
+  EngineSetup.match(model.engineSetup, {
+    Running: running =>
+      sameHost(running.host, host)
+        ? Option.match(next(running.step), {
+            onNone: () => model,
+            onSome: step =>
+              modifyFields(model, {
+                engineSetup: () =>
+                  EngineSetup.Running({ host: running.host, step }),
+              }),
+          })
+        : model,
+    Closed: () => model,
+    Editing: () => model,
+  })
+
+/**
+ * Whether `message` means the engine this app connects to may take it now: this machine's engine
+ * installed or updated, so a connection it refused is tried again.
+ */
+export const reconnectsAfter = (message: Message): boolean =>
+  Match.value(message).pipe(
+    Match.tag(
+      'CompletedEngineInstall',
+      ({ host, answer }) =>
+        EngineHost.guards.Local(host) && InstallAnswer.guards.Installed(answer),
+    ),
+    Match.orElse(() => false),
+  )
 
 export const update = (model: Model, message: Message): Return =>
   Message.match<Return>(message, {
@@ -642,6 +792,108 @@ export const update = (model: Model, message: Message): Return =>
           }),
       }),
     }),
+
+    OpenedAddEngine: () => ({
+      model: busy(model.engineSetup)
+        ? model
+        : modifyFields(model, {
+            engineSetup: () =>
+              EngineSetup.Editing({ destination: '', problem: Option.none() }),
+          }),
+    }),
+    ChangedEngineDestination: ({ destination }) => ({
+      model: EngineSetup.guards.Editing(model.engineSetup)
+        ? modifyFields(model, {
+            engineSetup: () =>
+              EngineSetup.Editing({ destination, problem: Option.none() }),
+          })
+        : model,
+    }),
+    SubmittedAddEngine: () =>
+      EngineSetup.match(model.engineSetup, {
+        Editing: ({ destination }): Return =>
+          Option.match(decodeDestination(destination.trim()), {
+            onNone: () => ({
+              model: modifyFields(model, {
+                engineSetup: () =>
+                  EngineSetup.Editing({
+                    destination,
+                    problem: Option.some(
+                      'Give the host’s SSH destination: user@host, or a host of your ~/.ssh/config.',
+                    ),
+                  }),
+              }),
+            }),
+            onSome: destination =>
+              startCheck(model, EngineHost.cases.Ssh.make({ destination })),
+          }),
+        Closed: () => ({ model }),
+        Running: () => ({ model }),
+      }),
+    RequestedEngineUpdate: () =>
+      busy(model.engineSetup)
+        ? { model }
+        : startCheck(model, EngineHost.cases.Local.make({})),
+    CompletedEngineCheck: ({ host, answer }) => ({
+      model: stepSetup(model, host, step =>
+        SetupStep.guards.Checking(step)
+          ? Option.some(
+              CheckAnswer.match(answer, {
+                Checked: ({ check }): SetupStep => SetupStep.Checked({ check }),
+                Failed: ({ reason }): SetupStep => SetupStep.Failed({ reason }),
+              }),
+            )
+          : Option.none(),
+      ),
+    }),
+    ConsentedInstall: () =>
+      EngineSetup.match(model.engineSetup, {
+        Running: ({ host, step }): Return =>
+          SetupStep.match(step, {
+            Checked: ({ check }): Return =>
+              Option.match(consentFor(check.plan), {
+                onNone: () => ({ model }),
+                onSome: consent => ({
+                  model: modifyFields(model, {
+                    engineSetup: () =>
+                      EngineSetup.Running({
+                        host,
+                        step: SetupStep.Installing({ consent }),
+                      }),
+                  }),
+                  commands: [InstallEngine({ host, consent })],
+                }),
+              }),
+            Checking: () => ({ model }),
+            Installing: () => ({ model }),
+            Installed: () => ({ model }),
+            Failed: () => ({ model }),
+          }),
+        Closed: () => ({ model }),
+        Editing: () => ({ model }),
+      }),
+    CompletedEngineInstall: ({ host, answer }) => ({
+      model: stepSetup(model, host, step =>
+        SetupStep.guards.Installing(step)
+          ? Option.some(
+              InstallAnswer.match(answer, {
+                Installed: ({ installed }): SetupStep =>
+                  SetupStep.Installed({ installed }),
+                Failed: ({ reason }): SetupStep => SetupStep.Failed({ reason }),
+              }),
+            )
+          : Option.none(),
+      ),
+    }),
+    RetriedEngineCheck: () =>
+      EngineSetup.guards.Running(model.engineSetup) && !busy(model.engineSetup)
+        ? startCheck(model, model.engineSetup.host)
+        : { model },
+    ClosedEngineSetup: () => ({
+      model: busy(model.engineSetup)
+        ? model
+        : modifyFields(model, { engineSetup: () => EngineSetup.Closed() }),
+    }),
   })
 
 // The view: the handoff's panel, card and list language (§18.2), since the handoff draws no screen
@@ -816,10 +1068,262 @@ const engineCard = (
             ],
           ),
       }),
+      updateOffer(model, inputs.connection, h),
       loginServiceView(model, h),
     ],
   )
 }
+
+/** What the card offers an engine that refused the app at connect (§8.4): its update, or the app's. */
+const updateOffer = (
+  model: Model,
+  connection: Connection,
+  h: HtmlBuilder<Message>,
+): Html =>
+  Connection.match(connection, {
+    Refused: ({ client, engine, update }) =>
+      update === 'client'
+        ? problemLine(
+            `The engine speaks protocol ${engine}, newer than this app's ${client}: update the app to reach it.`,
+            h,
+          )
+        : h.div(
+            [h.Class('flex items-center gap-10')],
+            [
+              h.button(
+                [
+                  h.Type('button'),
+                  h.OnClick(Message.RequestedEngineUpdate()),
+                  h.Disabled(busy(model.engineSetup)),
+                  h.Class(primaryButton),
+                ],
+                ['Update the engine'],
+              ),
+              h.span(
+                [h.Class('text-xs text-c3')],
+                [
+                  `The engine speaks protocol ${engine}, older than this app's ${client}: updating it winds its runs down first.`,
+                ],
+              ),
+            ],
+          ),
+    Connecting: () => h.empty,
+    Up: () => h.empty,
+    Down: () => h.empty,
+    Failed: () => h.empty,
+  })
+
+/** The host, as the setup names it. */
+export const hostName = (host: EngineHost): string =>
+  EngineHost.match(host, {
+    Local: () => 'this machine',
+    Ssh: ({ destination }) => destination,
+  })
+
+/** What the check proposes, in words. */
+export const planText = (plan: InstallPlan): string =>
+  InstallPlan.match(plan, {
+    Install: ({ to }) =>
+      `No engine is there. Install fabrica ${to}, and run it as a login service?`,
+    Update: ({ from, to }) =>
+      `fabrica ${from} is there. Update it to ${to}? Its runs are wound down before it restarts.`,
+    Current: ({ version }) =>
+      `fabrica ${version} is there already: there is nothing to install.`,
+    Newer: ({ there, offered }) =>
+      `fabrica ${there} is there, later than this app's ${offered}: update the app to reach it.`,
+  })
+
+/** The button that agrees to the plan: none for a plan that installs nothing. */
+const consentLabel = (consent: InstallConsent): string =>
+  InstallConsent.match(consent, {
+    Install: ({ to }) => `Install ${to}`,
+    Update: ({ to }) => `Update to ${to}`,
+  })
+
+const closeButton = (label: string, h: HtmlBuilder<Message>): Html =>
+  h.button(
+    [
+      h.Type('button'),
+      h.OnClick(Message.ClosedEngineSetup()),
+      h.Class(quietButton),
+    ],
+    [label],
+  )
+
+const addEngineForm = (
+  destination: string,
+  problem: Option.Option<string>,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.form(
+    [
+      h.AriaLabel('Add engine'),
+      h.OnSubmit(Message.SubmittedAddEngine()),
+      h.Class(card),
+      h.Style(cardStyle),
+    ],
+    [
+      labelled(
+        'add-engine-destination',
+        'SSH destination',
+        h.input([
+          h.Id('add-engine-destination'),
+          h.Type('text'),
+          h.Value(destination),
+          h.Placeholder('me@build-box'),
+          h.OnInput(destination =>
+            Message.ChangedEngineDestination({ destination }),
+          ),
+          h.Class(`font-mono ${field}`),
+        ]),
+        h,
+      ),
+      h.p(
+        [h.Class('text-xs text-muted')],
+        [
+          'user@host, or a host of your ~/.ssh/config, reached with your own keys. The host is checked first; nothing is installed until you agree.',
+        ],
+      ),
+      Option.match(problem, {
+        onNone: () => h.empty,
+        onSome: text => problemLine(text, h),
+      }),
+      h.div(
+        [h.Class('flex items-center gap-8')],
+        [
+          h.button(
+            [h.Type('submit'), h.Class(primaryButton)],
+            ['Check the host'],
+          ),
+          closeButton('Cancel', h),
+        ],
+      ),
+    ],
+  )
+
+const checkView = (check: HostCheck, h: HtmlBuilder<Message>): Html =>
+  h.div(
+    [h.Class('flex flex-col gap-8')],
+    [
+      h.dl(
+        [
+          h.Class('grid gap-10'),
+          h.Style({ gridTemplateColumns: 'repeat(2, minmax(0,1fr))' }),
+        ],
+        [fact('Host', check.host, h), fact('Engine target', check.target, h)],
+      ),
+      ...check.notes.map(note => h.p([h.Class('text-xs text-c2')], [note])),
+      h.p([h.Class('text-sm')], [planText(check.plan)]),
+      h.div(
+        [h.Class('flex items-center gap-8')],
+        Option.match(consentFor(check.plan), {
+          onNone: () => [closeButton('Close', h)],
+          onSome: consent => [
+            h.button(
+              [
+                h.Type('button'),
+                h.OnClick(Message.ConsentedInstall()),
+                h.Class(primaryButton),
+              ],
+              [consentLabel(consent)],
+            ),
+            closeButton('Cancel', h),
+          ],
+        }),
+      ),
+    ],
+  )
+
+const stepView = (
+  host: EngineHost,
+  step: SetupStep,
+  h: HtmlBuilder<Message>,
+): Html =>
+  SetupStep.match(step, {
+    Checking: () =>
+      h.p(
+        [h.Role('status'), h.Class('text-xs text-muted')],
+        [`Checking ${hostName(host)}…`],
+      ),
+    Checked: ({ check }) => checkView(check, h),
+    Installing: ({ consent }) =>
+      h.p(
+        [h.Role('status'), h.Class('text-xs text-muted')],
+        [
+          InstallConsent.match(consent, {
+            Install: ({ to }) => `Installing fabrica ${to}…`,
+            Update: ({ to }) =>
+              `Updating to fabrica ${to}, once its runs are wound down…`,
+          }),
+        ],
+      ),
+    Installed: ({ installed }) =>
+      h.div(
+        [h.Class('flex flex-col gap-8')],
+        [
+          h.p(
+            [h.Role('status'), h.Class('text-sm text-c4')],
+            [
+              `Installed fabrica ${installed.version} on ${hostName(host)}: ${installed.launcher}`,
+            ],
+          ),
+          installed.service === ''
+            ? h.empty
+            : h.pre(
+                [h.Class('whitespace-pre-wrap font-mono text-xs text-muted')],
+                [installed.service],
+              ),
+          h.div(
+            [h.Class('flex items-center gap-8')],
+            [closeButton('Close', h)],
+          ),
+        ],
+      ),
+    Failed: ({ reason }) =>
+      h.div(
+        [h.Class('flex flex-col gap-8')],
+        [
+          problemLine(reason, h),
+          h.div(
+            [h.Class('flex items-center gap-8')],
+            [
+              h.button(
+                [
+                  h.Type('button'),
+                  h.OnClick(Message.RetriedEngineCheck()),
+                  h.Class(quietButton),
+                ],
+                ['Check again'],
+              ),
+              closeButton('Close', h),
+            ],
+          ),
+        ],
+      ),
+  })
+
+/** Add engine's form, or the setup under way on a host. */
+const setupView = (model: Model, h: HtmlBuilder<Message>): Html =>
+  EngineSetup.match(model.engineSetup, {
+    Closed: () => h.empty,
+    Editing: ({ destination, problem }) =>
+      addEngineForm(destination, problem, h),
+    Running: ({ host, step }) =>
+      h.section(
+        [
+          h.AriaLabel(`Engine on ${hostName(host)}`),
+          h.Class(card),
+          h.Style(cardStyle),
+        ],
+        [
+          h.h3(
+            [h.Class('text-sm font-extrabold')],
+            [`Engine on ${hostName(host)}`],
+          ),
+          stepView(host, step, h),
+        ],
+      ),
+  })
 
 const sourceButton = (
   kind: SourceKind,
@@ -1376,8 +1880,24 @@ export const view = defineView<Model, Message, ViewInputs>((model, inputs, h) =>
       h.section(
         [h.AriaLabel('Engines'), h.Class('flex flex-col gap-8')],
         [
-          h.h2([h.Class('text-sm font-extrabold')], ['Engines']),
+          h.div(
+            [h.Class('flex items-center gap-10')],
+            [
+              h.h2([h.Class('text-sm font-extrabold')], ['Engines']),
+              EngineSetup.guards.Closed(model.engineSetup)
+                ? h.button(
+                    [
+                      h.Type('button'),
+                      h.OnClick(Message.OpenedAddEngine()),
+                      h.Class(`ml-auto ${primaryButton}`),
+                    ],
+                    ['+ Add engine'],
+                  )
+                : h.empty,
+            ],
+          ),
           engineCard(model, inputs, h),
+          setupView(model, h),
         ],
       ),
       projectsView(model, inputs, h),
