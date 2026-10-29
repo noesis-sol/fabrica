@@ -83,6 +83,14 @@ export interface GitShape {
   readonly worktreeTree: (input: {
     readonly worktree: string
   }) => Effect.Effect<TreeHash, CantTell>
+  /**
+   * The path of `name` in the worktree's own git folder (`--git-path`): where the engine keeps what it
+   * records of one worktree, across runs, out of its files, and removed with it.
+   */
+  readonly ownPath: (input: {
+    readonly worktree: string
+    readonly name: string
+  }) => Effect.Effect<string, CantTell>
   /** The branch checked out in `repo`'s worktree, its short name; none for a detached HEAD. */
   readonly currentBranch: (input: {
     readonly repo: string
@@ -668,6 +676,27 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
       }),
     )
 
+  const ownPath = Effect.fn('Git.ownPath')(function* ({
+    worktree,
+    name,
+  }: {
+    readonly worktree: string
+    readonly name: string
+  }) {
+    return yield* readExit(
+      'ownPath',
+      { cwd: worktree, args: ['rev-parse', '--git-path', name] },
+      exit => {
+        const [path, ...rest] = exit.stdout
+          .split('\n')
+          .filter(line => line !== '')
+        return exit.code === 0 && path !== undefined && rest.length === 0
+          ? Option.some(resolve(worktree, path))
+          : Option.none()
+      },
+    )
+  })
+
   /** Whether a rebase is in progress in the worktree: its state folder, from `--git-path`, exists. */
   const rebasing = (name: string, worktree: string) =>
     Effect.map(
@@ -956,6 +985,7 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     commitHash,
     treeHash,
     worktreeTree,
+    ownPath,
     currentBranch,
     changedFiles,
     diff,

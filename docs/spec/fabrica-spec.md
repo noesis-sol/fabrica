@@ -720,7 +720,7 @@ orchestra 0.9.1's path \[DECISION\]:
 
 ### 13.8 Setup
 
-orchestra 0.8.2–0.9.0's rules \[DECISION\]: the project's `setup` runs in each new worktree before its worker starts, and again in a reused one whose rebase changed a setup file; within the check's time limit; its output kept. A failing setup puts the ticket back in the queue until a merge or a probe (`SETUP_FAILED`), counts toward the environment hold when it fails ticket after ticket, and names its tickets at the run's end (`SETUP_WAITS`). A setup cut short is run again. A conflict hand-back after a rebase that changed a setup file runs the setup first.
+orchestra 0.8.2–0.9.0's rules \[DECISION\]: the project's `setup` runs in each new worktree before its worker starts, and again in a reused one whose rebase changed a setup file; within the check's time limit; its output kept. A failing setup puts the ticket back in the queue until a merge or a probe (`SETUP_FAILED`), counts toward the environment hold when it fails ticket after ticket, and names its tickets at the run's end (`SETUP_WAITS`). A setup cut short is run again: the setup files a worktree is set up for are recorded in its own git folder before the setup runs and dropped once it passes, so a setup that failed or was cut short, or a merge-train ride a stop put back without setting it up again (§13.10), is run at the ticket's next merge, at its rebase step, its branch on top of Base or not, with the files that rebase brings. A conflict hand-back after a rebase that changed a setup file runs the setup first.
 
 ### 13.9 The full check and the run's end
 
@@ -740,6 +740,7 @@ orchestra 0.8.2–0.9.0's rules \[DECISION\]: the project's `setup` runs in each
 - A ticket merged by hand during a run is noticed as Base moves: its label dropped, what it blocks freed, counted closed (orchestra-nr1v.9).
 - A crashed run is known by its lock, not by what the state file names: a write to `state.json` before carry-over made tutti take a crashed run's tickets for its own, leaving them in progress with nothing to resume them (tutti-z3el).
 - A rebase that a killed run's merge, train or hand-back left in progress is aborted and its branch put back, so the ticket merges rebased afresh (tutti-m31, -tejt, -b8hv).
+- A stop during a merge-train ride puts the rider's branch back without waiting on a setup (only the fast-forward is uninterruptible, §13.7): its worktree records the setup files the ride set it up for, and the ticket's next merge sets it up before its check (§13.8).
 - A stop during the start's carry-over cuts it short: no further worker is resumed, and the rest stay saved (tutti-5mp).
 
 ### 13.11 Exit codes and kinds

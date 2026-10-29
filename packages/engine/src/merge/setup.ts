@@ -1,13 +1,15 @@
 import { Context, Data, Effect, Layer, Option } from 'effect'
-import { basename, matchesGlob } from 'node:path'
+import { rm } from 'node:fs/promises'
+import { basename, dirname, matchesGlob } from 'node:path'
 
 import type { CommitHash, TicketId } from '@fabrica/contracts'
 
-import type { CantTell, GitShape } from '../git'
+import { readFileText, writeFileWhole } from '../files'
+import { CantTell, GitFailed, type GitShape } from '../git'
 
 // The setup a merge's rebase calls for (spec §13.7 step 4, §13.8): whether a rebase changed a setup
-// file, and the port the queue runs the setup through. The port does nothing until the run's setup
-// fills it.
+// file, the setup a worktree still waits for, and the port the queue runs the setup through. The port
+// does nothing until the run's setup fills it.
 
 /**
  * Whether `path` (from the repository's root) is a setup file: it, or its file name for a pattern
@@ -48,6 +50,72 @@ export const setupFilesBrought = (
       ),
   })
 
+/** The record, in a worktree's own git folder, of the setup files it waits to be set up for. */
+const PENDING_SETUP = 'fabrica-setup'
+
+/** Where the worktree's record of the setup it waits for is, as the engine's files name it. */
+const pendingAt = (git: GitShape, worktree: string) =>
+  Effect.map(git.ownPath({ worktree, name: PENDING_SETUP }), path => ({
+    root: dirname(path),
+    path: basename(path),
+  }))
+
+/**
+ * The setup files a worktree waits to be set up for (spec §13.8, §13.10): those of a setup that didn't
+ * pass, or of a ride a stop put back before setting it up again; none where none is recorded.
+ */
+export const pendingSetup = (
+  git: GitShape,
+  { worktree }: { readonly worktree: string },
+): Effect.Effect<ReadonlyArray<string>, CantTell> =>
+  Effect.flatMap(pendingAt(git, worktree), location =>
+    readFileText(location).pipe(
+      Effect.map(text => text.split('\0').filter(file => file !== '')),
+      Effect.catchTag('FileMissing', () =>
+        Effect.succeed<ReadonlyArray<string>>([]),
+      ),
+      Effect.mapError(
+        error => new CantTell({ read: 'pendingSetup', reason: error.message }),
+      ),
+    ),
+  )
+
+/** Records that the worktree waits to be set up for `files`, until a setup there passes. */
+export const recordSetup = (
+  git: GitShape,
+  {
+    worktree,
+    files,
+  }: { readonly worktree: string; readonly files: ReadonlyArray<string> },
+): Effect.Effect<void, CantTell | GitFailed> =>
+  Effect.flatMap(pendingAt(git, worktree), location =>
+    writeFileWhole(location, files.join('\0')).pipe(
+      Effect.mapError(
+        error =>
+          new GitFailed({
+            command: `writing ${location.root}/${location.path}`,
+            reason: error.message,
+          }),
+      ),
+    ),
+  )
+
+/** Drops the worktree's record of the setup it waits for. */
+const clearSetup = (
+  git: GitShape,
+  { worktree }: { readonly worktree: string },
+): Effect.Effect<void, CantTell | GitFailed> =>
+  Effect.flatMap(git.ownPath({ worktree, name: PENDING_SETUP }), path =>
+    Effect.tryPromise({
+      try: () => rm(path, { force: true }),
+      catch: cause =>
+        new GitFailed({
+          command: `removing ${path}`,
+          reason: cause instanceof Error ? cause.message : String(cause),
+        }),
+    }),
+  )
+
 /** What a merge's setup came to. */
 export type SetupOutcome = Data.TaggedEnum<{
   /** It ran and passed, or there was nothing to run. */
@@ -65,6 +133,26 @@ export interface MergeSetupShape {
     readonly files: ReadonlyArray<string>
   }) => Effect.Effect<SetupOutcome>
 }
+
+/**
+ * Runs the setup for `files` in the ticket's worktree, recorded as waited for until it passes: a setup
+ * that fails or is cut short is run again at the ticket's next merge (spec §13.8).
+ */
+export const setUpRecorded = (
+  git: GitShape,
+  setup: MergeSetupShape,
+  input: {
+    readonly ticket: TicketId
+    readonly worktree: string
+    readonly files: ReadonlyArray<string>
+  },
+): Effect.Effect<SetupOutcome, CantTell | GitFailed> =>
+  Effect.gen(function* () {
+    yield* recordSetup(git, input)
+    const ready = yield* setup.run(input)
+    if (SetupOutcome.$is('Ready')(ready)) yield* clearSetup(git, input)
+    return ready
+  })
 
 export class MergeSetup extends Context.Service<MergeSetup, MergeSetupShape>()(
   '@fabrica/engine/MergeSetup',

@@ -20,15 +20,23 @@ import {
   type Worktree,
 } from '../git'
 import { MergeOutcome, MergeUpdate } from './outcome'
-import { MergeSetup, SetupOutcome, setupFilesBrought } from './setup'
+import {
+  MergeSetup,
+  SetupOutcome,
+  recordSetup,
+  setUpRecorded,
+  setupFilesBrought,
+} from './setup'
 import type { MergeTurn } from './turn'
 
 // The merge train (spec §13.7, orchestra-8qk2): while one ticket's merge check runs, the next ticket in
 // line rides beside it: its branch is rebased onto the first's rebased head in its own worktree, set up
 // where that rebase calls for it, and checked there. If the first merges as checked, the second's turn
 // takes that check's outcome and merges with no further check; otherwise the second's branch is put
-// back where it was, set up again where the ride set it up, and its turn prepares it afresh. One ticket
-// rides at most, never deeper (`merge.train`), and none while the machine budget holds.
+// back where it was, set up again where the ride set it up, and its turn prepares it afresh. A stop puts
+// it back without waiting on a setup: the worktree records the files, and the ticket's next merge sets it
+// up at its rebase step. One ticket rides at most, never deeper (`merge.train`), and none while the
+// machine budget holds.
 
 /** Whether the machine budget holds (§14.3): no ticket rides while it does. Until it is built, it never holds. */
 export const MachineHold = Context.Reference<{
@@ -72,7 +80,7 @@ interface Ride {
   readonly rider: MergeTurn
   /** The rider's head before the ride: where its branch is put back. */
   readonly from: CommitHash
-  /** The setup files the ride set the worktree up for: set up again when it is put back. */
+  /** The setup files the ride set the worktree up for: set up again when it is put back, or recorded as waited for. */
   readonly setUp: Ref.Ref<ReadonlyArray<string>>
   readonly fiber: Fiber.Fiber<Ridden>
 }
@@ -204,7 +212,11 @@ export const makeTrain = Effect.fn('MergeTrain.make')(function* ({
     })
     if (files.length > 0) {
       yield* Ref.set(setUp, files)
-      const ready = yield* setup.run({ ticket, worktree: path, files })
+      const ready = yield* setUpRecorded(git, setup, {
+        ticket,
+        worktree: path,
+        files,
+      })
       if (SetupOutcome.$is('Failed')(ready))
         return Ridden.SetupFailed({ detail: ready.detail })
     }
@@ -214,7 +226,8 @@ export const makeTrain = Effect.fn('MergeTrain.make')(function* ({
 
   /**
    * Ends a ride and puts its rider's branch back where it was, any rebase aborted; set up again for the
-   * files the ride set it up for where `setUpAgain`. Empty, or stranded when git can't put it back.
+   * files the ride set it up for where `setUpAgain`, and else recorded as waiting for that setup. Empty,
+   * or stranded when git can't put it back.
    */
   const putBack = (
     ride: Ride,
@@ -223,12 +236,26 @@ export const makeTrain = Effect.fn('MergeTrain.make')(function* ({
     const { ticket, path } = ride.rider.worktree
     return Effect.gen(function* () {
       yield* Fiber.interrupt(ride.fiber)
+      const files = yield* Ref.get(ride.setUp)
+      // A record that can't be written leaves the setup to chance, never the branch where the ride took it.
+      if (!setUpAgain && files.length > 0)
+        yield* recordSetup(git, { worktree: path, files }).pipe(
+          Effect.catch(error =>
+            Effect.logWarning(
+              `Couldn't record the setup ${ticket}'s worktree waits for`,
+              error,
+            ),
+          ),
+        )
       yield* git.abortRebase({ worktree: path })
       if ((yield* headOf(path)) !== ride.from)
         yield* git.resetTo({ worktree: path, to: ride.from })
-      const files = yield* Ref.get(ride.setUp)
       if (!setUpAgain || files.length === 0) return Carriage.Empty()
-      const ready = yield* setup.run({ ticket, worktree: path, files })
+      const ready = yield* setUpRecorded(git, setup, {
+        ticket,
+        worktree: path,
+        files,
+      })
       return SetupOutcome.$match(ready, {
         Ready: () => Carriage.Empty(),
         Failed: ({ detail }) =>
@@ -413,7 +440,7 @@ export const makeTrain = Effect.fn('MergeTrain.make')(function* ({
     },
   )
 
-  // A ride the scope ends before its first merged is put back; its setup is left to the ticket's next merge.
+  // A ride the scope ends before its first merged is put back; its setup is recorded for the ticket's next merge.
   yield* Effect.addFinalizer(() =>
     Effect.flatMap(SynchronizedRef.get(carriage), current =>
       Carriage.$match(current, {

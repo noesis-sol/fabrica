@@ -34,7 +34,13 @@ import {
   mayGoRound,
 } from './hygiene'
 import { MergeOutcome, MergeUpdate } from './outcome'
-import { MergeSetup, SetupOutcome, setupFilesBrought } from './setup'
+import {
+  MergeSetup,
+  SetupOutcome,
+  pendingSetup,
+  setUpRecorded,
+  setupFilesBrought,
+} from './setup'
 import type { MergeTrain } from './train'
 import type { MergeTurn } from './turn'
 
@@ -49,13 +55,17 @@ import type { MergeTurn } from './turn'
 export type Step = Data.TaggedEnum<{
   /** Its worktree is read: a rebase a killed run left aborted, and uncommitted files refused. */
   Enter: {}
-  /** Base and the branch are read: nothing to merge, already on top of Base, or to rebase. */
+  /** Base and the branch are read: nothing to merge, already on top of Base and set up, or to rebase. */
   Locate: { readonly rounds: number }
-  /** The branch is rebased onto `onto`, Base's commit; `since` was their merge base. */
+  /**
+   * The branch is rebased onto `onto`, Base's commit; `since` was their merge base, and `pending` the
+   * setup files the worktree waited to be set up for before it.
+   */
   Rebase: {
     readonly rounds: number
     readonly onto: CommitHash
     readonly since: Option.Option<CommitHash>
+    readonly pending: ReadonlyArray<string>
   }
   /** The merge check runs on `head`, on top of `onto`. */
   Check: {
@@ -180,18 +190,20 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
   ) {
     const repo = turn.worktree.path
     const { base, head } = yield* ends(turn)
-    const { since, changed } = yield* Effect.all(
+    const { since, changed, pending } = yield* Effect.all(
       {
         since: git.mergeBase({ repo, branch: head, base }),
         changed: git.changedFiles({ repo, branch: head, base }),
+        pending: pendingSetup(git, { worktree: repo }),
       },
       { concurrency: 'unbounded' },
     )
     if (changed.length === 0)
       return done(MergeOutcome.NoChange({ ticket: turn.worktree.ticket }))
-    if (Option.contains(since, base))
+    // A branch on top of Base whose worktree waits for a setup goes through the rebase step, which sets it up.
+    if (Option.contains(since, base) && pending.length === 0)
       return Step.Check({ rounds, onto: base, head })
-    return Step.Rebase({ rounds, onto: base, since })
+    return Step.Rebase({ rounds, onto: base, since, pending })
   })
 
   const rebase = Effect.fn('MergeQueue.rebase')(function* (
@@ -200,10 +212,12 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
       rounds,
       onto,
       since,
+      pending,
     }: {
       readonly rounds: number
       readonly onto: CommitHash
       readonly since: Option.Option<CommitHash>
+      readonly pending: ReadonlyArray<string>
     },
   ) {
     const { ticket, path } = turn.worktree
@@ -214,14 +228,19 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
         Effect.gen(function* () {
           // Every commit of the branch was on Base already: nothing is left to merge.
           if (head === onto) return done(MergeOutcome.NoChange({ ticket }))
-          const files = yield* setupFilesBrought(git, {
+          const brought = yield* setupFilesBrought(git, {
             worktree: path,
             onto,
             since,
             patterns: turn.config.setupFiles,
           })
+          const files = [...new Set([...pending, ...brought])]
           if (files.length > 0) {
-            const ready = yield* setup.run({ ticket, worktree: path, files })
+            const ready = yield* setUpRecorded(git, setup, {
+              ticket,
+              worktree: path,
+              files,
+            })
             if (SetupOutcome.$is('Failed')(ready))
               return done(
                 MergeOutcome.SetupFailed({ ticket, detail: ready.detail }),

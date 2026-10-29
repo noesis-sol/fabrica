@@ -25,6 +25,9 @@ export {
   SetupOutcome,
   isSetupFile,
   noSetup,
+  pendingSetup,
+  recordSetup,
+  setUpRecorded,
   setupFilesBrought,
 } from './setup'
 export { Step, makeMachine, stepName } from './steps'
