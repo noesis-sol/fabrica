@@ -1,5 +1,4 @@
 import { DateTime, Effect, Option } from 'effect'
-import { SqlClient } from 'effect/sql'
 
 import {
   Diff,
@@ -7,24 +6,25 @@ import {
   NoReport,
   NoRun,
   type ProjectId,
-  ProjectNotFound,
   Report,
   ReviewRpcs,
   RunEvent,
   type RunId,
   RunNotFound,
   type TicketId,
+  TicketNotFound,
 } from '@fabrica/contracts'
 
-import { findProject } from '../engine/database'
 import { readFileTail, readFileTextWritten } from '../files'
 import { Git, ticketBranch } from '../git'
+import { Projects } from '../projects/service'
 import { logPath, readEvents, reportPath } from '../runlog'
 
 // The Review group's handlers (spec §8.1, §18.4): a ticket's branch diff against its merge base with
 // Base, a run's merged diff on Base, a run's report and the human log's last lines. The project is
-// read from engine.db; the diffs through the Git service, the report, the log and the event stream
-// through the safe reader, so a link, a pipe or a folder planted in the checkout's .fabrica/ is
+// read through the Projects service, and a ticket's diff asks its work graph first: a ticket it
+// doesn't have is `TicketNotFound`, one it has without a branch `NoBranch`. The diffs are read
+// through the Git service, the report, the log and the event stream through the safe reader, so a link, a pipe or a folder planted in the checkout's .fabrica/ is
 // refused, never followed (§20.2, H62). A run is known by its records in the event stream: its start
 // record names Base's commit as it started, its `closed` records each merge's commit on Base. What
 // the engine can't read (git can't tell, a file refused) answers as a defect, which the server keeps
@@ -36,21 +36,21 @@ const reportMaxBytes = 16 * 1024 * 1024
 /** A branch by its full ref, so a tag of the same name is never taken for it. */
 const branchRef = (branch: string): string => `refs/heads/${branch}`
 
-/** The Review group's handlers on the Git service and engine.db in context. */
+/** The Review group's handlers on the Git and Projects services in context. */
 export const makeReviewHandlers = Effect.gen(function* () {
   const git = yield* Git
-  const sql = yield* SqlClient.SqlClient
+  const projects = yield* Projects
 
-  const projectOf = (project: ProjectId) =>
-    findProject(project).pipe(
-      Effect.provideService(SqlClient.SqlClient, sql),
-      Effect.orDie,
-      Effect.flatMap(
-        Option.match({
-          onNone: () => Effect.fail(new ProjectNotFound({ project })),
-          onSome: Effect.succeed,
-        }),
-      ),
+  /** Fails `TicketNotFound` where the project's work graph doesn't have `ticket`. */
+  const known = (project: ProjectId, ticket: TicketId) =>
+    projects.workGraph(project).pipe(
+      Effect.catchTag('WorkGraphUnopened', Effect.die),
+      Effect.flatMap(graph => graph.show(ticket)),
+      Effect.catchTags({
+        TicketNotFound: () =>
+          Effect.fail(new TicketNotFound({ project, ticket })),
+        StoreFailed: Effect.die,
+      }),
     )
 
   const diffOf = (repo: string, range: Pick<Diff, 'base' | 'head'>) =>
@@ -66,7 +66,10 @@ export const makeReviewHandlers = Effect.gen(function* () {
       readonly project: ProjectId
       readonly ticket: TicketId
     }) {
-      const { path, base } = yield* projectOf(project)
+      const [{ path, base }] = yield* Effect.all(
+        [projects.find(project), known(project, ticket)],
+        { concurrency: 'unbounded' },
+      )
       const branch = ticketBranch(ticket)
       const head = yield* git.commitHash({
         repo: path,
@@ -95,7 +98,7 @@ export const makeReviewHandlers = Effect.gen(function* () {
       readonly project: ProjectId
       readonly run: RunId
     }) {
-      const { path } = yield* projectOf(project)
+      const { path } = yield* projects.find(project)
       const { events } = yield* readEvents({
         root: path,
         run: Option.some(run),
@@ -121,7 +124,7 @@ export const makeReviewHandlers = Effect.gen(function* () {
     readonly project: ProjectId
     readonly run: Option.Option<RunId>
   }) {
-    const { path } = yield* projectOf(project)
+    const { path } = yield* projects.find(project)
     const started = yield* Effect.orDie(
       readEvents({ root: path, run: Option.none() }),
     ).pipe(
@@ -170,7 +173,7 @@ export const makeReviewHandlers = Effect.gen(function* () {
     readonly project: ProjectId
     readonly lines: number
   }) {
-    const { path } = yield* projectOf(project)
+    const { path } = yield* projects.find(project)
     const tail = yield* readFileTail({ root: path, path: logPath }, lines).pipe(
       Effect.catch(error =>
         // A project that has never run has no log: no lines.
@@ -190,7 +193,7 @@ export const makeReviewHandlers = Effect.gen(function* () {
   })
 })
 
-/** The Review group's handlers on the Git service and engine.db in context. */
+/** The Review group's handlers on the Git and Projects services in context. */
 export const reviewHandlersOn = ReviewRpcs.toLayer(makeReviewHandlers)
 
 /** The Review group's handlers, their git the daemon's (§7.7: on the engine's host, in time awake). */

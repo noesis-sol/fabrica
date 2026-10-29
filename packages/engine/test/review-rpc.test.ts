@@ -9,7 +9,6 @@ import {
   Option,
 } from 'effect'
 import { RpcTest } from 'effect/rpc'
-import { SqlClient } from 'effect/sql'
 import { execFileSync } from 'node:child_process'
 import {
   existsSync,
@@ -25,6 +24,7 @@ import { dirname, join } from 'node:path'
 
 import { beforeAll, describe, expect, it } from '@effect/vitest'
 import {
+  Actor,
   CommitHash,
   EngineId,
   LocalTime,
@@ -33,15 +33,18 @@ import {
   NoRun,
   ProjectId,
   ProjectNotFound,
+  ProjectSource,
   ReviewRpcs,
   RunEvent,
   RunId,
   RunNotFound,
   TicketId,
+  TicketNotFound,
   encodeEventLine,
 } from '@fabrica/contracts'
 
 import { engineDatabaseLayer } from '../src/engine'
+import { EngineFiles, pathsIn } from '../src/engine/paths'
 import { type GitConfig, layer as gitLayer, ticketBranch } from '../src/git'
 import {
   type RunnerConfig,
@@ -51,12 +54,14 @@ import {
   listProcesses,
   layer as runnerLayer,
 } from '../src/process'
+import { Projects, layer as projectsLayer } from '../src/projects'
 import { reviewHandlersOn } from '../src/rpc/review'
 import { eventsPath, logPath, reportPath } from '../src/runlog'
+import { importBeads } from '../src/workgraph'
 
 // The Review group over RPC (spec §8.1, §18.4, §20.2): a ticket's branch diff, a run's merged diff, its
 // report and the human log's tail, against real git in temp folders and a project in an in-memory
-// engine.db; a link planted where the engine reads is refused.
+// engine.db, its tickets in its work graph; a link planted where the engine reads is refused.
 
 let root = ''
 let home = ''
@@ -147,23 +152,52 @@ const gitConfig: GitConfig = {
 const project = ProjectId.make('app')
 const ticket = TicketId.make('fa-a1b2')
 
-/** A client of the Review group's handlers, the project `app` at `checkout` with Base `main`. */
-const clientFor = (checkout: string) =>
+/** A Beads record of the ticket `id`, open. */
+const beadsRecord = (id: TicketId): string =>
+  JSON.stringify({
+    id,
+    title: 'A change',
+    priority: 2,
+    created_at: '2026-10-29T08:00:00Z',
+    updated_at: '2026-10-29T08:00:00Z',
+  })
+
+/**
+ * A client of the Review group's handlers, `checkout` added as the project `app` with Base `main`, its
+ * work graph holding the tickets `held`.
+ */
+const clientFor = (checkout: string, held: ReadonlyArray<TicketId> = []) =>
   Effect.gen(function* () {
+    const data = mkdtempSync(join(root, 'data-'))
     const services = yield* Layer.build(
       reviewHandlersOn.pipe(
+        Layer.provideMerge(projectsLayer),
         Layer.provide(
           gitLayer(gitConfig).pipe(
             Layer.provide(runnerLayer(runnerConfig())),
             Layer.provide(layerClock),
           ),
         ),
-        Layer.provideMerge(engineDatabaseLayer(':memory:')),
+        Layer.provide(engineDatabaseLayer(':memory:')),
+        Layer.provide(
+          Layer.succeed(EngineFiles)(pathsIn({ data, socketFolder: data })),
+        ),
       ),
     )
-    const sql = Context.get(services, SqlClient.SqlClient)
-    yield* sql`INSERT INTO projects (id, name, path, origin, base, added_at)
-      VALUES (${project}, 'app', ${checkout}, 'registered', 'main', 0)`
+    const projects = Context.get(services, Projects)
+    const added = yield* projects.add({
+      source: ProjectSource.cases.path.make({ path: checkout }),
+      name: Option.some('app'),
+    })
+    expect(added.id).toBe(project)
+    if (held.length > 0) {
+      const graph = yield* projects.workGraph(project)
+      yield* importBeads({
+        graph,
+        text: held.map(id => `${beadsRecord(id)}\n`).join(''),
+        actor: Actor.cases.maintainer.make({}),
+      })
+    }
     return yield* RpcTest.makeClient(ReviewRpcs).pipe(Effect.provide(services))
   })
 
@@ -249,7 +283,7 @@ describe('diff.ticket', () => {
         // A tag named as the branch never stands for it.
         git(checkout, 'tag', branch, 'main')
 
-        const client = yield* clientFor(checkout)
+        const client = yield* clientFor(checkout, [ticket])
         const diff = yield* client['diff.ticket']({ project, ticket })
 
         expect(diff.base).toBe(first)
@@ -298,8 +332,10 @@ describe('diff.ticket', () => {
         commit(checkout, 'attributes', { '.gitattributes': '*.ts diff=conv\n' })
         git(checkout, 'switch', '--quiet', '--create', ticketBranch(ticket))
         commit(checkout, 'change', { 'src/a.ts': 'export const a = 3\n' })
+        // The project is added on main, its Base.
+        git(checkout, 'switch', '--quiet', 'main')
 
-        const client = yield* clientFor(checkout)
+        const client = yield* clientFor(checkout, [ticket])
         const diff = yield* client['diff.ticket']({ project, ticket })
 
         expect(diff.files.map(file => file.path)).toEqual(['src/a.ts'])
@@ -317,8 +353,9 @@ describe('diff.ticket', () => {
         git(checkout, 'rm', '--quiet', 'gone.txt')
         symlinkSync('README.md', join(checkout, 'gone.txt'))
         commit(checkout, 'link', { 'src/b.ts': 'export const b = 1\n' })
+        git(checkout, 'switch', '--quiet', 'main')
 
-        const client = yield* clientFor(checkout)
+        const client = yield* clientFor(checkout, [ticket])
         const diff = yield* client['diff.ticket']({ project, ticket })
 
         expect(diff.files.map(file => [file.path, file.change])).toEqual([
@@ -334,21 +371,43 @@ describe('diff.ticket', () => {
       }),
   )
 
-  it.effect('answers NoBranch for a ticket with no branch', () =>
-    Effect.gen(function* () {
-      const { checkout } = repository()
-      const client = yield* clientFor(checkout)
-      const error = yield* Effect.flip(
-        client['diff.ticket']({ project, ticket }),
-      )
-      expect(error).toEqual(new NoBranch({ project, ticket }))
-    }),
+  it.effect(
+    'answers NoBranch for a ticket the work graph holds with no branch',
+    () =>
+      Effect.gen(function* () {
+        const { checkout } = repository()
+        const client = yield* clientFor(checkout, [ticket])
+        const error = yield* Effect.flip(
+          client['diff.ticket']({ project, ticket }),
+        )
+        expect(error).toEqual(new NoBranch({ project, ticket }))
+      }),
+  )
+
+  it.effect(
+    "answers TicketNotFound for a ticket the project's work graph lacks, its branch or none",
+    () =>
+      Effect.gen(function* () {
+        const { checkout } = repository()
+        const other = TicketId.make('fa-c3d4')
+        git(checkout, 'branch', ticketBranch(other))
+        const client = yield* clientFor(checkout, [ticket])
+        expect(
+          yield* Effect.flip(client['diff.ticket']({ project, ticket: other })),
+        ).toEqual(new TicketNotFound({ project, ticket: other }))
+        const missing = TicketId.make('fa-e5f6')
+        expect(
+          yield* Effect.flip(
+            client['diff.ticket']({ project, ticket: missing }),
+          ),
+        ).toEqual(new TicketNotFound({ project, ticket: missing }))
+      }),
   )
 
   it.effect('answers ProjectNotFound for a project the engine lacks', () =>
     Effect.gen(function* () {
       const { checkout } = repository()
-      const client = yield* clientFor(checkout)
+      const client = yield* clientFor(checkout, [ticket])
       const other = ProjectId.make('other')
       const error = yield* Effect.flip(
         client['diff.ticket']({ project: other, ticket }),
