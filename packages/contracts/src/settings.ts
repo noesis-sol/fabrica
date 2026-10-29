@@ -565,6 +565,9 @@ export const machineSettingNames = [
   'credentials_wait',
   'view_interval',
   'stream_flush',
+  'listen',
+  'listen_certificate',
+  'listen_key',
   'telemetry',
   'notifications',
   'theme',
@@ -651,6 +654,9 @@ export const ProjectSettings = Schema.Struct({
   credentials_wait: notInProjectSettings('credentials_wait'),
   view_interval: notInProjectSettings('view_interval'),
   stream_flush: notInProjectSettings('stream_flush'),
+  listen: notInProjectSettings('listen'),
+  listen_certificate: notInProjectSettings('listen_certificate'),
+  listen_key: notInProjectSettings('listen_key'),
   telemetry: notInProjectSettings('telemetry'),
   notifications: notInProjectSettings('notifications'),
   theme: notInProjectSettings('theme'),
@@ -715,6 +721,58 @@ const retention = Schema.Union([
   ),
 )
 
+/** Where the engine's TLS listener listens (spec §9.3): a host, or every interface, and a port (0: any free one). */
+export const ListenAddress = Schema.Struct({
+  host: Schema.Option(Schema.String),
+  port: Schema.Int,
+})
+export type ListenAddress = typeof ListenAddress.Type
+
+const listenPattern = /^(?:\[([0-9A-Fa-f:.]+)\]|([^\s:[\]]*)):(\d{1,5})$/u
+
+/** The address `host:port`, `[v6]:port` or `:port` (every interface) names; none for other text. */
+export const parseListenAddress = (
+  text: string,
+): Option.Option<ListenAddress> => {
+  const match = listenPattern.exec(text)
+  const port = Number(match?.[3])
+  if (match === null || port > 65_535) return Option.none()
+  const host = match[1] ?? match[2] ?? ''
+  return Option.some({
+    host: host === '' ? Option.none() : Option.some(host),
+    port,
+  })
+}
+
+/** Writes an address as parseListenAddress reads it. */
+export const formatListenAddress = (address: ListenAddress): string =>
+  `${Option.match(address.host, {
+    onNone: () => '',
+    onSome: host => (host.includes(':') ? `[${host}]` : host),
+  })}:${address.port}`
+
+/** An address written `host:port`, `[v6]:port` or `:port`, decoded to its host and port. */
+export const ListenAddressText = Schema.String.check(
+  Schema.makeFilter(
+    text =>
+      Option.isSome(parseListenAddress(text)) ||
+      `Expected an address such as "0.0.0.0:8443", "[::1]:8443" or ":8443", got ${JSON.stringify(text)}`,
+    { expected: 'an address such as "0.0.0.0:8443" or ":8443"' },
+  ),
+).pipe(
+  Schema.decodeTo(
+    ListenAddress,
+    SchemaTransformation.transform({
+      decode: text =>
+        Option.getOrElse(parseListenAddress(text), () => ({
+          host: Option.none(),
+          port: 0,
+        })),
+      encode: formatListenAddress,
+    }),
+  ),
+)
+
 /** `machine_workers` where the engine's settings give none: half the cores, at least 2 (H35). */
 export const defaultMachineWorkers = (cores: number): number =>
   Math.max(2, Math.floor(cores / 2))
@@ -737,6 +795,12 @@ export const EngineSettings = Schema.Struct({
   view_interval: SettingDuration.pipe(withDefault('50ms')),
   /** How often batched tokens and tool output are flushed to clients (spec §8.3). */
   stream_flush: SettingDuration.pipe(withDefault('50ms')),
+  /** Where the engine listens for clients over TLS; none: only on its local socket (spec §9.3). */
+  listen: Schema.OptionFromOptionalKey(ListenAddressText),
+  /** The TLS listener's certificate, a PEM file; none: one the engine makes and keeps (spec §9.3). */
+  listen_certificate: Schema.OptionFromOptionalKey(Text),
+  /** The private key of `listen_certificate`, a PEM file. */
+  listen_key: Schema.OptionFromOptionalKey(Text),
   telemetry: Schema.Struct({
     retention: Schema.Struct({
       raw: retention.pipe(withDefault('90d')),

@@ -20,8 +20,10 @@ import { workersHandlers } from './workers'
 
 // The RPC server (spec §8.1, §8.2, §20.2): the protocol served on the engine's local socket, as NDJSON,
 // with one handler layer per group, each in its own file. The socket is made mode 0600 before the
-// server takes its first connection, in a folder only the engine's user can enter. A request's
-// defect (a group not served yet, a fault) ends that request, never its client's connection.
+// server takes its first connection, in a folder only the engine's user can enter. Where the engine
+// listens over TLS too (§9.3), the listener's connections reach the same server, beside the local
+// socket's. A request's defect (a group not served yet, a fault) ends that request, never its
+// client's connection.
 
 /** Every group's handlers. */
 export const protocolHandlers = Layer.mergeAll(
@@ -65,13 +67,45 @@ export const removeStaleSocket = Effect.fn('RpcServer.removeStaleSocket')(
   },
 )
 
-/** The protocol served at the local socket `path`, on the daemon's services. */
-export const localRpcServer = (path: string) =>
+/** One socket server taking both servers' connections, named by the first's address. */
+const bothSocketServers = (
+  first: SocketServer.SocketServer['Service'],
+  second: SocketServer.SocketServer['Service'],
+): SocketServer.SocketServer['Service'] =>
+  SocketServer.SocketServer.of({
+    address: first.address,
+    run: handler => Effect.raceFirst(first.run(handler), second.run(handler)),
+  })
+
+/** The local socket at `path`, and the TLS listener's connections where there is one. */
+const engineSocketServer = (
+  path: string,
+  tls: Option.Option<SocketServer.SocketServer['Service']>,
+) =>
+  Option.match(tls, {
+    onNone: () => localSocketServer(path),
+    onSome: listener =>
+      Layer.effect(
+        SocketServer.SocketServer,
+        Effect.map(SocketServer.SocketServer, local =>
+          bothSocketServers(local, listener),
+        ),
+      ).pipe(Layer.provide(localSocketServer(path))),
+  })
+
+/** The protocol served at the local socket `path`, and on the TLS listener's connections, on the daemon's services. */
+export const localRpcServer = (
+  path: string,
+  tls: Option.Option<SocketServer.SocketServer['Service']> = Option.none(),
+) =>
   RpcServer.layer(FabricaRpcs, { disableFatalDefects: true }).pipe(
     Layer.provide(protocolHandlers),
     Layer.provide(
       RpcServer.layerProtocolSocketServer.pipe(
-        Layer.provide([localSocketServer(path), RpcSerialization.layerNdjson]),
+        Layer.provide([
+          engineSocketServer(path, tls),
+          RpcSerialization.layerNdjson,
+        ]),
       ),
     ),
   )

@@ -67,6 +67,9 @@ const enginePaths = [
   'credentials_wait',
   'view_interval',
   'stream_flush',
+  'listen',
+  'listen_certificate',
+  'listen_key',
   'telemetry.retention.raw',
   'telemetry.retention.daily',
 ]

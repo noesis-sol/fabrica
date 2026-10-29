@@ -23,6 +23,7 @@ import {
   supportedVersions,
 } from '@fabrica/contracts'
 
+import type { TlsEndpoint } from '../rpc/tls'
 import type { StoredSettingsInvalid } from './database'
 import { engineIdentity, projectCount, storedEngineSettings } from './database'
 
@@ -41,6 +42,8 @@ export const EngineEnd = Data.taggedEnum<EngineEnd>()
 export interface EngineShape {
   readonly id: EngineId
   readonly version: EngineVersion
+  /** Where the engine listens over TLS, besides its local socket (§9.3); none where it doesn't. */
+  readonly listening: Option.Option<TlsEndpoint>
   /** The engine's status; `clients` is how many the RPC server has connected. */
   readonly status: (options: {
     readonly clients: number
@@ -72,8 +75,14 @@ export interface EngineFacts {
   readonly host: EngineHost
 }
 
-/** The Engine service on the engine's database; it says it is stopping from when its scope starts to end. */
-export const engineLayer = (facts: EngineFacts) =>
+/**
+ * The Engine service on the engine's database, listening over TLS where `listening` says; it says it
+ * is stopping from when its scope starts to end.
+ */
+export const engineLayer = (
+  facts: EngineFacts,
+  listening: Option.Option<TlsEndpoint> = Option.none(),
+) =>
   Layer.effect(
     Engine,
     Effect.gen(function* () {
@@ -137,6 +146,7 @@ export const engineLayer = (facts: EngineFacts) =>
       return Engine.of({
         id,
         version,
+        listening,
         status,
         settings,
         stop,

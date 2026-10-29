@@ -327,6 +327,10 @@ importers:
       effect:
         specifier: 4.0.0
         version: 4.0.0
+    devDependencies:
+      '@fabrica/client':
+        specifier: workspace:*
+        version: link:../client
 
   packages/pi-extension:
     dependencies:

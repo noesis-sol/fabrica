@@ -2307,6 +2307,15 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         "keep_awake": {
           "not": {},
         },
+        "listen": {
+          "not": {},
+        },
+        "listen_certificate": {
+          "not": {},
+        },
+        "listen_key": {
+          "not": {},
+        },
         "machine_workers": {
           "not": {},
         },
@@ -7296,6 +7305,15 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
           },
           "keep_awake": {
             "type": "boolean",
+          },
+          "listen": {
+            "type": "string",
+          },
+          "listen_certificate": {
+            "type": "string",
+          },
+          "listen_key": {
+            "type": "string",
           },
           "machine_workers": {
             "minimum": 1,

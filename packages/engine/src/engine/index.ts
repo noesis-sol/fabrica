@@ -33,6 +33,7 @@ export {
 } from './scopes'
 export {
   type DaemonServices,
+  type ListenSettings,
   type ServeOptions,
   serveEngine,
   startEngine,

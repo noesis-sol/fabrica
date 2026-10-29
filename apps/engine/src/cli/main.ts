@@ -1,5 +1,14 @@
 import { Cause, Console, Effect } from 'effect'
-import { CliConfig, CliError, CliOutput, Command, GlobalFlag } from 'effect/cli'
+import {
+  CliConfig,
+  CliError,
+  CliOutput,
+  Command,
+  Flag,
+  GlobalFlag,
+} from 'effect/cli'
+
+import { ListenAddressText } from '@fabrica/contracts'
 
 import { bridge } from '../bridge'
 import { serve } from '../serve'
@@ -26,7 +35,29 @@ import { token } from './token'
 // shorthands one; `--help` (`-h`) and `--version` are built in. Everything the CLI prints, the help and
 // its errors included, goes through its console, which sanitises it for the terminal.
 
-const serveCommand = Command.make('serve', {}, () => serve).pipe(
+const serveCommand = Command.make(
+  'serve',
+  {
+    listen: Flag.String('listen').pipe(
+      Flag.withDescription(
+        'Listens over TLS on this address too, such as 0.0.0.0:8443 or :8443, for clients with a pairing token',
+      ),
+      Flag.withSchema(ListenAddressText),
+      Flag.optional,
+    ),
+    listen_certificate: Flag.String('listen-certificate').pipe(
+      Flag.withDescription(
+        "The TLS listener's certificate, a PEM file; the engine's own where none is given",
+      ),
+      Flag.optional,
+    ),
+    listen_key: Flag.String('listen-key').pipe(
+      Flag.withDescription("The certificate's private key, a PEM file"),
+      Flag.optional,
+    ),
+  },
+  serve,
+).pipe(
   Command.withDescription(
     'Runs the engine in the foreground, as the login service runs it',
   ),

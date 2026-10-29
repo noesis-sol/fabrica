@@ -27,6 +27,10 @@ export interface EnginePaths {
   readonly socket: string
   /** `<data>/logs`: the engine's own log's folder. */
   readonly logs: string
+  /** `<data>/tls-certificate.pem`: the TLS listener's own certificate, where the user gives none (§9.3). */
+  readonly certificate: string
+  /** `<data>/tls-key.pem`: its private key, mode 0600. */
+  readonly certificateKey: string
 }
 
 /** The running engine's files, for the services and handlers that use them. */
@@ -74,6 +78,8 @@ export const pathsIn = (options: {
   socketFolder: options.socketFolder,
   socket: NodePath.join(options.socketFolder, 'engine.sock'),
   logs: NodePath.join(options.data, 'logs'),
+  certificate: NodePath.join(options.data, 'tls-certificate.pem'),
+  certificateKey: NodePath.join(options.data, 'tls-key.pem'),
 })
 
 /**

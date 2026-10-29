@@ -49,7 +49,6 @@ import {
   runsHandlers,
   secretsHandlers,
   talksHandlers,
-  tokensHandlers,
   workersHandlers,
 } from '../src/rpc'
 
@@ -150,14 +149,15 @@ const modeOf = (path: string) =>
   Effect.promise(() => lstat(path)).pipe(Effect.map(info => info.mode & 0o777))
 
 /** Whether an exit is a defect named `NotImplemented`, as the protocol carries it. */
-/** The groups whose handlers answer `NotImplemented`: every one but those built (Engine, Review, Projects, Backlog). */
+/** The groups whose handlers answer `NotImplemented`: every one but those built (Engine, Tokens, Review, Projects, Backlog). */
 type Unfilled = Exclude<
   ProtocolGroupName,
-  'engine' | 'review' | 'projects' | 'backlog'
+  'engine' | 'tokens' | 'review' | 'projects' | 'backlog'
 >
 const unfilled = ProtocolGroupName.literals.filter(
   (group): group is Unfilled =>
     group !== 'engine' &&
+    group !== 'tokens' &&
     group !== 'review' &&
     group !== 'projects' &&
     group !== 'backlog',
@@ -426,7 +426,6 @@ describe('the groups not served yet', () => {
         const project = ProjectId.make('app')
         const ticket = TicketId.make('fa-a1b2')
         const calls: Record<Unfilled, Effect.Effect<unknown, unknown>> = {
-          tokens: client['tokens.list'](),
           secrets: client['credentials.list'](),
           runs: client['run.status']({ project }),
           workers: client['worker.release']({ project, ticket }),
@@ -448,7 +447,6 @@ describe('the groups not served yet', () => {
   it.effect('answer NotImplemented to every request and stream', () =>
     Effect.gen(function* () {
       const layers: Record<Unfilled, Layer.Layer<never>> = {
-        tokens: tokensHandlers,
         secrets: secretsHandlers,
         runs: runsHandlers,
         workers: workersHandlers,
