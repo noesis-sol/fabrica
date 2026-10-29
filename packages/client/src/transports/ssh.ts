@@ -140,7 +140,11 @@ export class SshFailed extends Data.TaggedError('SshFailed')<{
       BridgeMissing: () =>
         `${at} has no fabrica on its PATH: install the engine there`,
       TooOld: ({ version }) =>
-        `this ssh is ${version}: relaying its prompts takes OpenSSH ${askpassFloor.major}.${askpassFloor.minor} or later`,
+        `this ssh is ${version}: the app relays ssh's prompts, which takes OpenSSH ${askpassFloor.major}.${askpassFloor.minor} or later; ${
+          /for_Windows/u.test(version)
+            ? 'install a newer Win32-OpenSSH, with `winget install Microsoft.OpenSSH.Preview` or from https://github.com/PowerShell/Win32-OpenSSH/releases, and put it first on the PATH'
+            : 'install a newer OpenSSH, and put it first on the PATH'
+        }`,
       Lost: ({ detail }) => `the ssh connection to ${at} failed: ${detail}`,
     })
   }
@@ -257,9 +261,26 @@ const openFailed = (cause: unknown) =>
     reason: new Socket.SocketOpenError({ kind: 'Unknown', cause }),
   })
 
-/** Whether the ssh `options` run relays prompts: OpenSSH 8.4 or later, from `ssh -V`. */
-const checkVersion = (options: SshOptions) =>
-  Effect.callback<void, Socket.SocketError>(resume => {
+/** Whether `ssh -V`'s words name an OpenSSH 8.4 or later, whose prompts can be relayed. */
+const relaysPrompts = (said: string): boolean =>
+  Option.exists(
+    parseSshVersion(said),
+    ({ major, minor }) =>
+      major > askpassFloor.major ||
+      (major === askpassFloor.major && minor >= askpassFloor.minor),
+  )
+
+/**
+ * Checks that the ssh `options` run is OpenSSH 8.4 or later, from `ssh -V`: the app relays every prompt
+ * through `SSH_ASKPASS`, so it takes no older one (fab-mgi.13), and says so at Add engine and connect.
+ * It fails with SshFailed (`TooOld`), or with why `ssh -V` couldn't run.
+ */
+export const checkSshVersion = (options: {
+  readonly destination: SshDestination
+  readonly env: Readonly<Record<string, string>>
+  readonly ssh?: string
+}): Effect.Effect<void, SshFailed | Error> =>
+  Effect.callback<void, SshFailed | Error>(resume => {
     execFile(
       options.ssh ?? 'ssh',
       ['-V'],
@@ -267,28 +288,19 @@ const checkVersion = (options: SshOptions) =>
       (error, stdout, stderr) => {
         const said = `${stderr}${stdout}`.trim()
         if (error !== null && said === '') {
-          resume(Effect.fail(openFailed(error)))
+          resume(Effect.fail(error))
           return
         }
-        const at = parseSshVersion(said)
-        const recent = Option.exists(
-          at,
-          ({ major, minor }) =>
-            major > askpassFloor.major ||
-            (major === askpassFloor.major && minor >= askpassFloor.minor),
-        )
         resume(
-          recent
+          relaysPrompts(said)
             ? Effect.void
             : Effect.fail(
-                openFailed(
-                  new SshFailed({
-                    destination: options.destination,
-                    failure: SshFailure.TooOld({
-                      version: said.split(/[,\n]/u)[0] ?? said,
-                    }),
+                new SshFailed({
+                  destination: options.destination,
+                  failure: SshFailure.TooOld({
+                    version: said.split(/[,\n]/u)[0] ?? said,
                   }),
-                ),
+                }),
               ),
         )
       },
@@ -476,7 +488,9 @@ const openRelay = (
 /** A socket over ssh to the engine at `options.destination`: each connection runs ssh anew. */
 export const sshSocket = (options: SshOptions): Effect.Effect<Socket.Socket> =>
   Effect.gen(function* () {
-    const checked = yield* Effect.cached(checkVersion(options))
+    const checked = yield* Effect.cached(
+      Effect.mapError(checkSshVersion(options), openFailed),
+    )
     const ended = (end: BridgeEnd) =>
       Option.map(
         sshEnded(end),

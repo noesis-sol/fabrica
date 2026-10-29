@@ -1,5 +1,17 @@
-import { type Cause, Data, Effect, Option, Queue, Schema, Stream } from 'effect'
+import {
+  type Cause,
+  Data,
+  Effect,
+  Exit,
+  Option,
+  Predicate,
+  Queue,
+  Schedule,
+  Schema,
+  Stream,
+} from 'effect'
 import { NetAddress } from 'effect/net'
+import type { RpcClientError } from 'effect/rpc'
 import { Socket, SocketServer } from 'effect/socket'
 
 // The MessagePort transport (spec §8.2): in the app, the page's engine client and the connection
@@ -7,7 +19,8 @@ import { Socket, SocketServer } from 'effect/socket'
 // a `SocketServer`, so the RPC runs over the port as it does over the local socket. The RPC's NDJSON
 // frames cross as they are, bytes or text; beside them a few signals, each naming the connection it
 // is about: the page opens a connection and closes it; the relay says it took one, whose frames
-// follow, and that one ended. Each open of the page's socket is a new connection, so a connection the
+// follow, and that one ended, or was refused (ssh refused the engine's host, say) in a way another
+// connection wouldn't mend, which the page's client stops reconnecting at. Each open of the page's socket is a new connection, so a connection the
 // engine dropped reaches the page's client, which reconnects and resumes its streams as over any
 // other transport; and a connection never reads frames its predecessor was sent.
 
@@ -18,12 +31,51 @@ export const PageSignal = Schema.TaggedUnion({
 })
 export type PageSignal = typeof PageSignal.Type
 
-/** What the relay says on the port: it took connection `connection`, whose frames follow; or that connection ended. */
+/**
+ * What the relay says on the port: it took connection `connection`, whose frames follow; or that
+ * connection ended, or was refused, in `reason`'s words.
+ */
 export const RelaySignal = Schema.TaggedUnion({
   Opened: { connection: Schema.Int },
   Closed: { connection: Schema.Int },
+  Refused: { connection: Schema.Int, reason: Schema.String },
 })
 export type RelaySignal = typeof RelaySignal.Type
+
+/**
+ * A connection the relay's engine refused, in a way trying again would end the same: the failure a
+ * relay's handler ends with to say so, and the cause of the page's socket error for it.
+ */
+export class ConnectionRefused extends Data.TaggedError('ConnectionRefused')<{
+  readonly reason: string
+}> {
+  override get message() {
+    return this.reason
+  }
+}
+
+/** The ConnectionRefused a connection's error carries, if the relay refused it. */
+export const connectionRefused = (
+  error: Socket.SocketError | RpcClientError.RpcClientError,
+): Option.Option<ConnectionRefused> => {
+  const { reason } = error
+  return Predicate.hasProperty(reason, 'cause') &&
+    reason.cause instanceof ConnectionRefused
+    ? Option.some(reason.cause)
+    : Option.none()
+}
+
+/** Effect's own back-off between reconnects, the client's unless it is given another. */
+export const reconnectBackOff = Schedule.min([
+  Schedule.exponential(500, 1.5),
+  Schedule.spaced(5000),
+])
+
+/** The page's reconnect schedule over the port: `base` until the relay refuses a connection. */
+export const portReconnect = (
+  base: Schedule.Schedule<unknown, Socket.SocketError> = reconnectBackOff,
+): Schedule.Schedule<unknown, Socket.SocketError> =>
+  Schedule.while(base, ({ input }) => Option.isNone(connectionRefused(input)))
 
 const decodePageSignal = Schema.decodeUnknownOption(PageSignal)
 const decodeRelaySignal = Schema.decodeUnknownOption(RelaySignal)
@@ -98,6 +150,7 @@ const inbox = () => {
   const feed = {
     push: (_frame: Frame) => {},
     end: () => {},
+    fail: (_error: ConnectionRefused) => {},
   }
   // A stream's start runs as it is made, so `feed` holds its controller's ends from here on.
   const readable = new ReadableStream<Frame>({
@@ -113,19 +166,25 @@ const inbox = () => {
           controller.close()
         }
       }
+      feed.fail = error => {
+        if (!ended) {
+          ended = true
+          controller.error(error)
+        }
+      }
     },
     // A stream its reader cancelled is closed already.
     cancel: () => {
       ended = true
     },
   })
-  return { readable, push: feed.push, end: feed.end }
+  return { readable, push: feed.push, end: feed.end, fail: feed.fail }
 }
 
 /**
  * The page's end: each open is a new connection, whose frames are read from the relay's `Opened` for
- * it until its `Closed` (or the port's closing), and written to the port; closing the open tells the
- * relay. The port itself stays open: it is the page's for its life.
+ * it until its `Closed` (or the port's closing), and written to the port; a `Refused` fails its reads
+ * with the relay's ConnectionRefused. Closing the open tells the relay. The port itself stays open: it is the page's for its life.
  */
 export const portSocket = (port: PortEnd): Effect.Effect<Socket.Socket> => {
   let opened = 0
@@ -145,6 +204,11 @@ export const portSocket = (port: PortEnd): Effect.Effect<Socket.Socket> => {
               Closed: signal => {
                 if (signal.connection === connection) {
                   frames.end()
+                }
+              },
+              Refused: signal => {
+                if (signal.connection === connection) {
+                  frames.fail(new ConnectionRefused({ reason: signal.reason }))
                 }
               },
             }),
@@ -197,7 +261,8 @@ const release = (taken: Taken): void => {
 /**
  * The relay's end: each connection the page opens is a `Socket` the handler gets, its frames the
  * page's, its writes posted to the page while the page keeps it. A connection the page closes, or
- * replaces with a new one, ends its socket's reads; one whose handler ends is `Closed` to the page.
+ * replaces with a new one, ends its socket's reads; one whose handler ends is `Closed` to the page,
+ * or `Refused` where the handler failed with a ConnectionRefused.
  * Once the port has closed, every connection's reads end and `run` waits on (`portClosed` says when).
  */
 export const portServer = (
@@ -243,15 +308,31 @@ export const portServer = (
           )
           port.post(RelaySignal.cases.Opened.make({ connection }))
           yield* handler(socket).pipe(
-            Effect.ignoreCause,
-            Effect.ensuring(
+            Effect.onExit(exit =>
               Effect.sync(() => {
                 if (taken.live) {
                   release(taken)
-                  port.post(RelaySignal.cases.Closed.make({ connection }))
+                  port.post(
+                    Option.match(
+                      Option.filter(
+                        Exit.findErrorOption(exit),
+                        error => error instanceof ConnectionRefused,
+                      ),
+                      {
+                        onNone: () =>
+                          RelaySignal.cases.Closed.make({ connection }),
+                        onSome: ({ reason }) =>
+                          RelaySignal.cases.Refused.make({
+                            connection,
+                            reason,
+                          }),
+                      },
+                    ),
+                  )
                 }
               }),
             ),
+            Effect.ignoreCause,
             Effect.forkScoped,
           )
         })

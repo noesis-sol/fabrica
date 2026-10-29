@@ -1,7 +1,9 @@
-import { Effect, Layer, Option, Schedule, type Scope } from 'effect'
+import { Effect, Layer, Option, type Scope } from 'effect'
 import { Socket } from 'effect/socket'
 import { type ChildProcessByStdio, spawn } from 'node:child_process'
 import { PassThrough, Readable, Writable } from 'node:stream'
+
+import { reconnectBackOff } from '../port'
 
 // A bridge (spec §8.2): a child process whose stdin and stdout carry the protocol, the shape the SSH
 // and WSL2 bridges take (`ssh <destination> fabrica bridge`, `wsl.exe -d <distro> -- fabrica bridge`).
@@ -30,10 +32,7 @@ export interface BridgeCommand {
 }
 
 /** Effect's own back-off for a lost bridge: 0.5 s, growing, up to 5 s. */
-export const bridgeBackOff = Schedule.min([
-  Schedule.exponential(500, 1.5),
-  Schedule.spaced(5000),
-])
+export const bridgeBackOff = reconnectBackOff
 
 /** How much of a bridge's stderr is kept for its `ended`. */
 export const stderrTailBytes = 16 * 1024

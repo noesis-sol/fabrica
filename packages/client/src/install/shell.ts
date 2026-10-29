@@ -7,6 +7,7 @@ import type { SshDestination } from '../destination'
 import {
   SshFailed,
   SshPrompting,
+  checkSshVersion,
   shQuote,
   sshArguments,
   sshEnded,
@@ -217,7 +218,9 @@ const sshExit = 255
 
 /**
  * The host at `destination` through the system's ssh, with the user's own config, keys and agent in
- * `env`, asking nothing (`BatchMode`): a host `known_hosts` knows, and keys ssh-agent holds.
+ * `env`, asking nothing (`BatchMode`): a host `known_hosts` knows, and keys ssh-agent holds. Its first
+ * command checks the ssh first, once: the app takes no ssh older than OpenSSH 8.4, whose prompts it
+ * couldn't relay as it connects (`checkSshVersion`), so Add engine refuses it, saying how to get a newer.
  */
 export const sshShell = ({
   destination,
@@ -228,8 +231,20 @@ export const sshShell = ({
   readonly env: Readonly<Record<string, string>>
   /** The ssh to run: a path, or a name found on `env`'s PATH; `ssh` unless given. */
   readonly ssh?: string
-}): HostShellShape =>
-  shellOf(destination, argv => ({
+}): HostShellShape => {
+  const checked = Effect.runSync(
+    Effect.cached(
+      Effect.mapError(
+        checkSshVersion({
+          destination,
+          env,
+          ...(ssh === undefined ? {} : { ssh }),
+        }),
+        error => new ShellFailed({ host: destination, reason: error.message }),
+      ),
+    ),
+  )
+  const shell = shellOf(destination, argv => ({
     command: ssh ?? 'ssh',
     args: sshArguments({
       destination,
@@ -246,6 +261,11 @@ export const sshShell = ({
           )
         : Option.none(),
   }))
+  return {
+    ...shell,
+    exec: command => Effect.andThen(checked, shell.exec(command)),
+  }
+}
 
 /**
  * A WSL2 distribution through wsl.exe (§7.6), each command run there without a shell between; a

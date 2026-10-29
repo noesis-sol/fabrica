@@ -75,9 +75,13 @@ const keyPair = (): KeyPair => {
 const releaseKey = keyPair()
 const strangerKey = keyPair()
 
-/** The stub ssh: skips its options, logs the destination, runs the one remote word as a login shell would. */
+/**
+ * The stub ssh: says it is OpenSSH 9.6 to `-V`; else skips its options, logs the destination, and runs
+ * the one remote word as a login shell would.
+ */
 const sshStub = shStub(
   [
+    'if [ "$1" = "-V" ]; then echo "OpenSSH_9.6p1, OpenSSL 3.0.13" >&2; exit 0; fi',
     'while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done',
     'shift',
     'printf \'%s\\n\' "$1" >> "$STUB_LOG"',
