@@ -4,10 +4,12 @@
   commands inside the worktree; it asks about writes outside it, network-reaching commands other than package
   managers, risky commands and what it can't read, and refuses `git push`, `sudo`, history rewrites of other
   branches and removals outside the worktree. `ask` asks about every write and command; `full` refuses only
-  `git push`. Bash command lines are read through quotes, substitutions, here-documents, `cd` and wrappers
-  (`env`, `timeout`, `xargs`, `bash -c`, `eval`, `find -exec`). Path confinement checks every brace
-  alternative of a glob, reads a glob segment that can match `..` as `..`, and refuses a brace that doesn't
-  close or a pattern of more than 256 alternatives.
+  `git push`. Bash command lines are read through quotes, substitutions (inside `${…}` and `$((…))` too),
+  here-documents, `cd` and wrappers (`env`, `timeout`, `xargs`, `bash -c`, `eval`, `find -exec`). A quote
+  inside `${…}`, which shells read differently, makes the line unreadable; a line the gate can't read is
+  asked about, but still refused where its words name `git push` (or `sudo`, below `full`). Path confinement
+  checks every brace alternative of a glob, reads a glob segment that can match `..` as `..`, and refuses a
+  brace that doesn't close or a pattern of more than 256 alternatives.
 - A call the gate asks about goes to the engine whole (`request_permission`) and waits for the answer. A git
   command that writes the branch (commit, merge, rebase, reset, checkout…) first reads the ticket's place in
   the merge queue from the engine (`merge_standing`, new in the control group) and is refused, saying why,

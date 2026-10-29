@@ -153,6 +153,10 @@ const publishing: ReadonlyMap<string, ReadonlySet<string>> = new Map([
 /** Files a redirection may always write. */
 const harmlessTargets = /^\/dev\/(?:null|stdout|stderr|tty|fd\/\d+)$/u
 
+/** In a command line the gate can't read, a push or a command run as another user, by their words. */
+const unreadPush = /\bgit\b[\s\S]*\b(?:push|send-pack|http-push|dcommit)\b/u
+const unreadSudo = /(?:^|[^\w-])(?:sudo|doas|pkexec|run0)\b/u
+
 const assignment = /^([A-Za-z_][A-Za-z0-9_]*)\+?=/u
 
 /** A word made by the gate, standing for a path. */
@@ -296,6 +300,11 @@ class Policy {
     }
     return Script.$match(parseScript(source, this.context.home), {
       Unparsable: ({ reason }) => {
+        // What can't be read may still push or run as another user: their words alone refuse it.
+        if (unreadPush.test(source))
+          this.findings.push(Finding.Push({ command: 'git push' }))
+        if (unreadSudo.test(source))
+          this.refuse('sudo: commands never run as another user')
         this.ask(`the gate can’t read the command: ${reason}`)
         return Option.none()
       },
