@@ -87,7 +87,7 @@ export const SettingDuration = DurationText.pipe(
  * command hides what runs after it from one who reads it as one line (spec §16, init's checks).
  */
 export const CommandLine = Schema.String.check(
-  Schema.isPattern(/^[^\p{Cc}]*\S[^\p{Cc}]*$/u, {
+  Schema.isPattern(/^[^\p{Cc}]*[^\p{Cc}\s][^\p{Cc}]*$/u, {
     expected: 'a command on one line, without control characters',
   }),
 )

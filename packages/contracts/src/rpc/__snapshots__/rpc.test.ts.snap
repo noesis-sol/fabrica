@@ -2168,15 +2168,15 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
           "type": "object",
         },
         "check_fast": {
-          "pattern": "^[^\\p{Cc}]*\\S[^\\p{Cc}]*$",
+          "pattern": "^[^\\p{Cc}]*[^\\p{Cc}\\s][^\\p{Cc}]*$",
           "type": "string",
         },
         "check_full": {
-          "pattern": "^[^\\p{Cc}]*\\S[^\\p{Cc}]*$",
+          "pattern": "^[^\\p{Cc}]*[^\\p{Cc}\\s][^\\p{Cc}]*$",
           "type": "string",
         },
         "check_own": {
-          "pattern": "^[^\\p{Cc}]*\\S[^\\p{Cc}]*$",
+          "pattern": "^[^\\p{Cc}]*[^\\p{Cc}\\s][^\\p{Cc}]*$",
           "type": "string",
         },
         "check_timeout": {
@@ -2555,11 +2555,11 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
             "additionalProperties": true,
             "properties": {
               "check": {
-                "pattern": "^[^\\p{Cc}]*\\S[^\\p{Cc}]*$",
+                "pattern": "^[^\\p{Cc}]*[^\\p{Cc}\\s][^\\p{Cc}]*$",
                 "type": "string",
               },
               "install": {
-                "pattern": "^[^\\p{Cc}]*\\S[^\\p{Cc}]*$",
+                "pattern": "^[^\\p{Cc}]*[^\\p{Cc}\\s][^\\p{Cc}]*$",
                 "type": "string",
               },
               "manual": {
@@ -2603,7 +2603,7 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
           "type": "string",
         },
         "setup": {
-          "pattern": "^[^\\p{Cc}]*\\S[^\\p{Cc}]*$",
+          "pattern": "^[^\\p{Cc}]*[^\\p{Cc}\\s][^\\p{Cc}]*$",
           "type": "string",
         },
         "setup_files": {
@@ -7607,7 +7607,7 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
                     "type": "string",
                   },
                   "command": {
-                    "pattern": "^[^\\p{Cc}]*\\S[^\\p{Cc}]*$",
+                    "pattern": "^[^\\p{Cc}]*[^\\p{Cc}\\s][^\\p{Cc}]*$",
                     "type": "string",
                   },
                 },

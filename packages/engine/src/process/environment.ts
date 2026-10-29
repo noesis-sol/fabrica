@@ -71,3 +71,15 @@ export const commandEnvironment = ({
   for (const name of GIT_LOCAL_VARIABLES) delete environment[name]
   return environment
 }
+
+/**
+ * The variables carrying a command's share of the machine's cores (spec §7.3, H56): `FABRICA_CORES`,
+ * and `GOFLAGS=-p=<n>` for Go, whose `go` reads that variable alone and takes `-p` only in its `=`
+ * form there. `cores` is the share, at least 1, as the scheduler divides the cores.
+ */
+export const coreShareVariables = (
+  cores: number,
+): Readonly<Record<string, string>> => ({
+  FABRICA_CORES: String(cores),
+  GOFLAGS: `-p=${cores}`,
+})

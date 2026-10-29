@@ -2,3 +2,4 @@
 export * from './time'
 export * as Git from './git'
 export * as Process from './process'
+export * as Checks from './checks'
