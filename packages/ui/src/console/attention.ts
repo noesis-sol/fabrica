@@ -15,6 +15,7 @@ import { defineTaggedUnion } from 'foldkit/schema'
 import { modifyFields } from 'foldkit/struct'
 import { defineView } from 'foldkit/submodel'
 
+import { clientErrorWords } from '@fabrica/client'
 import {
   type AlreadyAnswered,
   AttentionAnswer,
@@ -176,7 +177,7 @@ export const failureWords = (error: AnswerError): string =>
     TicketNotFound: () => "the engine doesn't know the ticket",
     Refused: ({ reason }) => reason,
     ResourceNotAvailable: () => 'not connected to the engine',
-    RpcClientError: () => 'lost the engine before it answered',
+    RpcClientError: clientErrorWords,
   })
 
 /** Waits out the key guard for one drawing of a request's options, on the injected clock. */

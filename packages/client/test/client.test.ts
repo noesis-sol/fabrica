@@ -315,7 +315,10 @@ const clientOptions = (protocol: ProtocolVersion): ClientOptions => ({
 const watchStatus = (client: EngineClientShape) =>
   Effect.gen(function* () {
     const items = yield* Queue.unbounded<StatusItem>()
-    const ended = yield* Deferred.make<Exit.Exit<void, VersionMismatch>>()
+    const ended =
+      yield* Deferred.make<
+        Exit.Exit<void, VersionMismatch | RpcClientError.RpcClientError>
+      >()
     yield* client
       .watch(resume => client.rpc['engine.watchStatus']({ resume }))
       .pipe(

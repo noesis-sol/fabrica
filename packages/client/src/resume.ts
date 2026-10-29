@@ -46,10 +46,17 @@ export const advance = <S, P>(
   })
 
 /**
+ * Whether a client error is a defect (the engine's answer, or the protocol's) rather than the
+ * connection's loss: subscribing again after a reconnect won't mend it.
+ */
+export const isDefect = (error: RpcClientError.RpcClientError): boolean =>
+  error.reason._tag === 'RpcClientDefect'
+
+/**
  * The items of a stream subscribed through `subscribe`, kept going across lost connections: when the
  * stream fails with the connection's loss, it waits for `reconnected` (the wait for the connection
  * after the one the subscription was made on, read as it is made) and subscribes again from where it
- * stood.
+ * stood. A defect ends it, failing with its client error.
  */
 export const resumable = <S, P, E, R, F>(options: {
   readonly subscribe: (
@@ -58,7 +65,7 @@ export const resumable = <S, P, E, R, F>(options: {
   readonly reconnected: Effect.Effect<Effect.Effect<void, F>>
 }): Stream.Stream<
   StreamItem<S, P>,
-  Exclude<E, RpcClientError.RpcClientError> | F,
+  Exclude<E, RpcClientError.RpcClientError> | F | RpcClientError.RpcClientError,
   R
 > => {
   /** Whether an error is the stream's own rather than the connection's loss. */
@@ -70,7 +77,9 @@ export const resumable = <S, P, E, R, F>(options: {
     cursor: Ref.Ref<Option.Option<Resume>>,
   ): Stream.Stream<
     StreamItem<S, P>,
-    Exclude<E, RpcClientError.RpcClientError> | F,
+    | Exclude<E, RpcClientError.RpcClientError>
+    | F
+    | RpcClientError.RpcClientError,
     R
   > =>
     Stream.unwrap(
@@ -95,6 +104,12 @@ export const resumable = <S, P, E, R, F>(options: {
                 )
               }
               if (isOwn(error)) {
+                return Stream.fail(error)
+              }
+              if (
+                error instanceof RpcClientError.RpcClientError &&
+                isDefect(error)
+              ) {
                 return Stream.fail(error)
               }
               return Stream.unwrap(Effect.as(reconnected, subscribe(cursor)))

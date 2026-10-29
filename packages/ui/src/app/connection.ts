@@ -8,6 +8,7 @@ import {
   Schema,
   Stream,
 } from 'effect'
+import { RpcClientError } from 'effect/rpc'
 import { Socket } from 'effect/socket'
 import { ManagedResource } from 'foldkit'
 import { defineTaggedUnion } from 'foldkit/schema'
@@ -16,6 +17,8 @@ import {
   type ClientOptions,
   type EngineClientShape,
   Link,
+  clientErrorWords,
+  isDefect,
   make as makeClient,
   portSocket,
   webPortEnd,
@@ -154,10 +157,16 @@ export const AttemptFailure = Data.taggedEnum<AttemptFailure>()
 
 const isMismatch = Schema.is(VersionMismatch)
 
-/** A failure in words: its `reason` where it gives one, else its message, else its tag, else `fallback`. */
+/**
+ * A failure in words: its `reason` where it gives one, else its message, else its tag, else `fallback`;
+ * the engine's defect in the client's words.
+ */
 export const failureText = (error: unknown, fallback: string): string => {
   if (typeof error === 'string') return error === '' ? fallback : error
   if (typeof error !== 'object' || error === null) return fallback
+  if (error instanceof RpcClientError.RpcClientError && isDefect(error)) {
+    return clientErrorWords(error)
+  }
   const reason: unknown = Reflect.get(error, 'reason')
   if (typeof reason === 'string' && reason !== '') return reason
   if (error instanceof Error && error.message !== '') return error.message

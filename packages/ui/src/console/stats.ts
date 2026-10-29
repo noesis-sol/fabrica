@@ -7,6 +7,7 @@ import { defineTaggedUnion } from 'foldkit/schema'
 import { modifyFields } from 'foldkit/struct'
 import { defineView } from 'foldkit/submodel'
 
+import { clientErrorWords } from '@fabrica/client'
 import {
   type Banner,
   type EngineStep,
@@ -154,7 +155,7 @@ export const refusalWords = (error: RunRequestError): string =>
     NoRun: () => 'the project has no run going',
     ProjectNotFound: () => "the engine doesn't know the project",
     ResourceNotAvailable: () => 'not connected to the engine',
-    RpcClientError: () => 'lost the engine before it answered',
+    RpcClientError: clientErrorWords,
   })
 
 /** Starts a run of `project` in `mode`. */

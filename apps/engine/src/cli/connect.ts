@@ -1,11 +1,12 @@
 import { Context, Data, Effect, Layer, Option, Result, Schema } from 'effect'
-import type { RpcClientError } from 'effect/rpc'
+import { RpcClientError } from 'effect/rpc'
 import type { Socket } from 'effect/socket'
 
 import {
   type ClientOptions,
   type EngineClientShape,
   SshDestination,
+  isDefect,
   make,
 } from '@fabrica/client'
 import {
@@ -99,6 +100,18 @@ export class EngineLost extends Data.TaggedError('EngineLost')<{
 }> {
   override get message() {
     return `the connection to the engine at ${this.at} was lost`
+  }
+}
+
+/** The engine answered with a defect: a request it doesn't serve yet, or one it failed serving. */
+export class EngineFailed extends Data.TaggedError('EngineFailed')<{
+  /** Where the engine was: its socket, or its SSH destination. */
+  readonly at: string
+  /** The defect, in words. */
+  readonly reason: string
+}> {
+  override get message() {
+    return `the engine at ${this.at} couldn't answer: ${this.reason}`
   }
 }
 
@@ -204,8 +217,12 @@ export const withEngine = <A, E, R>(
       Ssh: ({ destination }) => sshClient(destination),
     })
     return yield* use(client).pipe(
-      Effect.catchTag('RpcClientError', () =>
-        Effect.fail(new EngineLost({ at })),
+      Effect.catchTag('RpcClientError', error =>
+        Effect.fail(
+          error instanceof RpcClientError.RpcClientError && isDefect(error)
+            ? new EngineFailed({ at, reason: error.reason.message })
+            : new EngineLost({ at }),
+        ),
       ),
     )
   }).pipe(Effect.scoped)

@@ -22,14 +22,17 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { type StreamItem, resumable } from './resume'
+import { type StreamItem, isDefect, resumable } from './resume'
 
 // The engine client (spec §8): Effect RPC over a transport's `Socket`, its frames NDJSON. The client
 // says hello at every connection (§8.4): the first at its start, which fails when the engine can't be
 // reached or the two share no version, then again each time the socket protocol reconnects after a
 // lost connection, since the engine on the other end may be another (restarted, updated). Its streams
 // resume after a reconnect from the last sequence number they took (§8.3, `resume.ts`). The CLI and
-// the app's connection process each run one per engine, over the transport that reaches it.
+// the app's connection process each run one per engine, over the transport that reaches it. A request
+// or stream the engine answers with a defect (one it doesn't serve yet answers `NotImplemented`) fails
+// with an `RpcClientError` whose reason is an `RpcClientDefect`, a failure every caller catches; a
+// stream `watch` follows ends with it rather than waiting for a reconnect that won't mend it.
 
 /** The client's link to its engine. `connection` counts the connections the transport has opened. */
 export type Link = Data.TaggedEnum<{
@@ -63,7 +66,10 @@ export interface ClientOptions extends Pick<
 }
 
 export interface EngineClientShape {
-  /** Every request and stream, called as they are; a request fails with `RpcClientError` while the link is down. */
+  /**
+   * Every request and stream, called as they are; a request fails with `RpcClientError` while the link
+   * is down, and with one whose reason is an `RpcClientDefect` where the engine answers with a defect.
+   */
   readonly rpc: FabricaClient
   /** The link now. */
   readonly link: Effect.Effect<Link>
@@ -71,7 +77,8 @@ export interface EngineClientShape {
   readonly links: Stream.Stream<Link>
   /**
    * A stream subscribed through `subscribe`, resumed after each lost connection from the last
-   * sequence number it took; it fails when the engine it reconnects to refuses the client's version.
+   * sequence number it took; it fails when the engine it reconnects to refuses the client's version,
+   * or when the engine answers it with a defect.
    */
   readonly watch: <S, P, E, R>(
     subscribe: (
@@ -79,7 +86,9 @@ export interface EngineClientShape {
     ) => Stream.Stream<StreamItem<S, P>, E | RpcClientError.RpcClientError, R>,
   ) => Stream.Stream<
     StreamItem<S, P>,
-    Exclude<E, RpcClientError.RpcClientError> | VersionMismatch,
+    | Exclude<E, RpcClientError.RpcClientError>
+    | VersionMismatch
+    | RpcClientError.RpcClientError,
     R
   >
 }
@@ -88,6 +97,54 @@ export class EngineClient extends Context.Service<
   EngineClient,
   EngineClientShape
 >()('@fabrica/client/EngineClient') {}
+
+/** The words of a defect: an `Error`'s message, or the value itself. */
+const defectWords = (defect: unknown): string =>
+  defect instanceof Error ? defect.message : String(defect)
+
+/** The failure a defect of request or stream `tag` comes to. */
+const defectFailure = (tag: string, defect: unknown) =>
+  new RpcClientError.RpcClientError({
+    reason: new RpcClientError.RpcClientDefect({
+      message: `${tag} failed: ${defectWords(defect)}`,
+      cause: defect,
+    }),
+  })
+
+/** A client error in words: the defect it carries, or the connection's loss. */
+export const clientErrorWords = (
+  error: RpcClientError.RpcClientError,
+): string =>
+  isDefect(error) ? error.reason.message : 'lost the engine before it answered'
+
+/**
+ * `rpc`, its requests and streams failing with `defectFailure` where they would die: the engine's
+ * defect, carried by the protocol as one, reaches the caller as a failure it catches. (A stream taken
+ * `asQueue` keeps its defects; the client takes none so.)
+ */
+const failingOnDefects = (rpc: FabricaClient): FabricaClient =>
+  new Proxy(rpc, {
+    get: (target, tag, receiver) => {
+      const call: unknown = Reflect.get(target, tag, receiver)
+      if (typeof tag !== 'string' || typeof call !== 'function') {
+        return call
+      }
+      return (...args: ReadonlyArray<unknown>) => {
+        const answer: unknown = Reflect.apply(call, target, args)
+        if (Stream.isStream(answer)) {
+          return Stream.catchDefect(answer, defect =>
+            Stream.fail(defectFailure(tag, defect)),
+          )
+        }
+        if (Effect.isEffect(answer)) {
+          return Effect.catchDefect(answer, defect =>
+            Effect.fail(defectFailure(tag, defect)),
+          )
+        }
+        return answer
+      }
+    },
+  })
 
 /** The first link after `connection` that is up or refused: the client may subscribe again, or never. */
 const linkAfter = (
@@ -139,8 +196,10 @@ export const make = Effect.fn('EngineClient.make')(function* (
       RpcSerialization.ndjson,
     ),
   )
-  const rpc = yield* RpcClient.make(FabricaRpcs).pipe(
-    Effect.provideService(RpcClient.Protocol, protocol),
+  const rpc = failingOnDefects(
+    yield* RpcClient.make(FabricaRpcs).pipe(
+      Effect.provideService(RpcClient.Protocol, protocol),
+    ),
   )
   const sayHello = rpc['engine.connect'](hello)
 
