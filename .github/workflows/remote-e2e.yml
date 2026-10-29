@@ -1,0 +1,158 @@
+# Remote end to end (spec §22.3, §8.2, §9.1): an engine in a container, reached from the runner through
+# the SSH stdio bridge. The engine distribution built here (linux-x64) is unpacked in an Ubuntu container
+# running sshd, its `fabrica` on the PATH, and on the runner, whose `fabrica --engine ssh://…` runs the
+# runner's ssh to the container's `fabrica bridge`, which starts the engine there. The container's host
+# key and the client's key are made here, so the runner's known_hosts is written from the key itself:
+# a host it doesn't know is refused, the known one is reached, and a changed key is refused. The
+# container's user has no password (`*`, not locked, which sshd would refuse without PAM), and its
+# sshd's PAM session doesn't require a login UID, which a container can't set.
+#
+# Every download is checked (§20.4): the actions by their commit, mise against its signed release
+# checksums, Node and pnpm against mise.lock, the npm packages against pnpm-lock.yaml, the Node the
+# distribution bundles against mise.lock, the base image by its digest, and its packages by apt's
+# signatures.
+name: Remote e2e
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: remote-e2e-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  remote:
+    name: remote e2e, linux-x64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # ubuntu:24.04, the multi-platform index.
+      BASE_IMAGE: ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
+      DESTINATION: ssh://fabrica@127.0.0.1:2222
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          version: 2026.10.22
+
+      - name: Find the pnpm store
+        id: pnpm-store
+        run: echo "path=$(mise exec -- pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-store-linux-x64-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-linux-x64-
+
+      - name: Install dependencies
+        run: mise exec -- pnpm install --frozen-lockfile
+
+      - name: Build the engine distribution
+        run: mise exec -- pnpm --filter @fabrica/engine-app dist linux-x64
+
+      - name: Make the keys and the container's context
+        run: |
+          set -eu
+          context="$RUNNER_TEMP/e2e"
+          mkdir -p "$context"
+          set -- apps/engine/out/fabrica-*-linux-x64.tar.gz
+          cp "$1" "$context/fabrica.tar.gz"
+          ssh-keygen -q -t ed25519 -N '' -C e2e-host -f "$context/host_key"
+          ssh-keygen -q -t ed25519 -N '' -C e2e-client -f "$context/client_key"
+          ssh-keygen -q -t ed25519 -N '' -C e2e-other -f "$context/other_key"
+          cp "$context/client_key.pub" "$context/authorized_keys"
+          cat > "$context/Dockerfile" <<'EOF'
+          ARG BASE_IMAGE
+          FROM ${BASE_IMAGE}
+          RUN apt-get update \
+            && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openssh-server \
+            && rm -rf /var/lib/apt/lists/* \
+            && useradd --create-home --shell /bin/bash fabrica \
+            && usermod -p '*' fabrica \
+            && sed -i 's/^session\s*required\s*pam_loginuid.so/session optional pam_loginuid.so/' /etc/pam.d/sshd \
+            && mkdir -p /run/sshd /opt/fabrica /home/fabrica/.ssh
+          COPY fabrica.tar.gz /tmp/fabrica.tar.gz
+          RUN tar -xzf /tmp/fabrica.tar.gz -C /opt/fabrica --strip-components=1 \
+            && rm /tmp/fabrica.tar.gz \
+            && ln -s /opt/fabrica/bin/fabrica /usr/local/bin/fabrica
+          COPY --chmod=600 host_key /etc/ssh/ssh_host_ed25519_key
+          COPY --chmod=600 authorized_keys /home/fabrica/.ssh/authorized_keys
+          RUN chown -R fabrica:fabrica /home/fabrica/.ssh && chmod 700 /home/fabrica/.ssh
+          CMD ["/usr/sbin/sshd", "-D", "-e", "-o", "HostKey=/etc/ssh/ssh_host_ed25519_key", "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no"]
+          EOF
+
+      - name: Start the engine's container
+        run: |
+          set -eu
+          docker build --build-arg "BASE_IMAGE=$BASE_IMAGE" -t fabrica-remote-e2e "$RUNNER_TEMP/e2e"
+          docker run -d --name fabrica-remote-e2e --hostname engine-host \
+            -p 127.0.0.1:2222:22 fabrica-remote-e2e
+          # sshd answers once it listens.
+          for _ in $(seq 1 30); do
+            if ssh-keyscan -p 2222 127.0.0.1 > /dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs fabrica-remote-e2e
+          exit 1
+
+      - name: Set the runner's ssh up
+        run: |
+          set -eu
+          context="$RUNNER_TEMP/e2e"
+          mkdir -p "$HOME/.ssh" "$RUNNER_TEMP/fabrica"
+          chmod 700 "$HOME/.ssh"
+          cat > "$HOME/.ssh/config" <<EOF
+          Host 127.0.0.1
+            IdentityFile $context/client_key
+            IdentitiesOnly yes
+            UserKnownHostsFile $context/known_hosts
+          EOF
+          : > "$context/known_hosts"
+          tar -xzf "$context/fabrica.tar.gz" -C "$RUNNER_TEMP/fabrica" --strip-components=1
+
+      - name: A host ssh doesn't know is refused
+        run: |
+          set -u
+          if "$RUNNER_TEMP/fabrica/bin/fabrica" --engine "$DESTINATION" engine status 2> "$RUNNER_TEMP/unknown.txt"; then
+            echo "an unknown host was reached" >&2
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/unknown.txt"
+          grep -q "the host key of $DESTINATION is not known" "$RUNNER_TEMP/unknown.txt"
+
+      - name: The engine is reached through the bridge
+        run: |
+          set -eu
+          printf '[127.0.0.1]:2222 %s\n' "$(cut -d ' ' -f 1,2 "$RUNNER_TEMP/e2e/host_key.pub")" \
+            > "$RUNNER_TEMP/e2e/known_hosts"
+          fabrica="$RUNNER_TEMP/fabrica/bin/fabrica"
+          "$fabrica" --engine "$DESTINATION" engine version --json
+          "$fabrica" --engine "$DESTINATION" engine status --json > "$RUNNER_TEMP/status.json"
+          cat "$RUNNER_TEMP/status.json"
+          jq -e '.host.hostname == "engine-host" and .host.platform == "linux"' "$RUNNER_TEMP/status.json"
+
+      - name: A changed host key is refused
+        run: |
+          set -u
+          printf '[127.0.0.1]:2222 %s\n' "$(cut -d ' ' -f 1,2 "$RUNNER_TEMP/e2e/other_key.pub")" \
+            > "$RUNNER_TEMP/e2e/known_hosts"
+          if "$RUNNER_TEMP/fabrica/bin/fabrica" --engine "$DESTINATION" engine status 2> "$RUNNER_TEMP/changed.txt"; then
+            echo "a host whose key changed was reached" >&2
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/changed.txt"
+          grep -q "the host key of $DESTINATION has changed" "$RUNNER_TEMP/changed.txt"
+
+      - name: The container's log
+        if: always()
+        run: docker logs fabrica-remote-e2e || true
