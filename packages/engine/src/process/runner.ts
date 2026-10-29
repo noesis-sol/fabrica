@@ -142,6 +142,8 @@ interface Spawned {
   readonly stdout: Readable
   readonly stderr: Readable
   readonly exited: Deferred.Deferred<ExitStatus>
+  /** What names the far ends of its pipes, read as it started, where the host needs it. */
+  readonly ends: ReadonlyArray<string>
 }
 
 const spawnChild = ({
@@ -149,11 +151,13 @@ const spawnChild = ({
   invocation,
   environment,
   stdin,
+  holders,
 }: {
   readonly file: string
   readonly invocation: Invocation
   readonly environment: Readonly<Record<string, string>>
   readonly stdin: 'pipe' | 'null'
+  readonly holders: PipeHolders
 }): Effect.Effect<Spawned, StartFailure> =>
   Effect.callback<Spawned, StartFailure>(resume => {
     const failed = (message: string): void =>
@@ -199,7 +203,9 @@ const spawnChild = ({
         failed('the child has no process ID or no output pipes')
         return
       }
-      resume(Effect.succeed({ child, pid, stdout, stderr, exited }))
+      // Read at once, in the tick the child's exec was reported, before it can have moved its fds.
+      const ends = holders.ends(pid)
+      resume(Effect.succeed({ child, pid, stdout, stderr, exited, ends }))
     })
   })
 
@@ -294,7 +300,10 @@ export const make = Effect.fn('ProcessRunner.make')(function* (
       )
       const exited = Deferred.isDoneUnsafe(spawned.exited)
       if (exited && open.length === 0 && !groupHasMembers(spawned.pid)) return
-      const holders = yield* config.pipeHolders(open)
+      const holders = yield* config.pipeHolders.find({
+        fds: open,
+        ends: spawned.ends,
+      })
       yield* endTree({
         host: tree,
         pid: spawned.pid,
@@ -340,7 +349,13 @@ export const make = Effect.fn('ProcessRunner.make')(function* (
     function* (command: Command) {
       const { environment, file } = yield* resolve(command)
       const spawned = yield* Effect.acquireRelease(
-        spawnChild({ file, invocation: command, environment, stdin: 'null' }),
+        spawnChild({
+          file,
+          invocation: command,
+          environment,
+          stdin: 'null',
+          holders: config.pipeHolders,
+        }),
         endSpawned,
       )
       const limit = command.outputLimit ?? DEFAULT_OUTPUT_LIMIT
@@ -431,6 +446,7 @@ export const make = Effect.fn('ProcessRunner.make')(function* (
           invocation: command,
           environment,
           stdin: command.stdin,
+          holders: config.pipeHolders,
         }),
         reason => new StartFailed({ reason }),
       ),

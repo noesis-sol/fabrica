@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  symlinkSync,
   watch,
   writeFileSync,
 } from 'node:fs'
@@ -31,6 +32,7 @@ import {
   listProcesses,
   parseLsof,
   parseProcessTable,
+  procHolders,
   treeOf,
 } from '../src/process'
 
@@ -237,6 +239,42 @@ describe('the holders of a pipe', () => {
       ],
     )
   })
+})
+
+describe('the holders of a pipe on Linux', () => {
+  /** A /proc of `fds` per process, each fd a link to its target, as Linux has them. */
+  const procOf = (fds: Record<number, Record<number, string>>): string => {
+    const proc = mkdtempSync(join(root, 'proc-'))
+    for (const [pid, links] of Object.entries(fds)) {
+      mkdirSync(join(proc, pid, 'fd'), { recursive: true })
+      for (const [fd, target] of Object.entries(links)) {
+        symlinkSync(target, join(proc, pid, 'fd', fd))
+      }
+    }
+    mkdirSync(join(proc, 'self'))
+    return proc
+  }
+
+  it.effect(
+    'reads the far ends as the command starts and finds who holds them later',
+    () =>
+      Effect.gen(function* () {
+        const proc = procOf({
+          1: { 0: '/dev/null' },
+          50: { 12: 'socket:[900]', 13: 'socket:[901]' }, // the engine: its own ends
+          60: { 0: '/dev/null', 1: 'socket:[910]', 2: 'socket:[911]' }, // the command
+          61: { 1: 'socket:[910]', 3: 'pipe:[77]' }, // a detached child holding its stdout
+          62: { 1: 'socket:[999]' }, // another command's
+        })
+        const holders = procHolders({ self: 50, proc })
+        const ends = holders.ends(60)
+        expect(ends).toEqual(['socket:[910]', 'socket:[911]'])
+        expect(holders.ends(70)).toEqual([])
+        const found = yield* holders.find({ fds: [12, 13], ends })
+        expect(found.toSorted((a, b) => a - b)).toEqual([60, 61])
+        expect(yield* holders.find({ fds: [12, 13], ends: [] })).toEqual([])
+      }),
+  )
 })
 
 describe('ProcessRunner.run', () => {

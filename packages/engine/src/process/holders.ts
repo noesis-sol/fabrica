@@ -1,17 +1,25 @@
 import { Effect, Option } from 'effect'
 import { execFile } from 'node:child_process'
+import { readlinkSync } from 'node:fs'
 import { readdir, readlink } from 'node:fs/promises'
 import type { Readable } from 'node:stream'
 
 // Who holds a command's pipes (spec §12.1, H61, H74): once a command has exited, a descendant that
 // moved to a group of its own and whose parent exited too is no longer in its tree, yet may still
-// hold its output pipes open. It is found by the pipes themselves: on macOS through lsof (its write
-// end names the engine's read end), on Linux through /proc (both ends share an inode).
+// hold its output pipes open. It is found by the pipes themselves. Node gives a child's stdio
+// socketpairs, whose two ends are told apart: on macOS lsof names the far end of the engine's own
+// (`->0x…`), while on Linux /proc gives each end an inode of its own, so the far ends are read from
+// the command's fds 1 and 2 as it starts, and looked for later.
 
-/** Finds the processes, other than the engine, holding the far end of the engine's pipe ends `fds`. */
-export type PipeHolders = (
-  fds: ReadonlyArray<number>,
-) => Effect.Effect<ReadonlyArray<number>>
+export interface PipeHolders {
+  /** Read as the command `pid` starts: what names the far ends of its pipes, where the host needs it. */
+  readonly ends: (pid: number) => ReadonlyArray<string>
+  /** The processes, other than the engine, holding the far ends of the engine's pipe ends `fds`. */
+  readonly find: (pipes: {
+    readonly fds: ReadonlyArray<number>
+    readonly ends: ReadonlyArray<string>
+  }) => Effect.Effect<ReadonlyArray<number>>
+}
 
 /** The file descriptor of the engine's end of a child's pipe, while it is open. */
 export const pipeFd = (readable: Readable): Option.Option<number> => {
@@ -63,10 +71,10 @@ export const parseLsof = (
   return processes
 }
 
-/** macOS: a pipe's write end names its read end's address, `->0x…`. */
-export const lsofHolders =
-  (self: number): PipeHolders =>
-  fds =>
+/** macOS: the far end of a socketpair or pipe names the engine's end's address, `->0x…`. */
+export const lsofHolders = (self: number): PipeHolders => ({
+  ends: () => [],
+  find: ({ fds }) =>
     Effect.gen(function* () {
       if (fds.length === 0) return []
       const own = yield* lsof([
@@ -99,42 +107,55 @@ export const lsofHolders =
             )
             .map(entry => entry.pid),
       })
-    }).pipe(Effect.withSpan('ProcessHolders.lsof'))
+    }).pipe(Effect.withSpan('ProcessHolders.lsof')),
+})
 
 const link = (path: string): Promise<string | undefined> =>
   readlink(path).catch(() => undefined)
 
-/** Linux: both ends of a pipe link to one `pipe:[inode]` under /proc. */
-export const procHolders =
-  (self: number): PipeHolders =>
-  fds =>
+/**
+ * Linux: under `proc` (/proc), each open end links to `socket:[inode]` or `pipe:[inode]`; a command's
+ * fds 1 and 2 are read as it starts, before it can have moved them.
+ */
+export const procHolders = ({
+  self,
+  proc,
+}: {
+  readonly self: number
+  readonly proc: string
+}): PipeHolders => ({
+  ends: pid =>
+    [1, 2].flatMap(fd => {
+      try {
+        return [readlinkSync(`${proc}/${pid}/fd/${fd}`)]
+      } catch {
+        return []
+      }
+    }),
+  find: ({ ends }) =>
     Effect.promise(async () => {
-      const own = await Promise.all(
-        fds.map(fd => link(`/proc/${self}/fd/${fd}`)),
-      )
-      const pipes = new Set(
-        own.filter(target => target?.startsWith('pipe:') === true),
-      )
-      if (pipes.size === 0) return []
-      const pids = (await readdir('/proc').catch(() => [])).filter(name =>
+      const wanted = new Set(ends)
+      if (wanted.size === 0) return []
+      const pids = (await readdir(proc).catch(() => [])).filter(name =>
         /^\d+$/.test(name),
       )
       const holders = await Promise.all(
         pids.map(async pid => {
           if (Number(pid) === self) return []
-          const fdNames = await readdir(`/proc/${pid}/fd`).catch(() => [])
+          const fds = await readdir(`${proc}/${pid}/fd`).catch(() => [])
           const targets = await Promise.all(
-            fdNames.map(fd => link(`/proc/${pid}/fd/${fd}`)),
+            fds.map(fd => link(`${proc}/${pid}/fd/${fd}`)),
           )
           return targets.some(
-            target => target !== undefined && pipes.has(target),
+            target => target !== undefined && wanted.has(target),
           )
             ? [Number(pid)]
             : []
         }),
       )
       return holders.flat()
-    }).pipe(Effect.withSpan('ProcessHolders.proc'))
+    }).pipe(Effect.withSpan('ProcessHolders.proc')),
+})
 
 /** The host's way of finding holders, by its platform; none where it has neither. */
 export const hostHolders = ({
@@ -147,5 +168,5 @@ export const hostHolders = ({
   platform === 'darwin'
     ? lsofHolders(self)
     : platform === 'linux'
-      ? procHolders(self)
-      : () => Effect.succeed([])
+      ? procHolders({ self, proc: '/proc' })
+      : { ends: () => [], find: () => Effect.succeed([]) }
