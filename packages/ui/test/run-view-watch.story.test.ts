@@ -52,6 +52,7 @@ const status = (of: ProjectId, run: ProjectRunState): ProjectStatus =>
     name: of,
     base: 'main',
     setUp: true,
+    trusted: false,
     run,
     ready: 0,
   })
