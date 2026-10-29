@@ -10,6 +10,7 @@ import {
   UpdateSide,
 } from '@fabrica/contracts'
 
+import * as Stats from '../console/stats'
 import { Screen } from './screen'
 import {
   AttentionItem,
@@ -66,5 +67,9 @@ export const Message = defineMessageUnion({
     name: Schema.String,
     items: itemsOf(ProjectStatusItem),
   },
+  /** The clock's tick: the time now, in the viewer's zone. */
+  Ticked: { now: Schema.DateTimeZoned },
+
+  GotStatsMessage: { message: Stats.Message },
 })
 export type Message = typeof Message.Type

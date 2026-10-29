@@ -1,11 +1,16 @@
 import { Effect, Option, Schema } from 'effect'
-import { Command, type Update } from 'foldkit'
+import { Command, Update } from 'foldkit'
 import { modifyFields } from 'foldkit/struct'
 
 import { ProjectId } from '@fabrica/contracts'
 
 import * as Sidebar from '../console/sidebar'
-import { Connection, retryAfter } from './connection'
+import * as Stats from '../console/stats'
+import {
+  Connection,
+  type EngineConnectionService,
+  retryAfter,
+} from './connection'
 import { commandFor, commandsFor } from './keys'
 import { Message } from './message'
 import { type Model, Overlay } from './model'
@@ -26,7 +31,27 @@ export const WaitToReconnect = Command.define('WaitToReconnect', {
   execute: Effect.as(Effect.sleep(retryAfter), Message.WaitedToReconnect()),
 })
 
-type Return = Update.Return<Model, Message>
+type Return = Update.Return<Model, Message, EngineConnectionService>
+
+/** The stats row's Messages, folded into its submodel; a run it started is watched afresh. */
+const foldStats = Update.foldChild({
+  update: Stats.update,
+  read: (model: Model) => Option.some(model.console.stats),
+  write: (model, stats) =>
+    modifyFields(model, {
+      console: parts => modifyFields(parts, { stats: () => stats }),
+    }),
+  toParentMessage: (message: Stats.Message): Message =>
+    Message.GotStatsMessage({ message }),
+  foldOutMessage: (outMessage: Stats.OutMessage) => (model: Model) =>
+    Stats.OutMessage.match(outMessage, {
+      StartedRun: ({ project }) => ({
+        model: Option.contains(model.scope, project)
+          ? modifyFields(model, { runWatch: watch => watch + 1 })
+          : model,
+      }),
+    }),
+})
 
 /** Whether the Model's overlay is open. */
 export const isOverlayOpen = (model: Model): boolean =>
@@ -158,4 +183,9 @@ export const update = (model: Model, message: Message): Return =>
           }),
       }),
     }),
+    Ticked: ({ now }) => ({
+      model: modifyFields(model, { now: () => Option.some(now) }),
+    }),
+
+    GotStatsMessage: ({ message }) => foldStats(model, message),
   })

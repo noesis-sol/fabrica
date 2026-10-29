@@ -1,4 +1,4 @@
-import { Effect, Option, Schema, Stream } from 'effect'
+import { type DateTime, Effect, Option, Schema, Stream } from 'effect'
 import { Subscription } from 'foldkit'
 
 import { type EngineClientShape, Link } from '@fabrica/client'
@@ -41,6 +41,8 @@ export interface SubscriptionEnvironment {
   readonly nextFrame: Effect.Effect<void>
   /** The keys going down in the window. */
   readonly keys: Stream.Stream<Pressed>
+  /** The time now in the viewer's zone, about every second (clock.ts). */
+  readonly ticks: Stream.Stream<DateTime.Zoned>
 }
 
 /** The keys going down in `target`'s window, each with whether focus was in a text field. */
@@ -160,6 +162,7 @@ export const projectMessages = (
 export const makeSubscriptions = ({
   nextFrame,
   keys,
+  ticks,
 }: SubscriptionEnvironment) =>
   Subscription.make<Model, Message, EngineConnectionService>()(entry => ({
     keys: Subscription.persistentEntry(
@@ -174,10 +177,11 @@ export const makeSubscriptions = ({
       },
     ),
     runView: entry(
-      { project: Schema.Option(ProjectId) },
+      { project: Schema.Option(ProjectId), watch: Schema.Int },
       {
         modelToDependencies: model => ({
           project: isLive(model.connection) ? model.scope : Option.none(),
+          watch: model.runWatch,
         }),
         dependenciesToStream: ({ project }) =>
           Option.match(project, {
@@ -226,6 +230,16 @@ export const makeSubscriptions = ({
         dependenciesToStream: ({ live }) =>
           live
             ? withSession(session => projectMessages(session, nextFrame))
+            : Stream.empty,
+      },
+    ),
+    clock: entry(
+      { live: Schema.Boolean },
+      {
+        modelToDependencies: model => ({ live: isLive(model.connection) }),
+        dependenciesToStream: ({ live }) =>
+          live
+            ? Stream.map(ticks, now => Message.Ticked({ now }))
             : Stream.empty,
       },
     ),

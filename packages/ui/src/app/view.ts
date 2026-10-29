@@ -24,7 +24,7 @@ import * as Review from '../screens/review'
 import * as Settings from '../screens/settings'
 import * as Talks from '../screens/talks'
 import * as Worker from '../screens/worker'
-import { Connection } from './connection'
+import { Connection, isLive } from './connection'
 import {
   type KeyCommand,
   hints,
@@ -69,6 +69,29 @@ const sidebarView = (
   h: HtmlBuilder<Message>,
 ): Html => Sidebar.view(sidebar, { scope, messages: sidebarMessages }, h)
 const lazyStats = createLazy()
+
+/** The stats row, a Submodel: given the scope, the connection, the scoped run and the time. */
+const statsPart = (
+  stats: Stats.Model,
+  inputs: Stats.ViewInputs,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.submodel({
+    slotId: 'stats',
+    model: stats,
+    view: Stats.view,
+    viewInputs: inputs,
+    toParentMessage: message => Message.GotStatsMessage({ message }),
+  })
+
+const lazyStatsPart = (
+  stats: Stats.Model,
+  project: Model['scope'],
+  live: boolean,
+  run: Model['runView'],
+  now: Model['now'],
+  h: HtmlBuilder<Message>,
+): Html => statsPart(stats, { project, live, run, now }, h)
 const lazyTalkPanel = createLazy()
 const lazyHistory = createLazy()
 const lazyInProgress = createLazy()
@@ -89,11 +112,17 @@ const consoleView = (model: Model, h: HtmlBuilder<Message>): Html => {
     [h.Class('flex min-h-0 flex-1 flex-col gap-16')],
     [
       h.section(
+        [h.AriaLabel('Ticket stats')],
         [
-          h.AriaLabel('Ticket stats'),
-          h.Class('rounded-card border border-line bg-panel'),
+          lazyStats(lazyStatsPart, [
+            parts.stats,
+            model.scope,
+            isLive(model.connection),
+            model.runView,
+            model.now,
+            h,
+          ]),
         ],
-        [lazyStats(Stats.view<Message>, [parts.stats, h])],
       ),
       h.div(
         [

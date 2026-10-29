@@ -96,6 +96,10 @@ export const Model = Schema.Struct({
   load: Schema.Option(HostLoad),
   /** The scoped project's provider account's usage windows, from the model proxy (§12.9, H90). */
   usage: Schema.Option(Schema.Array(UsageWindow)),
+  /** The time now in the viewer's zone, from the clock's ticks (spec §18.3, H80). */
+  now: Schema.Option(Schema.DateTimeZoned),
+  /** Bumped to watch the scoped project's run view afresh: a run started from the app. */
+  runWatch: Schema.Int,
   console: ConsoleParts,
   screens: Screens,
 })
@@ -114,6 +118,8 @@ export const initialModel = (flags: Flags): Model => ({
   backlog: Option.none(),
   load: Option.none(),
   usage: Option.none(),
+  now: Option.none(),
+  runWatch: 0,
   console: {
     titlebar: Titlebar.init(),
     sidebar: Sidebar.init(),

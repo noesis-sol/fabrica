@@ -4,6 +4,7 @@ import { Runtime } from 'foldkit'
 import type { Platform } from '@fabrica/contracts'
 
 import { applyTheme, defaultTheme } from '../theme/theme'
+import { localTicks } from './clock'
 import { nextAnimationFrame } from './frame'
 import { Message } from './message'
 import { receiveEnginePort } from './port'
@@ -33,6 +34,7 @@ export const start = (target: Window): void => {
       enginePort: Effect.promise(() => enginePort),
       nextFrame: nextAnimationFrame,
       keys: documentKeys(target.document),
+      ticks: localTicks,
     }),
     container: target.document.getElementById('root'),
     devTools: { Message },
