@@ -70,9 +70,10 @@ export type Step = Data.TaggedEnum<{
     readonly checked: CommitHash
     readonly unchecked: boolean
   }
-  /** Base is fast-forwarded to `checked`, and the ticket recorded merged and closed. */
+  /** Base is fast-forwarded from `onto` to `checked`, and the ticket recorded merged and closed. */
   FastForward: {
     readonly rounds: number
+    readonly onto: CommitHash
     readonly checked: CommitHash
     readonly unchecked: boolean
   }
@@ -142,14 +143,15 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
       }),
     )
 
+  /** Base's commit, read in the checkout. */
+  const baseOf = (turn: MergeTurn) =>
+    commitOf(turn.config.home.checkout, `refs/heads/${turn.config.base}`)
+
   /** Base's commit and the branch's head, read side by side. */
   const ends = (turn: MergeTurn) =>
     Effect.all(
       {
-        base: commitOf(
-          turn.config.home.checkout,
-          `refs/heads/${turn.config.base}`,
-        ),
+        base: baseOf(turn),
         head: commitOf(turn.worktree.path, 'HEAD'),
       },
       { concurrency: 'unbounded' },
@@ -224,6 +226,15 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
               return done(
                 MergeOutcome.SetupFailed({ ticket, detail: ready.detail }),
               )
+            // The worktree was clean before it: what git's status shows now, the setup left.
+            const left = yield* git.status({ worktree: path })
+            const dirty = yield* afterCheck({
+              turn,
+              by: 'setup',
+              changed: left.uncommitted,
+              wrote: left.untracked,
+            })
+            if (Option.isSome(dirty)) return aside(turn, dirty.value)
           }
           return Step.Check({ rounds, onto, head })
         }),
@@ -294,11 +305,13 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
                     }),
                   ),
                 Seen: ({ changed, wrote }) =>
-                  Effect.map(afterCheck({ turn, changed, wrote }), left =>
-                    Option.match(left, {
-                      onNone: () => confirm(head, false),
-                      onSome: given => aside(turn, given),
-                    }),
+                  Effect.map(
+                    afterCheck({ turn, by: 'check', changed, wrote }),
+                    left =>
+                      Option.match(left, {
+                        onNone: () => confirm(head, false),
+                        onSome: given => aside(turn, given),
+                      }),
                   ),
               }),
             Failed: failed => handedBack(turn, failed),
@@ -354,70 +367,98 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
       return yield* goRound(turn, rounds, `${turn.worktree.branch} moved on`)
     if (base !== onto)
       return yield* goRound(turn, rounds, `${turn.config.base} moved on`)
-    return Step.FastForward({ rounds, checked, unchecked })
+    return Step.FastForward({ rounds, onto, checked, unchecked })
   })
 
-  /** Fast-forwards Base to the checked commit, and records it: the one step a stop waits for. */
-  const merge = (
+  /**
+   * Fast-forwards Base to the checked commit once its checkout is clean, and records it: the one step a
+   * stop waits for, but in its waits for the checkout and before a refused fast-forward is tried again.
+   */
+  const fastForward = Effect.fn('MergeQueue.fastForward')(function* (
     turn: MergeTurn,
     {
       rounds,
+      onto,
       checked,
       unchecked,
     }: {
       readonly rounds: number
+      readonly onto: CommitHash
       readonly checked: CommitHash
       readonly unchecked: boolean
     },
-  ) =>
-    Effect.gen(function* () {
-      const { ticket } = turn.worktree
-      const { actor } = turn.config
-      const outcome = yield* git.fastForward({
-        checkout: turn.config.home.checkout,
-        base: turn.config.base,
-        to: checked,
-      })
-      if (!FastForwardOutcome.$is('FastForwarded')(outcome)) {
-        const diagnosis = yield* diagnose({ turn, outcome })
-        return Diagnosis.$match(diagnosis, {
-          Again: () => Step.Locate({ rounds: rounds + 1 }),
-          SetAside: given => aside(turn, given),
-          Stop: ({ kind, detail }) =>
-            done(MergeOutcome.Stopped({ ticket, kind, detail })),
+  ) {
+    const { ticket } = turn.worktree
+    const { actor } = turn.config
+    /** The fast-forward, tried again as its refusals are diagnosed: none once it's done, else the next step. */
+    const forward = (
+      retries: number,
+    ): Effect.Effect<Option.Option<Step>, CantTell | GitFailed> =>
+      Effect.gen(function* () {
+        yield* Effect.interruptible(
+          Effect.provideService(checkoutReady(turn), Git, git),
+        )
+        const outcome = yield* git.fastForward({
+          checkout: turn.config.home.checkout,
+          base: turn.config.base,
+          to: checked,
         })
-      }
-      yield* graph.update({
-        id: ticket,
-        changes: { mergedCommit: Option.some(checked) },
-        actor,
+        if (FastForwardOutcome.$is('FastForwarded')(outcome))
+          return Option.none()
+        const diagnosis = yield* Effect.interruptible(
+          diagnose({
+            turn,
+            onto,
+            checked,
+            outcome,
+            retries,
+            base: baseOf(turn),
+          }),
+        )
+        return yield* Diagnosis.$match(diagnosis, {
+          Again: () =>
+            Effect.map(
+              goRound(turn, rounds, `${turn.config.base} moved on`),
+              Option.some,
+            ),
+          Retry: () => forward(retries + 1),
+          SetAside: given => Effect.succeedSome(aside(turn, given)),
+          Stop: ({ kind, detail }) =>
+            Effect.succeedSome(
+              done(MergeOutcome.Stopped({ ticket, kind, detail })),
+            ),
+        })
       })
-      yield* graph
-        .close({
+    return yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        const notMerged = yield* forward(0)
+        if (Option.isSome(notMerged)) return notMerged.value
+        yield* graph.update({
           id: ticket,
-          resolution: 'done',
-          reason: unchecked
-            ? `Merged unchecked as ${checked}: check_fast is none.`
-            : `Merged as ${checked}.`,
+          changes: { mergedCommit: Option.some(checked) },
           actor,
         })
-        .pipe(Effect.catchTag('TransitionRefused', () => Effect.void))
-      yield* removed(turn)
-      return done(MergeOutcome.Merged({ ticket, commit: checked, unchecked }))
-    }).pipe(Effect.uninterruptible)
-
-  const fastForward = Effect.fn('MergeQueue.fastForward')(function* (
-    turn: MergeTurn,
-    step: Parameters<typeof merge>[1],
-  ) {
-    yield* checkoutReady(turn)
-    return yield* merge(turn, step)
+        yield* graph
+          .close({
+            id: ticket,
+            resolution: 'done',
+            reason: unchecked
+              ? `Merged unchecked as ${checked}: check_fast is none.`
+              : `Merged as ${checked}.`,
+            actor,
+          })
+          .pipe(Effect.catchTag('TransitionRefused', () => Effect.void))
+        yield* removed(turn)
+        return done(MergeOutcome.Merged({ ticket, commit: checked, unchecked }))
+      }),
+    )
   })
 
   /** The ticket's worktree and branch removed; a failure is logged, as the ticket is settled already. */
   const removed = (turn: MergeTurn) =>
     cleanUp(turn).pipe(
       Effect.provideService(Worktrees, worktrees),
+      Effect.provideService(Git, git),
       Effect.catch(error =>
         Effect.logWarning(
           `Couldn't remove ${turn.worktree.ticket}'s worktree and branch`,

@@ -12,7 +12,7 @@ import type { CheckRecord } from '../checks'
 
 // What the merge queue publishes (spec §13.7, §13.12): each merge's steps, its checks' records and how
 // it ended, as tagged values the run matches exhaustively. A ticket's phase follows from them: `Step`
-// is `merging`, the endings are `merged`, `no_change`, `set_aside`, or back to waiting.
+// is `merging` (`Wrote` and `MergesWait` tell more of it), the endings are `merged`, `no_change`, `set_aside`, or back to waiting.
 
 /** The stops a merge can bring a run to: it stops merging, and the run ends with its kind (§13.11). */
 export type MergeStopKind = Extract<
@@ -20,12 +20,28 @@ export type MergeStopKind = Extract<
   'MERGE_FAILED' | 'OFF_BRANCH' | 'TRACKER_FAILED'
 >
 
+/** What ran in a ticket's worktree during its merge: the setup its rebase called for, or the merge check. */
+export type LeftBy = 'setup' | 'check'
+
 /** What the merge queue publishes: its merges' progress, and how each ended. */
 export type MergeUpdate = Data.TaggedEnum<{
   /** A ticket's merge entered `step`. */
   Step: { readonly ticket: TicketId; readonly step: MergeStep }
   /** A check of a ticket's merge ended: its record, for the event stream. */
   Check: { readonly ticket: TicketId; readonly record: CheckRecord }
+  /** The merge's setup or check wrote untracked `files` in the worktree: recorded, and they go with it. */
+  Wrote: {
+    readonly ticket: TicketId
+    readonly by: LeftBy
+    readonly files: ReadonlyArray<string>
+  }
+  /** The fast-forward waits on `checkout`'s uncommitted changes to `files` (`MERGES_WAIT`, H72), until it is clean. */
+  MergesWait: {
+    readonly ticket: TicketId
+    readonly checkout: string
+    readonly files: ReadonlyArray<string>
+    readonly detail: string
+  }
   /** Base was fast-forwarded to `commit`, the commit its merge check passed on; unchecked under `check_fast: none`. */
   Merged: {
     readonly ticket: TicketId
@@ -58,6 +74,6 @@ export const MergeUpdate = Data.taggedEnum<MergeUpdate>()
 /** How a ticket's turn in the merge queue ended: every update but its progress. */
 export type MergeOutcome = Exclude<
   MergeUpdate,
-  { readonly _tag: 'Step' | 'Check' }
+  { readonly _tag: 'Step' | 'Check' | 'Wrote' | 'MergesWait' }
 >
 export const MergeOutcome = Data.taggedEnum<MergeOutcome>()

@@ -1,6 +1,18 @@
 // The merge queue (spec §13.7): finished tickets' merges onto Base, one at a time, as named steps.
 export * from './outcome'
 export {
+  type Aside,
+  Diagnosis,
+  FAST_FORWARD_RETRIES,
+  MergeWaits,
+  type MergeWaitsShape,
+  RECHECKS,
+  asideFolder,
+  cleanUp,
+  clearAside,
+  diagnose,
+} from './hygiene'
+export {
   type MergeLine,
   MergeQueue,
   type MergeQueueShape,
