@@ -2,6 +2,8 @@
 import { Cause, Console, Effect } from 'effect'
 
 import { NodeRuntime } from '@effect/platform-node'
+import type { Host } from '@fabrica/contracts'
+import { layerNodeHost } from '@fabrica/engine'
 
 import { bridge } from './bridge'
 import { serve } from './serve'
@@ -12,7 +14,7 @@ import { versionLine } from './version'
 
 const command = (
   name: string | undefined,
-): Effect.Effect<void, { readonly message: string }> => {
+): Effect.Effect<void, { readonly message: string }, Host> => {
   switch (name) {
     case 'serve':
       return serve
@@ -24,6 +26,7 @@ const command = (
 }
 
 command(process.argv[2]).pipe(
+  Effect.provide(layerNodeHost),
   Effect.tapError(error => Console.error(`fabrica: ${error.message}`)),
   Effect.tapCause(cause =>
     Cause.hasDies(cause) ? Console.error(Cause.pretty(cause)) : Effect.void,

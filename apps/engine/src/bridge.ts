@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 
 import { Daemon } from '@fabrica/engine'
 
-import { hostPaths } from './host'
+import { hostFacts, hostPaths } from './host'
 
 // `fabrica bridge` (spec §19, §8.2): connects stdin and stdout to the local engine's socket, starting
 // the engine when it isn't running; what SSH and WSL2 clients run.
@@ -23,7 +23,7 @@ const startDetached = Effect.sync(() => {
 })
 
 export const bridge = Effect.gen(function* () {
-  const paths = yield* hostPaths
+  const paths = yield* hostFacts.pipe(Effect.flatMap(hostPaths))
   yield* Daemon.runBridge({
     socket: paths.socket,
     input: process.stdin,
