@@ -81,6 +81,9 @@ const linkMessage = Link.$match({
       protocol: hello.protocol,
     }),
   Down: () => Message.LostEngine(),
+  // The client stopped reconnecting: the connection is tried again, with a client of its own.
+  Lost: () =>
+    Message.FailedToConnect({ reason: 'the client stopped reconnecting' }),
   Refused: ({ mismatch }) =>
     Message.RefusedByEngine({
       client: mismatch.client,

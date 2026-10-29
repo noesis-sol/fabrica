@@ -52,23 +52,33 @@ export const advance = <S, P>(
 export const isDefect = (error: RpcClientError.RpcClientError): boolean =>
   error.reason._tag === 'RpcClientDefect'
 
+/** What the wait after a lost connection came to: another connection, or none to come. */
+export type Reconnect = Data.TaggedEnum<{
+  /** Another connection is up: the stream subscribes again. */
+  Reconnected: {}
+  /** The client has stopped reconnecting: the stream ends with the connection's loss. */
+  Stopped: {}
+}>
+export const Reconnect = Data.taggedEnum<Reconnect>()
+
 /**
  * The items of a stream subscribed through `subscribe`, kept going across lost connections: when the
  * stream fails with the connection's loss, it waits for `reconnected` (the wait for the connection
  * after the one the subscription was made on, read as it is made) and subscribes again from where it
- * stood. A defect ends it, failing with its client error.
+ * stood. A defect ends it, failing with its client error, and so does the loss after which the client
+ * stops reconnecting.
  */
 export const resumable = <S, P, E, R, F>(options: {
   readonly subscribe: (
     resume: Option.Option<Resume>,
   ) => Stream.Stream<StreamItem<S, P>, E | RpcClientError.RpcClientError, R>
-  readonly reconnected: Effect.Effect<Effect.Effect<void, F>>
+  readonly reconnected: Effect.Effect<Effect.Effect<Reconnect, F>>
 }): Stream.Stream<
   StreamItem<S, P>,
   Exclude<E, RpcClientError.RpcClientError> | F | RpcClientError.RpcClientError,
   R
 > => {
-  /** Whether an error is the stream's own rather than the connection's loss. */
+  /** Whether an error is the stream's own rather than the client's. */
   const isOwn = (
     error: E | RpcClientError.RpcClientError,
   ): error is Exclude<E, RpcClientError.RpcClientError> =>
@@ -106,13 +116,22 @@ export const resumable = <S, P, E, R, F>(options: {
               if (isOwn(error)) {
                 return Stream.fail(error)
               }
-              if (
-                error instanceof RpcClientError.RpcClientError &&
-                isDefect(error)
-              ) {
-                return Stream.fail(error)
+              if (error instanceof RpcClientError.RpcClientError) {
+                if (isDefect(error)) {
+                  return Stream.fail(error)
+                }
+                return Stream.unwrap(
+                  Effect.map(
+                    reconnected,
+                    Reconnect.$match({
+                      Reconnected: () => subscribe(cursor),
+                      Stopped: () => Stream.fail(error),
+                    }),
+                  ),
+                )
               }
-              return Stream.unwrap(Effect.as(reconnected, subscribe(cursor)))
+              // Not reached: an error that isn't the stream's own is the client's.
+              return Stream.die(error)
             },
           ),
         )

@@ -33,9 +33,10 @@ import {
 
 // The connection to the engine (spec §8.2, §18.1): a ManagedResource, the engine client over the
 // connection process's MessagePort, held while the Model wants it. Its first hello says whether the
-// engine takes the app; after that the client's link, Up, Down while it reconnects, or Refused by an
-// engine that was updated meanwhile, comes in as Messages through a subscription. An attempt that
-// fails is tried again after a pause; a refused one waits for an update, since retrying can't help.
+// engine takes the app; after that the client's link, Up, Down while it reconnects, Lost where it has
+// stopped reconnecting, or Refused by an engine that was updated meanwhile, comes in as Messages
+// through a subscription. An attempt that fails is tried again after a pause; a refused one waits for
+// an update, since retrying can't help.
 
 /** The connection, as the app shows it. */
 export const Connection = defineTaggedUnion({
@@ -109,6 +110,7 @@ export const connect = Effect.fn('EngineConnection.connect')(function* (
         },
       }),
     Down: () => Effect.fail(new NotLinked()),
+    Lost: () => Effect.fail(new NotLinked()),
     Refused: ({ mismatch }) => Effect.fail(mismatch),
   })
 })

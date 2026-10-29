@@ -1,11 +1,13 @@
 import {
+  Cause,
   Context,
   Data,
   Effect,
   Layer,
   Option,
+  Pull,
   Ref,
-  type Schedule,
+  Schedule,
   Stream,
   SubscriptionRef,
 } from 'effect'
@@ -22,7 +24,7 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { type StreamItem, isDefect, resumable } from './resume'
+import { Reconnect, type StreamItem, isDefect, resumable } from './resume'
 
 // The engine client (spec §8): Effect RPC over a transport's `Socket`, its frames NDJSON. The client
 // says hello at every connection (§8.4): the first at its start, which fails when the engine can't be
@@ -32,7 +34,8 @@ import { type StreamItem, isDefect, resumable } from './resume'
 // the app's connection process each run one per engine, over the transport that reaches it. A request
 // or stream the engine answers with a defect (one it doesn't serve yet answers `NotImplemented`) fails
 // with an `RpcClientError` whose reason is an `RpcClientDefect`, a failure every caller catches; a
-// stream `watch` follows ends with it rather than waiting for a reconnect that won't mend it.
+// stream `watch` follows ends with it rather than waiting for a reconnect that won't mend it. A
+// `reconnect` schedule that ends leaves the link `Lost`, and the streams `watch` follows end then.
 
 /** The client's link to its engine. `connection` counts the connections the transport has opened. */
 export type Link = Data.TaggedEnum<{
@@ -40,6 +43,8 @@ export type Link = Data.TaggedEnum<{
   Up: { readonly connection: number; readonly hello: EngineHello }
   /** The connection was lost; the client is reconnecting. */
   Down: { readonly connection: number }
+  /** Connection `connection` was lost and the client stopped reconnecting: its `reconnect` ended. */
+  Lost: { readonly connection: number }
   /** The engine on connection `connection` shares no version with the client: one must be updated. */
   Refused: {
     readonly connection: number
@@ -61,7 +66,10 @@ export interface ClientOptions extends Pick<
 > {
   /** The protocol version the client speaks: this package's, `protocolVersion`, unless a test says. */
   readonly protocol?: ProtocolVersion
-  /** When to try the engine again after a lost connection: Effect's back-off (0.5 s, up to 5 s) unless given. */
+  /**
+   * When to try the engine again after a lost connection: Effect's back-off (0.5 s, up to 5 s), for
+   * good, unless given. Where the schedule ends, the client stops reconnecting and its link is `Lost`.
+   */
   readonly reconnect?: Schedule.Schedule<unknown, Socket.SocketError>
 }
 
@@ -78,7 +86,8 @@ export interface EngineClientShape {
   /**
    * A stream subscribed through `subscribe`, resumed after each lost connection from the last
    * sequence number it took; it fails when the engine it reconnects to refuses the client's version,
-   * or when the engine answers it with a defect.
+   * when the engine answers it with a defect (or a frame the client can't read), and with the
+   * connection's loss when the client stops reconnecting after it.
    */
   readonly watch: <S, P, E, R>(
     subscribe: (
@@ -146,14 +155,19 @@ const failingOnDefects = (rpc: FabricaClient): FabricaClient =>
     },
   })
 
-/** The first link after `connection` that is up or refused: the client may subscribe again, or never. */
+/**
+ * The first link after `connection` that is up or refused, or the link lost for good: the client may
+ * subscribe again, or never.
+ */
 const linkAfter = (
   links: SubscriptionRef.SubscriptionRef<Link>,
   connection: number,
-): Effect.Effect<void, VersionMismatch> =>
+): Effect.Effect<Reconnect, VersionMismatch> =>
   SubscriptionRef.changes(links).pipe(
     Stream.filter(
-      link => link.connection > connection && !Link.$is('Down')(link),
+      link =>
+        Link.$is('Lost')(link) ||
+        (link.connection > connection && !Link.$is('Down')(link)),
     ),
     Stream.runHead,
     Effect.flatMap(
@@ -161,11 +175,27 @@ const linkAfter = (
         // The link's changes end only as the client closes.
         onNone: () => Effect.interrupt,
         onSome: Link.$match({
-          Up: () => Effect.void,
-          Down: () => Effect.void,
+          Up: () => Effect.succeed(Reconnect.Reconnected()),
+          Down: () => Effect.succeed(Reconnect.Reconnected()),
+          Lost: () => Effect.succeed(Reconnect.Stopped()),
           Refused: ({ mismatch }) => Effect.fail(mismatch),
         }),
       }),
+    ),
+  )
+
+/** `schedule`, running `ended` as it ends: the socket protocol stops reconnecting then. */
+const endingWith = (
+  schedule: Schedule.Schedule<unknown, Socket.SocketError>,
+  ended: Effect.Effect<void>,
+): Schedule.Schedule<unknown, Socket.SocketError> =>
+  Schedule.fromStep(
+    Effect.map(
+      Schedule.toStep(schedule),
+      step => (now: number, input: Socket.SocketError) =>
+        Pull.catchDone(step(now, input), output =>
+          Effect.andThen(ended, Cause.done(output)),
+        ),
     ),
   )
 
@@ -187,8 +217,14 @@ export const make = Effect.fn('EngineClient.make')(function* (
       Link.$is('Up')(link) ? Link.Down({ connection: link.connection }) : link,
     ),
   })
+  const lost = SubscriptionRef.update(links, link =>
+    Link.Lost({ connection: link.connection }),
+  )
   const protocol = yield* RpcClient.makeProtocolSocket({
-    retryPolicy: options.reconnect,
+    retryPolicy:
+      options.reconnect === undefined
+        ? undefined
+        : endingWith(options.reconnect, lost),
   }).pipe(
     Effect.provideService(RpcClient.ConnectionHooks, hooks),
     Effect.provideService(
