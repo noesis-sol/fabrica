@@ -8,3 +8,5 @@
   each frame of the backlog comes, one request at a time.
 - `tickets.edges` (spec §8.1): every link between a project's tickets in one request, as the Backlog graph
   draws them, read through the work graph's new `edges`.
+- The backlog stream sends a ticket again when one of its links is added or removed, though the ticket
+  itself is unchanged (`KeyedFeed.resend`), so the Backlog screen asks for the links and the reasons afresh.

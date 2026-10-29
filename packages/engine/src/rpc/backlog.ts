@@ -15,6 +15,7 @@ import {
   type Ticket,
   type TicketChanges,
   TicketDetail,
+  type TicketEvent,
   type TicketFilter,
   type TicketId,
   TicketNotFound,
@@ -96,6 +97,27 @@ export const whyOf = (reasons: ReadonlyArray<WaitReason>): Why => {
     ? Why.cases.ready.make({})
     : Why.cases.not_ready.make({ reasons: [first, ...rest] })
 }
+
+/**
+ * Sends a change of the work graph on its backlog stream: its ticket as it is now, or its going. A
+ * link added or removed changes no ticket, so its ticket is sent again all the same: a client drawing
+ * the links (the Backlog screen's graph, §18.4) asks for them afresh.
+ */
+export const sendChange =
+  (graph: WorkGraphShape, feed: KeyedFeed<Ticket, TicketId, BacklogItem>) =>
+  (event: TicketEvent): Effect.Effect<void, WorkGraph.StoreFailed> =>
+    Option.match(event.ticketId, {
+      onNone: () => Effect.void,
+      onSome: id =>
+        graph.show(id).pipe(
+          Effect.flatMap(({ ticket }) =>
+            event.change._tag === 'linked' || event.change._tag === 'unlinked'
+              ? feed.resend(ticket)
+              : feed.upsert(ticket),
+          ),
+          Effect.catchTag('TicketNotFound', () => feed.remove(id)),
+        ),
+    })
 
 /** A project's backlog stream, and the work graph it is fed from. */
 interface Watched {
@@ -450,18 +472,8 @@ export const makeBacklogHandlers = Effect.gen(function* () {
           snapshot: BacklogItem.cases.snapshot.make,
           patch: BacklogItem.cases.patch.make,
         })
-        // Each change sends its ticket as it is now, or its going.
         yield* changes.pipe(
-          Stream.runForEach(event =>
-            Option.match(event.ticketId, {
-              onNone: () => Effect.void,
-              onSome: id =>
-                graph.show(id).pipe(
-                  Effect.flatMap(({ ticket }) => feed.upsert(ticket)),
-                  Effect.catchTag('TicketNotFound', () => feed.remove(id)),
-                ),
-            }),
-          ),
+          Stream.runForEach(sendChange(graph, feed)),
           Effect.catch(error =>
             Effect.logWarning(
               `the backlog of ${project} stopped sending its changes: ${error.message}`,

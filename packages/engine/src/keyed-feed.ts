@@ -12,7 +12,7 @@ import { drawBase36 } from './workgraph/ids'
 
 // A stream of a list of things with keys (spec §8.3): the projects' rows, a project's tickets. It is
 // sent as a snapshot, then a patch for each change, each numbered. An item that says what it said
-// before is no patch. The feed keeps its last patches, so a client that reconnects gets those after
+// before is no patch, unless it is sent again for what it doesn't carry. The feed keeps its last patches, so a client that reconnects gets those after
 // its last number (`planResume`), and one too far behind, or of an engine that has since restarted
 // (another epoch), a snapshot. A change and a subscription take the same lock, so a subscriber sees
 // every patch after its first item, once.
@@ -37,6 +37,8 @@ interface FeedState<A, K> {
 export interface KeyedFeed<A, K, Item> {
   /** Sets the item with its key, a new one at the end. */
   readonly upsert: (item: A) => Effect.Effect<void>
+  /** Sends the item again though it says the same: something it doesn't carry changed (a ticket's links). */
+  readonly resend: (item: A) => Effect.Effect<void>
   /** Drops the item with the key. */
   readonly remove: (key: K) => Effect.Effect<void>
   /** The items, as a snapshot or the patches after `resume`, then every patch as it is made. */
@@ -114,12 +116,14 @@ export const makeKeyedFeed = Effect.fn('KeyedFeed.make')(function* <A, K, Item>(
       }),
     )
 
-  const upsert = (item: A) =>
+  /** Sets the item; `always` sends it though it says what it said before. */
+  const put = (item: A, always: boolean) =>
     apply(items => {
       const key = keyOf(item)
       const index = items.findIndex(each => keyOf(each) === key)
       const found = items[index]
-      if (found !== undefined && same(found, item)) return Option.none()
+      if (found !== undefined && !always && same(found, item))
+        return Option.none()
       return Option.some({
         items:
           found === undefined
@@ -129,6 +133,10 @@ export const makeKeyedFeed = Effect.fn('KeyedFeed.make')(function* <A, K, Item>(
         remove: [],
       })
     })
+
+  const upsert = (item: A) => put(item, false)
+
+  const resend = (item: A) => put(item, true)
 
   const remove = (key: K) =>
     apply(items =>
@@ -175,5 +183,5 @@ export const makeKeyedFeed = Effect.fn('KeyedFeed.make')(function* <A, K, Item>(
       ),
     )
 
-  return { upsert, remove, watch } satisfies KeyedFeed<A, K, Item>
+  return { upsert, resend, remove, watch } satisfies KeyedFeed<A, K, Item>
 })

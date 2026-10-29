@@ -626,6 +626,35 @@ describe('the screen', () => {
     )
   })
 
+  test('a ticket sent again unchanged, as a link of its changed, asks the engine afresh', () => {
+    const opened = update(
+      connected,
+      Message.RequestedScreen({ screen: Screen.Backlog() }),
+    ).model
+    const received = update(opened, snapshot).model
+    const answered = update(
+      received,
+      Message.GotBacklogMessage({
+        message: Backlog.Message.SucceededLoadFacts({ facts: facts() }),
+      }),
+    ).model
+    expect(answered.screens.backlog.asking).toEqual(Option.none())
+    const resent = update(
+      answered,
+      Message.ReceivedBacklog({
+        project,
+        items: [
+          {
+            _tag: 'patch',
+            seq: 1,
+            value: { upsert: [session], remove: [] },
+          },
+        ],
+      }),
+    )
+    expect(requests(resent.commands)).toEqual(loadFacts(openIds))
+  })
+
   test('with every project in scope, it asks for one', () => {
     scene(
       { update, view },
