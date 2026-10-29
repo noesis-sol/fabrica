@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Option } from 'effect'
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 
 import type { CommitHash, FileDiff, TreeHash } from '@fabrica/contracts'
@@ -457,7 +457,12 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
           await writeFile(join(tree, 'HEAD'), `${head}\n`)
           const index = join(own, 'index')
           if (!existsSync(index)) return false
+          // The copy keeps the index's times: git takes an entry whose file changed in the second
+          // the index was written as racily clean, and checks its content, by the index file's
+          // mtime; a copy newer than such an edit would have a same-size one taken as unchanged.
+          const times = await stat(index)
           await copyFile(index, join(tree, 'index'))
+          await utimes(join(tree, 'index'), times.atime, times.mtime)
           return true
         },
         catch: cause =>
