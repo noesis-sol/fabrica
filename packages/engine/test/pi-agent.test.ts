@@ -56,8 +56,8 @@ import {
  * a record missing a field among them, a U+2028 inside a string), and behaves as `STUB_MODE` says:
  * `long` (a turn that runs until aborted), `wedged` (answers no abort, ignores SIGTERM), `slow-exit`
  * (exits a while after SIGTERM), `slow-abort` (answers an abort a while later), `silent` (answers
- * nothing), `exit-at-start`, `with-child` (starts a child in a group of its own, as Pi's bash tool
- * does), `dialog` (an extension asks the UI before the turn settles).
+ * nothing), `handled` (an extension handles every prompt, so no turn runs), `exit-at-start`,
+ * `with-child` (starts a child in a group of its own, as Pi's bash tool does), `dialog` (an extension asks the UI before the turn settles).
  */
 const STUB = `import { spawn } from 'node:child_process'
 import { appendFileSync, readFileSync } from 'node:fs'
@@ -112,6 +112,7 @@ const handle = command => {
     case 'get_state':
       return respond(command.id, 'get_state', { sessionId, sessionFile, isStreaming: turn, messageCount: 0 })
     case 'prompt':
+      if (mode === 'handled') return respond(command.id, 'prompt', { disposition: 'handled' })
       respond(command.id, 'prompt', { disposition: 'started' })
       turn = true
       out({ type: 'agent_start' })
@@ -228,10 +229,13 @@ const runnerConfig = (): RunnerConfig => ({
 const folders = (name: string) => {
   const base = join(root, name)
   mkdirSync(base)
+  // Made before the stub writes to it, so a wait can watch the file itself (see `logged`).
+  const log = join(base, 'stub.log')
+  writeFileSync(log, '')
   return {
     data: join(base, 'data'),
     configRoot: join(base, 'agents'),
-    log: join(base, 'stub.log'),
+    log,
   }
 }
 
@@ -307,11 +311,21 @@ const entries = (log: string): ReadonlyArray<Entry> =>
   existsSync(log)
     ? readFileSync(log, 'utf8')
         .split('\n')
-        .filter(line => line !== '')
-        .map((line): Entry => JSON.parse(line))
+        .flatMap((line): ReadonlyArray<Entry> => {
+          // A line the stub is still writing is read whole on the next change.
+          try {
+            return [JSON.parse(line)]
+          } catch {
+            return []
+          }
+        })
     : []
 
-/** Waits, on the folder's change events, for the log to hold an entry `found` matches. */
+/**
+ * Waits, on the log file's change events, for it to hold an entry `found` matches. The file is
+ * watched, not its folder: macOS starts a folder's watch a while after it is asked for, and a line
+ * written meanwhile, with nothing written after it, would never be seen.
+ */
 const logged = (
   log: string,
   found: (entry: Entry) => boolean,
@@ -321,7 +335,7 @@ const logged = (
       const entry = entries(log).find(found)
       if (entry !== undefined) resume(Effect.succeed(entry))
     }
-    const watcher = watch(dirname(log), look)
+    const watcher = watch(log, look)
     look()
     return Effect.sync(() => watcher.close())
   })
@@ -561,6 +575,22 @@ describe('PiAgent', () => {
       expect(commands.map(e => e.type)).toEqual(['switch_session', 'get_state'])
     }).pipe(Effect.scoped, Effect.provide(services(config)))
   })
+
+  it.live(
+    'returns at once from a prompt an extension handled, no turn run',
+    () => {
+      const config = agentConfig('handled')
+      return Effect.gen(function* () {
+        const { start } = yield* PiAgent
+        const agent = yield* start(startOptions(config.log, 'handled'))
+        expect(yield* agent.prompt('/ext-command')).toEqual({
+          disposition: 'handled',
+          aborted: false,
+        })
+        expect(yield* agent.steer('Still open')).toBe('queued')
+      }).pipe(Effect.scoped, Effect.provide(services(config)))
+    },
+  )
 
   it.live(
     'cancels an extension’s dialog, so the turn never waits on it',

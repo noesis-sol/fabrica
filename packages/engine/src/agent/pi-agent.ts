@@ -103,7 +103,10 @@ export interface Agent {
    * lost however late it is read, and ends when Pi exits.
    */
   readonly events: Effect.Effect<Stream.Stream<PiEvent>, never, Scope.Scope>
-  /** Sends a prompt (the first, or a hand-back) and waits for its turn to settle; interrupted, it aborts the turn. */
+  /**
+   * Sends a prompt (the first, or a hand-back) and waits for its turn to settle; interrupted, it
+   * aborts the turn. A prompt an extension handled runs no turn, and returns at once.
+   */
   readonly prompt: (message: string) => Effect.Effect<Settled, AgentSendFailed>
   /** Sends a maintainer's message into the running turn. */
   readonly steer: (
@@ -512,6 +515,11 @@ export const make = Effect.fn('PiAgent.make')(function* (
             PiCommand.Prompt({ message }),
             PiDisposition,
           )
+          // An extension handled it: no turn runs, so none settles (Pi's own RPC client waits on none).
+          if (disposition === 'handled') {
+            const handled: Settled = { disposition, aborted: false }
+            return handled
+          }
           for (;;) {
             const next = yield* take
             if (Option.isNone(next))
