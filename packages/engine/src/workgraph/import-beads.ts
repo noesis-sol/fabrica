@@ -266,12 +266,19 @@ const mapIssue = Effect.fnUntraced(function* (
   const status: TicketStatus =
     mapped === 'open' && Option.isSome(deferUntil) ? 'deferred' : mapped
 
+  const entries: Array<readonly [string, unknown]> = []
+  for (const [key, value] of Object.entries(issue.metadata ?? {})) {
+    if (Option.isSome(question) && questionKeys.includes(key)) continue
+    const kept = metadataEntry(key, value)
+    entries.push(kept)
+    if (kept[0] !== key) {
+      dropped.push(
+        `${ticketId}'s metadata ${key}: not what the engine reads there; kept as ${kept[0]}`,
+      )
+    }
+  }
   const metadata = yield* decodeMetadata({
-    ...Object.fromEntries(
-      Object.entries(issue.metadata ?? {}).filter(
-        ([key]) => Option.isNone(question) || !questionKeys.includes(key),
-      ),
-    ),
+    ...Object.fromEntries(entries),
     ...(issue.spec_id === undefined ? {} : { spec_id: issue.spec_id }),
     ...(issue.external_ref === undefined
       ? {}
@@ -374,6 +381,30 @@ const mapIssue = Effect.fnUntraced(function* (
 })
 
 const decodeMetadata = Schema.decodeUnknownEffect(TicketMetadata)
+
+const metadataDecodes = (key: string, value: unknown): boolean =>
+  Option.isSome(Schema.decodeUnknownOption(TicketMetadata)({ [key]: value }))
+
+/**
+ * A Beads metadata key and its value as the engine keeps them. A key the engine reads whose value
+ * it can't read there is taken from JSON text where it is that (tutti writes `predicted_files` as a
+ * JSON list in a string), and otherwise kept as it is under `beads_<key>`.
+ */
+const metadataEntry = (
+  key: string,
+  value: unknown,
+): readonly [string, unknown] => {
+  if (metadataDecodes(key, value)) return [key, value]
+  if (typeof value === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(value)
+      if (metadataDecodes(key, parsed)) return [key, parsed]
+    } catch {
+      // Not JSON: kept as it is, below.
+    }
+  }
+  return [`beads_${key}`, value]
+}
 
 /** Every import is the maintainer's: Beads' authors are names, which an actor doesn't carry. */
 const maintainer = Actor.cases.maintainer.make({})

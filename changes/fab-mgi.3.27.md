@@ -2,8 +2,9 @@
   `bd export` JSONL file) into a project's work graph (spec §11.6), IDs kept with their prefix: types (one
   Fabrica lacks becomes a task labelled with it), statuses (`blocked` and `pinned` open, `hooked` in progress,
   an open ticket with a defer time deferred), priorities, labels, `blocks`, `parent-child`, `discovered-from`
-  and `related` links, comments and notes as notes, design, acceptance criteria and metadata. A ticket
-  labelled `human` with options in its metadata becomes a question, answered as `bd human respond` answered
+  and `related` links, comments and notes as notes, design, acceptance criteria and metadata (an engine key
+  holding a JSON list as text, such as tutti's `predicted_files`, read as the list; one the engine can't read
+  kept as `beads_<key>` and said). A ticket labelled `human` with options in its metadata becomes a question, answered as `bd human respond` answered
   it, cancelled when dismissed. A file with a record the work graph can't hold is refused whole, with every
   problem by line; a link of another kind, or to a ticket neither the file nor the project has, is left out
   and said. Importing into a project with tickets merges them until the tickets ref's merge exists: the

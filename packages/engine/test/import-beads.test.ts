@@ -328,6 +328,47 @@ describe('importBeads', () => {
     }).pipe(Effect.provide(graphLayer)),
   )
 
+  it.effect(
+    'reads metadata the engine reads from JSON text, and keeps what it can’t read under another key',
+    () =>
+      Effect.gen(function* () {
+        const imported = yield* importSample(
+          jsonl([
+            record('bd-m1', {
+              metadata: {
+                predicted_files: '["src/a.ts","src/b.ts"]',
+                files: 'unknown',
+                spec_commit: 'abc',
+              },
+            }),
+          ]),
+        )
+        expect(imported.created).toBe(1)
+        expect(imported.dropped).toStrictEqual([
+          "bd-m1's metadata files: not what the engine reads there; kept as beads_files",
+        ])
+        const { ticket } = yield* show('bd-m1')
+        expect(ticket.metadata.predicted_files).toStrictEqual(
+          Option.some(['src/a.ts', 'src/b.ts']),
+        )
+        expect(ticket.metadata.files).toStrictEqual(Option.none())
+        expect(ticket.metadata['beads_files']).toBe('unknown')
+        expect(ticket.metadata['spec_commit']).toBe('abc')
+        const again = yield* importSample(
+          jsonl([
+            record('bd-m1', {
+              metadata: {
+                predicted_files: '["src/a.ts","src/b.ts"]',
+                files: 'unknown',
+                spec_commit: 'abc',
+              },
+            }),
+          ]),
+        )
+        expect(again.changed).toStrictEqual([])
+      }).pipe(Effect.provide(graphLayer)),
+  )
+
   it.effect('says what it left out', () =>
     Effect.gen(function* () {
       const imported = yield* importSample()
