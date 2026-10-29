@@ -146,21 +146,24 @@ const statusWinner = ({ base, ours, theirs }: MergeInput): Side => {
 }
 
 /**
- * Which side's `assignee` wins where both changed it: with a run lease held, a claim naming another
- * engine (made under a lease since expired) loses to the other side, the holder's claim or its
- * release; else the later clock.
+ * Which side's `assignee` wins where both changed it: with a run lease held, a change another engine
+ * wrote (a claim or a release made under a lease since expired), or a claim naming another engine,
+ * loses to the other side; else the later clock. Only the lease's holder writes claims (spec §11.5).
  */
 const assigneeWinner = (
   { ours, theirs }: MergeInput,
   holder: Option.Option<EngineId>,
   sides: Record<Side, FieldView>,
 ): Side => {
-  const stale = (file: TicketFile): boolean =>
-    Option.exists(holder, engine =>
-      Option.exists(file.ticket.assignee, claim => claim.engine !== engine),
+  const stale = (file: TicketFile, view: FieldView): boolean =>
+    Option.exists(
+      holder,
+      engine =>
+        view.clock.engine !== engine ||
+        Option.exists(file.ticket.assignee, claim => claim.engine !== engine),
     )
-  const oursStale = stale(ours)
-  return oursStale !== stale(theirs)
+  const oursStale = stale(ours, sides.ours)
+  return oursStale !== stale(theirs, sides.theirs)
     ? oursStale
       ? 'theirs'
       : 'ours'
@@ -535,7 +538,8 @@ export const mergeLease = ({
         (DateTime.Equivalence(t.renewedAt, o.renewedAt) &&
           (DateTime.isGreaterThan(t.expiresAt, o.expiresAt) ||
             (DateTime.Equivalence(t.expiresAt, o.expiresAt) &&
-              CodePoints(`${t.name} ${t.host}`, `${o.name} ${o.host}`) < 0)))
+              (CodePoints(t.name, o.name) < 0 ||
+                (t.name === o.name && CodePoints(t.host, o.host) < 0)))))
         ? t
         : o,
     )

@@ -442,6 +442,29 @@ describe('the merge of a ticket file (examples)', () => {
       })
       expect(released.file.ticket.assignee).toEqual(Option.none())
     }
+    // And a release written under an expired lease loses to the holder's claim.
+    const claimedByA = edited(baseFile, hlc(100, fa), {
+      status: 'in_progress',
+      assignee: claim(fa, 's-1'),
+    })
+    for (const [ours, theirs] of [
+      [
+        edited(claimedByA, hlc(1000, fb), { assignee: claim(fb, 's-2') }),
+        edited(claimedByA, hlc(2000, fa), { assignee: Option.none() }),
+      ],
+      [
+        edited(claimedByA, hlc(2000, fa), { assignee: Option.none() }),
+        edited(claimedByA, hlc(1000, fb), { assignee: claim(fb, 's-2') }),
+      ],
+    ] as const) {
+      const reclaimed = mergeTicketFile({
+        base: Option.some(claimedByA),
+        ours,
+        theirs,
+        holder: Option.some(fb),
+      })
+      expect(reclaimed.file.ticket.assignee).toEqual(claim(fb, 's-2'))
+    }
   })
 
   it('merges labels and edges as sets against the base', () => {
@@ -669,7 +692,18 @@ describe('the run lease merged', () => {
     const moved = new RunLease({ ...lease(fa, 'r-1', 0, 2), host: 'a.local' })
     expect(both(some(held), some(lease(fa, 'r-1', 0, 2)), some(moved))).toEqual(
       some(moved),
-    )
+    ) // Name and host are compared one after the other, never run together.
+    const spaced = new RunLease({
+      ...lease(fa, 'r-1', 0, 2),
+      name: 'a b',
+      host: 'c',
+    })
+    const other = new RunLease({
+      ...lease(fa, 'r-1', 0, 2),
+      name: 'a',
+      host: 'b c',
+    })
+    expect(both(some(held), some(spaced), some(other))).toEqual(some(other))
   })
 
   it('keeps the earlier start of two leases covering the same time', () => {

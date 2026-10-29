@@ -115,7 +115,10 @@ const metadataArb = fc
       fc
         .string({ unit: 'binary', maxLength: 6 })
         .filter(key => !engineMetadataKeys.has(key)),
-      fc.jsonValue({ maxDepth: 2 }),
+      // As a file holds it: JSON has no -0.
+      fc
+        .jsonValue({ maxDepth: 2 })
+        .map((value): unknown => JSON.parse(JSON.stringify(value))),
       { maxKeys: 3 },
     ),
   })
