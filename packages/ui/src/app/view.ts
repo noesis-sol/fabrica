@@ -77,7 +77,7 @@ const sidebarView = (
 ): Html => Sidebar.view(sidebar, { scope, messages: sidebarMessages }, h)
 const lazyStats = createLazy()
 
-/** The stats row, a Submodel: given the scope, the connection, the scoped run and the time. */
+/** The stats row, a Submodel: given the scope, the connection, the scoped run, the time and the requests. */
 const statsPart = (
   stats: Stats.Model,
   inputs: Stats.ViewInputs,
@@ -97,8 +97,9 @@ const lazyStatsPart = (
   live: boolean,
   run: Model['runView'],
   now: Model['now'],
+  attention: Model['attention'],
   h: HtmlBuilder<Message>,
-): Html => statsPart(stats, { project, live, run, now }, h)
+): Html => statsPart(stats, { project, live, run, now, attention }, h)
 const lazyTalkPanel = createLazy()
 
 /** The talk panel, a Submodel: given the scope, the connection and the projects by name. */
@@ -237,6 +238,7 @@ const consoleView = (model: Model, h: HtmlBuilder<Message>): Html => {
             isLive(model.connection),
             model.runView,
             model.now,
+            model.attention,
             h,
           ]),
         ],

@@ -1995,6 +1995,22 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
     "PreflightItemEncoded": {
       "additionalProperties": true,
       "properties": {
+        "check": {
+          "enum": [
+            "limit_set",
+            "concurrent_low",
+            "base_failing",
+            "permissions_ask",
+            "credentials",
+            "free_disk",
+            "usage_limit_wait",
+            "no_ticket_limit",
+            "heavy_load",
+            "worker_rules",
+            "battery",
+          ],
+          "type": "string",
+        },
         "fix": {
           "anyOf": [
             {
@@ -2012,6 +2028,7 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         },
       },
       "required": [
+        "check",
         "text",
         "fix",
       ],
@@ -9237,6 +9254,54 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
               "offline": {
                 "type": "boolean",
               },
+              "preflight": {
+                "additionalProperties": true,
+                "properties": {
+                  "fix": {
+                    "items": {
+                      "enum": [
+                        "limit_set",
+                        "concurrent_low",
+                        "base_failing",
+                        "permissions_ask",
+                        "credentials",
+                        "free_disk",
+                        "usage_limit_wait",
+                        "no_ticket_limit",
+                        "heavy_load",
+                        "worker_rules",
+                        "battery",
+                      ],
+                      "type": "string",
+                    },
+                    "type": "array",
+                  },
+                  "override": {
+                    "items": {
+                      "enum": [
+                        "limit_set",
+                        "concurrent_low",
+                        "base_failing",
+                        "permissions_ask",
+                        "credentials",
+                        "free_disk",
+                        "usage_limit_wait",
+                        "no_ticket_limit",
+                        "heavy_load",
+                        "worker_rules",
+                        "battery",
+                      ],
+                      "type": "string",
+                    },
+                    "type": "array",
+                  },
+                },
+                "required": [
+                  "fix",
+                  "override",
+                ],
+                "type": "object",
+              },
               "settings": {
                 "additionalProperties": {
                   "type": "string",
@@ -9461,6 +9526,54 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
               },
               "offline": {
                 "type": "boolean",
+              },
+              "preflight": {
+                "additionalProperties": true,
+                "properties": {
+                  "fix": {
+                    "items": {
+                      "enum": [
+                        "limit_set",
+                        "concurrent_low",
+                        "base_failing",
+                        "permissions_ask",
+                        "credentials",
+                        "free_disk",
+                        "usage_limit_wait",
+                        "no_ticket_limit",
+                        "heavy_load",
+                        "worker_rules",
+                        "battery",
+                      ],
+                      "type": "string",
+                    },
+                    "type": "array",
+                  },
+                  "override": {
+                    "items": {
+                      "enum": [
+                        "limit_set",
+                        "concurrent_low",
+                        "base_failing",
+                        "permissions_ask",
+                        "credentials",
+                        "free_disk",
+                        "usage_limit_wait",
+                        "no_ticket_limit",
+                        "heavy_load",
+                        "worker_rules",
+                        "battery",
+                      ],
+                      "type": "string",
+                    },
+                    "type": "array",
+                  },
+                },
+                "required": [
+                  "fix",
+                  "override",
+                ],
+                "type": "object",
               },
               "settings": {
                 "additionalProperties": {

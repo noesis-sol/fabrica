@@ -633,6 +633,15 @@ const samples: Record<string, Samples> = {
         mode: { _tag: 'overnight' },
         flags: { offline: false, settings: {} },
       },
+      {
+        project,
+        mode: { _tag: 'overnight' },
+        flags: {
+          offline: false,
+          settings: {},
+          preflight: { fix: ['concurrent_low'], override: ['free_disk'] },
+        },
+      },
     ],
     success: [{ run }],
     error: [
@@ -666,8 +675,16 @@ const samples: Record<string, Samples> = {
     ],
     success: [
       {
-        refusals: [{ text: 'concurrent is 1', fix: 'set concurrent to 2' }],
-        warnings: [{ text: 'no ticket_limit', fix: null }],
+        refusals: [
+          {
+            check: 'concurrent_low',
+            text: 'concurrent is 1',
+            fix: 'set concurrent to 2',
+          },
+        ],
+        warnings: [
+          { check: 'no_ticket_limit', text: 'no ticket_limit', fix: null },
+        ],
         questions: ['fa-q1'],
         ready: 4,
         waitingOnQuestions: 1,

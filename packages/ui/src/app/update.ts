@@ -86,7 +86,10 @@ type Return = Update.Return<
   | ThemeHost
 >
 
-/** The stats row's Messages, folded into its submodel; a run it started is watched afresh. */
+/**
+ * The stats row's Messages, folded into its submodel; a run it started is watched afresh, and an
+ * overnight pre-flight's questions opened in the answer talk.
+ */
 const foldStats = Update.foldChild({
   update: Stats.update,
   read: (model: Model) => Option.some(model.console.stats),
@@ -97,12 +100,14 @@ const foldStats = Update.foldChild({
   toParentMessage: (message: Stats.Message): Message =>
     Message.GotStatsMessage({ message }),
   foldOutMessage: (outMessage: Stats.OutMessage) => (model: Model) =>
-    Stats.OutMessage.match(outMessage, {
+    Stats.OutMessage.match<Return>(outMessage, {
       StartedRun: ({ project }) => ({
         model: Option.contains(model.scope, project)
           ? modifyFields(model, { runWatch: watch => watch + 1 })
           : model,
       }),
+      AnsweringQuestions: ({ project }) =>
+        requestAnswerTalk(model, Option.some(project)),
     }),
 })
 

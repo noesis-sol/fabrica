@@ -9,10 +9,15 @@ import { defineView } from 'foldkit/submodel'
 
 import { clientErrorWords } from '@fabrica/client'
 import {
+  type AttentionRequest,
   type Banner,
   type EngineStep,
   type Hold,
   type NoRun,
+  Preflight,
+  PreflightCheck,
+  PreflightChoices,
+  type PreflightItem,
   ProjectId,
   type ProjectNotFound,
   type RunFlags,
@@ -38,6 +43,9 @@ import { waitingWords } from './waiting'
 // workers against the slots, done today, set aside, needs you, in queue with how many of them wait
 // (each with why in words on hover), and tokens; at its right end the run's controls, Start run and
 // its modes while the project is idle, Drain and Stop while its run goes, and an overnight run's tag.
+// Overnight starts after its pre-flight checklist (§15.6), drawn below the row: its refusals to fix or
+// override, its warnings with their fixes, the ready and question-only counts, then its questions in
+// the answer talk; the fixes chosen go with the start, so a checklist cancelled changes nothing.
 // Above the row, a strip of the run's holds and banners (`c2` for a hold, `c3` for a stop) with when
 // each lifts, the engine's run-wide steps with their elapsed time, and a request the engine refused.
 // A Submodel: the root folds its Messages and gives it the run, the scope and the time.
@@ -96,15 +104,40 @@ export const Request = defineTaggedUnion({
 })
 export type Request = typeof Request.Type
 
+/** A pre-flight gone through so far: the fixes chosen to make, and the refusals overridden. */
+const Choices = {
+  project: ProjectId,
+  preflight: Preflight,
+  fix: Schema.Array(PreflightCheck),
+  override: Schema.Array(PreflightCheck),
+}
+
+/** An overnight run's pre-flight checklist (§15.6). */
+export const Checklist = defineTaggedUnion({
+  /** None open. */
+  None: {},
+  /** The engine asked for the pre-flight. */
+  Checking: { project: ProjectId },
+  /** The engine couldn't give it, with why. */
+  Failed: { project: ProjectId, reason: Schema.String },
+  /** Its refusals and warnings shown, each fix and override chosen. */
+  Reviewing: Choices,
+  /** Its questions being answered in the answer talk. */
+  Answering: Choices,
+})
+export type Checklist = typeof Checklist.Type
+
 export const Model = Schema.Struct({
   controls: Controls,
   request: Request,
+  checklist: Checklist,
 })
 export type Model = typeof Model.Type
 
 export const init = (): Model => ({
   controls: Controls.Closed(),
   request: Request.None(),
+  checklist: Checklist.None(),
 })
 
 export const Message = defineMessageUnion({
@@ -122,12 +155,25 @@ export const Message = defineMessageUnion({
   SucceededRunRequest: {},
   FailedRunRequest: { action: RunAction, reason: Schema.String },
   DismissedRefusal: {},
+  SucceededPreflight: { project: ProjectId, preflight: Preflight },
+  FailedPreflight: { project: ProjectId, reason: Schema.String },
+  ToggledFix: { check: PreflightCheck },
+  ToggledOverride: { check: PreflightCheck },
+  ClickedCheckAgain: {},
+  /** On from the refusals and warnings: to the questions, or the start where there are none. */
+  ClickedContinue: {},
+  ClickedStartOvernight: {},
+  CancelledChecklist: {},
 })
 export type Message = typeof Message.Type
 
-/** What the root does on the controls' behalf: a started run's view is watched afresh. */
+/**
+ * What the root does on the controls' behalf: a started run's view is watched afresh, and the answer
+ * talk opened on a pre-flight's questions.
+ */
 export const OutMessage = defineMessageUnion({
   StartedRun: { project: ProjectId },
+  AnsweringQuestions: { project: ProjectId },
 })
 export type OutMessage = typeof OutMessage.Type
 
@@ -233,11 +279,12 @@ export const offerMessage = (offer: Offer): Message =>
     KeepRunning: () => Message.CancelledControls(),
   })
 
-/** A run started from the app: no dispatch limit, online, the project's own settings. */
+/** A run started from the app: no dispatch limit, online, the project's own settings, no pre-flight. */
 export const startFlags: RunFlags = {
   limit: Option.none(),
   offline: false,
   settings: {},
+  preflight: Option.none(),
 }
 
 /** What a run request can fail with: the engine's refusals, the connection not held, or lost. */
@@ -260,24 +307,75 @@ export const refusalWords = (error: RunRequestError): string =>
     RpcClientError: clientErrorWords,
   })
 
+const startRun = (project: ProjectId, mode: RunMode, flags: RunFlags) =>
+  EngineConnection.get.pipe(
+    Effect.flatMap(({ client }) =>
+      client.rpc['run.start']({ project, mode, flags }),
+    ),
+    Effect.as(Message.SucceededStartRun({ project })),
+    Effect.catch(error =>
+      Effect.succeed(
+        Message.FailedRunRequest({
+          action: 'start',
+          reason: refusalWords(error),
+        }),
+      ),
+    ),
+  )
+
 /** Starts a run of `project` in `mode`. */
 export const StartRun = Command.define('StartRun', {
   args: { project: ProjectId, mode: RunMode },
   messages: [Message.SucceededStartRun, Message.FailedRunRequest],
-  execute: ({ project, mode }) =>
+  execute: ({ project, mode }) => startRun(project, mode, startFlags),
+})
+
+/** Asks the engine for `project`'s overnight pre-flight (§15.6), with the flags the start will have. */
+export const CheckPreflight = Command.define('CheckPreflight', {
+  args: { project: ProjectId },
+  messages: [Message.SucceededPreflight, Message.FailedPreflight],
+  execute: ({ project }) =>
     EngineConnection.get.pipe(
       Effect.flatMap(({ client }) =>
-        client.rpc['run.start']({ project, mode, flags: startFlags }),
+        client.rpc['run.preflight']({
+          project,
+          mode: RunMode.cases.overnight.make({}),
+          flags: startFlags,
+        }),
       ),
-      Effect.as(Message.SucceededStartRun({ project })),
+      Effect.map(preflight =>
+        Message.SucceededPreflight({ project, preflight }),
+      ),
       Effect.catch(error =>
         Effect.succeed(
-          Message.FailedRunRequest({
-            action: 'start',
-            reason: refusalWords(error),
-          }),
+          Message.FailedPreflight({ project, reason: refusalWords(error) }),
         ),
       ),
+    ),
+})
+
+/** An overnight run's flags: the app's, with what its pre-flight chose. */
+export const overnightFlags = (
+  fix: ReadonlyArray<PreflightCheck>,
+  override: ReadonlyArray<PreflightCheck>,
+): RunFlags => ({
+  ...startFlags,
+  preflight: Option.some(new PreflightChoices({ fix, override })),
+})
+
+/** Starts `project`'s overnight run, its pre-flight's chosen fixes made and its refusals overridden. */
+export const StartOvernight = Command.define('StartOvernight', {
+  args: {
+    project: ProjectId,
+    fix: Schema.Array(PreflightCheck),
+    override: Schema.Array(PreflightCheck),
+  },
+  messages: [Message.SucceededStartRun, Message.FailedRunRequest],
+  execute: ({ project, fix, override }) =>
+    startRun(
+      project,
+      RunMode.cases.overnight.make({}),
+      overnightFlags(fix, override),
     ),
 })
 
@@ -340,8 +438,89 @@ const starting = (model: Model, project: ProjectId, mode: RunMode): Return => ({
   model: modifyFields(model, {
     controls: () => Controls.Closed(),
     request: () => Request.Pending({ action: 'start' }),
+    checklist: () => Checklist.None(),
   }),
   commands: [StartRun({ project, mode })],
+})
+
+// The pre-flight checklist.
+
+type Gone = Extract<Checklist, { readonly _tag: 'Reviewing' | 'Answering' }>
+
+/** The checklist's project, while one is open. */
+const checklistProject = (checklist: Checklist): Option.Option<ProjectId> =>
+  Checklist.match(checklist, {
+    None: () => Option.none(),
+    Checking: ({ project }) => Option.some(project),
+    Failed: ({ project }) => Option.some(project),
+    Reviewing: ({ project }) => Option.some(project),
+    Answering: ({ project }) => Option.some(project),
+  })
+
+/** A pre-flight first shown: every fix it offers chosen, no refusal overridden. */
+export const offered = (
+  project: ProjectId,
+  preflight: Preflight,
+): Extract<Checklist, { readonly _tag: 'Reviewing' }> =>
+  Checklist.Reviewing({
+    project,
+    preflight,
+    fix: [...preflight.refusals, ...preflight.warnings]
+      .filter(item => Option.isSome(item.fix))
+      .map(item => item.check),
+    override: [],
+  })
+
+/** The refusals neither fixed nor overridden, which keep the run from starting. */
+export const standing = (gone: Gone): ReadonlyArray<PreflightItem> =>
+  gone.preflight.refusals.filter(
+    ({ check, fix }) =>
+      !gone.override.includes(check) &&
+      !(Option.isSome(fix) && gone.fix.includes(check)),
+  )
+
+const toggle = (
+  checks: ReadonlyArray<PreflightCheck>,
+  check: PreflightCheck,
+): ReadonlyArray<PreflightCheck> =>
+  checks.includes(check)
+    ? checks.filter(chosen => chosen !== check)
+    : [...checks, check]
+
+/** The checklist under review changed by `change`; any other left as it is. */
+const reviewing = (
+  model: Model,
+  change: (
+    gone: Extract<Checklist, { readonly _tag: 'Reviewing' }>,
+  ) => Checklist,
+): Return => ({
+  model: modifyFields(model, {
+    checklist: checklist =>
+      Checklist.guards.Reviewing(checklist) ? change(checklist) : checklist,
+  }),
+})
+
+const checking = (model: Model, project: ProjectId): Return => ({
+  model: modifyFields(model, {
+    controls: () => Controls.Closed(),
+    checklist: () => Checklist.Checking({ project }),
+  }),
+  commands: [CheckPreflight({ project })],
+})
+
+/** The overnight run started with the checklist's choices, the checklist closed. */
+const startingOvernight = (model: Model, gone: Gone): Return => ({
+  model: modifyFields(model, {
+    request: () => Request.Pending({ action: 'start' }),
+    checklist: () => Checklist.None(),
+  }),
+  commands: [
+    StartOvernight({
+      project: gone.project,
+      fix: gone.fix,
+      override: gone.override,
+    }),
+  ],
 })
 
 const asking = (
@@ -370,7 +549,7 @@ export const update = (model: Model, message: Message): Return =>
       mode === 'tickets'
         ? starting(model, project, RunMode.cases.tickets.make({}))
         : mode === 'overnight'
-          ? starting(model, project, RunMode.cases.overnight.make({}))
+          ? checking(model, project)
           : {
               model: modifyFields(model, {
                 controls: () =>
@@ -432,6 +611,76 @@ export const update = (model: Model, message: Message): Return =>
     }),
     DismissedRefusal: () => ({
       model: modifyFields(model, { request: () => Request.None() }),
+    }),
+    SucceededPreflight: ({ project, preflight }) => ({
+      model: modifyFields(model, {
+        checklist: checklist =>
+          Checklist.guards.Checking(checklist) && checklist.project === project
+            ? offered(project, preflight)
+            : checklist,
+      }),
+    }),
+    FailedPreflight: ({ project, reason }) => ({
+      model: modifyFields(model, {
+        checklist: checklist =>
+          Checklist.guards.Checking(checklist) && checklist.project === project
+            ? Checklist.Failed({ project, reason })
+            : checklist,
+      }),
+    }),
+    // A refusal is fixed or overridden, never both.
+    ToggledFix: ({ check }) =>
+      reviewing(model, gone =>
+        Checklist.Reviewing({
+          ...gone,
+          fix: toggle(gone.fix, check),
+          override: gone.override.filter(chosen => chosen !== check),
+        }),
+      ),
+    ToggledOverride: ({ check }) =>
+      reviewing(model, gone =>
+        Checklist.Reviewing({
+          ...gone,
+          override: toggle(gone.override, check),
+          fix: gone.fix.filter(chosen => chosen !== check),
+        }),
+      ),
+    ClickedCheckAgain: () =>
+      Option.match(checklistProject(model.checklist), {
+        onNone: () => ({ model }),
+        onSome: project => checking(model, project),
+      }),
+    ClickedContinue: () => {
+      const { checklist } = model
+      if (
+        !Checklist.guards.Reviewing(checklist) ||
+        standing(checklist).length > 0
+      ) {
+        return { model }
+      }
+      return checklist.preflight.questions.length === 0
+        ? startingOvernight(model, checklist)
+        : {
+            model: modifyFields(model, {
+              checklist: () =>
+                Checklist.Answering({
+                  project: checklist.project,
+                  preflight: checklist.preflight,
+                  fix: checklist.fix,
+                  override: checklist.override,
+                }),
+            }),
+            outMessage: OutMessage.AnsweringQuestions({
+              project: checklist.project,
+            }),
+          }
+    },
+    ClickedStartOvernight: () =>
+      Checklist.guards.Answering(model.checklist)
+        ? startingOvernight(model, model.checklist)
+        : { model },
+    CancelledChecklist: () => ({
+      model: modifyFields(model, { checklist: () => Checklist.None() }),
     }),
   })
 
@@ -515,10 +764,55 @@ export const shownSteps = (
       Option.isNone(step.ticket) && secondsSince(step.startedAt, now) >= 1,
   )
 
+/** A pre-flight's question still open, with its title and the tickets it holds, where they are read. */
+export interface QuestionLeft {
+  readonly ticket: TicketId
+  readonly title: Option.Option<string>
+  readonly holds: ReadonlyArray<TicketId>
+}
+
+/**
+ * The pre-flight's questions still open, by the scope's attention requests: one no longer among them is
+ * answered; every one is open while they aren't read yet.
+ */
+export const questionsLeft = (
+  gone: Gone,
+  attention: Option.Option<ReadonlyArray<AttentionRequest>>,
+): ReadonlyArray<QuestionLeft> =>
+  Option.match(attention, {
+    onNone: () =>
+      gone.preflight.questions.map(ticket => ({
+        ticket,
+        title: Option.none(),
+        holds: [],
+      })),
+    onSome: requests => {
+      const open = requests.flatMap(request =>
+        request._tag === 'question' && request.project === gone.project
+          ? [request]
+          : [],
+      )
+      return Array.getSomes(
+        gone.preflight.questions.map(ticket =>
+          Option.map(
+            Array.findFirst(open, request => request.ticket === ticket),
+            request => ({
+              ticket,
+              title: Option.some(request.title),
+              holds: request.blocks,
+            }),
+          ),
+        ),
+      )
+    },
+  })
+
 /** What the frame gives the row: what its controls are given, and the time. */
 export interface ViewInputs extends ControlInputs {
   /** The time now, in the viewer's zone. */
   readonly now: Option.Option<DateTime.Zoned>
+  /** The scope's open attention requests, whose questions the pre-flight waits on. */
+  readonly attention: Option.Option<ReadonlyArray<AttentionRequest>>
 }
 
 const toneMark = (tone: Tone, h: HtmlBuilder<Message>): Html =>
@@ -1107,9 +1401,317 @@ const row = (model: Model, inputs: ViewInputs, h: HtmlBuilder<Message>): Html =>
     ],
   )
 
+// The pre-flight checklist below the row.
+
+const checkbox = (
+  {
+    label,
+    checked,
+    message,
+  }: {
+    readonly label: string
+    readonly checked: boolean
+    readonly message: Message
+  },
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.label(
+    [h.Class('flex items-center gap-4 text-xs text-muted')],
+    [
+      h.input([
+        h.Type('checkbox'),
+        h.AriaLabel(label),
+        h.Checked(checked),
+        h.OnClick(message),
+      ]),
+      label,
+    ],
+  )
+
+const fixBox = (
+  gone: Gone,
+  item: PreflightItem,
+  h: HtmlBuilder<Message>,
+): Html =>
+  Option.match(item.fix, {
+    onNone: () => h.empty,
+    onSome: fix =>
+      checkbox(
+        {
+          label: `Fix: ${fix}`,
+          checked: gone.fix.includes(item.check),
+          message: Message.ToggledFix({ check: item.check }),
+        },
+        h,
+      ),
+  })
+
+const checklistLine = (
+  {
+    item,
+    tone,
+    after,
+  }: {
+    readonly item: PreflightItem
+    readonly tone: Tone
+    readonly after: ReadonlyArray<Html>
+  },
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.keyed('li')(
+    item.check,
+    [
+      h.DataAttribute('check', item.check),
+      h.DataAttribute('tone', tone),
+      h.Class('flex flex-wrap items-baseline gap-8 text-xs'),
+    ],
+    [toneMark(tone, h), h.span([h.Class('text-fg')], [item.text]), ...after],
+  )
+
+const plural = (count: number, one: string, many: string): string =>
+  `${count} ${count === 1 ? one : many}`
+
+/** The ready and question-only counts, and the questions to answer. */
+const countsLine = (preflight: Preflight, h: HtmlBuilder<Message>): Html =>
+  h.p(
+    [h.DataAttribute('preflight-counts', ''), h.Class('text-xs text-muted')],
+    [
+      [
+        plural(preflight.ready, 'ticket ready', 'tickets ready'),
+        plural(
+          preflight.waitingOnQuestions,
+          'waits only on questions',
+          'wait only on questions',
+        ),
+        plural(
+          preflight.questions.length,
+          'question to answer',
+          'questions to answer',
+        ),
+      ].join(' · '),
+    ],
+  )
+
+const buttons = (items: ReadonlyArray<Html>, h: HtmlBuilder<Message>): Html =>
+  h.div([h.Class('flex flex-wrap items-center gap-8')], items)
+
+const cancelButton = (h: HtmlBuilder<Message>): Html =>
+  h.button(
+    [
+      h.Type('button'),
+      h.OnClick(Message.CancelledChecklist()),
+      h.Class(ghostButton),
+    ],
+    ['Cancel'],
+  )
+
+const checkAgainButton = (h: HtmlBuilder<Message>): Html =>
+  h.button(
+    [
+      h.Type('button'),
+      h.OnClick(Message.ClickedCheckAgain()),
+      h.Class(ghostButton),
+    ],
+    ['Check again'],
+  )
+
+/** The refusals, each to fix or override, the warnings with their fixes, and the counts. */
+const reviewBody = (
+  gone: Extract<Checklist, { readonly _tag: 'Reviewing' }>,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Html> => {
+  const { preflight } = gone
+  const left = standing(gone).length
+  const questions = preflight.questions.length
+  const lines = [
+    ...preflight.refusals.map(item =>
+      checklistLine(
+        {
+          item,
+          tone: 'stop',
+          after: [
+            fixBox(gone, item, h),
+            checkbox(
+              {
+                label: 'Override',
+                checked: gone.override.includes(item.check),
+                message: Message.ToggledOverride({ check: item.check }),
+              },
+              h,
+            ),
+          ],
+        },
+        h,
+      ),
+    ),
+    ...preflight.warnings.map(item =>
+      checklistLine(
+        { item, tone: 'warning', after: [fixBox(gone, item, h)] },
+        h,
+      ),
+    ),
+  ]
+  return [
+    lines.length === 0
+      ? h.p([h.Class('text-xs text-muted')], ['Nothing refused or warned of.'])
+      : h.ul(
+          [
+            h.AriaLabel('Refusals and warnings'),
+            h.Class('flex flex-col gap-6'),
+          ],
+          lines,
+        ),
+    countsLine(preflight, h),
+    left === 0
+      ? h.empty
+      : h.p(
+          [h.Role('status'), h.Class('text-xs text-c3')],
+          [`Fix or override ${plural(left, 'refusal', 'refusals')} to go on.`],
+        ),
+    buttons(
+      [
+        h.button(
+          [
+            h.Type('button'),
+            h.Disabled(left > 0),
+            h.OnClick(Message.ClickedContinue()),
+            h.Class(primaryButton),
+          ],
+          [
+            questions === 0
+              ? 'Start overnight'
+              : `Answer ${plural(questions, 'question', 'questions')}`,
+          ],
+        ),
+        checkAgainButton(h),
+        cancelButton(h),
+      ],
+      h,
+    ),
+  ]
+}
+
+const questionLine = (left: QuestionLeft, h: HtmlBuilder<Message>): Html =>
+  h.keyed('li')(
+    left.ticket,
+    [h.DataAttribute('question', left.ticket), h.Class('text-xs')],
+    [
+      h.span([h.Class('font-mono text-fg')], [left.ticket]),
+      ...Option.match(left.title, {
+        onNone: () => [],
+        onSome: title => [h.span([h.Class('text-fg')], [` ${title}`])],
+      }),
+      left.holds.length === 0
+        ? h.empty
+        : h.span(
+            [h.Class('text-muted')],
+            [` · holds ${left.holds.join(', ')}`],
+          ),
+    ],
+  )
+
+/** The questions, answered in the answer talk; the start, leaving those still open named. */
+const answeringBody = (
+  gone: Extract<Checklist, { readonly _tag: 'Answering' }>,
+  inputs: ViewInputs,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Html> => {
+  const left = questionsLeft(gone, inputs.attention)
+  const asked = gone.preflight.questions.length
+  return [
+    h.p(
+      [h.Role('status'), h.Class('text-xs text-fg')],
+      [
+        left.length === 0
+          ? 'Every question is answered.'
+          : `${asked - left.length} of ${asked} answered in the answer talk.`,
+      ],
+    ),
+    left.length === 0
+      ? h.empty
+      : h.ul(
+          [h.AriaLabel('Questions still open'), h.Class('flex flex-col gap-4')],
+          left.map(question => questionLine(question, h)),
+        ),
+    countsLine(gone.preflight, h),
+    buttons(
+      [
+        h.button(
+          [
+            h.Type('button'),
+            h.OnClick(Message.ClickedStartOvernight()),
+            h.Class(primaryButton),
+          ],
+          [
+            left.length === 0
+              ? 'Start overnight'
+              : `Start, leaving ${plural(left.length, 'question', 'questions')} open`,
+          ],
+        ),
+        cancelButton(h),
+      ],
+      h,
+    ),
+  ]
+}
+
+/** The pre-flight checklist of the scoped project, while it has no run. */
+const checklist = (
+  model: Model,
+  inputs: ViewInputs,
+  h: HtmlBuilder<Message>,
+): Html => {
+  const shown =
+    inputs.live &&
+    Option.isNone(inputs.run) &&
+    Option.exists(checklistProject(model.checklist), project =>
+      Option.contains(inputs.project, project),
+    )
+  return !shown
+    ? h.empty
+    : h.section(
+        [
+          h.AriaLabel('Overnight pre-flight'),
+          h.DataAttribute('layout', 'preflight'),
+          h.Class(
+            'flex flex-col gap-8 rounded-card border border-line bg-panel px-12 py-8',
+          ),
+        ],
+        [
+          h.h2(
+            [h.Class('text-sm font-bold text-fg')],
+            ['Overnight pre-flight'],
+          ),
+          ...Checklist.match(model.checklist, {
+            None: () => [],
+            Checking: () => [
+              h.p(
+                [h.Role('status'), h.Class('text-xs text-muted')],
+                ['Running the pre-flight…'],
+              ),
+              buttons([cancelButton(h)], h),
+            ],
+            Failed: ({ reason }) => [
+              h.p(
+                [h.Role('status'), h.Class('text-xs text-c3')],
+                [`The pre-flight couldn’t run: ${reason}.`],
+              ),
+              buttons([checkAgainButton(h), cancelButton(h)], h),
+            ],
+            Reviewing: gone => reviewBody(gone, h),
+            Answering: gone => answeringBody(gone, inputs, h),
+          }),
+        ],
+      )
+}
+
 export const view = defineView<Model, Message, ViewInputs>((model, inputs, h) =>
   h.div(
     [h.Class('flex flex-col gap-8')],
-    [strip(model, inputs, h), row(model, inputs, h)],
+    [
+      strip(model, inputs, h),
+      row(model, inputs, h),
+      checklist(model, inputs, h),
+    ],
   ),
 )

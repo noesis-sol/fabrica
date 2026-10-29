@@ -275,9 +275,9 @@ describe('the keys run the controls', () => {
       update,
       given(connected),
       message(Message.RequestedPalette()),
-      message(Message.RanPaletteEntry({ id: 'run.start.overnight' })),
+      message(Message.RanPaletteEntry({ id: 'run.start.tickets' })),
       Command.expectExact(
-        Stats.StartRun({ project, mode: RunMode.cases.overnight.make({}) }),
+        Stats.StartRun({ project, mode: RunMode.cases.tickets.make({}) }),
       ),
       Command.resolve(
         Stats.StartRun,

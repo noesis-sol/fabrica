@@ -304,7 +304,7 @@ describe('the run controls', () => {
       update,
       givenStory(connected),
       message(
-        statsMessage(Stats.Message.ChoseMode({ project, mode: 'overnight' })),
+        statsMessage(Stats.Message.ChoseMode({ project, mode: 'tickets' })),
       ),
       StoryCommand.expectHas(Stats.StartRun),
       StoryCommand.resolve(
