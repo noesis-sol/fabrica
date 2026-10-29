@@ -397,6 +397,28 @@ const samples: Record<string, Samples> = {
     ],
     error: [{ _tag: 'AddFailed', reason: '/home/m/app is not a git checkout' }],
   },
+  'projects.folders': {
+    payload: [{}, { path: '/home/m/src' }],
+    success: [
+      {
+        path: '/home/m/src',
+        parent: '/home/m',
+        checkout: false,
+        folders: [
+          { name: 'app', path: '/home/m/src/app', checkout: true },
+          { name: 'notes', path: '/home/m/src/notes', checkout: false },
+        ],
+      },
+      { path: '/', parent: null, checkout: false, folders: [] },
+    ],
+    error: [
+      {
+        _tag: 'FolderUnreadable',
+        path: '/home/m/gone',
+        reason: 'there is no folder at /home/m/gone',
+      },
+    ],
+  },
   'projects.list': { success: [[projectInfo]] },
   'projects.remove': { payload: [{ project }], error: [notFound] },
   'projects.trust': {
@@ -1020,6 +1042,7 @@ describe('the protocol’s groups', () => {
       'credentials.remove',
       'credentials.login',
       'projects.add',
+      'projects.folders',
       'projects.list',
       'projects.remove',
       'projects.trust',

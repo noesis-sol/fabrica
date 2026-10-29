@@ -5,12 +5,14 @@ import * as NodePath from 'node:path'
 import type { SqliteClient } from '@effect/sql-sqlite-node'
 import {
   type EngineSettings,
+  type Host,
   type ListenAddress,
   decodeEngineSettings,
   formatListenAddress,
 } from '@fabrica/contracts'
 
 import { Git, hostLayer as hostGitLayer } from '../git'
+import { layerNodeHost } from '../host'
 import { Projects, layer as projectsLayer } from '../projects/service'
 import {
   CertificateFailed,
@@ -48,7 +50,7 @@ import { Engine, type EngineFacts, engineLayer } from './service'
 /**
  * The daemon's services, which every group's handler file may use as it builds its handlers and the
  * service layers it provides itself: the Engine, its lifetimes (a run's resources go in
- * `EngineScopes.runs`), its files, engine.db (`SqlClient`), whose tables their groups' handlers
+ * `EngineScopes.runs`), its host's facts (`Host`: its home folder), its files, engine.db (`SqlClient`), whose tables their groups' handlers
  * read and write, its Git, its projects with their work graphs, its Updater, its talks' agents
  * and modes, and its Telemetry, which records rows, with the store they are recorded in
  * (`TelemetryStore`) for what reads them. A handler file that needs another service provides it in
@@ -57,6 +59,7 @@ import { Engine, type EngineFacts, engineLayer } from './service'
 export type DaemonServices =
   | Engine
   | EngineScopes
+  | Host
   | EngineFiles
   | SqlClient.SqlClient
   | SqliteClient.SqliteClient
@@ -86,6 +89,8 @@ const noListen: ListenSettings = {
 
 export interface ServeOptions extends EngineFacts {
   readonly paths: EnginePaths
+  /** The host's facts: this machine's (`layerNodeHost`) where none are given; a test gives its own. */
+  readonly facts?: Layer.Layer<Host>
   /** The engine's Git: git on its host (`hostLayer`) where none is given; a test gives its own. */
   readonly git?: Layer.Layer<Git>
   /** What installs the engine's updates (§9.2); where none is given, the engine refuses every update. */
@@ -202,10 +207,12 @@ export const startEngine = Effect.fn('Engine.start')(function* (
       layerRefusing('this engine was started with nowhere to install updates'),
   )
   const talks = yield* Layer.build(options.talks ?? talksRefused)
+  const facts = yield* Layer.build(options.facts ?? layerNodeHost)
   const services: Context.Context<DaemonServices> = Context.mergeAll(
     database,
     scopes,
     engine,
+    facts,
     files,
     git,
     projects,

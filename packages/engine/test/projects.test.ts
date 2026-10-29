@@ -39,6 +39,7 @@ import {
 import { engineDatabaseLayer } from '../src/engine'
 import { EngineFiles, pathsIn } from '../src/engine/paths'
 import { type GitConfig, layer as gitLayer } from '../src/git'
+import { layerHostFrom } from '../src/host'
 import {
   type RunnerConfig,
   hostHolders,
@@ -139,6 +140,16 @@ const runnerConfig = (): RunnerConfig => ({
   outputGrace: Duration.millis(200),
 })
 
+/** The host's facts, its home the test's. */
+const testHost = Layer.suspend(() =>
+  layerHostFrom({
+    availableParallelism: () => 2,
+    totalmem: () => 8 * 1024 ** 3,
+    loadavg: () => [0],
+    homedir: () => home,
+  }),
+)
+
 const gitConfig: GitConfig = {
   timeLimit: Duration.minutes(1),
   readRetries: { times: 0, spacing: Duration.zero },
@@ -153,6 +164,7 @@ const engineAt = (options: {
     const services = yield* Layer.build(
       projectsHandlers.pipe(
         Layer.provideMerge(projectsLayer),
+        Layer.provide(testHost),
         Layer.provide(
           gitLayer(gitConfig).pipe(
             Layer.provide(runnerLayer(runnerConfig())),

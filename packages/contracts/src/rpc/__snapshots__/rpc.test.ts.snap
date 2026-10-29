@@ -874,6 +874,67 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
       ],
       "type": "object",
     },
+    "FolderListingEncoded": {
+      "additionalProperties": true,
+      "properties": {
+        "checkout": {
+          "type": "boolean",
+        },
+        "folders": {
+          "items": {
+            "$ref": "#/$defs/HostFolderEncoded",
+          },
+          "type": "array",
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "pattern": "\\S",
+              "type": "string",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "path": {
+          "pattern": "\\S",
+          "type": "string",
+        },
+      },
+      "required": [
+        "path",
+        "parent",
+        "checkout",
+        "folders",
+      ],
+      "type": "object",
+    },
+    "FolderUnreadableEncoded": {
+      "additionalProperties": true,
+      "properties": {
+        "_tag": {
+          "enum": [
+            "FolderUnreadable",
+          ],
+          "type": "string",
+        },
+        "path": {
+          "pattern": "\\S",
+          "type": "string",
+        },
+        "reason": {
+          "pattern": "\\S",
+          "type": "string",
+        },
+      },
+      "required": [
+        "_tag",
+        "path",
+        "reason",
+      ],
+      "type": "object",
+    },
     "HoldEncoded": {
       "additionalProperties": true,
       "properties": {
@@ -923,6 +984,28 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         "since",
         "lifts",
         "provider",
+      ],
+      "type": "object",
+    },
+    "HostFolderEncoded": {
+      "additionalProperties": true,
+      "properties": {
+        "checkout": {
+          "type": "boolean",
+        },
+        "name": {
+          "pattern": "\\S",
+          "type": "string",
+        },
+        "path": {
+          "pattern": "\\S",
+          "type": "string",
+        },
+      },
+      "required": [
+        "name",
+        "path",
+        "checkout",
       ],
       "type": "object",
     },
@@ -7996,6 +8079,27 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         "$ref": "#/$defs/ProjectInfoEncoded",
       },
       "tag": "projects.add",
+    },
+    {
+      "error": {
+        "$ref": "#/$defs/FolderUnreadableEncoded",
+      },
+      "group": "projects",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "path": {
+            "pattern": "\\S",
+            "type": "string",
+          },
+        },
+        "type": "object",
+      },
+      "stream": false,
+      "success": {
+        "$ref": "#/$defs/FolderListingEncoded",
+      },
+      "tag": "projects.folders",
     },
     {
       "error": {

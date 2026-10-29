@@ -1,4 +1,12 @@
-import { DateTime, Effect, Match, Option, Redacted, Schema } from 'effect'
+import {
+  DateTime,
+  Effect,
+  Equal,
+  Match,
+  Option,
+  Redacted,
+  Schema,
+} from 'effect'
 import { Command, type Update } from 'foldkit'
 import * as AsyncData from 'foldkit/asyncData'
 import type { Html, HtmlBuilder } from 'foldkit/html'
@@ -24,6 +32,8 @@ import {
   CredentialName,
   CredentialValue,
   EngineStatus,
+  FolderListing,
+  type HostFolder,
   ProjectId,
   ProjectInfo,
   ProjectSource,
@@ -50,8 +60,9 @@ import { type EngineProjects, runLabel } from '../console/sidebar'
 // once the user agrees to what the check proposes (§9.2). An engine that refuses the app's version at
 // connect is offered its update the same way, on this machine (§8.4); an app too old for its engine is
 // told to update itself. A project is added as a checkout on the engine's host,
-// by its path, or as a clone of a git URL, which the engine checks and, where `.fabrica/` is missing,
-// offers to set up (`init`). A project is trusted or untrusted from its row, the words beside the
+// by its path, typed or found by browsing the host's folders through the engine (from the path typed,
+// or its home folder), or as a clone of a git URL, which the engine checks and, where `.fabrica/` is
+// missing, offers to set up (`init`). A project is trusted or untrusted from its row, the words beside the
 // list saying what trusting it lets its own files do. Credentials are set by name and removed, never shown (§20.3); the key a
 // form holds is redacted, so no log or trace of the Model shows it. The local engine runs at login
 // when the user chooses, which the app around the renderer installs (§7.1).
@@ -78,6 +89,19 @@ export const AddFlow = defineTaggedUnion({
   Adding: { form: AddForm },
 })
 export type AddFlow = typeof AddFlow.Type
+
+/**
+ * The engine host's folders, browsed for the checkout to add (§10.1): the engine lists them, so a
+ * remote engine's host is browsed as this machine's is. A folder is asked by its path, the engine's
+ * home folder where none is given; only the answer to the folder last asked is shown.
+ */
+export const FolderBrowser = defineTaggedUnion({
+  Closed: {},
+  Loading: { path: Schema.Option(Text) },
+  Shown: { listing: FolderListing },
+  Failed: { path: Schema.Option(Text), reason: Schema.String },
+})
+export type FolderBrowser = typeof FolderBrowser.Type
 
 /** A project just added, and its setting up, which the engine offers where its settings are missing. */
 export const Setup = defineTaggedUnion({
@@ -149,6 +173,7 @@ export const Model = Schema.Struct({
   /** The local engine's status, asked as the screen opens. */
   status: AsyncData.Schema(EngineStatus, Schema.String).schema,
   addProject: AddFlow,
+  folders: FolderBrowser,
   added: Schema.Option(Added),
   credentials: AsyncData.Schema(Schema.Array(CredentialInfo), Schema.String)
     .schema,
@@ -178,6 +203,7 @@ const emptyCredentialForm: CredentialForm = {
 export const init = (): Model => ({
   status: AsyncData.Idle(),
   addProject: AddFlow.Closed(),
+  folders: FolderBrowser.Closed(),
   added: Option.none(),
   credentials: AsyncData.Idle(),
   credentialForm: emptyCredentialForm,
@@ -203,6 +229,13 @@ export const Message = defineMessageUnion({
   ChangedProjectName: { name: Schema.String },
   SubmittedAddProject: {},
   CancelledAddProject: {},
+  /** Browse from the path typed, or the engine's home folder where none is. */
+  OpenedFolders: {},
+  RequestedFolders: { path: Schema.Option(Text) },
+  SucceededFolders: { path: Schema.Option(Text), listing: FolderListing },
+  FailedFolders: { path: Schema.Option(Text), reason: Schema.String },
+  ChoseFolder: { path: Text },
+  ClosedFolders: {},
   SucceededAddProject: { project: ProjectInfo },
   FailedAddProject: { reason: Schema.String },
   RequestedSetUp: { project: ProjectId },
@@ -278,6 +311,19 @@ export const AddProject = Command.define('AddProject', {
       Effect.map(project => Message.SucceededAddProject({ project })),
       Effect.catch(reason =>
         Effect.succeed(Message.FailedAddProject({ reason })),
+      ),
+    ),
+})
+
+/** Lists a folder on the engine's host: its home folder where no path is given. */
+export const LoadFolders = Command.define('LoadFolders', {
+  args: { path: Schema.Option(Text) },
+  messages: [Message.SucceededFolders, Message.FailedFolders],
+  execute: ({ path }) =>
+    requestEngine(client => client.rpc['projects.folders']({ path })).pipe(
+      Effect.map(listing => Message.SucceededFolders({ path, listing })),
+      Effect.catch(reason =>
+        Effect.succeed(Message.FailedFolders({ path, reason })),
       ),
     ),
 })
@@ -487,6 +533,29 @@ const credentialProblem = (form: CredentialForm): string =>
       ? 'Give the key.'
       : 'Give the command that prints the key, on one line.'
 
+/** The folder at `path` asked of the engine, where a checkout's path is being edited. */
+const browse = (model: Model, path: Option.Option<string>): Return =>
+  AddFlow.guards.Editing(model.addProject) &&
+  model.addProject.form.kind === 'path'
+    ? {
+        model: modifyFields(model, {
+          folders: () => FolderBrowser.Loading({ path }),
+        }),
+        commands: [LoadFolders({ path })],
+      }
+    : { model }
+
+/** The browser moved on to `next`, where it is waiting on the folder at `path`. */
+const answerFolders = (
+  model: Model,
+  path: Option.Option<string>,
+  next: FolderBrowser,
+): Model =>
+  FolderBrowser.guards.Loading(model.folders) &&
+  Equal.equals(model.folders.path, path)
+    ? modifyFields(model, { folders: () => next })
+    : model
+
 /** Changes the add-project form while it is being edited; a form being added stays as it was sent. */
 const editForm = (model: Model, change: (form: AddForm) => AddForm): Model =>
   AddFlow.match(model.addProject, {
@@ -650,12 +719,42 @@ export const update = (model: Model, message: Message): Return =>
       }),
     CancelledAddProject: () => ({
       model: AddFlow.guards.Editing(model.addProject)
-        ? modifyFields(model, { addProject: () => AddFlow.Closed() })
+        ? modifyFields(model, {
+            addProject: () => AddFlow.Closed(),
+            folders: () => FolderBrowser.Closed(),
+          })
         : model,
+    }),
+    OpenedFolders: () =>
+      AddFlow.match(model.addProject, {
+        Editing: ({ form }) => browse(model, decodeText(form.path.trim())),
+        Closed: () => ({ model }),
+        Adding: () => ({ model }),
+      }),
+    RequestedFolders: ({ path }) => browse(model, path),
+    SucceededFolders: ({ path, listing }) => ({
+      model: answerFolders(model, path, FolderBrowser.Shown({ listing })),
+    }),
+    FailedFolders: ({ path, reason }) => ({
+      model: answerFolders(model, path, FolderBrowser.Failed({ path, reason })),
+    }),
+    ChoseFolder: ({ path }) => ({
+      model: AddFlow.guards.Editing(model.addProject)
+        ? modifyFields(
+            editForm(model, form => ({ ...form, path })),
+            {
+              folders: () => FolderBrowser.Closed(),
+            },
+          )
+        : model,
+    }),
+    ClosedFolders: () => ({
+      model: modifyFields(model, { folders: () => FolderBrowser.Closed() }),
     }),
     SucceededAddProject: ({ project }) => ({
       model: modifyFields(model, {
         addProject: () => AddFlow.Closed(),
+        folders: () => FolderBrowser.Closed(),
         added: () => Option.some({ project, setup: Setup.NotAsked() }),
       }),
     }),
@@ -1354,10 +1453,154 @@ const labelled = (
     [h.label([h.For(id), h.Class('text-xs text-muted')], [label]), control],
   )
 
+/** The browser's buttons that move it: home, and up where the folder shown has a parent. */
+const folderMoves = (
+  parent: Option.Option<string>,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Html> => [
+  ...Option.match(parent, {
+    onNone: () => [],
+    onSome: path => [
+      h.button(
+        [
+          h.Type('button'),
+          h.OnClick(Message.RequestedFolders({ path: Option.some(path) })),
+          h.Class(quietButton),
+        ],
+        ['Up'],
+      ),
+    ],
+  }),
+  h.button(
+    [
+      h.Type('button'),
+      h.OnClick(Message.RequestedFolders({ path: Option.none() })),
+      h.Class(quietButton),
+    ],
+    ['Home'],
+  ),
+  h.button(
+    [
+      h.Type('button'),
+      h.OnClick(Message.ClosedFolders()),
+      h.Class(`ml-auto ${quietButton}`),
+    ],
+    ['Close'],
+  ),
+]
+
+/** A folder shown: its name opens it; a checkout is marked, with the button that chooses it. */
+const folderRow = (folder: HostFolder, h: HtmlBuilder<Message>): Html =>
+  h.keyed('li')(
+    folder.path,
+    [h.Class('flex items-center gap-8 text-sm')],
+    [
+      h.button(
+        [
+          h.Type('button'),
+          h.AriaLabel(`Open ${folder.name}`),
+          h.OnClick(
+            Message.RequestedFolders({ path: Option.some(folder.path) }),
+          ),
+          h.Class('min-w-0 truncate text-left font-mono'),
+        ],
+        [`${folder.name}/`],
+      ),
+      folder.checkout
+        ? h.span([h.Class('text-xs text-c4')], ['git checkout'])
+        : h.empty,
+      folder.checkout
+        ? h.button(
+            [
+              h.Type('button'),
+              h.AriaLabel(`Choose ${folder.name}`),
+              h.OnClick(Message.ChoseFolder({ path: folder.path })),
+              h.Class(`ml-auto ${quietButton}`),
+            ],
+            ['Choose'],
+          )
+        : h.empty,
+    ],
+  )
+
+/** The engine host's folders, as the browser shows them. */
+const folderBrowser = (
+  folders: FolderBrowser,
+  h: HtmlBuilder<Message>,
+): Html => {
+  const browser = (children: ReadonlyArray<Html>): Html =>
+    h.section(
+      [
+        h.AriaLabel(`Folders on ${localEngineName}`),
+        h.Class('flex flex-col gap-8 rounded-button border border-line'),
+        h.Style({ padding: '8px 10px' }),
+      ],
+      children,
+    )
+  return FolderBrowser.match(folders, {
+    Closed: () => h.empty,
+    Loading: () =>
+      browser([
+        h.p(
+          [h.Role('status'), h.Class('text-xs text-muted')],
+          ['Listing the folders…'],
+        ),
+      ]),
+    Failed: ({ reason }) =>
+      browser([
+        problemLine(`Couldn't list the folder: ${reason}`, h),
+        h.div(
+          [h.Class('flex items-center gap-8')],
+          folderMoves(Option.none(), h),
+        ),
+      ]),
+    Shown: ({ listing }) =>
+      browser([
+        h.div(
+          [h.Class('flex items-center gap-8')],
+          [
+            h.span(
+              [h.Class('min-w-0 truncate font-mono text-xs')],
+              [listing.path],
+            ),
+            listing.checkout
+              ? h.span([h.Class('text-xs text-c4')], ['git checkout'])
+              : h.empty,
+          ],
+        ),
+        h.div(
+          [h.Class('flex items-center gap-8')],
+          [
+            h.button(
+              [
+                h.Type('button'),
+                h.OnClick(Message.ChoseFolder({ path: listing.path })),
+                h.Class(quietButton),
+              ],
+              ['Choose this folder'],
+            ),
+            ...folderMoves(listing.parent, h),
+          ],
+        ),
+        listing.folders.length === 0
+          ? h.p([h.Class('text-xs text-muted')], ['No folders here.'])
+          : h.ul(
+              [
+                h.AriaLabel(`Folders in ${listing.path}`),
+                h.Class('flex flex-col gap-4 overflow-auto'),
+                h.Style({ maxHeight: '240px' }),
+              ],
+              listing.folders.map(folder => folderRow(folder, h)),
+            ),
+      ]),
+  })
+}
+
 const addProjectForm = (
   form: AddForm,
   problem: Option.Option<string>,
   adding: boolean,
+  folders: FolderBrowser,
   h: HtmlBuilder<Message>,
 ): Html =>
   h.form(
@@ -1379,15 +1622,29 @@ const addProjectForm = (
         ? labelled(
             'add-project-path',
             `Its folder on ${localEngineName}`,
-            h.input([
-              h.Id('add-project-path'),
-              h.Type('text'),
-              h.Value(form.path),
-              h.Placeholder('/Users/me/src/app'),
-              h.OnInput(path => Message.ChangedProjectPath({ path })),
-              h.Disabled(adding),
-              h.Class(`font-mono ${field}`),
-            ]),
+            h.div(
+              [h.Class('flex items-center gap-8')],
+              [
+                h.input([
+                  h.Id('add-project-path'),
+                  h.Type('text'),
+                  h.Value(form.path),
+                  h.Placeholder('/Users/me/src/app'),
+                  h.OnInput(path => Message.ChangedProjectPath({ path })),
+                  h.Disabled(adding),
+                  h.Class(`min-w-0 flex-1 font-mono ${field}`),
+                ]),
+                h.button(
+                  [
+                    h.Type('button'),
+                    h.OnClick(Message.OpenedFolders()),
+                    h.Disabled(adding),
+                    h.Class(quietButton),
+                  ],
+                  ['Browse…'],
+                ),
+              ],
+            ),
             h,
           )
         : labelled(
@@ -1404,6 +1661,7 @@ const addProjectForm = (
             ]),
             h,
           ),
+      form.kind === 'path' && !adding ? folderBrowser(folders, h) : h.empty,
       labelled(
         'add-project-name',
         'Name (optional)',
@@ -1608,8 +1866,10 @@ const projectsView = (
       ),
       AddFlow.match(model.addProject, {
         Closed: () => h.empty,
-        Editing: ({ form, problem }) => addProjectForm(form, problem, false, h),
-        Adding: ({ form }) => addProjectForm(form, Option.none(), true, h),
+        Editing: ({ form, problem }) =>
+          addProjectForm(form, problem, false, model.folders, h),
+        Adding: ({ form }) =>
+          addProjectForm(form, Option.none(), true, model.folders, h),
       }),
       Option.match(model.added, {
         onNone: () => h.empty,

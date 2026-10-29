@@ -417,6 +417,7 @@ const handlers = served.toLayer({
   'engine.watchStatus': () => Stream.die('not served'),
   'engine.watchLoad': () => Stream.die('not served'),
   'projects.add': notServed,
+  'projects.folders': notServed,
   'projects.list': notServed,
   'projects.remove': notServed,
   'projects.trust': notServed,

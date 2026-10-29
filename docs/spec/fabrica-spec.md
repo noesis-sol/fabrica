@@ -326,7 +326,7 @@ The engine samples its host's load every few seconds for the console's system st
 | Engine | `version`, `status`, `settings`, `stop`, `update` | engine status, load |
 | Hosts and tokens | `tokens.create`, `tokens.list`, `tokens.revoke` | |
 | Secrets | `credentials.set`, `credentials.list` (names only), `credentials.remove`, `credentials.login` (a subscription's OAuth sign-in, run by the engine, §20.3) | a login's progress (the sign-in URL or device code to show) |
-| Projects | `projects.add` (path or URL), `list`, `remove`, `trust` (the maintainer's alone, §12.1), `settings.get`, `settings.set`, `init` | project status |
+| Projects | `projects.add` (path or URL), `folders` (a folder's subfolders on the engine's host, for browsing to a checkout), `list`, `remove`, `trust` (the maintainer's alone, §12.1), `settings.get`, `settings.set`, `init` | project status |
 | Backlog | `tickets.list`, `show`, `create`, `update`, `close`, `dep.add`, `dep.remove`, `label`, `note`, `ready`, `why` (what holds a ticket back), `import` (Beads JSONL, §11.6) | backlog changes |
 | Runs | `run.start` (mode, flags), `run.stop`, `run.drain`, `run.undrain`, `run.status`, `run.preflight` | the run view (§8.3), the run's events |
 | Workers | `worker.message`, `worker.interrupt`, `worker.release` | a worker's transcript |

@@ -10,8 +10,9 @@ import { ProjectNotFound } from './errors'
 import { keyedPatch, resume, streamItem } from './stream'
 
 // The Projects group (spec §8.1, §10): adding a checkout on the engine's host or a clone of a URL,
-// listing and removing projects, the user's trust in each (§12.1), their settings, `init`, and the
-// stream of their status that the sidebar shows (§18.3).
+// the host's folders a client browses for that checkout, listing and removing projects, the user's
+// trust in each (§12.1), their settings, `init`, and the stream of their status that the sidebar
+// shows (§18.3).
 
 /** Where a project comes from (§10.1): a checkout the engine can read, or a git URL it clones. */
 export const ProjectSource = Schema.TaggedUnion({
@@ -19,6 +20,29 @@ export const ProjectSource = Schema.TaggedUnion({
   url: { url: Text },
 })
 export type ProjectSource = typeof ProjectSource.Type
+
+/** A folder on the engine's host, as a client browses for a checkout to add (§10.1). */
+export class HostFolder extends Schema.Class<HostFolder>('HostFolder')({
+  name: Text,
+  /** Its absolute path on the engine's host. */
+  path: Text,
+  /** It is a git checkout's top folder: it holds `.git`. */
+  checkout: Schema.Boolean,
+}) {}
+
+/** A folder on the engine's host and its subfolders, by name. */
+export class FolderListing extends Schema.Class<FolderListing>('FolderListing')(
+  {
+    /** The folder listed, absolute. */
+    path: Text,
+    /** The folder above it; none at the root. */
+    parent: Schema.OptionFromNullOr(Text),
+    /** It is a git checkout's top folder itself. */
+    checkout: Schema.Boolean,
+    /** Its subfolders, hidden ones left out. */
+    folders: Schema.Array(HostFolder),
+  },
+) {}
 
 /** A project on the engine. */
 export class ProjectInfo extends Schema.Class<ProjectInfo>('ProjectInfo')({
@@ -83,6 +107,12 @@ export class AddFailed extends Schema.TaggedError<AddFailed>()('AddFailed', {
   reason: Text,
 }) {}
 
+/** The folder couldn't be listed: it isn't there, isn't a folder, or can't be read. */
+export class FolderUnreadable extends Schema.TaggedError<FolderUnreadable>()(
+  'FolderUnreadable',
+  { path: Text, reason: Text },
+) {}
+
 /** `init` failed; it lists what it had written (H62), and the project is as it was or set up. */
 export class InitFailed extends Schema.TaggedError<InitFailed>()('InitFailed', {
   reason: Text,
@@ -113,6 +143,15 @@ export const ProjectRpcs = RpcGroup.make(
     payload: { source: ProjectSource, name: optional(Text) },
     success: ProjectInfo,
     error: AddFailed,
+  }),
+  /**
+   * A folder's subfolders on the engine's host, each marked where it is a git checkout, for a client
+   * to browse for the checkout to add: the engine's home folder where no path is given.
+   */
+  Rpc.make('projects.folders', {
+    payload: { path: optional(Text) },
+    success: FolderListing,
+    error: FolderUnreadable,
   }),
   Rpc.make('projects.list', { success: Schema.Array(ProjectInfo) }),
   /** Forgets the project; a registered checkout stays where it is. */
