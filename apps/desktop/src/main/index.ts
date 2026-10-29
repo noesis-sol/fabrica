@@ -27,6 +27,7 @@ import { windowColours } from '@fabrica/ui/window-colours'
 import { ConnectionTarget } from '../connection/target'
 import { FolderPick, UpdateStatus, channels } from '../preload/api'
 import { type MainIpc, registerIpc, sendEnginePort } from './ipc'
+import { keepTheme, keptTheme } from './keptTheme'
 import {
   bundledLauncher,
   ensureLocalEngine,
@@ -237,6 +238,8 @@ const makeAppWindow = () => {
     quit: (): void => {
       quitting = true
     },
+    /** The theme the window is made in, and coloured in. */
+    theme: (): Theme => theme,
     /** Colours the window and its title bar for the theme the page shows, now and when next made. */
     setTheme: (next: Theme): void => {
       theme = next
@@ -254,6 +257,21 @@ const makeAppWindow = () => {
 }
 
 const appWindow = makeAppWindow()
+
+/** Colours the window in the theme the page shows, and keeps a new one for the next start's window. */
+const setTheme = (theme: Theme): void => {
+  if (theme === appWindow.theme()) {
+    return
+  }
+  appWindow.setTheme(theme)
+  void Effect.runPromise(
+    keepTheme({ folder: app.getPath('userData'), theme }).pipe(
+      Effect.catch(error =>
+        Effect.logWarning(`keeping the theme: ${error.reason}`),
+      ),
+    ),
+  )
+}
 
 const notifications = makeNotifications({
   system: Notification,
@@ -321,7 +339,7 @@ if (!app.requestSingleInstanceLock()) {
         }
       },
       close: () => appWindow.current()?.close(),
-      setTheme: appWindow.setTheme,
+      setTheme,
       notify: notifications.notify,
       pickFolder,
       version,
@@ -330,7 +348,7 @@ if (!app.requestSingleInstanceLock()) {
     },
   })
 
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
     void Effect.runPromise(reachLocalEngine)
     Option.map(makeUpdater(), updater =>
       followUpdates({
@@ -343,6 +361,11 @@ if (!app.requestSingleInstanceLock()) {
       }),
     )
     guardPermissions(session.defaultSession)
+    // The window opens in the theme the page last showed, kept in the app's data folder.
+    Option.map(
+      await Effect.runPromise(keptTheme(app.getPath('userData'))),
+      appWindow.setTheme,
+    )
     appWindow.show()
     app.on('activate', appWindow.show)
   })
