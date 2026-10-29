@@ -52,10 +52,13 @@
       }
     },
     {
-      "files": [
-        "packages/ui/test/contrast.test.ts",
-        "packages/ui/test/windowColours.test.ts"
-      ],
+      "files": ["packages/ui/test/contrast.test.ts"],
+      "rules": {
+        "fabrica/no-colour-literals": "off"
+      }
+    },
+    {
+      "files": ["packages/ui/test/windowColours.test.ts"],
       "rules": {
         "fabrica/no-colour-literals": "off"
       }
