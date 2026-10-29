@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="_ds/modernist-23acbe7d-1520-41af-a334-cb2d827d7454/styles.css">
+<script src="_ds/modernist-23acbe7d-1520-41af-a334-cb2d827d7454/_ds_bundle.js"></script>
+<style>
+body{margin:0;background:var(--color-neutral-300);font-family:var(--font-body);}
+a{color:var(--color-accent-700);}a:hover{color:var(--color-accent-600);}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}
+@keyframes drift{to{background-position:64px 0}}
+</style>
+</helmet>
+<section style="padding:64px;display:flex;flex-direction:column;gap:32px;">
+  <div style="display:flex;flex-direction:column;gap:8px;max-width:1100px;">
+    <div style="font-size:14px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--color-accent-700);">Turn 6 · Kit variations</div>
+    <div style="font-size:44px;font-weight:800;line-height:1.05;color:var(--color-text);">The reference layout in three design kits</div>
+    <div style="font-size:17px;line-height:1.5;color:var(--color-neutral-800);text-wrap:pretty;">The layout is unchanged from the Lichen Bright reference. Each version applies a kit&#39;s colors, fonts, corner radius and glow.</div>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:48px;align-items:flex-start;">
+  <sc-for list="{{ kits }}" as="th" hint-placeholder-count="3">
+  <div id="{{ th.id }}" style="display:flex;flex-direction:column;gap:12px;">
+    <div style="display:flex;gap:12px;align-items:baseline;width:1280px;"><span style="flex-shrink:0;background:var(--color-text);color:var(--color-bg);font-weight:800;font-size:15px;padding:4px 10px;">{{ th.id }}</span><span style="font-size:18px;font-weight:800;white-space:nowrap;">{{ th.name }}</span><span style="font-size:14px;color:var(--color-neutral-700);">{{ th.note }}</span></div>
+    <div style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));width:1280px;border:2px solid var(--color-text);">
+      <sc-for list="{{ th.swatches }}" as="w" hint-placeholder-count="6">
+        <div style="display:flex;flex-direction:column;">
+          <div style="height:44px;background:{{ w.v }};"></div>
+          <div style="padding:6px 10px;display:flex;flex-direction:column;gap:2px;background:var(--color-bg);border-top:2px solid var(--color-text);">
+            <span style="font-size:12px;font-weight:800;">{{ w.n }}</span>
+            <span style="font-size:11px;font-family:var(--mono);color:var(--color-neutral-700);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ w.v }}</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div style="{{ th.vars }}">
+    <div style="width:1280px;height:800px;background:var(--bg);color:var(--fg);font-family:var(--font);border:1px solid var(--line);border-radius:var(--rw);display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shadow-lg);">
+      <div style="height:38px;display:flex;align-items:center;gap:8px;padding:0 14px;border-bottom:1px solid var(--line);background:var(--side);">
+        <span style="width:12px;height:12px;background:var(--c3);"></span><span style="width:12px;height:12px;background:var(--c2);"></span><span style="width:12px;height:12px;background:var(--c1);"></span>
+        <span style="margin-left:16px;font-size:13px;font-weight:700;">Hivemind</span>
+        <span style="margin-left:auto;display:flex;align-items:center;gap:18px;font-size:12px;font-family:var(--mono);color:var(--muted);">
+          <span style="display:flex;align-items:center;gap:6px;">MEM <span style="width:64px;height:6px;background:var(--line);display:flex;"><span style="width:35%;background:var(--c4);"></span></span><span style="color:var(--fg);">11.2/32 GB</span></span>
+          <span style="display:flex;align-items:center;gap:6px;">CPU <span style="width:64px;height:6px;background:var(--line);display:flex;"><span style="width:47%;background:var(--c5);"></span></span><span style="color:var(--fg);">47%</span></span>
+          <span style="display:flex;align-items:center;gap:6px;">CORES <span style="display:flex;gap:2px;"><sc-for list="{{ cores }}" as="k" hint-placeholder-count="10"><span style="width:5px;height:12px;background:{{ k.col }};"></span></sc-for></span><span style="color:var(--fg);">6/10</span></span>
+        </span>
+        <span style="margin-left:18px;width:260px;height:24px;border:1px solid var(--line);border-radius:var(--rb);font-size:12px;color:var(--muted);display:flex;align-items:center;padding:0 10px;box-sizing:border-box;">Search tickets and sessions   ⌘K</span>
+      </div>
+      <div style="flex:1;display:grid;grid-template-columns:260px minmax(0,1fr);min-height:0;">
+        <aside style="border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:var(--side);">
+          <div style="padding:16px 16px 10px;display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-size:13px;font-weight:800;">Coding sessions</span>
+            <span style="font-size:12px;color:var(--muted);">7</span>
+          </div>
+          <sc-for list="{{ sessions }}" as="s" hint-placeholder-count="7">
+            <div style="display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 16px;background:{{ s.sel4 }};border-left:3px solid {{ s.selBar4 }};cursor:pointer;">
+              <span style="width:22px;height:22px;background:{{ s.c4 }};border-radius:var(--rb);color:var(--ink);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;">{{ s.num }}</span>
+              <div style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+                <span style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ s.name }}</span>
+                <span style="font-size:12px;color:var(--muted);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ s.branch }}</span>
+              </div>
+              <span style="font-size:12px;color:{{ s.dot3 }};">{{ s.stLabel }}</span>
+            </div>
+          </sc-for>
+          <div style="margin-top:auto;padding:12px 16px;border-top:1px solid var(--line);display:flex;">
+            <button class="btn" style="padding:8px 12px;font-size:13px;font-weight:700;background:var(--c1);color:var(--ink);border:0;border-radius:var(--rb);box-shadow:var(--glow1);justify-content:flex-start;gap:8px;" style-hover="filter:brightness(1.08);"><span style="font-size:16px;line-height:1;">+</span>New session</button>
+          </div>
+        </aside>
+        <main style="display:flex;flex-direction:column;gap:16px;padding:20px 24px;min-width:0;min-height:0;">
+          <div style="display:flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:var(--r);background:var(--panel);">
+            <sc-for list="{{ stats }}" as="st" hint-placeholder-count="4">
+              <div style="display:flex;align-items:baseline;gap:8px;padding:10px 18px;border-right:1px solid var(--line);">
+                <span style="font-size:20px;font-weight:800;line-height:1;color:{{ st.col4 }};">{{ st.value }}</span>
+                <span style="font-size:12px;font-weight:700;color:var(--muted);white-space:nowrap;">{{ st.label }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;height:156px;flex-shrink:0;">
+            <div style="background:var(--panel);border:1px solid var(--line);border-radius:var(--r);display:flex;flex-direction:column;min-height:0;">
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);"><span style="width:8px;height:8px;background:var(--c5);"></span><span style="font-size:13px;font-weight:800;">Hivemind</span><span style="font-size:12px;color:var(--muted);">orchestrator</span><span style="margin-left:auto;font-size:11px;font-family:var(--mono);color:var(--muted);">claude · 14k ctx</span></div>
+              <div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;gap:6px;padding:8px 12px;overflow:auto;font-size:12.5px;line-height:1.35;min-height:0;">
+                <sc-for list="{{ chat }}" as="m" hint-placeholder-count="2">
+                  <div style="display:grid;grid-template-columns:64px minmax(0,1fr);gap:8px;"><span style="font-size:12px;font-weight:800;color:{{ m.col }};">{{ m.who }}</span><span>{{ m.text }}</span></div>
+                </sc-for>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--line);">
+                <span style="color:var(--c1);font-family:var(--mono);font-weight:700;">›</span>
+                <span style="flex:1;font-size:13px;color:var(--muted);">Ask the agents or give an instruction…</span>
+                <span style="font-size:11px;font-family:var(--mono);color:var(--muted);border:1px solid var(--line);padding:1px 6px;">⏎</span>
+              </div>
+            </div>
+            <div style="background:var(--panel);border:1px solid var(--line);border-radius:var(--r);display:flex;flex-direction:column;min-height:0;">
+              <div style="display:flex;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line);"><span style="font-size:13px;font-weight:800;">History</span><span style="margin-left:auto;font-size:12px;color:var(--muted);">Today</span></div>
+              <div style="flex:1;display:flex;flex-direction:column;overflow:auto;">
+                <sc-for list="{{ history }}" as="e" hint-placeholder-count="5">
+                  <div style="display:grid;grid-template-columns:40px 6px minmax(0,1fr);gap:8px;align-items:center;padding:5px 12px;font-size:12px;">
+                    <span style="font-family:var(--mono);color:var(--muted);">{{ e.t }}</span>
+                    <span style="width:6px;height:6px;background:{{ e.col }};"></span>
+                    <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ e.text }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+          <div style="flex:1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;min-height:0;">
+            <div style="display:flex;flex-direction:column;gap:8px;min-height:0;overflow:auto;">
+              <div style="display:flex;align-items:center;gap:8px;padding-bottom:8px;border-bottom:2px solid var(--c1);"><span style="font-size:14px;font-weight:800;">In progress</span><span style="font-size:12px;color:var(--muted);">4</span></div>
+              <sc-for list="{{ working }}" as="t" hint-placeholder-count="4">
+                <div style="background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;display:flex;flex-direction:column;gap:8px;">
+                  <div style="display:flex;gap:8px;align-items:baseline;"><span style="font-size:12px;font-family:var(--mono);color:var(--muted);">{{ t.id }}</span><span style="font-size:14px;font-weight:700;flex:1;">{{ t.title }}</span></div>
+                  <div style="height:4px;background:var(--line);"><div style="height:4px;width:{{ t.pct }};background:{{ t.col4 }};"></div></div>
+                  <div style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted);"><span style="color:{{ t.col4 }};font-weight:700;">{{ t.agent }}</span><span>{{ t.step }}</span><span style="margin-left:auto;">{{ t.time }}</span></div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;min-height:0;overflow:auto;">
+              <div style="display:flex;align-items:center;gap:8px;padding-bottom:8px;border-bottom:2px solid var(--c2);"><span style="font-size:14px;font-weight:800;">Needs your attention</span><span style="font-size:12px;font-weight:700;color:var(--c2);">3</span></div>
+              <sc-for list="{{ hitl }}" as="h" hint-placeholder-count="3">
+                <div style="background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;display:flex;flex-direction:column;gap:8px;">
+                  <div style="display:flex;gap:8px;align-items:center;"><span style="font-size:11px;font-weight:800;background:{{ h.col4 }};color:var(--ink);padding:2px 6px;border-radius:var(--rb);">{{ h.kind }}</span><span style="font-size:12px;font-family:var(--mono);color:var(--muted);">{{ h.id }}</span><span style="margin-left:auto;font-size:12px;color:var(--c2);">waiting {{ h.wait }}</span></div>
+                  <span style="font-size:14px;font-weight:700;">{{ h.title }}</span>
+                  <span style="font-size:13px;color:var(--muted);">{{ h.reason }}</span>
+                  <div style="display:flex;gap:8px;"><button class="btn" style="padding:6px 12px;font-size:13px;background:var(--c2);color:var(--ink);border:0;font-weight:700;border-radius:var(--rb);box-shadow:var(--glow2);">{{ h.action }}</button><button class="btn btn-ghost" style="padding:6px 12px;font-size:13px;color:var(--fg);border-radius:var(--rb);">Open session</button></div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+    </div>
+  </div>
+  </sc-for>
+  </div>
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    const h = React.createElement;
+    const raw = [
+      ['Auth refresh rewrite', 'feat/auth-rt', '42m', 'hitl'],
+      ['Billing webhooks', 'fix/stripe-retry', '18m', 'live'],
+      ['Search indexer perf', 'perf/indexer', '1h 06m', 'live'],
+      ['Onboarding copy pass', 'chore/copy', '9m', 'hitl'],
+      ['Postgres 17 migration', 'ops/pg17', '2h 11m', 'hitl'],
+      ['Flaky e2e triage', 'test/e2e-flake', '27m', 'live'],
+      ['Dark mode tokens', 'feat/dark', '4m', 'idle'],
+    ];
+    const sessions = raw.map(([name, branch, time, st], i) => ({
+      name, branch, time, num: String(i + 1).padStart(2, '0'),
+      bgA: i === 0 ? 'var(--color-neutral-200)' : 'transparent',
+      dotA: st === 'hitl' ? 'var(--color-accent)' : st === 'live' ? 'repeating-linear-gradient(-45deg,var(--color-text) 0 2px,var(--color-bg) 2px 5px)' : 'var(--color-bg)',
+      bgB: i === 0 ? 'var(--color-bg)' : 'transparent',
+      fgB: i === 0 ? 'var(--color-text)' : '#fff',
+      bgC: i === 0 ? 'var(--color-neutral-900)' : 'transparent',
+      dot: st === 'hitl' ? 'var(--color-accent)' : st === 'live' ? 'var(--color-text)' : 'var(--color-neutral-400)',
+      stLabel: st === 'hitl' ? 'Waiting' : st === 'live' ? 'Running' : 'Idle',
+      sel2: i === 0 ? 'var(--color-surface)' : 'transparent',
+      sel2d: i === 0 ? 'var(--color-neutral-900)' : 'transparent',
+      selBar: i === 0 ? 'var(--color-accent)' : 'transparent',
+      dot3: st === 'hitl' ? 'var(--hot)' : st === 'live' ? 'var(--run)' : 'transparent',
+      sel3: i === 0 ? 'var(--panel)' : 'transparent',
+      selBar3: i === 0 ? 'var(--run)' : 'transparent',
+      barC: st === 'hitl' ? 'var(--color-accent)' : st === 'live' ? 'var(--color-neutral-400)' : 'transparent',
+    }));
+    const stats = [
+      ['Agents live', '7', '+2 since 9am', '78%'],
+      ['Tickets done', '23', 'today', '92%'],
+      ['Needs you', '3', 'oldest 14m', '30%', true],
+      ['Tokens', '1.2M', '$18.40 spent', '55%'],
+    ].map(([label, value, delta, bar, hot]) => ({
+      label, value, delta, bar,
+      bgA: hot ? 'var(--color-accent)' : 'transparent', fgA: hot ? '#fff' : 'var(--color-text)',
+      fgB: hot ? 'var(--color-accent)' : 'var(--color-text)',
+      fgC: hot ? 'var(--color-accent-400)' : 'var(--color-bg)',
+      fg3: hot ? 'var(--hot)' : 'var(--fg)',
+    }));
+    const working = [
+      ['ENG-412', 'Retry failed Stripe webhooks', 'Agent 02', 'Writing tests', '72%', '18m'],
+      ['ENG-398', 'Batch writes in search indexer', 'Agent 03', 'Benchmarking', '48%', '1h 06m'],
+      ['ENG-421', 'Quarantine flaky checkout spec', 'Agent 06', 'Reading CI logs', '25%', '27m'],
+      ['ENG-430', 'Map tokens to dark palette', 'Agent 07', 'Planning', '8%', '4m'],
+    ].map(([id, title, agent, step, pct, time]) => ({ id, title, agent, step, pct, time }));
+    const hitl = [
+      ['ENG-377', 'Drop legacy sessions table', 'Destructive migration needs approval before running on prod.', 'Approve', '14m', 'Approval'],
+      ['ENG-405', 'Rotate refresh tokens on reuse?', 'Spec is ambiguous: revoke the whole family or only the one token?', 'Answer', '9m', 'Question'],
+      ['ENG-419', 'Welcome email tone', '3 drafts ready. Pick one to ship.', 'Review', '2m', 'Review'],
+    ].map(([id, title, reason, action, wait, kind]) => ({ id, title, reason, action, wait, kind }));
+    const discA = h('div', { key: 'd', style: { width: 120, height: 120, background: 'repeating-conic-gradient(var(--color-text) 0 10deg, var(--color-bg) 10deg 20deg)', animation: 'spin 24s linear infinite', position: 'relative' } },
+      h('div', { style: { position: 'absolute', inset: 30, background: 'repeating-radial-gradient(circle, var(--color-accent) 0 4px, var(--color-bg) 4px 8px)', animation: 'spin 8s linear infinite reverse' } }));
+    const ringsC = h('div', { key: 'r', style: { width: 560, height: 560, borderRadius: '50%', background: 'repeating-radial-gradient(circle, transparent 0 14px, var(--color-accent-800) 14px 16px)', animation: 'breathe 4s ease-in-out infinite', opacity: 0.9 } });
+    const T = (id, name, note, h, c, run, hot, hotH) => ({
+      id, name, note,
+      vars: `--bg:oklch(0.19 ${c} ${h});--panel:oklch(0.235 ${c * 1.2} ${h});--side:oklch(0.165 ${c} ${h});--line:oklch(0.31 ${c * 1.4} ${h});--muted:oklch(0.72 ${c * 1.5} ${h});--fg:oklch(0.94 ${c * 0.6} ${h});--run:${run};--hot:${hot};--hotInk:oklch(0.2 0.03 ${hotH});--hotSoft:color-mix(in oklch, ${hot} 45%, transparent)`,
+    });
+    const themes = [
+      T('3a', 'Amethyst', 'Deep violet ground, lilac for running work, hot pink for attention.', 300, 0.03, 'oklch(0.76 0.14 300)', 'oklch(0.76 0.17 350)', 350),
+      T('3b', 'Moss', 'Warm olive-black ground, lichen green for running work, amber for attention.', 120, 0.018, 'oklch(0.8 0.13 128)', 'oklch(0.8 0.15 70)', 70),
+      T('3c', 'Espresso', 'Coffee-brown ground, cream for running work, clay orange for attention.', 55, 0.02, 'oklch(0.88 0.05 85)', 'oklch(0.72 0.14 45)', 45),
+      T('3d', 'Plum & Sage', 'Plum ground with sage-green running work and peach for attention.', 340, 0.025, 'oklch(0.8 0.07 150)', 'oklch(0.8 0.11 55)', 55),
+    ];
+    const cyc = ['var(--c2)', 'var(--c1)', 'var(--c4)', 'var(--c2)', 'var(--c3)', 'var(--c5)', 'var(--muted)'];
+    sessions.forEach((s, i) => { s.c4 = cyc[i]; s.sel4 = i === 0 ? 'var(--panel)' : 'transparent'; s.selBar4 = i === 0 ? 'var(--c1)' : 'transparent'; });
+    ['var(--c1)', 'var(--c4)', 'var(--c2)', 'var(--c5)'].forEach((c, i) => { stats[i].col4 = c; });
+    ['var(--c1)', 'var(--c4)', 'var(--c3)', 'var(--c5)'].forEach((c, i) => { working[i].col4 = c; });
+    ['var(--c2)', 'var(--c5)', 'var(--c4)'].forEach((c, i) => { hitl[i].col4 = c; });
+    const M = (id, name, note, h, c, cols) => {
+      const names = ['Running', 'Attention', 'Error', 'Done', 'Info'];
+      return { id, name, note,
+        swatches: [`oklch(0.19 ${c} ${h})`, ...cols].map((v, i) => ({ v, n: i ? names[i - 1] : 'Ground' })),
+        vars: `--bg:oklch(0.19 ${c} ${h});--panel:oklch(0.235 ${c * 1.2} ${h});--side:oklch(0.165 ${c} ${h});--line:oklch(0.31 ${c * 1.4} ${h});--muted:oklch(0.72 ${c * 1.5} ${h});--fg:oklch(0.94 ${c * 0.6} ${h});--c1:${cols[0]};--c2:${cols[1]};--c3:${cols[2]};--c4:${cols[3]};--c5:${cols[4]};--ink:oklch(0.2 0.02 ${h})` };
+    };
+    const moss = [
+      M('4a', 'Moss Garden', 'The original Moss ground with lichen, amber, rust, teal and a pale sky blue.', 120, 0.018,
+        ['oklch(0.8 0.13 128)', 'oklch(0.8 0.15 70)', 'oklch(0.66 0.15 35)', 'oklch(0.76 0.09 185)', 'oklch(0.8 0.07 235)']),
+      M('4b', 'Forest Floor', 'Earthier and lower in saturation: fern, honey, brick, sage and a mushroom mauve.', 95, 0.022,
+        ['oklch(0.74 0.11 135)', 'oklch(0.8 0.12 85)', 'oklch(0.62 0.12 30)', 'oklch(0.75 0.06 160)', 'oklch(0.74 0.05 330)']),
+      M('4c', 'Lichen Bright', 'A punchier take on Moss: chartreuse, marigold, coral, aqua and lavender on a deep green-black.', 140, 0.025,
+        ['oklch(0.86 0.17 125)', 'oklch(0.82 0.16 75)', 'oklch(0.72 0.16 25)', 'oklch(0.82 0.11 190)', 'oklch(0.78 0.1 295)']),
+    ];
+    const lichen = [{ ...moss[2], id: '5a', name: 'Lichen Bright', note: 'Compact stats, system load in the title bar, New session button.' }];
+    const cores = Array.from({ length: 10 }, (_, i) => ({ col: i < 6 ? 'var(--c1)' : 'var(--line)' }));
+    const chat = [
+      { who: 'You', col: 'var(--c1)', text: 'Hold the indexer work until the sessions-table migration is approved.' },
+      { who: 'Hivemind', col: 'var(--c5)', text: 'Paused Agent 03 on ENG-398. Resumes once ENG-377 is approved.' },
+    ];
+    const history = [
+      { t: '10:42', col: 'var(--c4)', text: 'Agent 02 opened PR #812 · Stripe retries' },
+      { t: '10:38', col: 'var(--c2)', text: 'Agent 05 asked for approval · ENG-377' },
+      { t: '10:31', col: 'var(--c4)', text: 'ENG-401 merged · rate-limit headers' },
+      { t: '10:20', col: 'var(--c3)', text: 'Agent 06 hit a CI failure · retrying' },
+    ];
+    const K = (id, name, note, v) => ({ id, name, note,
+      swatches: [['Ground', v.bg], ['Running', v.c1], ['Attention', v.c2], ['Error', v.c3], ['Done', v.c4], ['Info', v.c5]].map(([n, x]) => ({ n, v: x })),
+      vars: Object.entries(v).map(([k, x]) => '--' + k + ':' + x).join(';') });
+    const kits = [
+      K('6a', 'Neon Grid', 'True black with magenta and cyan neon, monospace everywhere, square corners and glow on actions.', { bg: '#05060B', side: '#030409', panel: '#0B0D18', line: 'rgba(255,46,155,0.24)', muted: '#7A82A2', fg: '#E8ECF8', c1: '#00E5FF', c2: '#FF2E9B', c3: '#FF3D3D', c4: '#39FF14', c5: '#FFB800', ink: '#05060B', font: "'JetBrains Mono', ui-monospace, monospace", mono: "'JetBrains Mono', ui-monospace, monospace", r: '0px', rb: '0px', rw: '0px', glow1: '0 0 18px rgba(0,229,255,0.5)', glow2: '0 0 18px rgba(255,46,155,0.55)' }),
+      K('6b', 'Classic', 'A quiet slate chat-app workspace with a terracotta accent, Inter at 14px and soft 6px corners.', { bg: '#1A1D21', side: '#19171D', panel: '#222529', line: 'rgba(255,255,255,0.1)', muted: '#949BA4', fg: '#D1D2D3', c1: '#2BAC76', c2: '#C2724E', c3: '#E5484D', c4: '#5B9BD5', c5: '#D4A574', ink: '#FFFFFF', font: "Inter, system-ui, sans-serif", mono: "ui-monospace, SFMono-Regular, Menlo, monospace", r: '6px', rb: '4px', rw: '10px', glow1: 'none', glow2: 'none' }),
+      K('6c', 'Lichen Bright', 'The reference: chartreuse, marigold, coral, aqua and lavender on a deep green-black, in Archivo with square corners.', { bg: 'oklch(0.19 0.025 140)', side: 'oklch(0.165 0.025 140)', panel: 'oklch(0.235 0.03 140)', line: 'oklch(0.31 0.034999999999999996 140)', muted: 'oklch(0.72 0.037500000000000006 140)', fg: 'oklch(0.94 0.015 140)', c1: 'oklch(0.86 0.17 125)', c2: 'oklch(0.82 0.16 75)', c3: 'oklch(0.72 0.16 25)', c4: 'oklch(0.82 0.11 190)', c5: 'oklch(0.78 0.1 295)', ink: 'oklch(0.2 0.02 140)', font: 'var(--font-body)', mono: 'ui-monospace, monospace', r: '0px', rb: '0px', rw: '0px', glow1: 'none', glow2: 'none' }),
+    ];
+    return { kits, sessions, stats, working, hitl, discA, ringsC, themes, moss, lichen, cores, chat, history };
+  }
+}
+</script>
+</body>
+</html>
