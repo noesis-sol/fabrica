@@ -1,0 +1,16 @@
+{
+  "name": "@fabrica/pi-checks",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Development only: the type check and oxlint after every write and edit of a Pi agent working on Fabrica (spec §23).",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

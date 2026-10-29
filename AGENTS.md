@@ -167,6 +167,11 @@ core on CI, or half the machine's cores elsewhere. `pnpm test` reruns each file'
 process and prints `FLAKY: <file> > <test>` for a test that passes on its rerun. Shared test helpers live in
 `@fabrica/testkit`.
 
+After every write, the type check of the written file's package and oxlint run on it, and their problems come
+back with the tool's result: a `PostToolUse` hook in `.claude/settings.json` for Claude Code, and the
+development-only Pi package `scripts/pi-checks` (loaded by `.pi/settings.json`) for Pi; both run
+`scripts/check-write.ts`. Fix what they report before going on.
+
 Dependencies are pinned to exact versions (`saveExact` in `pnpm-workspace.yaml`): add one with
 `pnpm add --filter <package> <name>@<version>`. `effect` and every `@effect/*` package stay on one version,
 the Effect peer Foldkit pins (4.0.0 at Foldkit 0.169.0), held by `overrides` in `pnpm-workspace.yaml`; they
