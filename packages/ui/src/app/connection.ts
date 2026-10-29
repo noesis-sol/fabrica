@@ -1,4 +1,13 @@
-import { Data, Duration, Effect, Option, Schema, Stream } from 'effect'
+import {
+  Cause,
+  Data,
+  Duration,
+  Effect,
+  Option,
+  Predicate,
+  Schema,
+  Stream,
+} from 'effect'
 import { Socket } from 'effect/socket'
 import { ManagedResource } from 'foldkit'
 import { defineTaggedUnion } from 'foldkit/schema'
@@ -145,17 +154,54 @@ export const AttemptFailure = Data.taggedEnum<AttemptFailure>()
 
 const isMismatch = Schema.is(VersionMismatch)
 
+/** A failure in words: its `reason` where it gives one, else its message, else its tag, else `fallback`. */
+export const failureText = (error: unknown, fallback: string): string => {
+  if (typeof error === 'string') return error === '' ? fallback : error
+  if (typeof error !== 'object' || error === null) return fallback
+  const reason: unknown = Reflect.get(error, 'reason')
+  if (typeof reason === 'string' && reason !== '') return reason
+  if (error instanceof Error && error.message !== '') return error.message
+  const tag: unknown = Reflect.get(error, '_tag')
+  return typeof tag === 'string' ? tag : fallback
+}
+
 export const attemptFailure = (error: unknown): AttemptFailure =>
   isMismatch(error)
     ? AttemptFailure.Refused({ mismatch: error })
     : AttemptFailure.Unreachable({
-        reason:
-          error instanceof Error
-            ? error.message
-            : typeof error === 'string'
-              ? error
-              : 'the engine could not be reached',
+        reason: failureText(error, 'the engine could not be reached'),
       })
+
+/** What a request says while no engine is connected. */
+export const notConnected = 'the engine is not connected'
+
+/**
+ * A request to the engine through the held client: its answer, or its failure in words, the engine's
+ * refusal, a request it doesn't serve yet, and no connection included (§8.1).
+ */
+export const requestEngine = <A, E, R>(
+  use: (client: EngineClientShape) => Effect.Effect<A, E, R>,
+): Effect.Effect<A, string, R | EngineConnectionService> =>
+  EngineConnection.get.pipe(
+    Effect.flatMap(({ client }) => use(client)),
+    Effect.catchCause(cause =>
+      Effect.fail(
+        Cause.hasInterruptsOnly(cause)
+          ? 'the request was interrupted'
+          : failureText(
+              Option.getOrElse(
+                Option.map(Cause.findErrorOption(cause), error =>
+                  Predicate.isTagged(error, 'ResourceNotAvailable')
+                    ? notConnected
+                    : error,
+                ),
+                () => Cause.squash(cause),
+              ),
+              'the engine gave no reason',
+            ),
+      ),
+    ),
+  )
 
 /** The requirements the resource is held under: the attempt, so a new attempt acquires afresh, and the release. */
 export const ConnectionRequirements = Schema.Option(

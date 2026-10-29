@@ -14,6 +14,7 @@ import {
 import * as Attention from '../console/attention'
 import * as History from '../console/history'
 import * as Stats from '../console/stats'
+import * as Engines from '../screens/engines'
 import { NotificationTarget } from './notify'
 import { Screen } from './screen'
 import {
@@ -45,6 +46,8 @@ export const Message = defineMessageUnion({
   /** The sidebar's "+ Add project": the engines screen's add-project flow (§10.1). */
   RequestedAddProject: {},
   GotHistoryMessage: { message: History.Message },
+  /** A Message of the Engines and projects screen's. */
+  GotEnginesMessage: { message: Engines.Message },
 
   ConnectedToEngine: {
     engine: EngineId,

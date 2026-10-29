@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Effect, Layer } from 'effect'
 import { ManagedResource, type Runtime } from 'foldkit'
 
 import {
@@ -10,6 +10,7 @@ import {
   connect,
   connectionRequirements,
 } from './connection'
+import { AppHost, type AppHostShape } from './host'
 import { Message } from './message'
 import { Flags, Model, initialModel } from './model'
 import { type NotifierShape, layerNotifier } from './notifier'
@@ -21,8 +22,9 @@ import { update } from './update'
 import { view } from './view'
 
 // The program the entries run (spec §18.1): the Model, its update and view, the engine connection as
-// a ManagedResource, the subscriptions, and the notifier as a resource, given what they need of their
-// host, injected so tests run them against a test engine and their own frames and keys.
+// a ManagedResource, the subscriptions, the notifier and the app around the renderer as resources,
+// given what they need of their host, injected so tests run them against a test engine and their own
+// frames and keys.
 
 /** What the program needs from its host. */
 export interface Environment extends SubscriptionEnvironment {
@@ -30,6 +32,8 @@ export interface Environment extends SubscriptionEnvironment {
   readonly enginePort: Effect.Effect<MessagePort>
   /** The app's notifications (§18.5): through the preload, or none without it. */
   readonly notifier: NotifierShape
+  /** The app around the renderer: the desktop app's preload, or none in a browser. */
+  readonly host: AppHostShape
 }
 
 /** How the app names itself in its hello. */
@@ -74,6 +78,9 @@ export const program = (environment: Environment) => ({
   update,
   view,
   subscriptions: makeSubscriptions(environment),
-  resources: layerNotifier(environment.notifier),
+  resources: Layer.mergeAll(
+    layerNotifier(environment.notifier),
+    Layer.succeed(AppHost, environment.host),
+  ),
   managedResources: makeManagedResources(environment),
 })

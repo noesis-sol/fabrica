@@ -243,6 +243,7 @@ describe("the user's choice of the login service", () => {
       toggleMaximize: () => undefined,
       close: () => undefined,
       setTheme: () => undefined,
+      notify: () => undefined,
       pickFolder: unused,
       version: '1.0.0',
       updateStatus: () => ({ _tag: 'Unavailable' }),

@@ -6,6 +6,7 @@ import type { Platform } from '@fabrica/contracts'
 import { applyTheme, defaultTheme } from '../theme/theme'
 import { localTicks } from './clock'
 import { nextAnimationFrame } from './frame'
+import { appHostOf } from './host'
 import { Message } from './message'
 import { type NotifierShape, silentNotifier } from './notifier'
 import { receiveEnginePort } from './port'
@@ -13,9 +14,9 @@ import { program } from './program'
 import { documentKeys } from './subscriptions'
 
 // Starting the renderer in a window, the one way both entries do (the app's and the renderer alone in
-// a browser): the theme on the root, the program with the window's frames, keys and engine port, and
-// the host's facts as its flags. The app's entry passes the preload's notifications; the renderer alone
-// shows none.
+// a browser): the theme on the root, the program with the window's frames, keys, engine port and the
+// app around it, and the host's facts as its flags. The app's entry passes the preload's
+// notifications; the renderer alone shows none.
 
 /** The app's release, said in its hello to the engine. */
 export const appRelease = '0.0.0'
@@ -41,6 +42,7 @@ export const start = (
       keys: documentKeys(target.document),
       ticks: localTicks,
       notifier,
+      host: appHostOf(target),
     }),
     container: target.document.getElementById('root'),
     devTools: { Message },

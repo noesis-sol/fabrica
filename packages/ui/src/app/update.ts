@@ -8,12 +8,9 @@ import * as Attention from '../console/attention'
 import * as History from '../console/history'
 import * as Sidebar from '../console/sidebar'
 import * as Stats from '../console/stats'
+import * as Engines from '../screens/engines'
 import { dayOf, sameDay } from './clock'
-import {
-  Connection,
-  type EngineConnectionService,
-  retryAfter,
-} from './connection'
+import { Connection, retryAfter } from './connection'
 import { commandFor, commandsFor } from './keys'
 import { Message } from './message'
 import { type Model, Overlay } from './model'
@@ -38,7 +35,7 @@ export const WaitToReconnect = Command.define('WaitToReconnect', {
   execute: Effect.as(Effect.sleep(retryAfter), Message.WaitedToReconnect()),
 })
 
-type Return = Update.Return<Model, Message, EngineConnectionService | Notifier>
+type Return = Update.Return<Model, Message, Engines.Requires | Notifier>
 
 /** The stats row's Messages, folded into its submodel; a run it started is watched afresh. */
 const foldStats = Update.foldChild({
@@ -192,6 +189,47 @@ const focusOn = (
   }
 }
 
+const foldEngines = Update.foldChild({
+  update: Engines.update,
+  read: (model: Model) => Option.some(model.screens.engines),
+  write: (model: Model, engines: Engines.Model) =>
+    modifyFields(model, {
+      screens: screens => modifyFields(screens, { engines: () => engines }),
+    }),
+  toParentMessage: (message: Engines.Message) =>
+    Message.GotEnginesMessage({ message }),
+})
+
+/** The Engines screen's own Model changed, and its Commands lifted, by `step`. */
+const stepEngines = (
+  model: Model,
+  step: (
+    engines: Engines.Model,
+  ) => Update.Return<Engines.Model, Engines.Message, Engines.Requires>,
+): Return => {
+  const stepped = step(model.screens.engines)
+  return {
+    model: modifyFields(model, {
+      screens: screens =>
+        modifyFields(screens, { engines: () => stepped.model }),
+    }),
+    commands: Command.mapMessages(stepped.commands, message =>
+      Message.GotEnginesMessage({ message }),
+    ),
+  }
+}
+
+/**
+ * Shows `screen`; a screen that wasn't shown already asks what it shows as it opens: the Engines
+ * screen, its engine's status and credentials (§18.4).
+ */
+const enterScreen = (model: Model, screen: Screen): Return => {
+  const shown = showScreen(model, screen)
+  return Screen.guards.Engines(screen) && !Screen.guards.Engines(model.screen)
+    ? stepEngines(shown, Engines.opened)
+    : { model: shown }
+}
+
 export const update = (model: Model, message: Message): Return =>
   Message.match<Return>(message, {
     PressedKey: pressed =>
@@ -199,7 +237,7 @@ export const update = (model: Model, message: Message): Return =>
         onNone: () => ({ model }),
         onSome: command => update(model, command.message),
       }),
-    RequestedScreen: ({ screen }) => ({ model: showScreen(model, screen) }),
+    RequestedScreen: ({ screen }) => enterScreen(model, screen),
     RequestedPalette: () => ({
       model: modifyFields(model, { overlay: () => Overlay.Palette() }),
     }),
@@ -224,16 +262,30 @@ export const update = (model: Model, message: Message): Return =>
             }),
             Option.none(),
           ),
-    RequestedAddProject: () => ({
-      model: showScreen(model, Screen.Engines()),
-    }),
+    RequestedAddProject: () => {
+      const entered = enterScreen(model, Screen.Engines())
+      return {
+        ...entered,
+        model: modifyFields(entered.model, {
+          screens: screens =>
+            modifyFields(screens, {
+              engines: Engines.openAddProject,
+            }),
+        }),
+      }
+    },
     GotHistoryMessage: ({ message }) => foldHistory(model, message),
+    GotEnginesMessage: ({ message }) => foldEngines(model, message),
 
-    ConnectedToEngine: ({ engine, release, protocol }) => ({
-      model: modifyFields(model, {
+    ConnectedToEngine: ({ engine, release, protocol }) => {
+      const connected = modifyFields(model, {
         connection: () => Connection.Up({ engine, release, protocol }),
-      }),
-    }),
+      })
+      // The Engines screen asks again what it shows of the engine just reached.
+      return Screen.guards.Engines(model.screen)
+        ? stepEngines(connected, Engines.opened)
+        : { model: connected }
+    },
     LostEngine: () => ({
       model: modifyFields(model, { connection: () => Connection.Down() }),
     }),

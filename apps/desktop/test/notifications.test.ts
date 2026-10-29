@@ -256,6 +256,8 @@ describe('main’s end of notify', () => {
       pickFolder: () => Promise.resolve(FolderPick.cases.Cancelled.make({})),
       version: '1.0.0',
       updateStatus: () => UpdateStatus.cases.Unavailable.make({}),
+      installLoginService: () =>
+        Promise.resolve({ _tag: 'Failed', reason: 'not this test’s' }),
     }
     registerIpc({ ipc, trusted: url => url === app, actions })
     const send = (sender: string | undefined, ...values: Array<unknown>) =>

@@ -2,6 +2,7 @@ import { Effect, Layer, Option, Stream } from 'effect'
 import { RpcSerialization, RpcServer } from 'effect/rpc'
 import { SocketServer } from 'effect/socket'
 import {
+  Command as SceneCommand,
   all,
   click,
   expectAll,
@@ -12,7 +13,7 @@ import {
   selector,
   within,
 } from 'foldkit/scene'
-import { given, message, model, story } from 'foldkit/story'
+import { Command, given, message, model, story } from 'foldkit/story'
 
 import { describe, expect, it, test } from '@effect/vitest'
 import { portServer, webPortEnd } from '@fabrica/client'
@@ -39,6 +40,7 @@ import { projectMessages } from '../src/app/subscriptions'
 import { update } from '../src/app/update'
 import { view } from '../src/app/view'
 import { chipOf, projectChip, rows } from '../src/console/sidebar'
+import * as Engines from '../src/screens/engines'
 
 // The console's sidebar (spec §18.3, H43; Appendix A.2), drawn from fixture project rows on two
 // engines: the rows with their chips, Base and engine names and run states, the selected row's style,
@@ -333,6 +335,18 @@ describe('selection', () => {
 })
 
 describe('+ Add project', () => {
+  /** What the Engines screen asks as it opens, answered. */
+  const engineScreenAnswers = [
+    [
+      Engines.LoadEngineStatus,
+      Engines.Message.FailedLoadStatus({ reason: 'not this test’s' }),
+    ],
+    [
+      Engines.LoadCredentials,
+      Engines.Message.FailedLoadCredentials({ reason: 'not this test’s' }),
+    ],
+  ] as const
+
   test('is pinned at the bottom and opens the engines screen', () => {
     scene(
       { update, view },
@@ -344,6 +358,8 @@ describe('+ Add project', () => {
       expectScene(
         role('heading', { name: 'Engines and projects', level: 1 }),
       ).toExist(),
+      expectScene(role('form', { name: 'Add project' })).toExist(),
+      SceneCommand.resolveAll(...engineScreenAnswers),
     )
     story(
       update,
@@ -352,6 +368,7 @@ describe('+ Add project', () => {
       model(shown => {
         expect(shown.screen).toEqual(Screen.Engines())
       }),
+      Command.resolveAll(...engineScreenAnswers),
     )
   })
 })

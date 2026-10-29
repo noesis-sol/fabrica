@@ -163,9 +163,9 @@ describe('routing', () => {
     story(
       update,
       given({ ...start, overlay: Overlay.Palette() }),
-      message(Message.RequestedScreen({ screen: Screen.Engines() })),
+      message(Message.RequestedScreen({ screen: Screen.Insights() })),
       model(shown => {
-        expect(shown.screen).toEqual(Screen.Engines())
+        expect(shown.screen).toEqual(Screen.Insights())
         expect(shown.overlay).toEqual(Overlay.Closed())
       }),
     )

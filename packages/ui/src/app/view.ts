@@ -339,7 +339,17 @@ const screenView = (model: Model, h: HtmlBuilder<Message>): Html =>
     Backlog: () => Backlog.view(model.screens.backlog, h),
     Review: () => Review.view(model.screens.review, h),
     Insights: () => Insights.view(model.screens.insights, h),
-    Engines: () => Engines.view(model.screens.engines, h),
+    Engines: () =>
+      h.submodel({
+        slotId: 'engines',
+        view: Engines.view,
+        model: model.screens.engines,
+        viewInputs: {
+          connection: model.connection,
+          engines: model.console.sidebar.engines,
+        },
+        toParentMessage: message => Message.GotEnginesMessage({ message }),
+      }),
     Settings: () => Settings.view(model.screens.settings, h),
   })
 
