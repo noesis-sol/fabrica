@@ -181,6 +181,7 @@ describe('the console against an engine that serves little yet', () => {
           nextFrame: Effect.void,
           keys: Stream.fromQueue(keys),
           ticks: Stream.never,
+          replacedEnginePorts: Stream.never,
           notifier: silentNotifier,
           host: noAppHost,
           themeHost: themeHostOf(window),
