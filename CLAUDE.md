@@ -132,7 +132,8 @@ Foldkit, Effect v4 and Pi are git subtrees under `repos/` (spec §23), each at t
 
 They are read-only references, for the source, the examples and the docs of the versions this project runs:
 never edit them and never import from them; code imports from `node_modules`. The checks leave `repos/` out:
-oxlint and oxfmt ignore it, the type checks and Vitest cover only `apps/`, `packages/` and `scripts/`, and
+oxlint and oxfmt through `.eslintignore` and `.prettierignore` (their configs' `ignorePatterns` alone don't
+stop the configs nested there), the type checks and Vitest cover only `apps/`, `packages/` and `scripts/`, and
 `pnpm check:own` counts no change there.
 
 `FOLDKIT.md` is Foldkit's, copied whole from

@@ -2,7 +2,13 @@ import { Option } from 'effect'
 
 import { describe, expect, it } from '@effect/vitest'
 
-import { Plan, type Sources, isVendored, standOn } from './check-own'
+import {
+  Plan,
+  type Sources,
+  isSetupFile,
+  isVendored,
+  standOn,
+} from './check-own'
 
 const treeA = 'a'.repeat(40)
 const treeB = 'b'.repeat(40)
@@ -51,6 +57,13 @@ describe('isVendored', () => {
     expect(isVendored('packages/repos/index.ts')).toBe(false)
     expect(isVendored('reposition.ts')).toBe(false)
     expect(isVendored('FOLDKIT.md')).toBe(false)
+  })
+})
+
+describe('isSetupFile', () => {
+  it('holds for the ignore files that keep repos/ out of oxlint and oxfmt', () => {
+    expect(isSetupFile('.eslintignore')).toBe(true)
+    expect(isSetupFile('.prettierignore')).toBe(true)
   })
 })
 
@@ -121,8 +134,6 @@ describe('standOn with vendored source', () => {
         earlier: Option.none(),
         sources,
       }),
-    ).toEqual(
-      Plan.Whole({ reason: 'packages/contracts/package.json changed' }),
-    )
+    ).toEqual(Plan.Whole({ reason: 'packages/contracts/package.json changed' }))
   })
 })

@@ -21,8 +21,9 @@ import { Data, Option } from 'effect'
 // causes in a test is the type check's to find. import { type X } … still counts, as
 // verbatimModuleSyntax keeps it as an import.
 // A change to the project's setup (isSetupFile: a package.json, the lockfile, a tsconfig, the
-// linter's and formatter's settings, the root vitest.config.ts, scripts/check-fast.sh) runs
-// scripts/check-fast.sh whole instead, and so does a branch with no main to start from.
+// linter's and formatter's settings and ignore files, the root vitest.config.ts,
+// scripts/check-fast.sh) runs scripts/check-fast.sh whole instead, and so does a branch with no main
+// to start from.
 // The vendored source under repos/ (isVendored: Foldkit, Effect and Pi, spec §23) is read-only
 // reference that no check covers, so a change there counts for nothing, its package.json files
 // included.
@@ -57,6 +58,8 @@ export const isSetupFile = (file: string): boolean =>
     'mise.toml',
     '.oxlintrc.json',
     '.oxfmtrc.json',
+    '.eslintignore',
+    '.prettierignore',
     'vitest.config.ts',
     'scripts/check-fast.sh',
   ].includes(file)

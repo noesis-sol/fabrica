@@ -1,0 +1,4 @@
+# oxlint's ignore file. The vendored source under repos/ (spec §23) is listed here and not only in
+# .oxlintrc.json's ignorePatterns, which don't keep oxlint from loading the .oxlintrc.json files nested
+# there, and failing on the plugins they name.
+repos/
