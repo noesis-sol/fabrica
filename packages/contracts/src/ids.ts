@@ -6,19 +6,25 @@ import { Schema } from 'effect'
 // Functions taking several of them take them by name.
 
 /** Text with no whitespace and at least one character: the form of every opaque ID. */
-const Opaque = Schema.String.check(Schema.isPattern(/^\S+$/))
+const Opaque = Schema.String.check(Schema.isPattern(/^\S+$/u))
 
 /** A ticket's ID: `<prefix>-<short hash>`, e.g. `fa-a1b2`; its children `<parent>.<n>` (spec §11.2). */
 export const TicketId = Schema.String.check(
-  Schema.isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)+(?:\.[1-9][0-9]*)*$/),
+  Schema.isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)+(?:\.[1-9][0-9]*)*$/u),
 ).pipe(Schema.brand('TicketId'))
 export type TicketId = typeof TicketId.Type
 
 /** A git commit's full hash, lower-case hex: SHA-1 (40 digits) or SHA-256 (64). */
 export const CommitHash = Schema.String.check(
-  Schema.isPattern(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/),
+  Schema.isPattern(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u),
 ).pipe(Schema.brand('CommitHash'))
 export type CommitHash = typeof CommitHash.Type
+
+/** A git tree's full hash, in a commit's form: what a check ran on, HEAD's tree with the uncommitted and untracked files (spec §13.6). */
+export const TreeHash = Schema.String.check(
+  Schema.isPattern(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u),
+).pipe(Schema.brand('TreeHash'))
+export type TreeHash = typeof TreeHash.Type
 
 /** A note on a ticket; notes from two engines merge as a union by this ID (spec §11.4). */
 export const NoteId = Opaque.pipe(Schema.brand('NoteId'))

@@ -8,7 +8,7 @@ import { CommitHash, EngineId, NoteId, SessionId, TicketId } from './ids'
 // milliseconds since the epoch. Tags and literals are written as the spec writes them, snake_case.
 
 /** Text with something in it besides whitespace. */
-const Text = Schema.String.check(Schema.isPattern(/\S/))
+export const Text = Schema.String.check(Schema.isPattern(/\S/u))
 
 /** A moment, encoded as milliseconds since the epoch, as the store keeps it. */
 const Moment = Schema.DateTimeUtcFromMillis
@@ -51,12 +51,12 @@ export type Priority = typeof Priority.Type
 
 /** A per-ticket model override: `<provider>/<model>`, with the provider's thinking level where it takes one (§12.5). */
 export const ModelOverride = Schema.String.check(
-  Schema.isPattern(/^[^/\s]+\/\S+$/),
+  Schema.isPattern(/^[^/\s]+\/\S+$/u),
 )
 export type ModelOverride = typeof ModelOverride.Type
 
 /** A label: one word, such as `solo` or an area label. */
-export const LabelName = Schema.String.check(Schema.isPattern(/^\S+$/))
+export const LabelName = Schema.String.check(Schema.isPattern(/^\S+$/u))
 export type LabelName = typeof LabelName.Type
 
 /** The organs, one-shot advisers that file notes and questions (§16). */
@@ -135,8 +135,8 @@ export type TicketMetadata = typeof TicketMetadata.Type
 export class QuestionOption extends Schema.Class<QuestionOption>(
   'QuestionOption',
 )({
-  label: Text,
-  tradeOff: Text,
+  label: Text.annotate({ description: 'A short label.' }),
+  tradeOff: Text.annotate({ description: 'Its trade-off, in one line.' }),
 }) {}
 
 /** A question's options, 2 to 4, and the index of the one recommended. */
@@ -144,8 +144,12 @@ export class QuestionChoices extends Schema.Class<QuestionChoices>(
   'QuestionChoices',
 )(
   Schema.Struct({
-    options: Schema.Array(QuestionOption).check(Schema.isBetweenLength(2, 4)),
-    recommended: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    options: Schema.Array(QuestionOption)
+      .check(Schema.isBetweenLength(2, 4))
+      .annotate({ description: '2 to 4 options.' }),
+    recommended: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).annotate({
+      description: 'The index, from 0, of the option recommended.',
+    }),
   }).check(
     Schema.makeFilter(({ options, recommended }) =>
       recommended < options.length

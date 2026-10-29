@@ -1,0 +1,899 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`the tools’ JSON Schema > add_note matches its snapshot 1`] = `
+{
+  "description": "Writes a note on your ticket: a decision you made, a gap you left, what a later session needs to know.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "body": {
+        "pattern": "\\S",
+        "type": "string",
+      },
+    },
+    "required": [
+      "body",
+    ],
+    "type": "object",
+  },
+}
+`;
+
+exports[`the tools’ JSON Schema > ask_and_wait matches its snapshot 1`] = `
+{
+  "description": "Asks as ask_question does, for a quick choice you need now to go on, then waits for the answer up to the project's question_wait (15 minutes by default). Without an answer by then, it ends your turn as ask_question does.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "blocks": {
+        "description": "The ticket the decision is about, which waits on the answer; your own when left out.",
+        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)+(?:\\.[1-9][0-9]*)*$",
+        "type": "string",
+      },
+      "choices": {
+        "additionalProperties": false,
+        "properties": {
+          "options": {
+            "description": "2 to 4 options.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "label": {
+                  "description": "A short label.",
+                  "pattern": "\\S",
+                  "type": "string",
+                },
+                "tradeOff": {
+                  "description": "Its trade-off, in one line.",
+                  "pattern": "\\S",
+                  "type": "string",
+                },
+              },
+              "required": [
+                "label",
+                "tradeOff",
+              ],
+              "type": "object",
+            },
+            "maxItems": 4,
+            "minItems": 2,
+            "type": "array",
+          },
+          "recommended": {
+            "description": "The index, from 0, of the option recommended.",
+            "minimum": 0,
+            "type": "integer",
+          },
+        },
+        "required": [
+          "options",
+          "recommended",
+        ],
+        "type": "object",
+      },
+      "consequential": {
+        "description": "true when an option would close, cancel, defer or freeze work, or change a decision the spec records: nothing answers it in a batch.",
+        "type": "boolean",
+      },
+      "description": {
+        "description": "The context, the options and your recommendation, for a maintainer who has not followed your work.",
+        "pattern": "\\S",
+        "type": "string",
+      },
+      "maintainerOnly": {
+        "description": "true when it asks the maintainer to do or give something (make a key, run a step by hand, act under their own account), or to approve something done in their name: nothing answers it for them.",
+        "type": "boolean",
+      },
+      "title": {
+        "allOf": [
+          {
+            "pattern": "^[^\\n\\r]*$",
+          },
+        ],
+        "description": "The question, one line, at most 60 characters.",
+        "maxLength": 60,
+        "pattern": "\\S",
+        "type": "string",
+      },
+    },
+    "required": [
+      "title",
+      "description",
+      "choices",
+      "consequential",
+      "maintainerOnly",
+    ],
+    "type": "object",
+  },
+}
+`;
+
+exports[`the tools’ JSON Schema > ask_question matches its snapshot 1`] = `
+{
+  "description": "Asks the maintainer a decision only they can make, blocking your ticket or the one it is about. Asked about your own ticket, it ends your turn: your session is resumed with the answer. Decide yourself what you can; a decision about another ticket blocks that ticket, and you go on with yours.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "blocks": {
+        "description": "The ticket the decision is about, which waits on the answer; your own when left out.",
+        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)+(?:\\.[1-9][0-9]*)*$",
+        "type": "string",
+      },
+      "choices": {
+        "additionalProperties": false,
+        "properties": {
+          "options": {
+            "description": "2 to 4 options.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "label": {
+                  "description": "A short label.",
+                  "pattern": "\\S",
+                  "type": "string",
+                },
+                "tradeOff": {
+                  "description": "Its trade-off, in one line.",
+                  "pattern": "\\S",
+                  "type": "string",
+                },
+              },
+              "required": [
+                "label",
+                "tradeOff",
+              ],
+              "type": "object",
+            },
+            "maxItems": 4,
+            "minItems": 2,
+            "type": "array",
+          },
+          "recommended": {
+            "description": "The index, from 0, of the option recommended.",
+            "minimum": 0,
+            "type": "integer",
+          },
+        },
+        "required": [
+          "options",
+          "recommended",
+        ],
+        "type": "object",
+      },
+      "consequential": {
+        "description": "true when an option would close, cancel, defer or freeze work, or change a decision the spec records: nothing answers it in a batch.",
+        "type": "boolean",
+      },
+      "description": {
+        "description": "The context, the options and your recommendation, for a maintainer who has not followed your work.",
+        "pattern": "\\S",
+        "type": "string",
+      },
+      "maintainerOnly": {
+        "description": "true when it asks the maintainer to do or give something (make a key, run a step by hand, act under their own account), or to approve something done in their name: nothing answers it for them.",
+        "type": "boolean",
+      },
+      "title": {
+        "allOf": [
+          {
+            "pattern": "^[^\\n\\r]*$",
+          },
+        ],
+        "description": "The question, one line, at most 60 characters.",
+        "maxLength": 60,
+        "pattern": "\\S",
+        "type": "string",
+      },
+    },
+    "required": [
+      "title",
+      "description",
+      "choices",
+      "consequential",
+      "maintainerOnly",
+    ],
+    "type": "object",
+  },
+}
+`;
+
+exports[`the tools’ JSON Schema > defer matches its snapshot 1`] = `
+{
+  "description": "Ends your turn without finishing, when you cannot: commit the work done so far first. The ticket is set aside with its worktree and session kept, and your reason as its note.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "reason": {
+        "description": "Why you cannot finish, and what is done and committed so far.",
+        "pattern": "\\S",
+        "type": "string",
+      },
+    },
+    "required": [
+      "reason",
+    ],
+    "type": "object",
+  },
+}
+`;
+
+exports[`the tools’ JSON Schema > file_ticket matches its snapshot 1`] = `
+{
+  "description": "Files a follow-up or an issue you discovered, linked to your ticket. Keep the title a plain summary of the change, at most 60 characters; the details go in the description.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "description": {
+        "description": "Opens with the detail, not a restatement of the title. Name a file only where the ticket will change it.",
+        "pattern": "\\S",
+        "type": "string",
+      },
+      "files": {
+        "anyOf": [
+          {
+            "items": {
+              "pattern": "^(?!\\/)(?!(?:.*\\/)?\\.\\.(?:\\/|$))[^\\n\\r]*[^\\s/]$",
+              "type": "string",
+            },
+            "minItems": 1,
+            "type": "array",
+          },
+          {
+            "enum": [
+              "unknown",
+            ],
+            "type": "string",
+          },
+        ],
+        "description": "The files it will change, its footprint, which keeps it apart from tickets changing the same files; "unknown" when they cannot be named yet.",
+      },
+      "labels": {
+        "description": "Labels, such as solo for a change most tickets touch (splitting or moving a shared file), which runs with no other ticket beside it.",
+        "items": {
+          "pattern": "^\\S+$",
+          "type": "string",
+        },
+        "type": "array",
+      },
+      "link": {
+        "description": "blocks: your ticket blocks it, for a follow-up that changes or builds on what your ticket adds; it waits until yours merges. discovered_from: found while working on yours, independent of its changes. related: touches the same files or functions as yours.",
+        "enum": [
+          "blocks",
+          "discovered_from",
+          "related",
+        ],
+        "type": "string",
+      },
+      "priority": {
+        "description": "0 (most urgent) to 4 (backlog); 2 when left out.",
+        "maximum": 4,
+        "minimum": 0,
+        "type": "integer",
+      },
+      "title": {
+        "allOf": [
+          {
+            "pattern": "^[^\\n\\r]*$",
+          },
+        ],
+        "description": "One line, at most 60 characters.",
+        "maxLength": 60,
+        "pattern": "\\S",
+        "type": "string",
+      },
+      "type": {
+        "enum": [
+          "task",
+          "bug",
+          "feature",
+          "chore",
+        ],
+        "type": "string",
+      },
+    },
+    "required": [
+      "title",
+      "description",
+      "type",
+      "files",
+      "link",
+    ],
+    "type": "object",
+  },
+}
+`;
+
+exports[`the tools’ JSON Schema > finish (contract_changed) matches its snapshot 1`] = `
+{
+  "description": "Ends your work: your commits are on the branch and check_own passed on the tree you finish, with nothing uncommitted or untracked in the worktree. The verifier then checks your change, and the merge queue merges it.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "checkOwn": {
+        "additionalProperties": false,
+        "properties": {
+          "commit": {
+            "description": "The commit you are finishing, HEAD.",
+            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+            "type": "string",
+          },
+          "output": {
+            "description": "The file the check wrote its whole output to.",
+            "pattern": "\\S",
+            "type": "string",
+          },
+          "tree": {
+            "description": "The tree check_own passed on, the tree you are finishing: HEAD's, as nothing is left uncommitted.",
+            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+            "type": "string",
+          },
+        },
+        "required": [
+          "tree",
+          "commit",
+          "output",
+        ],
+        "type": "object",
+      },
+      "result": {
+        "additionalProperties": false,
+        "description": "The hand-off: a summary, plus the fields the ticket's result_kind asks for; the tickets depending on yours read it.",
+        "properties": {
+          "_tag": {
+            "enum": [
+              "contract_changed",
+            ],
+            "type": "string",
+          },
+          "breaking": {
+            "type": "boolean",
+          },
+          "contracts": {
+            "items": {
+              "pattern": "\\S",
+              "type": "string",
+            },
+            "minItems": 1,
+            "prefixItems": [
+              {
+                "pattern": "\\S",
+                "type": "string",
+              },
+            ],
+            "type": "array",
+          },
+          "summary": {
+            "pattern": "\\S",
+            "type": "string",
+          },
+        },
+        "required": [
+          "_tag",
+          "summary",
+          "contracts",
+          "breaking",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "checkOwn",
+      "result",
+    ],
+    "type": "object",
+  },
+}
+`;
+
+exports[`the tools’ JSON Schema > finish (decision_recorded) matches its snapshot 1`] = `
+{
+  "description": "Ends your work: your commits are on the branch and check_own passed on the tree you finish, with nothing uncommitted or untracked in the worktree. The verifier then checks your change, and the merge queue merges it.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "checkOwn": {
+        "additionalProperties": false,
+        "properties": {
+          "commit": {
+            "description": "The commit you are finishing, HEAD.",
+            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+            "type": "string",
+          },
+          "output": {
+            "description": "The file the check wrote its whole output to.",
+            "pattern": "\\S",
+            "type": "string",
+          },
+          "tree": {
+            "description": "The tree check_own passed on, the tree you are finishing: HEAD's, as nothing is left uncommitted.",
+            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+            "type": "string",
+          },
+        },
+        "required": [
+          "tree",
+          "commit",
+          "output",
+        ],
+        "type": "object",
+      },
+      "result": {
+        "additionalProperties": false,
+        "description": "The hand-off: a summary, plus the fields the ticket's result_kind asks for; the tickets depending on yours read it.",
+        "properties": {
+          "_tag": {
+            "enum": [
+              "decision_recorded",
+            ],
+            "type": "string",
+          },
+          "decision": {
+            "pattern": "\\S",
+            "type": "string",
+          },
+          "summary": {
+            "pattern": "\\S",
+            "type": "string",
+          },
+        },
+        "required": [
+          "_tag",
+          "summary",
+          "decision",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "checkOwn",
+      "result",
+    ],
+    "type": "object",
+  },
+}
+`;
+
+exports[`the tools’ JSON Schema > finish (migration_added) matches its snapshot 1`] = `
+{
+  "description": "Ends your work: your commits are on the branch and check_own passed on the tree you finish, with nothing uncommitted or untracked in the worktree. The verifier then checks your change, and the merge queue merges it.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "checkOwn": {
+        "additionalProperties": false,
+        "properties": {
+          "commit": {
+            "description": "The commit you are finishing, HEAD.",
+            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+            "type": "string",
+          },
+          "output": {
+            "description": "The file the check wrote its whole output to.",
+            "pattern": "\\S",
+            "type": "string",
+          },
+          "tree": {
+            "description": "The tree check_own passed on, the tree you are finishing: HEAD's, as nothing is left uncommitted.",
+            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+            "type": "string",
+          },
+        },
+        "required": [
+          "tree",
+          "commit",
+          "output",
+        ],
+        "type": "object",
+      },
+      "result": {
+        "additionalProperties": false,
+        "description": "The hand-off: a summary, plus the fields the ticket's result_kind asks for; the tickets depending on yours read it.",
+        "properties": {
+          "_tag": {
+            "enum": [
+              "migration_added",
+            ],
+            "type": "string",
+          },
+          "migration": {
+            "pattern": "\\S",
+            "type": "string",
+          },
+          "summary": {
+            "pattern": "\\S",
+            "type": "string",
+          },
+        },
+        "required": [
+          "_tag",
+          "summary",
+          "migration",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "checkOwn",
+      "result",
+    ],
+    "type": "object",
+  },
+}
+`;
+
+exports[`the tools’ JSON Schema > finish (summary) matches its snapshot 1`] = `
+{
+  "description": "Ends your work: your commits are on the branch and check_own passed on the tree you finish, with nothing uncommitted or untracked in the worktree. The verifier then checks your change, and the merge queue merges it.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "checkOwn": {
+        "additionalProperties": false,
+        "properties": {
+          "commit": {
+            "description": "The commit you are finishing, HEAD.",
+            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+            "type": "string",
+          },
+          "output": {
+            "description": "The file the check wrote its whole output to.",
+            "pattern": "\\S",
+            "type": "string",
+          },
+          "tree": {
+            "description": "The tree check_own passed on, the tree you are finishing: HEAD's, as nothing is left uncommitted.",
+            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+            "type": "string",
+          },
+        },
+        "required": [
+          "tree",
+          "commit",
+          "output",
+        ],
+        "type": "object",
+      },
+      "result": {
+        "additionalProperties": false,
+        "description": "The hand-off: a summary, plus the fields the ticket's result_kind asks for; the tickets depending on yours read it.",
+        "properties": {
+          "_tag": {
+            "enum": [
+              "summary",
+            ],
+            "type": "string",
+          },
+          "summary": {
+            "pattern": "\\S",
+            "type": "string",
+          },
+        },
+        "required": [
+          "_tag",
+          "summary",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "checkOwn",
+      "result",
+    ],
+    "type": "object",
+  },
+}
+`;
+
+exports[`the tools’ JSON Schema > finish matches its snapshot 1`] = `
+{
+  "description": "Ends your work: your commits are on the branch and check_own passed on the tree you finish, with nothing uncommitted or untracked in the worktree. The verifier then checks your change, and the merge queue merges it.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "checkOwn": {
+        "additionalProperties": false,
+        "properties": {
+          "commit": {
+            "description": "The commit you are finishing, HEAD.",
+            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+            "type": "string",
+          },
+          "output": {
+            "description": "The file the check wrote its whole output to.",
+            "pattern": "\\S",
+            "type": "string",
+          },
+          "tree": {
+            "description": "The tree check_own passed on, the tree you are finishing: HEAD's, as nothing is left uncommitted.",
+            "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+            "type": "string",
+          },
+        },
+        "required": [
+          "tree",
+          "commit",
+          "output",
+        ],
+        "type": "object",
+      },
+      "result": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "_tag": {
+                "enum": [
+                  "summary",
+                ],
+                "type": "string",
+              },
+              "summary": {
+                "pattern": "\\S",
+                "type": "string",
+              },
+            },
+            "required": [
+              "_tag",
+              "summary",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "_tag": {
+                "enum": [
+                  "contract_changed",
+                ],
+                "type": "string",
+              },
+              "breaking": {
+                "type": "boolean",
+              },
+              "contracts": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string",
+                },
+                "minItems": 1,
+                "prefixItems": [
+                  {
+                    "pattern": "\\S",
+                    "type": "string",
+                  },
+                ],
+                "type": "array",
+              },
+              "summary": {
+                "pattern": "\\S",
+                "type": "string",
+              },
+            },
+            "required": [
+              "_tag",
+              "summary",
+              "contracts",
+              "breaking",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "_tag": {
+                "enum": [
+                  "migration_added",
+                ],
+                "type": "string",
+              },
+              "migration": {
+                "pattern": "\\S",
+                "type": "string",
+              },
+              "summary": {
+                "pattern": "\\S",
+                "type": "string",
+              },
+            },
+            "required": [
+              "_tag",
+              "summary",
+              "migration",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "_tag": {
+                "enum": [
+                  "decision_recorded",
+                ],
+                "type": "string",
+              },
+              "decision": {
+                "pattern": "\\S",
+                "type": "string",
+              },
+              "summary": {
+                "pattern": "\\S",
+                "type": "string",
+              },
+            },
+            "required": [
+              "_tag",
+              "summary",
+              "decision",
+            ],
+            "type": "object",
+          },
+        ],
+        "description": "The hand-off: a summary, plus the fields the ticket's result_kind asks for; the tickets depending on yours read it.",
+      },
+    },
+    "required": [
+      "checkOwn",
+      "result",
+    ],
+    "type": "object",
+  },
+}
+`;
+
+exports[`the tools’ JSON Schema > get_ticket matches its snapshot 1`] = `
+{
+  "description": "Reads your ticket, or one linked to it: its description, design, acceptance criteria, notes, labels and links, and the results of the tickets it depends on.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "description": "The ticket to read; your own when left out.",
+        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)+(?:\\.[1-9][0-9]*)*$",
+        "type": "string",
+      },
+    },
+    "type": "object",
+  },
+}
+`;
+
+exports[`the tools’ JSON Schema > verdict matches its snapshot 1`] = `
+{
+  "description": "Gives your verdict on the change, once: PASS when it meets its ticket, or FAIL with the gaps that affect correctness or the ticket's requirements. Weigh the earlier rounds' findings; where you disagree with one, say so in the finding.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "verdict": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "_tag": {
+                "enum": [
+                  "PASS",
+                ],
+                "type": "string",
+              },
+              "findings": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "blocking": {
+                      "description": "true when it affects correctness or the ticket's requirements; false for an optional improvement.",
+                      "type": "boolean",
+                    },
+                    "disagreesWithRound": {
+                      "description": "The earlier round whose findings this one disagrees with (DISAGREES WITH ROUND <n>); the worker then asks the maintainer rather than going round again.",
+                      "minimum": 1,
+                      "type": "integer",
+                    },
+                    "gap": {
+                      "description": "What is missing or wrong, with the file and line.",
+                      "pattern": "\\S",
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "gap",
+                    "blocking",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+              "summary": {
+                "pattern": "\\S",
+                "type": "string",
+              },
+            },
+            "required": [
+              "_tag",
+              "summary",
+              "findings",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "_tag": {
+                "enum": [
+                  "FAIL",
+                ],
+                "type": "string",
+              },
+              "findings": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "blocking": {
+                      "description": "true when it affects correctness or the ticket's requirements; false for an optional improvement.",
+                      "type": "boolean",
+                    },
+                    "disagreesWithRound": {
+                      "description": "The earlier round whose findings this one disagrees with (DISAGREES WITH ROUND <n>); the worker then asks the maintainer rather than going round again.",
+                      "minimum": 1,
+                      "type": "integer",
+                    },
+                    "gap": {
+                      "description": "What is missing or wrong, with the file and line.",
+                      "pattern": "\\S",
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "gap",
+                    "blocking",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+              "summary": {
+                "pattern": "\\S",
+                "type": "string",
+              },
+            },
+            "required": [
+              "_tag",
+              "summary",
+              "findings",
+            ],
+            "type": "object",
+          },
+        ],
+      },
+    },
+    "required": [
+      "verdict",
+    ],
+    "type": "object",
+  },
+}
+`;
+
+exports[`the tools’ JSON Schema > wait_for matches its snapshot 1`] = `
+{
+  "description": "Ends your turn when your ticket needs work from another ticket that is not on your base yet. Never build on its branch or copy its code, and leave nothing uncommitted. Your ticket is linked as blocked by it, and comes back once it merges.",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "needs": {
+        "description": "What your ticket needs from it.",
+        "pattern": "\\S",
+        "type": "string",
+      },
+      "ticket": {
+        "description": "The ticket that must merge first.",
+        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)+(?:\\.[1-9][0-9]*)*$",
+        "type": "string",
+      },
+    },
+    "required": [
+      "ticket",
+      "needs",
+    ],
+    "type": "object",
+  },
+}
+`;
