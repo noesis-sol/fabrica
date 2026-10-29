@@ -47,7 +47,6 @@ import {
   attentionHandlers,
   backlogHandlers,
   insightsHandlers,
-  projectsHandlers,
   runsHandlers,
   secretsHandlers,
   talksHandlers,
@@ -152,10 +151,11 @@ const modeOf = (path: string) =>
   Effect.promise(() => lstat(path)).pipe(Effect.map(info => info.mode & 0o777))
 
 /** Whether an exit is a defect named `NotImplemented`, as the protocol carries it. */
-/** The groups whose handlers answer `NotImplemented`: every one but the Engine group. */
-type Unfilled = Exclude<ProtocolGroupName, 'engine' | 'review'>
+/** The groups whose handlers answer `NotImplemented`: every one but those built (Engine, Review, Projects). */
+type Unfilled = Exclude<ProtocolGroupName, 'engine' | 'review' | 'projects'>
 const unfilled = ProtocolGroupName.literals.filter(
-  (group): group is Unfilled => group !== 'engine' && group !== 'review',
+  (group): group is Unfilled =>
+    group !== 'engine' && group !== 'review' && group !== 'projects',
 )
 
 /** Whether a handler's answer is an effect: the handlers built here need no service. */
@@ -423,7 +423,6 @@ describe('the groups not served yet', () => {
         const calls: Record<Unfilled, Effect.Effect<unknown, unknown>> = {
           tokens: client['tokens.list'](),
           secrets: client['credentials.list'](),
-          projects: client['projects.list'](),
           backlog: client['tickets.show']({ project, ticket }),
           runs: client['run.status']({ project }),
           workers: client['worker.release']({ project, ticket }),
@@ -447,7 +446,6 @@ describe('the groups not served yet', () => {
       const layers: Record<Unfilled, Layer.Layer<never>> = {
         tokens: tokensHandlers,
         secrets: secretsHandlers,
-        projects: projectsHandlers,
         backlog: backlogHandlers,
         runs: runsHandlers,
         workers: workersHandlers,

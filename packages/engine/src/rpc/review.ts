@@ -1,4 +1,4 @@
-import { DateTime, Effect, Layer, Option } from 'effect'
+import { DateTime, Effect, Option } from 'effect'
 import { SqlClient } from 'effect/sql'
 
 import {
@@ -18,10 +18,8 @@ import {
 
 import { findProject } from '../engine/database'
 import { readFileTail, readFileTextWritten } from '../files'
-import { Git, layer as gitLayer, ticketBranch } from '../git'
-import { layerAwake, layerHost } from '../process'
+import { Git, ticketBranch } from '../git'
 import { logPath, readEvents, reportPath } from '../runlog'
-import { layerWake, sleepCausesFor } from '../time'
 
 // The Review group's handlers (spec §8.1, §18.4): a ticket's branch diff against its merge base with
 // Base, a run's merged diff on Base, a run's report and the human log's last lines. The project is
@@ -195,13 +193,5 @@ export const makeReviewHandlers = Effect.gen(function* () {
 /** The Review group's handlers on the Git service and engine.db in context. */
 export const reviewHandlersOn = ReviewRpcs.toLayer(makeReviewHandlers)
 
-/** Git on the engine's host, each command's time limit counted in time awake (§7.7). */
-const hostGit = gitLayer().pipe(
-  Layer.provide(layerHost),
-  Layer.provide(layerAwake),
-  Layer.provide(layerWake),
-  Layer.provide(Layer.suspend(() => sleepCausesFor(process.platform))),
-)
-
-/** The Review group's handlers, their git run on the engine's host. */
-export const reviewHandlers = reviewHandlersOn.pipe(Layer.provide(hostGit))
+/** The Review group's handlers, their git the daemon's (§7.7: on the engine's host, in time awake). */
+export const reviewHandlers = reviewHandlersOn

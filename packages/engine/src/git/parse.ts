@@ -41,6 +41,36 @@ export const parseStatus = (output: string): Option.Option<WorktreeStatus> => {
 export const parseHash = (output: string): Option.Option<CommitHash> =>
   CommitHash.makeOption(output.trim())
 
+/** Where a checkout is: its top folder and its git folders, absolute. */
+export interface CheckoutPlace {
+  /** The checkout's top folder. */
+  readonly top: string
+  /** Its own git folder: the common one for the main checkout, `<common>/worktrees/<name>` for a linked worktree. */
+  readonly gitDir: string
+  /** The git folder its repository's worktrees share. */
+  readonly commonDir: string
+}
+
+/** Whether the checkout is a linked worktree of another, not its repository's main checkout. */
+export const isLinkedWorktree = (place: CheckoutPlace): boolean =>
+  place.gitDir !== place.commonDir
+
+/** `rev-parse --path-format=absolute --show-toplevel --git-dir --git-common-dir`: three lines, or none. */
+export const parseCheckoutPlace = (
+  output: string,
+): Option.Option<CheckoutPlace> => {
+  const [top, gitDir, commonDir, ...rest] = output
+    .replace(/\n$/u, '')
+    .split('\n')
+  return top === undefined ||
+    gitDir === undefined ||
+    commonDir === undefined ||
+    rest.length > 0 ||
+    [top, gitDir, commonDir].some(path => !path.startsWith('/'))
+    ? Option.none()
+    : Option.some({ top, gitDir, commonDir })
+}
+
 /** One line's tree hash, as `rev-parse <revision>^{tree}` prints it. */
 export const parseTreeHash = (output: string): Option.Option<TreeHash> =>
   TreeHash.makeOption(output.trim())

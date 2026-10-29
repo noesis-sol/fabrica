@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Option } from 'effect'
 import { existsSync } from 'node:fs'
 import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 import type { CommitHash, FileDiff, TreeHash } from '@fabrica/contracts'
 
@@ -15,15 +15,18 @@ import {
 import { CantTell, GitFailed } from './errors'
 import {
   AbortOutcome,
+  CloneOutcome,
   FastForwardOutcome,
   GitVersion,
   RebaseOutcome,
 } from './outcomes'
 import {
+  type CheckoutPlace,
   MINIMUM_GIT,
   type WorktreeEntry,
   type WorktreeStatus,
   nulList,
+  parseCheckoutPlace,
   parseDiff,
   parseGitVersion,
   parseHash,
@@ -152,6 +155,15 @@ export interface GitShape {
     readonly repo: string
     readonly branch: string
   }) => Effect.Effect<void, GitFailed>
+  /** The checkout `folder` is in (spec §10.1); none where it is in none: outside a repository, or in a bare one. */
+  readonly checkoutOf: (input: {
+    readonly folder: string
+  }) => Effect.Effect<Option.Option<CheckoutPlace>, CantTell>
+  /** Clones `url` into the new folder `into`, with the host's git credentials (spec §10.1). */
+  readonly clone: (input: {
+    readonly url: string
+    readonly into: string
+  }) => Effect.Effect<CloneOutcome, GitFailed>
 }
 
 export class Git extends Context.Service<Git, GitShape>()(
@@ -804,6 +816,49 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     })
   })
 
+  const checkoutOf = Effect.fn('Git.checkoutOf')(function* ({
+    folder,
+  }: {
+    readonly folder: string
+  }) {
+    const command = {
+      cwd: folder,
+      args: [
+        'rev-parse',
+        '--path-format=absolute',
+        '--show-toplevel',
+        '--git-dir',
+        '--git-common-dir',
+      ],
+    }
+    return yield* readExit('checkoutOf', command, exit =>
+      exit.code === 0
+        ? Option.map(parseCheckoutPlace(exit.stdout), Option.some)
+        : // 128: not in a repository, or in one with no worktree (a bare one).
+          exit.code === 128
+          ? Option.some(Option.none<CheckoutPlace>())
+          : Option.none(),
+    )
+  })
+
+  const clone = Effect.fn('Git.clone')(function* ({
+    url,
+    into,
+  }: {
+    readonly url: string
+    readonly into: string
+  }) {
+    const exit = yield* write({
+      cwd: dirname(into),
+      args: ['clone', '--quiet', '--', url, into],
+    })
+    return exit.code === 0
+      ? CloneOutcome.Cloned()
+      : CloneOutcome.Refused({
+          message: exit.stderr.trim() || `git clone exited ${exit.code}`,
+        })
+  })
+
   return Git.of({
     version,
     status,
@@ -826,6 +881,8 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     removeWorktree,
     pruneWorktrees,
     deleteBranch,
+    checkoutOf,
+    clone,
   })
 })
 

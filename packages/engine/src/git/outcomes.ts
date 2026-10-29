@@ -53,3 +53,11 @@ export type FastForwardOutcome = Data.TaggedEnum<{
   Refused: { readonly message: string }
 }>
 export const FastForwardOutcome = Data.taggedEnum<FastForwardOutcome>()
+
+/** Cloning a project's remote (spec §10.1). */
+export type CloneOutcome = Data.TaggedEnum<{
+  Cloned: {}
+  /** Git refused it: the URL reaches no repository, the credentials were refused; `message` is git's. */
+  Refused: { readonly message: string }
+}>
+export const CloneOutcome = Data.taggedEnum<CloneOutcome>()

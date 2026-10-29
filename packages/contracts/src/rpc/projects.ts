@@ -83,6 +83,13 @@ const Settings = ProjectSettings.annotate({ identifier: 'ProjectSettings' })
 /** The patch to the project rows: a removed project by its ID. */
 export const ProjectStatusPatch = keyedPatch(ProjectStatus, ProjectId)
 
+/** The project status stream's items: the rows, then patches to them. */
+export const ProjectStatusItem = streamItem(
+  Schema.Array(ProjectStatus),
+  ProjectStatusPatch,
+)
+export type ProjectStatusItem = typeof ProjectStatusItem.Type
+
 export const ProjectRpcs = RpcGroup.make(
   Rpc.make('projects.add', {
     payload: { source: ProjectSource, name: optional(Text) },
@@ -111,7 +118,7 @@ export const ProjectRpcs = RpcGroup.make(
   }),
   Rpc.make('projects.watchStatus', {
     payload: { resume },
-    success: streamItem(Schema.Array(ProjectStatus), ProjectStatusPatch),
+    success: ProjectStatusItem,
     stream: true,
   }),
 )

@@ -9,6 +9,7 @@ export {
   makeCommands,
 } from './command'
 export * from './errors'
+export { hostLayer } from './host'
 export * from './outcomes'
 export * from './parse'
 export { Git, type GitShape, layer, make } from './service'
