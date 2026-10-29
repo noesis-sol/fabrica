@@ -1,12 +1,4 @@
-import {
-  Context,
-  Effect,
-  HashMap,
-  HashSet,
-  Layer,
-  type Option,
-  Ref,
-} from 'effect'
+import { Context, Effect, Layer, type Option } from 'effect'
 
 import type {
   PermissionDecision,
@@ -17,6 +9,13 @@ import type {
   ToolCallId,
   TreeHash,
 } from '@fabrica/contracts'
+
+import {
+  type CheckOwnPassOf,
+  type StoreFailed,
+  type TicketNotFound,
+  WorkGraph,
+} from '../workgraph'
 
 // What the control server needs from the rest of the engine beyond the work graph and git: the
 // attention service, which takes the gate's permission requests to the maintainer (spec §12.6,
@@ -50,20 +49,22 @@ export class Attention extends Context.Service<Attention, AttentionShape>()(
   '@fabrica/engine/Attention',
 ) {}
 
-/** The passes of `check_own`, each kept with the tree it ran on: HEAD's, with the uncommitted and untracked files (§13.6). */
+/**
+ * The passes of `check_own`, each kept with the tree it ran on: HEAD's, with the uncommitted and
+ * untracked files (§13.6). They live in the work graph's store, so a carried-over ticket's passes
+ * outlast the engine's restart, and go as the ticket closes.
+ */
 export interface CheckOwnPassesShape {
   /** Keeps a pass of the ticket's `check_own` on `tree`. */
-  readonly record: (pass: {
-    readonly ticket: TicketId
-    readonly tree: TreeHash
-  }) => Effect.Effect<void>
+  readonly record: (
+    pass: CheckOwnPassOf,
+  ) => Effect.Effect<void, TicketNotFound | StoreFailed>
   /** Whether a pass of the ticket's `check_own` is kept on `tree`. */
-  readonly passed: (pass: {
-    readonly ticket: TicketId
-    readonly tree: TreeHash
-  }) => Effect.Effect<boolean>
+  readonly passed: (pass: CheckOwnPassOf) => Effect.Effect<boolean, StoreFailed>
   /** The tree the ticket's last pass ran on, `FABRICA_CHECK_OWN_PASSED_AT` for its next run; none before its first. */
-  readonly last: (ticket: TicketId) => Effect.Effect<Option.Option<TreeHash>>
+  readonly last: (
+    ticket: TicketId,
+  ) => Effect.Effect<Option.Option<TreeHash>, StoreFailed>
 }
 
 export class CheckOwnPasses extends Context.Service<
@@ -71,34 +72,19 @@ export class CheckOwnPasses extends Context.Service<
   CheckOwnPassesShape
 >()('@fabrica/engine/CheckOwnPasses') {}
 
-const passKey = (pass: {
-  readonly ticket: TicketId
-  readonly tree: TreeHash
-}): string => `${pass.ticket} ${pass.tree}`
+/** The passes the project's work graph keeps. */
+export const makeCheckOwnPasses: Effect.Effect<
+  CheckOwnPassesShape,
+  never,
+  WorkGraph
+> = Effect.map(WorkGraph, graph => ({
+  record: graph.recordCheckOwnPass,
+  passed: graph.checkOwnPassed,
+  last: graph.lastCheckOwnPass,
+}))
 
-/** Passes kept in memory for the engine's life, each ticket's last one beside them. */
-export const makeCheckOwnPasses: Effect.Effect<CheckOwnPassesShape> =
-  Effect.map(
-    Ref.make({
-      passes: HashSet.empty<string>(),
-      last: HashMap.empty<TicketId, TreeHash>(),
-    }),
-    kept => ({
-      record: pass =>
-        Ref.update(kept, ({ passes, last }) => ({
-          passes: HashSet.add(passes, passKey(pass)),
-          last: HashMap.set(last, pass.ticket, pass.tree),
-        })),
-      passed: pass =>
-        Effect.map(Ref.get(kept), ({ passes }) =>
-          HashSet.has(passes, passKey(pass)),
-        ),
-      last: ticket =>
-        Effect.map(Ref.get(kept), ({ last }) => HashMap.get(last, ticket)),
-    }),
-  )
-
-export const checkOwnPassesLayer: Layer.Layer<CheckOwnPasses> = Layer.effect(
+export const checkOwnPassesLayer: Layer.Layer<
   CheckOwnPasses,
-  makeCheckOwnPasses,
-)
+  never,
+  WorkGraph
+> = Layer.effect(CheckOwnPasses, makeCheckOwnPasses)

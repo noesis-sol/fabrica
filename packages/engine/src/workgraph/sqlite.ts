@@ -46,6 +46,7 @@ import {
   whyWaiting,
 } from './ready'
 import {
+  type CheckOwnPassRow,
   type EdgeRow,
   type EventRow,
   type NoteRow,
@@ -59,6 +60,7 @@ import {
   noteFromRow,
   rowFromTicket,
   ticketFromRow,
+  treeFromPassRow,
 } from './rows'
 import {
   DroppedEdge,
@@ -210,6 +212,10 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
 
   const dropLease = (id: TicketId) =>
     sql`DELETE FROM leases WHERE ticket_id = ${id}`
+
+  /** Drops the ticket's `check_own` passes: it closed, or is deleted. */
+  const dropPasses = (id: TicketId) =>
+    sql`DELETE FROM check_own_passes WHERE ticket_id = ${id}`
 
   /** A new top-level ID no ticket or tombstone has. */
   const freeTicketId = Effect.gen(function* () {
@@ -370,6 +376,7 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
       })
       yield* writeTicket(changed)
       if (options.lease === 'drop') yield* dropLease(options.id)
+      if (changed.status === 'closed') yield* dropPasses(options.id)
       yield* appendEvent({
         ticket: options.id,
         actor: options.actor,
@@ -522,6 +529,50 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
       )
     },
   )
+
+  // A pass is engine-local, as a lease is: no event, and nothing the reactive queries show.
+  const recordCheckOwnPass: WorkGraphShape['recordCheckOwnPass'] = Effect.fn(
+    'WorkGraph.recordCheckOwnPass',
+  )(function* ({ ticket, tree }) {
+    return yield* read(
+      'recordCheckOwnPass',
+      sql.withTransaction(
+        Effect.gen(function* () {
+          yield* requireTicket(ticket)
+          // Recorded again, a pass becomes the last: its row is written afresh, past every other.
+          yield* sql`DELETE FROM check_own_passes WHERE ticket_id = ${ticket} AND tree = ${tree}`
+          yield* sql`INSERT INTO check_own_passes ${sql.insert({
+            ticket_id: ticket,
+            tree,
+          })}`
+        }),
+      ),
+    )
+  })
+
+  const checkOwnPassed: WorkGraphShape['checkOwnPassed'] = Effect.fn(
+    'WorkGraph.checkOwnPassed',
+  )(function* ({ ticket, tree }) {
+    return yield* read(
+      'checkOwnPassed',
+      Effect.map(
+        sql`SELECT 1 FROM check_own_passes WHERE ticket_id = ${ticket} AND tree = ${tree}`,
+        rows => rows.length > 0,
+      ),
+    )
+  })
+
+  const lastCheckOwnPass: WorkGraphShape['lastCheckOwnPass'] = Effect.fn(
+    'WorkGraph.lastCheckOwnPass',
+  )(function* (ticket) {
+    const rows = yield* read(
+      'lastCheckOwnPass',
+      sql<CheckOwnPassRow>`SELECT tree FROM check_own_passes WHERE ticket_id = ${ticket} ORDER BY seq DESC LIMIT 1`,
+    )
+    return yield* Effect.transposeOption(
+      Option.map(Option.fromUndefinedOr(rows[0]), treeFromPassRow),
+    )
+  })
 
   const closeTicket = (options: {
     readonly id: TicketId
@@ -959,6 +1010,7 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
       if (ours.status === 'in_progress' && merged.status !== 'in_progress') {
         yield* dropLease(ours.id)
       }
+      if (merged.status === 'closed') yield* dropPasses(ours.id)
       yield* appendEvent({
         ticket: ours.id,
         actor,
@@ -1059,6 +1111,7 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
           yield* sql`DELETE FROM edges WHERE from_id = ${id} OR to_id = ${id}`
           yield* sql`DELETE FROM notes WHERE ticket_id = ${id}`
           yield* dropLease(id)
+          yield* dropPasses(id)
           yield* sql`DELETE FROM tickets WHERE id = ${id}`
           yield* sql`INSERT INTO tombstones ${sql.insert({
             id,
@@ -1132,6 +1185,9 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
     update,
     claim,
     release,
+    recordCheckOwnPass,
+    checkOwnPassed,
+    lastCheckOwnPass,
     close,
     closeEpics,
     reopen,

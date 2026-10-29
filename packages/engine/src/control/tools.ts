@@ -435,7 +435,7 @@ export const makeTools = (context: ToolContext) => {
 
   /** What `finish` stands on, as the project's `check_own` asks: a pass, or none where it is `"none"` (H62). */
   const ownCheck = (given: FinishCheckOwn) =>
-    CommandSetting.match<Effect.Effect<OwnCheck, ToolRefusal | CantTell>>(
+    CommandSetting.match<Effect.Effect<OwnCheck, ToolRefusal | EngineError>>(
       context.checkOwn.command,
       {
         None: () =>

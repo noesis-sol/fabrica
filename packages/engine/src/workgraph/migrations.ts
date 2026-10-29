@@ -73,9 +73,21 @@ const workGraph = statements(
   `CREATE INDEX notes_ticket ON notes (ticket_id)`,
 )
 
+/**
+ * The passes of each ticket's `check_own`, by the tree each ran on (H89, §13.6), engine-local as the
+ * leases are: kept across the engine's restarts for the carry-over, dropped as the ticket closes.
+ * `seq` orders them, the ticket's last pass the highest.
+ */
+const checkOwnPasses = statements(
+  `CREATE TABLE check_own_passes (seq INTEGER PRIMARY KEY,
+    ticket_id TEXT NOT NULL REFERENCES tickets(id), tree TEXT NOT NULL,
+    UNIQUE (ticket_id, tree))`,
+)
+
 /** The engine's migrations, in order. */
 export const migrations: Migrations = {
   '0001_work_graph': workGraph,
+  '0002_check_own_passes': checkOwnPasses,
 }
 
 /** The schema version a set of migrations brings a database to: its highest number. */

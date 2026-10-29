@@ -186,14 +186,13 @@ const gitServiceLayer = Layer.provide(gitLayer(gitConfig), runnerServiceLayer)
 const services = controlLayer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
-      graphLayer,
+      checkOwnPassesLayer.pipe(Layer.provideMerge(graphLayer)),
       gitServiceLayer,
       Layer.provide(
         checksLayer,
         Layer.merge(runnerServiceLayer, gitServiceLayer),
       ),
       Layer.provide(layerWake, noSleepCauses),
-      checkOwnPassesLayer,
       attentionLayer,
     ),
   ),

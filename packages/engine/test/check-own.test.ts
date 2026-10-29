@@ -136,13 +136,15 @@ const services = () => {
   return controlLayer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
-        Layer.effect(WorkGraph, makeWorkGraph({ prefix: 'fa' })).pipe(
+        checkOwnPassesLayer.pipe(
+          Layer.provideMerge(
+            Layer.effect(WorkGraph, makeWorkGraph({ prefix: 'fa' })),
+          ),
           Layer.provideMerge(storeLayer(':memory:')),
         ),
         gitService,
         Layer.provide(checksLayer, Layer.merge(runner, gitService)),
         Layer.provide(layerWake, noSleepCauses),
-        checkOwnPassesLayer,
         Layer.succeed(Attention)({
           permission: () =>
             Effect.succeed(PermissionDecision.cases.allow_run.make({})),

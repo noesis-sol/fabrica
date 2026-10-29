@@ -26,6 +26,7 @@ import type {
   TicketResult,
   TicketStatus,
   TicketType,
+  TreeHash,
 } from '@fabrica/contracts'
 
 import type {
@@ -136,6 +137,12 @@ export interface ClosedTicket {
   readonly offers: ReadonlyArray<Ticket>
 }
 
+/** A pass of a ticket's `check_own`, by the tree it ran on: HEAD's, with the uncommitted and untracked files (§13.6). */
+export interface CheckOwnPassOf {
+  readonly ticket: TicketId
+  readonly tree: TreeHash
+}
+
 type Found<A> = Effect.Effect<A, TicketNotFound | StoreFailed>
 type Changed<A, E = never> = Effect.Effect<
   A,
@@ -176,6 +183,20 @@ export interface WorkGraphShape {
     readonly id: TicketId
     readonly actor: Actor
   }) => Changed<Ticket, TransitionRefused>
+  /**
+   * Keeps a pass of the ticket's `check_own` on `tree` (H89), its last from now on. Engine-local, as
+   * leases are: kept across the engine's restarts, so a carried-over ticket's passes stand, and
+   * dropped as the ticket closes (its merge closes it) or is deleted.
+   */
+  readonly recordCheckOwnPass: (pass: CheckOwnPassOf) => Found<void>
+  /** Whether a pass of the ticket's `check_own` is kept on `tree`. */
+  readonly checkOwnPassed: (
+    pass: CheckOwnPassOf,
+  ) => Effect.Effect<boolean, StoreFailed>
+  /** The tree the ticket's last kept pass ran on; none before its first, or once it closed. */
+  readonly lastCheckOwnPass: (
+    ticket: TicketId,
+  ) => Effect.Effect<Option.Option<TreeHash>, StoreFailed>
   readonly close: (options: {
     readonly id: TicketId
     readonly resolution: Resolution

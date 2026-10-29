@@ -460,6 +460,9 @@ CREATE TABLE events (seq INTEGER PRIMARY KEY, ticket_id TEXT, type TEXT NOT NULL
 CREATE TABLE leases (               -- engine-local; never synced
   ticket_id TEXT PRIMARY KEY REFERENCES tickets(id), engine_id TEXT NOT NULL,
   expires_at INTEGER NOT NULL);
+CREATE TABLE check_own_passes (     -- engine-local; never synced; the last pass has the highest seq
+  seq INTEGER PRIMARY KEY, ticket_id TEXT NOT NULL REFERENCES tickets(id), tree TEXT NOT NULL,
+  UNIQUE (ticket_id, tree));
 ```
 
 **Rules**
@@ -468,6 +471,7 @@ CREATE TABLE leases (               -- engine-local; never synced
 - Every mutation appends an `events` row in the same transaction, with its actor (the maintainer through a client, a worker's session, an organ, the engine).
 - Rows decode into Schema classes from `contracts`; the same types reach the UI unchanged.
 - A lease renews from its worker's activity; an expired lease (the engine crashed) returns the ticket to the carry-over on the next start (§13.10), not straight to `ready`.
+- `check_own`'s passes are kept by the tree each ran on (H89), so a carried-over ticket's passes, and its `FABRICA_CHECK_OWN_PASSED_AT`, outlast the engine's restart (§13.10); they are dropped in the transaction that closes the ticket (its merge closes it) or deletes it.
 
 ### 11.3 The tickets ref
 

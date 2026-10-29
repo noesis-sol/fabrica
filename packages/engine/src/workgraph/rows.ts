@@ -7,6 +7,7 @@ import {
   Ticket,
   TicketChange,
   TicketEvent,
+  TreeHash,
 } from '@fabrica/contracts'
 
 import { InvalidTicket, StoreFailed } from './errors'
@@ -234,6 +235,18 @@ export const eventFromRow = (
     },
     at: row.at,
   }))
+
+/** A row of `check_own_passes`, as read for its tree. */
+export type CheckOwnPassRow = {
+  readonly tree: string
+}
+
+const decodePassRow = decodeRow(TreeHash, 'check_own_passes')
+
+/** The tree a pass ran on, from its row. */
+export const treeFromPassRow = (
+  row: CheckOwnPassRow,
+): Effect.Effect<TreeHash, StoreFailed> => decodePassRow(row, row => row.tree)
 
 const encodeActor = Schema.encodeSync(Actor)
 const encodeChange = Schema.encodeSync(TicketChange)
