@@ -29,14 +29,15 @@ const maintainer: Actor = { _tag: 'maintainer' }
 
 /** The patches the feed sent after its snapshot, each as the IDs it upserts and removes. */
 const patchesOf = (items: ReadonlyArray<BacklogItem>) =>
-  items.map(item =>
-    BacklogItem.match(item, {
-      snapshot: () => 'snapshot',
-      patch: ({ value }) => ({
-        upsert: value.upsert.map(ticket => ticket.id),
-        remove: value.remove,
-      }),
-    }),
+  items.flatMap(item =>
+    item._tag === 'patch'
+      ? [
+          {
+            upsert: item.value.upsert.map(ticket => ticket.id),
+            remove: item.value.remove,
+          },
+        ]
+      : [],
   )
 
 describe('a link changed', () => {
