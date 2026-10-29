@@ -19,6 +19,7 @@ import {
   type LabelName,
   Note,
   Question,
+  type Resolution,
   type Ticket,
   type TicketChange,
   type TicketEvent,
@@ -35,7 +36,12 @@ import {
 } from './errors'
 import { checkPrefix, drawNoteId, drawTicketId, nextChildId } from './ids'
 import { migrate } from './migrations'
-import { readyTickets, whyWaiting } from './ready'
+import {
+  blockedTickets,
+  finishedEpics,
+  readyTickets,
+  whyWaiting,
+} from './ready'
 import {
   type EdgeRow,
   type EventRow,
@@ -506,26 +512,70 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
     },
   )
 
+  const closeTicket = (options: {
+    readonly id: TicketId
+    readonly resolution: Resolution
+    readonly reason: Option.Option<string>
+    readonly actor: Actor
+  }) =>
+    transition({
+      id: options.id,
+      operation: 'close',
+      allowed: ticket => ticket.status !== 'closed',
+      change: () => ({
+        status: 'closed',
+        resolution: Option.some(options.resolution),
+        closeReason: options.reason,
+      }),
+      event: { _tag: 'closed', resolution: options.resolution },
+      actor: options.actor,
+      lease: 'drop',
+    })
+
   const close: WorkGraphShape['close'] = Effect.fn('WorkGraph.close')(
     function* ({ id, resolution, reason, actor }) {
       return yield* mutate(
         'close',
-        transition({
-          id,
-          operation: 'close',
-          allowed: ticket => ticket.status !== 'closed',
-          change: () => ({
-            status: 'closed',
-            resolution: Option.some(resolution),
-            closeReason: Option.fromUndefinedOr(reason),
-          }),
-          event: { _tag: 'closed', resolution },
-          actor,
-          lease: 'drop',
+        Effect.gen(function* () {
+          const ticket = yield* closeTicket({
+            id,
+            resolution,
+            reason: Option.fromUndefinedOr(reason),
+            actor,
+          })
+          return { ticket, offers: yield* blockedTickets(sql, id) }
         }),
       )
     },
   )
+
+  const closeEpics: WorkGraphShape['closeEpics'] = Effect.fn(
+    'WorkGraph.closeEpics',
+  )(function* ({ onBase, actor }) {
+    // Git is asked before the transaction, so that none is held open while it answers.
+    const finished = yield* read('closeEpics', finishedEpics(sql, onBase))
+    if (finished.length === 0) return []
+    return yield* mutate(
+      'closeEpics',
+      Effect.map(
+        Effect.forEach(finished, epic =>
+          closeTicket({
+            id: epic.id,
+            resolution: 'done',
+            reason: Option.some('Its children are closed and merged.'),
+            actor,
+          }).pipe(
+            Effect.map(Option.some),
+            // Closed meanwhile: nothing left to do for it.
+            Effect.catchTag('TransitionRefused', () =>
+              Effect.succeed(Option.none()),
+            ),
+          ),
+        ),
+        closed => closed.flatMap(Option.toArray),
+      ),
+    )
+  })
 
   const reopen: WorkGraphShape['reopen'] = Effect.fn('WorkGraph.reopen')(
     function* ({ id, actor }) {
@@ -852,9 +902,17 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
   }).pipe(Effect.withSpan('WorkGraph.changes'))
 
   return WorkGraph.of({
-    ready: () => readyTickets(),
-    why: id =>
-      Effect.flatMap(read('why', requireTicket(id)), () => whyWaiting(id)),
+    ready: Effect.fn('WorkGraph.ready')(function* (options) {
+      return yield* read('ready', readyTickets(sql, options))
+    }),
+    why: Effect.fn('WorkGraph.why')(function* ({ id, ...options }) {
+      return yield* read(
+        'why',
+        Effect.flatMap(getTicket(id), ticket =>
+          whyWaiting(sql, ticket, options),
+        ),
+      )
+    }),
     show,
     list,
     create,
@@ -862,6 +920,7 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
     claim,
     release,
     close,
+    closeEpics,
     reopen,
     defer,
     undefer,

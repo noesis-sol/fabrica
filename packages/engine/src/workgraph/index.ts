@@ -2,7 +2,12 @@
 export * from './errors'
 export { checkPrefix, ticketIdRandomLength } from './ids'
 export { backupPath, migrate, type Migrations, migrations } from './migrations'
-export { ReadyNotBuilt, WaitReason } from './ready'
+export {
+  describeWait,
+  type OnBase,
+  type ReadyOptions,
+  WaitReason,
+} from './ready'
 export * from './service'
 export {
   layer as sqliteLayer,

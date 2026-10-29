@@ -267,7 +267,7 @@ describe('close and reopen', () => {
         actor: maintainer,
       })
       yield* graph.claim({ id: ticket.id, assignee, actor: maintainer })
-      const closed = yield* graph.close({
+      const { ticket: closed } = yield* graph.close({
         id: ticket.id,
         resolution: 'done',
         reason: 'Merged.',
@@ -809,25 +809,6 @@ describe('list', () => {
           yield* graph.list({ statuses: ['closed'], types: ['epic'] }),
         ).toEqual([])
       }).pipe(Effect.provide(graphLayer)),
-  )
-})
-
-describe('ready and why', () => {
-  it.effect('fail as not built yet', () =>
-    Effect.gen(function* () {
-      const graph = yield* WorkGraph
-      const ticket = yield* graph.create({
-        ticket: task('A'),
-        actor: maintainer,
-      })
-      expect((yield* Effect.flip(graph.ready()))._tag).toBe('ReadyNotBuilt')
-      expect((yield* Effect.flip(graph.why(ticket.id)))._tag).toBe(
-        'ReadyNotBuilt',
-      )
-      expect((yield* Effect.flip(graph.why(id('fa-missing'))))._tag).toBe(
-        'TicketNotFound',
-      )
-    }).pipe(Effect.provide(graphLayer)),
   )
 })
 

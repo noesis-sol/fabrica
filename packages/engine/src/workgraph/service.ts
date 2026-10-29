@@ -35,7 +35,7 @@ import type {
   TicketNotFound,
   TransitionRefused,
 } from './errors'
-import type { ReadyNotBuilt, WaitReason } from './ready'
+import type { OnBase, ReadyOptions, WaitReason } from './ready'
 
 // The tracker interface (spec §11.1): every ticket operation goes through `WorkGraph`, the only code
 // that knows the backend. Each mutation names its actor, and appends an event with it (§11.2).
@@ -100,6 +100,12 @@ export interface TicketDetail {
   readonly notes: ReadonlyArray<Note>
 }
 
+/** A ticket closed, and the tickets it blocks that aren't closed: closing offers to close them with it (§11.1). */
+export interface ClosedTicket {
+  readonly ticket: Ticket
+  readonly offers: ReadonlyArray<Ticket>
+}
+
 type Found<A> = Effect.Effect<A, TicketNotFound | StoreFailed>
 type Changed<A, E = never> = Effect.Effect<
   A,
@@ -107,18 +113,14 @@ type Changed<A, E = never> = Effect.Effect<
 >
 
 export interface WorkGraphShape {
-  /** The tickets ready to dispatch (§13.3). */
-  readonly ready: () => Effect.Effect<
-    ReadonlyArray<Ticket>,
-    ReadyNotBuilt | StoreFailed
-  >
-  /** Each reason the ticket isn't ready. */
+  /** The tickets ready to dispatch (§13.3), most urgent first, then oldest. */
+  readonly ready: (
+    options: ReadyOptions,
+  ) => Effect.Effect<ReadonlyArray<Ticket>, StoreFailed>
+  /** Each reason the ticket isn't ready, by the same rule as `ready`; none when it is. */
   readonly why: (
-    id: TicketId,
-  ) => Effect.Effect<
-    ReadonlyArray<WaitReason>,
-    ReadyNotBuilt | TicketNotFound | StoreFailed
-  >
+    options: ReadyOptions & { readonly id: TicketId },
+  ) => Effect.Effect<ReadonlyArray<WaitReason>, TicketNotFound | StoreFailed>
   readonly show: (id: TicketId) => Found<TicketDetail>
   /** The tickets the filter takes, most urgent first, then oldest; read in batches that yield. */
   readonly list: (
@@ -149,7 +151,16 @@ export interface WorkGraphShape {
     readonly resolution: Resolution
     readonly reason?: string
     readonly actor: Actor
-  }) => Changed<Ticket, TransitionRefused>
+  }) => Changed<ClosedTicket, TransitionRefused>
+  /**
+   * Closes each epic whose children are all closed and merged (§13.3), an epic among them first, so
+   * that its parent closes in the same call: called once a ticket closes or merges. Returns the epics
+   * closed.
+   */
+  readonly closeEpics: (options: {
+    readonly onBase: OnBase
+    readonly actor: Actor
+  }) => Changed<ReadonlyArray<Ticket>>
   readonly reopen: (options: {
     readonly id: TicketId
     readonly actor: Actor
