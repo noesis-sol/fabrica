@@ -1,6 +1,6 @@
 import { Clock, Context, Duration, Effect, Layer } from 'effect'
 
-import { Wake } from '../time'
+import { Wake } from '../time/wake'
 
 // How the process runner counts its time limits (spec §7.7): a command's time limit, the grace its
 // output gets after it exits, the grace its tree gets between terminate and kill. The wake service

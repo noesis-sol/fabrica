@@ -7,6 +7,8 @@ import type {
   TicketId,
 } from '@fabrica/contracts'
 
+import { BatteryNotice } from '../time'
+
 // The human log's lines (spec §7.5), in orchestra's formats: each dated as orchestra dates them
 // (`2026-10-29 10:15:00 +0200`, the UTC offset making the hour a clock change repeats read in order),
 // then the text. A run-level line starts at the margin (`HOLD: …`, `SLEPT: …`); a line about one
@@ -110,6 +112,23 @@ export const spanText = (span: Duration.Duration): string => {
   if (minutes < 60) return `${minutes}m`
   return `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, '0')}m`
 }
+
+/**
+ * What the run says of the battery (§7.7): `LID_SLEEPS: …` and `BATTERY: on battery at 85%` as it
+ * starts, `BATTERY: 19% and discharging; …` at a threshold.
+ */
+export const batteryLine: (notice: BatteryNotice) => string =
+  BatteryNotice.$match({
+    LidSleeps: () =>
+      warningLine({
+        tag: 'LID_SLEEPS',
+        about: 'run',
+        text: 'keeping awake prevents idle sleep only: a closed lid still sleeps this host on battery or without an external display',
+      }),
+    OnBattery: ({ level }) => `BATTERY: on battery at ${level}%`,
+    Low: ({ level }) =>
+      `BATTERY: ${level}% and discharging; plug the host in before it sleeps`,
+  })
 
 /** `SLEPT: the host slept 34m (14:03–14:37, lid closed); limits don't count it` (§7.7). */
 export const sleptLine = (slept: {

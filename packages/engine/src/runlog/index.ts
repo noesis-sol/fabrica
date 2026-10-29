@@ -1,4 +1,5 @@
 // The run's log: the event stream and the human log (spec §7.5, §13.12, H84).
+export * from './battery'
 export * from './errors'
 export * from './lines'
 export { oneLine } from './one-line'
