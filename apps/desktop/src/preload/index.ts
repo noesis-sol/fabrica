@@ -21,7 +21,7 @@ const ipc: PreloadIpc = {
 contextBridge.exposeInMainWorld('fabrica', makeApi(ipc))
 
 // The page and the preload share the window's message queue, not their globals: the page's
-// receiveEnginePort takes the port from this message.
+// onEnginePorts takes each port from these messages.
 forwardEnginePorts(ipc, (message, ports) =>
   window.postMessage(message, '*', ports),
 )
