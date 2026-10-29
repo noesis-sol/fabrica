@@ -111,11 +111,23 @@ export const Why = Schema.TaggedUnion({
 })
 export type Why = typeof Why.Type
 
+/** A ticket the project had that an import changed, and the fields it changed. */
+export class ImportedChange extends Schema.Class<ImportedChange>(
+  'ImportedChange',
+)({
+  ticket: TicketId,
+  fields: Schema.NonEmptyArray(Text),
+}) {}
+
 /** What a Beads import did. */
 export class Imported extends Schema.Class<Imported>('Imported')({
   created: Count,
   /** Tickets the project had, merged as a sync merges them (§11.4). */
   merged: Count,
+  /** The merged tickets the import changed; importing the same file again changes none. */
+  changed: Schema.Array(ImportedChange),
+  /** What the file had that the import left out, in words: a link of a kind the work graph lacks, a link to a ticket of another project. */
+  dropped: Schema.Array(Text),
 }) {}
 
 /** The Beads file was refused: every problem with it. */

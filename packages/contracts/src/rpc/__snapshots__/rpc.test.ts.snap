@@ -1034,12 +1034,53 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
       ],
       "type": "object",
     },
+    "ImportedChangeEncoded": {
+      "additionalProperties": true,
+      "properties": {
+        "fields": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string",
+          },
+          "minItems": 1,
+          "prefixItems": [
+            {
+              "pattern": "\\S",
+              "type": "string",
+            },
+          ],
+          "type": "array",
+        },
+        "ticket": {
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)+(?:\\.[1-9][0-9]*)*$",
+          "type": "string",
+        },
+      },
+      "required": [
+        "ticket",
+        "fields",
+      ],
+      "type": "object",
+    },
     "ImportedEncoded": {
       "additionalProperties": true,
       "properties": {
+        "changed": {
+          "items": {
+            "$ref": "#/$defs/ImportedChangeEncoded",
+          },
+          "type": "array",
+        },
         "created": {
           "minimum": 0,
           "type": "integer",
+        },
+        "dropped": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string",
+          },
+          "type": "array",
         },
         "merged": {
           "minimum": 0,
@@ -1049,6 +1090,8 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
       "required": [
         "created",
         "merged",
+        "changed",
+        "dropped",
       ],
       "type": "object",
     },

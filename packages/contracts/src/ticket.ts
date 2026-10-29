@@ -261,6 +261,20 @@ export class Edge extends Schema.Class<Edge>('Edge')(
   ),
 ) {}
 
+/** An edge in words: `fa-a1b2 blocks fa-c3d4`. */
+export const edgeWords = (edge: Edge): string => {
+  switch (edge.kind) {
+    case 'blocks':
+      return `${edge.from} blocks ${edge.to}`
+    case 'parent':
+      return `${edge.from} is the parent of ${edge.to}`
+    case 'discovered_from':
+      return `${edge.from} was discovered from ${edge.to}`
+    case 'related':
+      return `${edge.from} is related to ${edge.to}`
+  }
+}
+
 /** A note on a ticket. */
 export class Note extends Schema.Class<Note>('Note')({
   id: NoteId,

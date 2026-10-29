@@ -20,15 +20,17 @@ import {
   Note,
   Question,
   type Resolution,
-  type Ticket,
+  Ticket,
   type TicketChange,
   type TicketEvent,
   type TicketId,
   TicketMetadata,
+  type TicketStatus,
 } from '@fabrica/contracts'
 
 import {
   EdgeCycle,
+  InvalidTicket,
   NotAQuestion,
   StoreFailed,
   TicketNotFound,
@@ -59,6 +61,9 @@ import {
   ticketFromRow,
 } from './rows'
 import {
+  DroppedEdge,
+  type ImportedTicket,
+  type MergedTicket,
   type NewTicket,
   type TicketFilter,
   WorkGraph,
@@ -76,6 +81,9 @@ const reactivityKeys = ['work_graph']
 
 /** How many tickets a batch of `list` reads before it yields. */
 const listBatchSize = 500
+
+/** How many tickets, and then edges, an import writes before it yields. */
+const importBatchSize = 200
 
 /** The store: the database at `filename` (`:memory:` for one in memory), migrated, foreign keys enforced. */
 export const storeLayer = (
@@ -838,6 +846,208 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
     },
   )
 
+  /** The ticket an import merges: the import's plain fields, the later status by §11.4's precedence (its answer with it), the claim kept. */
+  const mergedTicket = (ours: Ticket, theirs: Ticket) => {
+    const oursLater =
+      statusPrecedence[ours.status] > statusPrecedence[theirs.status]
+    return makeTicket({
+      ...theirs,
+      assignee: ours.assignee,
+      model: Option.orElse(theirs.model, () => ours.model),
+      result: Option.orElse(theirs.result, () => ours.result),
+      mergedCommit: Option.orElse(theirs.mergedCommit, () => ours.mergedCommit),
+      ...(oursLater
+        ? {
+            status: ours.status,
+            resolution: ours.resolution,
+            closeReason: ours.closeReason,
+            deferUntil: ours.deferUntil,
+            question: Option.map(theirs.question, asked =>
+              Question.make({
+                ...asked,
+                answer: Option.flatMap(ours.question, ({ answer }) => answer),
+              }),
+            ),
+          }
+        : {}),
+      createdAt: ours.createdAt,
+      updatedAt: ours.updatedAt,
+    })
+  }
+
+  /** Files an imported ticket the graph hasn't, as it is: its row, labels and notes, with its `created` event. */
+  const insertImported = (
+    { ticket, labels, notes }: ImportedTicket,
+    actor: Actor,
+    at: DateTime.Utc,
+  ) =>
+    Effect.gen(function* () {
+      yield* insertTicket(ticket)
+      for (const label of new Set(labels)) {
+        yield* sql`INSERT INTO labels ${sql.insert({ ticket_id: ticket.id, label })}`
+      }
+      for (const each of notes) yield* insertNote(each)
+      yield* appendEvent({
+        ticket: ticket.id,
+        actor,
+        change: { _tag: 'created' },
+        at,
+      })
+    })
+
+  const insertNote = (note: Note) =>
+    sql`INSERT INTO notes ${sql.insert({
+      id: note.id,
+      ticket_id: note.ticketId,
+      author: actorColumn(note.author),
+      body: note.body,
+      at: DateTime.toEpochMillis(note.at),
+    })} ON CONFLICT (id) DO NOTHING`
+
+  /** Merges an imported ticket into the one the graph has; returns the fields it changed, with their `updated` event. */
+  const mergeImported = (
+    ours: Ticket,
+    { ticket: theirs, labels, notes }: ImportedTicket,
+    actor: Actor,
+    at: DateTime.Utc,
+  ) =>
+    Effect.gen(function* () {
+      const merged = yield* mergedTicket(ours, theirs)
+      const [encodedOurs, encodedMerged] = yield* Effect.all([
+        encodeTicket(ours),
+        encodeTicket(merged),
+      ]).pipe(
+        Effect.mapError(error => new InvalidTicket({ issue: error.message })),
+      )
+      const fields: Array<string> = mergedFields.filter(
+        field =>
+          canonicalJson(encodedOurs[field]) !==
+          canonicalJson(encodedMerged[field]),
+      )
+      const had = new Set(
+        (yield* sql<{
+          readonly label: string
+        }>`SELECT label FROM labels WHERE ticket_id = ${ours.id}`).map(
+          row => row.label,
+        ),
+      )
+      const newLabels = [...new Set(labels)].filter(label => !had.has(label))
+      for (const label of newLabels) {
+        yield* sql`INSERT INTO labels ${sql.insert({ ticket_id: ours.id, label })}`
+      }
+      if (newLabels.length > 0) fields.push('labels')
+      const bodies = new Map(
+        (yield* sql<{
+          readonly id: string
+          readonly body: string
+        }>`SELECT id, body FROM notes WHERE ticket_id = ${ours.id}`).map(
+          row => [row.id, row.body],
+        ),
+      )
+      let notesChanged = false
+      for (const each of notes) {
+        const body = bodies.get(each.id)
+        if (body === undefined) yield* insertNote(each)
+        else if (body !== each.body) {
+          yield* sql`UPDATE notes SET body = ${each.body} WHERE id = ${each.id}`
+        } else continue
+        notesChanged = true
+      }
+      if (notesChanged) fields.push('notes')
+      if (!isNonEmpty(fields)) return fields
+      yield* writeTicket(yield* makeTicket({ ...merged, updatedAt: at }))
+      if (ours.status === 'in_progress' && merged.status !== 'in_progress') {
+        yield* dropLease(ours.id)
+      }
+      yield* appendEvent({
+        ticket: ours.id,
+        actor,
+        change: { _tag: 'updated', fields },
+        at,
+      })
+      return fields
+    })
+
+  const tombstoned = (id: TicketId) =>
+    Effect.map(
+      sql`SELECT 1 FROM tombstones WHERE id = ${id}`,
+      rows => rows.length > 0,
+    )
+
+  /** Adds an imported edge; one already there (a `related` edge either way) changes nothing. */
+  const linkImported = (edge: Edge, actor: Actor, at: DateTime.Utc) =>
+    Effect.gen(function* (): Effect.fn.Return<
+      Option.Option<DroppedEdge>,
+      InvalidTicket | SqlError.SqlError
+    > {
+      for (const id of [edge.from, edge.to]) {
+        if (Option.isNone(yield* ticketRow(id))) {
+          return Option.some(DroppedEdge.Missing({ edge, id }))
+        }
+      }
+      const reverse = yield* makeEdge({
+        from: edge.to,
+        to: edge.from,
+        kind: edge.kind,
+      })
+      if (
+        (yield* edgeExists(edge)) ||
+        (edge.kind === 'related' && (yield* edgeExists(reverse)))
+      ) {
+        return Option.none()
+      }
+      if (
+        (edge.kind === 'blocks' || edge.kind === 'parent') &&
+        (yield* reaches(edge.to, edge.from, edge.kind))
+      ) {
+        return Option.some(DroppedEdge.Cycle({ edge }))
+      }
+      yield* sql`INSERT INTO edges ${sql.insert({ from_id: edge.from, to_id: edge.to, kind: edge.kind })}`
+      yield* appendEvent({
+        ticket: edge.from,
+        actor,
+        change: { _tag: 'linked', edge },
+        at,
+      })
+      return Option.none()
+    })
+
+  const importTickets: WorkGraphShape['importTickets'] = Effect.fn(
+    'WorkGraph.importTickets',
+  )(function* ({ tickets, edges, actor }) {
+    return yield* mutate(
+      'importTickets',
+      Effect.gen(function* () {
+        const at = yield* now
+        const created: Array<TicketId> = []
+        const merged: Array<MergedTicket> = []
+        const deleted: Array<TicketId> = []
+        const dropped: Array<DroppedEdge> = []
+        for (const [index, imported] of tickets.entries()) {
+          if (index > 0 && index % importBatchSize === 0) yield* Effect.yieldNow
+          const id = imported.ticket.id
+          const row = yield* ticketRow(id)
+          if (Option.isSome(row)) {
+            const ours = yield* ticketFromRow(row.value)
+            const fields = yield* mergeImported(ours, imported, actor, at)
+            merged.push({ id, fields })
+          } else if (yield* tombstoned(id)) {
+            deleted.push(id)
+          } else {
+            yield* insertImported(imported, actor, at)
+            created.push(id)
+          }
+        }
+        for (const [index, edge] of edges.entries()) {
+          if (index > 0 && index % importBatchSize === 0) yield* Effect.yieldNow
+          const left = yield* linkImported(edge, actor, at)
+          if (Option.isSome(left)) dropped.push(left.value)
+        }
+        return { created, merged, deleted, dropped }
+      }),
+    )
+  })
+
   const deleteTicket: WorkGraphShape['delete'] = Effect.fn('WorkGraph.delete')(
     function* ({ id, actor }) {
       return yield* mutate(
@@ -935,11 +1145,54 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
     fileDiscovered,
     ask,
     answer,
+    importTickets,
     delete: deleteTicket,
     history,
     changes,
   })
 })
+
+/** §11.4's precedence of statuses, where both sides changed one: `closed` over `in_progress` over `deferred` over `open`. */
+const statusPrecedence: Record<TicketStatus, number> = {
+  open: 0,
+  deferred: 1,
+  in_progress: 2,
+  closed: 3,
+}
+
+/** The fields an import compares, by their encoded names: every one but the ID and the times. */
+const mergedFields = [
+  'type',
+  'title',
+  'description',
+  'design',
+  'acceptance',
+  'status',
+  'resolution',
+  'priority',
+  'deferUntil',
+  'assignee',
+  'model',
+  'metadata',
+  'result',
+  'question',
+  'mergedCommit',
+  'closeReason',
+] as const satisfies ReadonlyArray<keyof typeof Ticket.Encoded>
+
+const encodeTicket = Schema.encodeEffect(Ticket)
+
+/** A JSON value as text, an object's keys sorted, so that the same value gives the same text. */
+const canonicalJson = (value: unknown): string =>
+  JSON.stringify(value, (_key, each: unknown) =>
+    each !== null && typeof each === 'object' && !Array.isArray(each)
+      ? Object.fromEntries(
+          Object.entries(each).toSorted(([a], [b]) =>
+            a < b ? -1 : a > b ? 1 : 0,
+          ),
+        )
+      : each,
+  )
 
 const isNonEmpty = <A>(
   items: ReadonlyArray<A>,

@@ -4,6 +4,7 @@ import {
   Actor,
   BacklogItem,
   BacklogRpcs,
+  ImportFailed,
   type NewTicket,
   NotReady,
   NotReadyReason,
@@ -29,7 +30,6 @@ import {
   type WorkGraphShape,
   describeWait,
 } from '../workgraph'
-import { notImplemented } from './not-implemented'
 
 // The Backlog group's handlers (spec §8.1, §11.1) on each project's work graph, opened by the Projects
 // service: every change made through a client is the maintainer's. What the work graph refuses (a
@@ -38,7 +38,8 @@ import { notImplemented } from './not-implemented'
 // can't do (its store failed, the project's database won't open) is a defect of the request that met
 // it. `tickets.why` gives each reason with the words the log says it in (H81). The backlog stream is
 // one keyed feed per project, fed from its work graph's changes, so a client that reconnects resumes
-// it. `import` is the Beads import's ticket's.
+// it. `tickets.import` brings a Beads file's tickets in (§11.6): a file it can't read is refused with
+// every problem, `ImportFailed`.
 
 /** What the work graph fails with, as the Backlog group's requests meet it. */
 type GraphError =
@@ -479,6 +480,29 @@ export const makeBacklogHandlers = Effect.gen(function* () {
       )
     })
 
+  const importBeads = Effect.fn('Backlog.import')(function* ({
+    project,
+    beads,
+  }: {
+    readonly project: ProjectId
+    readonly beads: string
+  }) {
+    const graph = yield* graphOf(project)
+    return yield* WorkGraph.importBeads({
+      graph,
+      text: beads,
+      actor: maintainer,
+    }).pipe(
+      Effect.catchTags({
+        BeadsRefused: ({ problems }) =>
+          Effect.fail(new ImportFailed({ problems })),
+        InvalidTicket: error =>
+          Effect.fail(new ImportFailed({ problems: [error.message] })),
+        StoreFailed: Effect.die,
+      }),
+    )
+  })
+
   const watch = ({
     project,
     resume,
@@ -509,7 +533,7 @@ export const makeBacklogHandlers = Effect.gen(function* () {
     'tickets.note': note,
     'tickets.ready': ready,
     'tickets.why': why,
-    'tickets.import': notImplemented('tickets.import'),
+    'tickets.import': importBeads,
     'tickets.watch': watch,
   })
 })

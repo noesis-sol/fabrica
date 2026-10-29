@@ -1,5 +1,6 @@
 import {
   Context,
+  Data,
   type DateTime,
   type Effect,
   type Option,
@@ -98,6 +99,35 @@ export interface TicketDetail {
   readonly labels: ReadonlyArray<LabelName>
   readonly edges: ReadonlyArray<Edge>
   readonly notes: ReadonlyArray<Note>
+}
+
+/** A ticket brought in whole from another tracker (§11.6): its ID, state and times as that tracker had them. */
+export interface ImportedTicket {
+  readonly ticket: Ticket
+  readonly labels: ReadonlyArray<LabelName>
+  readonly notes: ReadonlyArray<Note>
+}
+
+/** An imported edge the work graph left out: an end it has no ticket for, or a cycle it would close. */
+export type DroppedEdge = Data.TaggedEnum<{
+  Missing: { readonly edge: Edge; readonly id: TicketId }
+  Cycle: { readonly edge: Edge }
+}>
+export const DroppedEdge = Data.taggedEnum<DroppedEdge>()
+
+/** A ticket the graph had when an import brought it again, and the fields the import changed: none when it changed nothing. */
+export interface MergedTicket {
+  readonly id: TicketId
+  readonly fields: ReadonlyArray<string>
+}
+
+/** What an import did with each ticket and edge. */
+export interface ImportOutcome {
+  readonly created: ReadonlyArray<TicketId>
+  readonly merged: ReadonlyArray<MergedTicket>
+  /** Tickets the graph deleted: left deleted, as their tombstones say (§11.7). */
+  readonly deleted: ReadonlyArray<TicketId>
+  readonly dropped: ReadonlyArray<DroppedEdge>
 }
 
 /** A ticket closed, and the tickets it blocks that aren't closed: closing offers to close them with it (§11.1). */
@@ -218,6 +248,19 @@ export interface WorkGraphShape {
     readonly answer: string
     readonly actor: Actor
   }) => Changed<Ticket, NotAQuestion | TransitionRefused>
+  /**
+   * Brings tickets from another tracker in with their IDs (§11.6), in one transaction, in batches
+   * that yield. A ticket the graph hasn't is filed as it is. One it has merges until the tickets
+   * ref's merge (§11.4) exists: its plain fields take the import's values, its status the later of
+   * the two by §11.4's precedence, and its labels, notes (by ID) and edges are the union. Importing
+   * the same tickets again changes nothing. An edge to a ticket neither has, or closing a `blocks`
+   * or `parent` cycle, is dropped.
+   */
+  readonly importTickets: (options: {
+    readonly tickets: ReadonlyArray<ImportedTicket>
+    readonly edges: ReadonlyArray<Edge>
+    readonly actor: Actor
+  }) => Effect.Effect<ImportOutcome, InvalidTicket | StoreFailed>
   /** Deletes a ticket, its labels, edges and notes, leaving a tombstone (§11.7); its history stays. */
   readonly delete: (options: {
     readonly id: TicketId

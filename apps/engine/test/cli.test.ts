@@ -289,7 +289,6 @@ describe('the command line', () => {
     ['talk', 'feature'],
     ['talk', 'answer'],
     ['talk', 'run'],
-    ['tickets', 'import'],
     ['requires'],
     ['report'],
     ['insights'],
@@ -330,7 +329,6 @@ describe('the command line', () => {
     ['run --feature add-x --auto-answer=30m --offline', 'run'],
     ['run --overnight --auto-answer --json', 'run'],
     ['requires --markdown', 'requires'],
-    ['tickets import --beads issues.jsonl', 'tickets import'],
   ]
 
   it.effect.each(withFlags)(

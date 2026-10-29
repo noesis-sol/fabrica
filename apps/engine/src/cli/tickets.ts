@@ -1,9 +1,6 @@
 import { Data, DateTime, Effect, Option, Schema } from 'effect'
 import { Argument, Command, Flag } from 'effect/cli'
-import type { RpcClientError } from 'effect/rpc'
-import * as NodePath from 'node:path'
 
-import type { EngineClientShape } from '@fabrica/client'
 import {
   Edge,
   EdgeKind,
@@ -12,42 +9,36 @@ import {
   ModelOverride,
   NoteId,
   Priority,
-  ProjectId,
-  type ProjectInfo,
-  type ProjectNotFound,
-  type Refused,
   Resolution,
   Text,
   Ticket,
   TicketDetail,
   TicketId,
   type TicketMetadata,
-  type TicketNotFound,
   TicketType,
   Why,
+  edgeWords,
 } from '@fabrica/contracts'
 
 import { versionLine } from '../version'
-import { withEngine } from './connect'
-import { notYet, valueFlag } from './not-yet'
 import { printAnswer } from './output'
 import { sanitise, sanitiseLine } from './sanitise'
+import { ticketsImport } from './tickets-import'
+import {
+  type TicketsRefused,
+  projectFlag,
+  refused,
+  withProject,
+} from './tickets-project'
+
+export { projectHolding, TicketsRefused } from './tickets-project'
 
 // `fabrica tickets list|show|create|update|close|reopen|defer|dep|label|note|ready|why` (spec §19,
 // §11): the backlog of a project, through the engine's Backlog group, every change the maintainer's.
 // The project is `--project <id>`, or the one whose checkout holds the folder the command runs in.
 // `create --files` gives the files a ticket will change, its footprint (§13.4). `why` says each reason
 // in the engine's words. `rebuild` waits for the tickets ref (M4), and says so; `import --beads` is
-// the Beads import's ticket's. Values the engine sends are printed one to a line.
-
-/** The engine refused what the command asked, or the command can't tell what it was asked. */
-export class TicketsRefused extends Data.TaggedError('TicketsRefused')<{
-  readonly reason: string
-}> {
-  override get message() {
-    return this.reason
-  }
-}
+// its own file's. Values the engine sends are printed one to a line.
 
 /** `fabrica tickets rebuild`, which the tickets ref (M4) brings. */
 export class RebuildWaits extends Data.TaggedError('RebuildWaits')<{}> {
@@ -55,25 +46,6 @@ export class RebuildWaits extends Data.TaggedError('RebuildWaits')<{}> {
     return `\`fabrica tickets rebuild\` is not in ${versionLine} yet: it rebuilds the backlog from the tickets ref, which comes with sync (M4)`
   }
 }
-
-const refused = (reason: string) => new TicketsRefused({ reason })
-
-/** The project whose checkout holds `folder`: the innermost, where checkouts nest. */
-export const projectHolding = (
-  projects: ReadonlyArray<ProjectInfo>,
-  folder: string,
-): Option.Option<ProjectInfo> =>
-  Option.fromUndefinedOr(
-    projects
-      .filter(
-        ({ path }) =>
-          folder === path ||
-          folder.startsWith(
-            path.endsWith(NodePath.sep) ? path : path + NodePath.sep,
-          ),
-      )
-      .toSorted((a, b) => b.path.length - a.path.length)[0],
-  )
 
 /** `value` decoded by `schema`, or refused as not `what`. */
 const decoded = <A>(
@@ -140,71 +112,6 @@ const noMetadata: TicketMetadata = {
   result_kind: Option.none(),
 }
 
-/** The project `--project` names, or the one whose checkout holds the folder the command runs in. */
-const projectOf = (client: EngineClientShape, given: Option.Option<string>) =>
-  Option.match(given, {
-    onSome: text =>
-      Option.match(ProjectId.makeOption(text), {
-        onNone: () =>
-          Effect.fail(refused(`${sanitiseLine(text)} isn't a project's ID`)),
-        onSome: Effect.succeed,
-      }),
-    onNone: () =>
-      Effect.gen(function* () {
-        const folder = NodePath.resolve('.')
-        const projects = yield* client.rpc['projects.list']()
-        return yield* Option.match(projectHolding(projects, folder), {
-          onNone: () =>
-            Effect.fail(
-              refused(
-                `no project's checkout holds ${sanitiseLine(folder)}: name one with --project <id>, as \`fabrica project list\` gives it`,
-              ),
-            ),
-          onSome: ({ id }) => Effect.succeed(id),
-        })
-      }),
-  })
-
-/** Runs `use` with a client of the engine and the project, the engine's refusals in words. */
-const withProject = <A>(
-  given: Option.Option<string>,
-  use: (
-    client: EngineClientShape,
-    project: ProjectId,
-  ) => Effect.Effect<
-    A,
-    | TicketsRefused
-    | ProjectNotFound
-    | TicketNotFound
-    | Refused
-    | RpcClientError.RpcClientError
-  >,
-) =>
-  withEngine(client =>
-    Effect.flatMap(projectOf(client, given), project => use(client, project)),
-  ).pipe(
-    Effect.catchTags({
-      ProjectNotFound: ({ project }) =>
-        Effect.fail(
-          refused(`the engine has no project ${sanitiseLine(project)}`),
-        ),
-      TicketNotFound: ({ project, ticket }) =>
-        Effect.fail(
-          refused(
-            `the project ${sanitiseLine(project)} has no ticket ${sanitiseLine(ticket)}`,
-          ),
-        ),
-      Refused: ({ reason }) => Effect.fail(refused(sanitiseLine(reason))),
-    }),
-  )
-
-const projectFlag = Flag.String('project').pipe(
-  Flag.withDescription(
-    "The project's ID; the one whose checkout holds this folder where it isn't given",
-  ),
-  Flag.optional,
-)
-
 const ticketArgument = Argument.String('ticket').pipe(
   Argument.withDescription("The ticket's ID"),
 )
@@ -237,21 +144,6 @@ const ticketRows = (tickets: ReadonlyArray<Ticket>, none: string): string => {
         .trimEnd(),
     )
     .join('\n')
-}
-
-const edgeWords = (edge: Edge): string => {
-  const from = sanitiseLine(edge.from)
-  const to = sanitiseLine(edge.to)
-  switch (edge.kind) {
-    case 'blocks':
-      return `${from} blocks ${to}`
-    case 'parent':
-      return `${from} is the parent of ${to}`
-    case 'discovered_from':
-      return `${from} was discovered from ${to}`
-    case 'related':
-      return `${from} is related to ${to}`
-  }
 }
 
 /** A text field, indented under its name. */
@@ -289,7 +181,7 @@ const detailText = ({ ticket, labels, edges, notes }: TicketDetail): string =>
       onNone: () => [],
       onSome: model => [`model     ${sanitiseLine(model)}`],
     }),
-    ...edges.map(edge => `link      ${edgeWords(edge)}`),
+    ...edges.map(edge => `link      ${sanitiseLine(edgeWords(edge))}`),
     ...block('description', ticket.description),
     ...block('design', ticket.design),
     ...block('acceptance', ticket.acceptance),
@@ -904,11 +796,6 @@ export const tickets = Command.make('tickets').pipe(
     ready,
     why,
     rebuild,
-    notYet({
-      group: ['tickets'],
-      name: 'import',
-      description: 'Imports a Beads backlog into the project',
-      flags: { beads: valueFlag('beads') },
-    }),
+    ticketsImport,
   ]),
 )

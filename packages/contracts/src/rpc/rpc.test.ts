@@ -565,7 +565,16 @@ const samples: Record<string, Samples> = {
   },
   'tickets.import': {
     payload: [{ project, beads: '{"id":"bd-1","title":"x"}\n' }],
-    success: [{ created: 3, merged: 1 }],
+    success: [
+      {
+        created: 3,
+        merged: 1,
+        changed: [{ ticket: 'fa-a1b2', fields: ['title', 'labels'] }],
+        dropped: [
+          "fa-a1b2's waits-for link to fa-c3d4: the work graph has no such link",
+        ],
+      },
+    ],
     error: [{ _tag: 'ImportFailed', problems: ['line 2: not JSON'] }],
   },
   'tickets.watch': {
