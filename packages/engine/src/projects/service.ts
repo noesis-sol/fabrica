@@ -345,25 +345,30 @@ export const make = Effect.gen(function* () {
           `${NodePath.dirname(into)} couldn't be made: ${reasonOf(error)}`,
         ),
     })
-    const cloned = yield* git
-      .clone({ url: options.url, into })
-      .pipe(
-        Effect.mapError(error =>
-          refused(`git clone ${error.command}: ${error.reason}`),
-        ),
-      )
-    yield* CloneOutcome.$match(cloned, {
-      Cloned: () => Effect.void,
-      Refused: ({ message }) =>
-        Effect.andThen(removeClone, Effect.fail(refused(message))),
-    })
-    return yield* register({
-      id: options.id,
-      name: options.name,
-      folder: into,
-      origin: 'cloned',
-      url: Option.some(options.url),
-    }).pipe(Effect.tapError(() => removeClone))
+    // Whatever ends the add before the project is kept (git refused, timed out, the check, an
+    // interruption), the clone goes with it.
+    return yield* Effect.gen(function* () {
+      const cloned = yield* git
+        .clone({ url: options.url, into })
+        .pipe(
+          Effect.mapError(error =>
+            refused(`git clone ${error.command}: ${error.reason}`),
+          ),
+        )
+      yield* CloneOutcome.$match(cloned, {
+        Cloned: () => Effect.void,
+        Refused: ({ message }) => Effect.fail(refused(message)),
+      })
+      return yield* register({
+        id: options.id,
+        name: options.name,
+        folder: into,
+        origin: 'cloned',
+        url: Option.some(options.url),
+      })
+    }).pipe(
+      Effect.onExit(exit => (Exit.isSuccess(exit) ? Effect.void : removeClone)),
+    )
   })
 
   const add = Effect.fn('Projects.add')(function* (options: {
