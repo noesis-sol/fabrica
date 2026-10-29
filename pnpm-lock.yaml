@@ -241,6 +241,9 @@ importers:
 
   apps/engine:
     dependencies:
+      '@effect/platform-node':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0)(redis@6.3.0)
       '@fabrica/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -272,6 +275,9 @@ importers:
 
   packages/engine:
     dependencies:
+      '@effect/platform-node':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0)(redis@6.3.0)
       '@effect/sql-sqlite-node':
         specifier: 4.0.0
         version: 4.0.0(effect@4.0.0)

@@ -1,0 +1,136 @@
+import { Clock, Context, Data, Effect, Layer, Option, Random } from 'effect'
+import { Reactivity } from 'effect/reactivity'
+import { SqlClient } from 'effect/sql'
+
+import { SqliteClient } from '@effect/sql-sqlite-node'
+import { EngineId, decodeEngineSettings } from '@fabrica/contracts'
+
+import { type Migrations, migrate, statements } from '../workgraph/migrations'
+
+// The engine's own database (spec §7.2): `<data>/engine.db`, the engine's state across its projects:
+// its identity, its settings, the projects it holds and its pairing tokens (hashed, §9.3). Its
+// migrations are bundled as a record and run as the work graph's are (`migrate`), with its own record.
+// The groups' handlers that own a table read and write it themselves (`rpc/<group>.ts`).
+
+const engine = statements(
+  // The engine's ID, drawn at its first start (§11.5's leases name it).
+  `CREATE TABLE engine (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    id TEXT NOT NULL,
+    created_at INTEGER NOT NULL)`,
+  // The engine's settings (§13.13), one JSON document as `EngineSettings` encodes it.
+  `CREATE TABLE settings (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    document TEXT NOT NULL)`,
+  `CREATE TABLE projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    path TEXT NOT NULL UNIQUE,
+    origin TEXT NOT NULL CHECK (origin IN ('registered','cloned')),
+    url TEXT,
+    base TEXT NOT NULL,
+    added_at INTEGER NOT NULL)`,
+  // Pairing tokens (§9.3): only each token's hash is kept.
+  `CREATE TABLE tokens (
+    name TEXT PRIMARY KEY,
+    hash TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER)`,
+)
+
+/** The engine database's migrations, in order. */
+export const engineMigrations: Migrations = {
+  '0001_engine': engine,
+}
+
+/** The engine's database at `filename` (`:memory:` for one in memory), migrated. */
+export const engineDatabaseLayer = (filename: string) =>
+  Layer.effectContext(
+    Effect.gen(function* () {
+      const sql = yield* SqliteClient.make({ filename })
+      const context = Context.make(SqliteClient.SqliteClient, sql).pipe(
+        Context.add(SqlClient.SqlClient, sql),
+      )
+      yield* migrate(engineMigrations).pipe(Effect.provide(context))
+      return context
+    }),
+  ).pipe(Layer.provide(Reactivity.layer))
+
+/** The engine's stored settings don't decode: written by hand, or by a newer engine. */
+export class StoredSettingsInvalid extends Data.TaggedError(
+  'StoredSettingsInvalid',
+)<{ readonly reason: string }> {
+  override get message() {
+    return `the engine's stored settings are invalid: ${this.reason}`
+  }
+}
+
+const idAlphabet = '0123456789abcdefghijklmnopqrstuvwxyz'
+
+/** A new engine ID: `engine-` and 16 random base36 characters. */
+const drawEngineId = Effect.map(
+  Effect.all(
+    Array.from({ length: 16 }, () =>
+      Random.nextIntBetween(0, idAlphabet.length),
+    ),
+  ),
+  indices =>
+    EngineId.make(`engine-${indices.map(index => idAlphabet[index]).join('')}`),
+)
+
+/** The engine's ID: the one it drew at its first start, drawn and kept now where it has none. */
+export const engineIdentity = Effect.fn('EngineDatabase.identity')(
+  function* () {
+    const sql = yield* SqlClient.SqlClient
+    const read = sql<{ readonly id: string }>`SELECT id FROM engine`.pipe(
+      Effect.map(rows =>
+        Option.fromUndefinedOr(rows[0]).pipe(
+          Option.map(({ id }) => EngineId.make(id)),
+        ),
+      ),
+    )
+    const found = yield* read
+    if (Option.isSome(found)) return found.value
+    const drawn = yield* drawEngineId
+    const now = yield* Clock.currentTimeMillis
+    yield* sql`INSERT INTO engine (singleton, id, created_at) VALUES (1, ${drawn}, ${now})`
+    return drawn
+  },
+)
+
+/** The engine's settings as stored, decoded, every key not stored at its default. */
+export const storedEngineSettings = Effect.fn('EngineDatabase.settings')(
+  function* () {
+    const sql = yield* SqlClient.SqlClient
+    const rows = yield* sql<{
+      readonly document: string
+    }>`SELECT document FROM settings`
+    const document = yield* Option.match(Option.fromUndefinedOr(rows[0]), {
+      onNone: () => Effect.succeed<unknown>({}),
+      onSome: ({ document }) =>
+        Effect.try({
+          try: (): unknown => JSON.parse(document),
+          catch: error =>
+            new StoredSettingsInvalid({
+              reason: error instanceof Error ? error.message : String(error),
+            }),
+        }),
+    })
+    return yield* decodeEngineSettings(document).pipe(
+      Effect.mapError(
+        error => new StoredSettingsInvalid({ reason: error.message }),
+      ),
+    )
+  },
+)
+
+/** How many projects the engine holds. */
+export const projectCount = Effect.fn('EngineDatabase.projectCount')(
+  function* () {
+    const sql = yield* SqlClient.SqlClient
+    const rows = yield* sql<{
+      readonly count: number
+    }>`SELECT count(*) AS count FROM projects`
+    return rows[0]?.count ?? 0
+  },
+)
