@@ -330,6 +330,9 @@ importers:
       '@effect/platform-browser':
         specifier: 4.0.0
         version: 4.0.0(effect@4.0.0)
+      '@fabrica/client':
+        specifier: workspace:*
+        version: link:../client
       '@fabrica/contracts':
         specifier: workspace:*
         version: link:../contracts

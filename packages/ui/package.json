@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@effect/platform-browser": "4.0.0",
+    "@fabrica/client": "workspace:*",
     "@fabrica/contracts": "workspace:*",
     "@foldkit/ui": "0.169.0",
     "effect": "4.0.0",
