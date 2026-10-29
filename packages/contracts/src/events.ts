@@ -9,6 +9,7 @@ import {
   SetAsideReason,
   TicketOutcome,
 } from './phases'
+import { OrganName } from './ticket'
 
 // The event stream (spec §13.12): `.fabrica/run/events.jsonl` and the `run events` RPC stream, one
 // JSON object a line. orchestra's record kinds keep their names and fields (its `docs/events.md`), and
@@ -64,7 +65,11 @@ export const formatLocalTime = (time: DateTime.Zoned): LocalTime => {
   )
 }
 
-/** A model, as `<provider>/<model>` or as the provider names it. */
+/**
+ * A model, as `<provider>/<model>` or as the provider names it. Wider than a ticket's `ModelOverride`
+ * (`./ticket`), which every value of is, since orchestra's and tutti's streams, and a provider's usage
+ * keyed in `tokens`, name a model without its provider (`claude-opus-5-5`) (H65).
+ */
 export const ModelName = Schema.String.check(Schema.isPattern(/^\S+$/))
 export type ModelName = typeof ModelName.Type
 
@@ -454,18 +459,9 @@ export const FullCheckEvent = record('full_check', {
   text: Text,
 })
 
-export const OrganKind = Schema.Literals([
-  'triage',
-  'predictor',
-  'reviewer',
-  'scout',
-  'breakdown',
-])
-export type OrganKind = typeof OrganKind.Type
-
 /** An organ call ended (§16). */
 export const OrganEvent = record('organ', {
-  organ: OrganKind,
+  organ: OrganName,
   ticket: optional(TicketId),
   outcome: Schema.Literals(['answered', 'no_result']),
   model: optional(ModelName),

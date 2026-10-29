@@ -5,7 +5,7 @@ import type {
   CheckSuite,
   HoldKind,
   ModelName,
-  OrganKind,
+  OrganName,
   ProjectId,
   ProviderName,
   RunId,
@@ -92,7 +92,7 @@ export type TelemetryRow = Data.TaggedEnum<{
   }
   /** An organ call (§16). */
   OrganCall: Tie & {
-    readonly organ: OrganKind
+    readonly organ: OrganName
     readonly model?: ModelName | undefined
     readonly duration: Duration.Duration
     readonly outcome: 'answered' | 'no_result'
