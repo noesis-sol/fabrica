@@ -2,7 +2,7 @@ import { Effect, Exit, Layer, Option, Redacted, Stream } from 'effect'
 import type { RpcClientError } from 'effect/rpc'
 import { RpcClient, RpcSerialization } from 'effect/rpc'
 import { SqlClient } from 'effect/sql'
-import { X509Certificate } from 'node:crypto'
+import { X509Certificate, createHash } from 'node:crypto'
 import {
   lstat,
   mkdir,
@@ -385,8 +385,18 @@ describe('the pairing tokens', () => {
       yield* startEngine({ paths, host, release })
       const local = yield* localClient(paths)
       const created = yield* local['tokens.create']({ name: 'laptop' })
-      const database = yield* Effect.promise(() => readFile(paths.database))
-      expect(database.includes(Redacted.value(created.token))).toBe(false)
+      const secret = Redacted.value(created.token)
+      // The row as engine.db holds it, read through a connection of the test's own (the WAL's
+      // writes included, which the database's main file may not have yet).
+      const context = yield* Layer.build(engineDatabaseLayer(paths.database))
+      const sql = yield* Effect.provide(SqlClient.SqlClient, context)
+      const rows = yield* sql<Record<string, unknown>>`SELECT * FROM tokens`
+      expect(rows).toHaveLength(1)
+      expect(rows[0]?.['hash']).toBe(
+        createHash('sha256').update(secret, 'utf8').digest('hex'),
+      )
+      expect(JSON.stringify(rows)).not.toContain(secret)
+      expect(rows[0]?.['name']).toBe('laptop')
     }),
   )
 })
