@@ -13,6 +13,12 @@ if [ -z "${FABRICA_TOOLCHAIN:-}" ] && command -v mise >/dev/null 2>&1; then
   FABRICA_TOOLCHAIN=mise exec mise exec -- "$0" "$@"
 fi
 
+# On Linux without a display, the suites run under Xvfb: the UI look test draws the console in an
+# Electron window (spec §24).
+if [ "$(uname -s)" = Linux ] && [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then
+  exec xvfb-run -a "$0" "$@"
+fi
+
 # The run's share of the cores bounds the type checks, builds and test workers.
 if [ -z "${FABRICA_CORES:-}" ] && [ -n "${TUTTI_CORES:-}" ]; then
   export FABRICA_CORES="$TUTTI_CORES"

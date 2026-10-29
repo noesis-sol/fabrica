@@ -12,3 +12,6 @@ dist/
 out/
 *.tsbuildinfo
 .DS_Store
+
+# The UI look test's captures, written on each run for review (spec §24)
+packages/ui/look-captures/

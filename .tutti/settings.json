@@ -31,6 +31,19 @@
       "install": "mise install pnpm@12.16.1"
     },
     {
+      "name": "electron",
+      "check": "MISE_EXEC_AUTO_INSTALL=0 mise exec -- pnpm --filter @fabrica/ui exec node -e \"const fs = require('node:fs'); const path = require('node:path'); const dir = path.dirname(require.resolve('electron/package.json')); const file = path.join(dir, 'path.txt'); process.exit(fs.existsSync(file) && fs.existsSync(path.join(dir, 'dist', fs.readFileSync(file, 'utf8'))) ? 0 : 1)\" >/dev/null 2>&1",
+      "install": "mise exec -- pnpm --filter @fabrica/ui exec node -e \"require('electron')\""
+    },
+    {
+      "name": "xvfb-linux",
+      "platforms": [
+        "linux"
+      ],
+      "check": "[ -n \"${DISPLAY:-}${WAYLAND_DISPLAY:-}\" ] || command -v xvfb-run >/dev/null",
+      "manual": "Install Xvfb (Ubuntu: sudo apt-get install xvfb): on a machine without a display, scripts/check-fast.sh runs its suites under xvfb-run for the UI look test's Electron window."
+    },
+    {
       "name": "git-macos",
       "platforms": [
         "darwin"

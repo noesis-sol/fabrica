@@ -112,3 +112,12 @@ jobs:
           fi
           "$@" mise exec -- node --print "'cores: ' + require('node:os').availableParallelism()"
           "$@" "scripts/check-$CHECK.sh"
+
+      # The UI look test's captures of the console in each theme, beside the handoff's, for review (§24).
+      - name: Keep the look test's captures
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: look-captures-${{ matrix.check }}-${{ matrix.target }}${{ matrix.cpus && '-2-cores' || '' }}
+          path: packages/ui/look-captures/
+          if-no-files-found: ignore

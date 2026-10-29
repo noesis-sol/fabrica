@@ -167,6 +167,10 @@ core on CI, or half the machine's cores elsewhere. `pnpm test` reruns each file'
 process and prints `FLAKY: <file> > <test>` for a test that passes on its rerun. Shared test helpers live in
 `@fabrica/testkit`.
 
+The UI look test (`packages/ui/test/look.test.ts`) draws the console in Electron in each theme and compares it
+with the handoff's `design/console/*.png`; it writes its captures to `packages/ui/look-captures/` for review.
+A known difference, filed as a ticket, is held in its `known` list until that ticket strikes it.
+
 After every write, the type check of the written file's package and oxlint run on it, and their problems come
 back with the tool's result: a `PostToolUse` hook in `.claude/settings.json` for Claude Code, and the
 development-only Pi package `scripts/pi-checks` (loaded by `.pi/settings.json`) for Pi; both run
