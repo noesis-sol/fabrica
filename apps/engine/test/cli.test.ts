@@ -267,9 +267,6 @@ describe('fabrica engine', () => {
 describe('the command line', () => {
   /** Every command of spec §19 not yet built, as it is typed after `fabrica`. */
   const notYet: ReadonlyArray<ReadonlyArray<string>> = [
-    ['service', 'install'],
-    ['service', 'uninstall'],
-    ['service', 'status'],
     ['token', 'create'],
     ['token', 'list'],
     ['token', 'revoke'],

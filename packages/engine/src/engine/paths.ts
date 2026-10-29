@@ -54,7 +54,7 @@ export class DataFolderFailed extends Data.TaggedError('DataFolderFailed')<{
 }
 
 /** A variable's value, where it is set to an absolute path; the XDG specification ignores any other. */
-const absoluteVariable = (
+export const absoluteVariable = (
   environment: HostPlaces['environment'],
   name: string,
 ): Option.Option<string> =>
