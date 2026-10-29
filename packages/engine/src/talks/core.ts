@@ -2,6 +2,7 @@ import {
   Context,
   Data,
   DateTime,
+  Deferred,
   type Duration,
   Effect,
   Exit,
@@ -16,6 +17,7 @@ import {
 import * as NodePath from 'node:path'
 
 import {
+  Actor,
   type AnyTool,
   type ModelChoice,
   ModelName,
@@ -29,8 +31,11 @@ import {
   type TalkMode,
   TalkNotFound,
   TalkNotOpened,
+  type Tool,
+  ToolRefusal,
   TranscriptEntry,
   type TranscriptItem,
+  decodeArguments,
 } from '@fabrica/contracts'
 
 import { type PiEvent, drawMessageId, makeTranscriptReader } from '../agent'
@@ -39,6 +44,7 @@ import type { ProjectRecord } from '../projects'
 import { Projects } from '../projects/service'
 import { describeProblem } from '../settings'
 import { type TranscriptFeed, makeTranscriptFeed } from '../transcript-feed'
+import type { WorkGraphShape } from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
 
 // Talks (spec §15.4): Pi sessions the engine runs with the maintainer, in the project's checkout, each
@@ -48,6 +54,9 @@ import { drawBase36 } from '../workgraph/ids'
 // session is kept. A kept mode (the run talk) is one per project: opening it again gives the talk
 // that is open, and after the engine restarts, the same talk on the same Pi session, resumed from
 // the file the engine keeps for it. A talk runs on the project's model unless it is given one.
+// A mode's tools carry the engine's side of a call (`talkTool`): the agent hands a call over by the
+// tool's name, and the engine decodes its arguments, acts as the talk's session (on the project's
+// work graph, for the ticket tools) and answers with the result encoded, or refuses it.
 // The talk's agent is a port (`TalkAgents`), so the talks' rules are tested on a scripted session.
 
 /** A talk's agent couldn't start, or refused a message. */
@@ -73,6 +82,11 @@ export interface TalkAgentStart {
   readonly instructions: string
   /** The engine's tools the agent is given. */
   readonly tools: ReadonlyArray<AnyTool>
+  /** The engine's side of a call to one of `tools`: its answer, encoded, or why it was refused. */
+  readonly call: (options: {
+    readonly tool: string
+    readonly input: unknown
+  }) => Effect.Effect<unknown, ToolRefusal>
   /** The folder Pi keeps the talk's sessions in. */
   readonly sessions: string
   /** A kept session's file to resume; none starts a new session. */
@@ -115,12 +129,58 @@ export type TalkContextOf<M extends TalkMode> = Extract<
   { readonly _tag: M }
 >
 
+/** What a talk's tool acts on: the talk's project and context, the project's work graph, and the talk's session, its actor. */
+export interface TalkToolContext<M extends TalkMode> {
+  readonly project: ProjectRecord
+  readonly context: TalkContextOf<M>
+  readonly graph: Effect.Effect<WorkGraphShape>
+  readonly actor: Actor
+}
+
+/** A talk's tool: the tool its agent is given, and the engine's side of a call to it. */
+export interface TalkTool<M extends TalkMode> {
+  readonly tool: AnyTool
+  /** Decodes the call's arguments and acts on them, answering with the result encoded, or refusing. */
+  readonly call: (
+    input: unknown,
+    context: TalkToolContext<M>,
+  ) => Effect.Effect<unknown, ToolRefusal>
+}
+
+/** `tool` with the engine's side of a call: `act` on the decoded arguments. */
+export const talkTool = <
+  M extends TalkMode,
+  Parameters extends Schema.Struct<Schema.Struct.Fields> & {
+    readonly DecodingServices: never
+  },
+  Success extends Schema.Codec<unknown, unknown>,
+>(
+  tool: Tool<Parameters, Success>,
+  act: (
+    input: Parameters['Type'],
+    context: TalkToolContext<M>,
+  ) => Effect.Effect<Success['Type'], ToolRefusal>,
+): TalkTool<M> => ({
+  tool,
+  call: (input, context) =>
+    decodeArguments(tool)(input).pipe(
+      Effect.catch(issue =>
+        Effect.fail(ToolRefusal.cases.invalid.make({ issue: issue.message })),
+      ),
+      Effect.flatMap(decoded => act(decoded, context)),
+      Effect.flatMap(answer =>
+        Effect.orDie(Schema.encodeEffect(tool.success)(answer)),
+      ),
+      Effect.withSpan(`Talks.${tool.name}`),
+    ),
+})
+
 /** A talk's mode: what its agent is told, given and opened with. */
 export interface TalkModeOf<M extends TalkMode> {
   /** Its session is kept across the engine's restarts, one talk per project. */
   readonly keep: boolean
   readonly instructions: string
-  readonly tools: ReadonlyArray<AnyTool>
+  readonly tools: ReadonlyArray<TalkTool<M>>
   /**
    * The prompt a new session opens with, the engine's message in the transcript; none waits for the
    * maintainer's first message.
@@ -382,6 +442,38 @@ export const make = Effect.fn('Talks.make')(function* (config: TalksConfig) {
     const first = Option.isSome(resume)
       ? Option.none<string>()
       : yield* definition.opening({ context, project })
+    // The talk's session is its tools' actor, known once its agent has started.
+    const session = yield* Deferred.make<SessionId>()
+    const call = ({
+      tool,
+      input,
+    }: {
+      readonly tool: string
+      readonly input: unknown
+    }) =>
+      Option.match(
+        Option.fromUndefinedOr(
+          definition.tools.find(({ tool: { name } }) => name === tool),
+        ),
+        {
+          onNone: () =>
+            Effect.fail(
+              ToolRefusal.cases.invalid.make({
+                issue: `the ${mode} talk has no tool ${tool}`,
+              }),
+            ),
+          onSome: found =>
+            Effect.flatMap(Deferred.await(session), id =>
+              found.call(input, {
+                project,
+                context,
+                // The work graph failing to open is a defect of the call, as the store failing is.
+                graph: Effect.orDie(projects.workGraph(project.id)),
+                actor: Actor.cases.talk.make({ session: id }),
+              }),
+            ),
+        },
+      )
     const scope = yield* Scope.fork(config.scope)
     const started = yield* Effect.exit(
       Effect.gen(function* () {
@@ -393,7 +485,8 @@ export const make = Effect.fn('Talks.make')(function* (config: TalksConfig) {
           projectTrusted: project.trusted,
           model,
           instructions: definition.instructions,
-          tools: definition.tools,
+          tools: definition.tools.map(({ tool }) => tool),
+          call,
           sessions: NodePath.join(
             talksFolder({ data: config.data, project: project.id }),
             definition.keep ? mode : talk,
@@ -416,6 +509,7 @@ export const make = Effect.fn('Talks.make')(function* (config: TalksConfig) {
       )
     }
     const { agent, events, feed } = started.value
+    yield* Deferred.succeed(session, agent.session.id)
     if (Option.isSome(location) && Option.isSome(agent.session.file))
       yield* writeFileWhole(
         location.value,

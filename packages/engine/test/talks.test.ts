@@ -19,6 +19,7 @@ import * as NodePath from 'node:path'
 
 import { beforeAll, describe, expect, it } from '@effect/vitest'
 import {
+  type AnyTool,
   FileTicketTool,
   GetTicketTool,
   type ModelChoice,
@@ -29,6 +30,7 @@ import {
   SessionId,
   type TalkContext,
   TalkId,
+  type TalkMode,
   TalkNotFound,
   TalkNotOpened,
   TalkRpcs,
@@ -49,6 +51,7 @@ import {
   TalkAgents,
   TalkModes,
   type TalkModesShape,
+  type TalkTool,
 } from '../src/talks'
 
 // Talks over RPC (spec §15.4, §8.3): the Talks group's handlers, as the daemon builds them, on a scripted
@@ -172,19 +175,25 @@ const scriptedAgents = (script: Script) =>
       }),
   })
 
+/** A tool the scripted agents never call. */
+const uncalled = <M extends TalkMode>(tool: AnyTool): TalkTool<M> => ({
+  tool,
+  call: () => Effect.die(`${tool.name} isn't called here`),
+})
+
 /** A mode for each of the tests: `feature` opens with its text, `run` is kept and waits. */
 const modes: TalkModesShape = {
   feature: {
     keep: false,
     instructions: 'Talk the feature through; file an epic and its tickets.',
-    tools: [GetTicketTool, FileTicketTool],
+    tools: [uncalled(GetTicketTool), uncalled(FileTicketTool)],
     opening: ({ context, project: { name } }) =>
       Effect.succeed(Option.map(context.text, text => `In ${name}: ${text}`)),
   },
   run: {
     keep: true,
     instructions: 'Read the run; act on the maintainer’s word.',
-    tools: [GetTicketTool],
+    tools: [uncalled(GetTicketTool)],
     opening: () => Effect.succeed(Option.none()),
   },
   refine: {

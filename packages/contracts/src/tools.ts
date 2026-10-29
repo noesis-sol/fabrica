@@ -74,7 +74,7 @@ const words = (text: string) =>
     .filter(word => word.length > 0)
 
 /** Whether `text` opens with `title`'s words, whole words each. */
-const opensWith = (text: string, title: string) => {
+export const opensWith = (text: string, title: string) => {
   const opening = words(text)
   const titleWords = words(title)
   return (
