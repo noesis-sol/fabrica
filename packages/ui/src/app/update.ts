@@ -1,8 +1,8 @@
-import { Effect, Option, Schema } from 'effect'
+import { Array, Effect, Option, Schema } from 'effect'
 import { Command, Update } from 'foldkit'
 import { modifyFields } from 'foldkit/struct'
 
-import { ProjectId } from '@fabrica/contracts'
+import { type AttentionRef, ProjectId } from '@fabrica/contracts'
 
 import * as History from '../console/history'
 import * as Sidebar from '../console/sidebar'
@@ -16,6 +16,8 @@ import {
 import { commandFor, commandsFor } from './keys'
 import { Message } from './message'
 import { type Model, Overlay } from './model'
+import { type Notifier, ShowNotification } from './notifier'
+import * as Notify from './notify'
 import { Screen } from './screen'
 import {
   applyAttention,
@@ -26,7 +28,8 @@ import {
 } from './streams'
 
 // The root's update (spec §18.1): routing, the keys through the screen's command list, the
-// connection's lifecycle, and each stream's items applied to the part of the Model they change.
+// connection's lifecycle, each stream's items applied to the part of the Model they change, and the
+// app's notifications: those to show, and a click on one focusing its target (§18.5).
 
 /** Waits before the next connection attempt. */
 export const WaitToReconnect = Command.define('WaitToReconnect', {
@@ -34,7 +37,7 @@ export const WaitToReconnect = Command.define('WaitToReconnect', {
   execute: Effect.as(Effect.sleep(retryAfter), Message.WaitedToReconnect()),
 })
 
-type Return = Update.Return<Model, Message, EngineConnectionService>
+type Return = Update.Return<Model, Message, EngineConnectionService | Notifier>
 
 /** The stats row's Messages, folded into its submodel; a run it started is watched afresh. */
 const foldStats = Update.foldChild({
@@ -91,6 +94,57 @@ const showScreen = (model: Model, screen: Screen): Model =>
           Screen.guards.Backlog(screen) ? backlog : Option.none(),
       })
 
+/** A project's name as the sidebar's rows have it; its ID while they don't. */
+const projectName =
+  (model: Model): Notify.ProjectName =>
+  project =>
+    Option.match(
+      Array.findFirst(
+        Sidebar.rows(model.console.sidebar),
+        row => row.status.project === project,
+      ),
+      { onNone: () => project, onSome: row => row.status.name },
+    )
+
+/** `told`'s model as the Model's, and its notifications shown. */
+const tell = (model: Model, told: Notify.Told): Return => ({
+  model: modifyFields(model, { notify: () => told.model }),
+  commands: told.notifications.map(notification =>
+    ShowNotification({ notification }),
+  ),
+})
+
+/**
+ * The console, focused on a clicked notification's `project` and `request`: the scope stays where it
+ * already shows the project (every project, or that one), and moves to the project otherwise.
+ */
+const focusOn = (
+  model: Model,
+  {
+    project,
+    request,
+  }: {
+    readonly project: ProjectId
+    readonly request: Option.Option<AttentionRef>
+  },
+): Return => {
+  const scoped = Option.match(model.scope, {
+    onNone: () => model,
+    onSome: scope =>
+      scope === project
+        ? model
+        : update(
+            model,
+            Message.SelectedScope({ project: Option.some(project) }),
+          ).model,
+  })
+  return {
+    model: modifyFields(showScreen(scoped, Screen.Console()), {
+      focusedRequest: () => request,
+    }),
+  }
+}
+
 export const update = (model: Model, message: Message): Return =>
   Message.match<Return>(message, {
     PressedKey: pressed =>
@@ -116,6 +170,7 @@ export const update = (model: Model, message: Message): Return =>
             runView: () => Option.none(),
             events: () => Option.none(),
             attention: () => Option.none(),
+            focusedRequest: () => Option.none(),
             backlog: () => Option.none(),
             usage: () => Option.none(),
           }),
@@ -199,13 +254,41 @@ export const update = (model: Model, message: Message): Return =>
     ReceivedLoad: ({ items }) => ({
       model: modifyFields(model, { load: load => applyLoad(load, items) }),
     }),
-    ReceivedProjects: ({ engine, name, items }) => ({
+    ReceivedProjects: ({ engine, name, items }) => {
+      const sidebar = Sidebar.receivedProjects(model.console.sidebar, {
+        engine,
+        name,
+        items,
+      })
+      return {
+        model: modifyFields(model, {
+          console: parts => modifyFields(parts, { sidebar: () => sidebar }),
+          notify: notify =>
+            Notify.receivedRuns(
+              notify,
+              Notify.liveRuns(Sidebar.rows(sidebar).map(row => row.status)),
+            ),
+        }),
+      }
+    },
+
+    ReceivedAttentionToNotify: ({ items }) =>
+      tell(
+        model,
+        Notify.receivedAttention(model.notify, items, projectName(model)),
+      ),
+    ReceivedRunEvents: ({ project, run, items }) =>
+      tell(
+        model,
+        Notify.receivedRunEvents(
+          model.notify,
+          { project, run, items },
+          projectName(model),
+        ),
+      ),
+    EndedRunEvents: ({ project, run }) => ({
       model: modifyFields(model, {
-        console: parts =>
-          modifyFields(parts, {
-            sidebar: sidebar =>
-              Sidebar.receivedProjects(sidebar, { engine, name, items }),
-          }),
+        notify: notify => Notify.endedRunEvents(notify, { project, run }),
       }),
     }),
     Ticked: ({ now }) => ({
@@ -219,4 +302,13 @@ export const update = (model: Model, message: Message): Return =>
     }),
 
     GotStatsMessage: ({ message }) => foldStats(model, message),
+
+    CompletedShowNotification: () => ({ model }),
+    ClickedNotification: ({ target }) =>
+      Notify.NotificationTarget.match(target, {
+        Request: ({ ref }) =>
+          focusOn(model, { project: ref.project, request: Option.some(ref) }),
+        Project: ({ project }) =>
+          focusOn(model, { project, request: Option.none() }),
+      }),
   })

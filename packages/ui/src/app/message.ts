@@ -7,11 +7,13 @@ import {
   ProjectStatusItem,
   ProtocolVersion,
   ReleaseVersion,
+  RunId,
   UpdateSide,
 } from '@fabrica/contracts'
 
 import * as History from '../console/history'
 import * as Stats from '../console/stats'
+import { NotificationTarget } from './notify'
 import { Screen } from './screen'
 import {
   AttentionItem,
@@ -23,7 +25,7 @@ import {
 } from './streams'
 
 // The root's Messages: keys pressed and commands asked for, the connection's lifecycle, and each
-// stream's items, a frame's worth at a time (spec §18.1, §18.5).
+// stream's items, a frame's worth at a time (spec §18.1, §18.5), and the app's notifications.
 
 export const Message = defineMessageUnion({
   /** A key went down anywhere in the window; `inField` while focus is in a text field. */
@@ -75,5 +77,19 @@ export const Message = defineMessageUnion({
   Ticked: { now: Schema.DateTimeZoned },
 
   GotStatsMessage: { message: Stats.Message },
+
+  /** Every project's attention requests, read for those to notify (§18.5). */
+  ReceivedAttentionToNotify: { items: itemsOf(AttentionItem) },
+  /** A run's events, read for those to notify. */
+  ReceivedRunEvents: {
+    project: ProjectId,
+    run: RunId,
+    items: itemsOf(EventsItem),
+  },
+  /** A run's events ended: the run is over, or can't be read. */
+  EndedRunEvents: { project: ProjectId, run: RunId },
+  CompletedShowNotification: {},
+  /** A notification was clicked: the console focuses its target. */
+  ClickedNotification: { target: NotificationTarget },
 })
 export type Message = typeof Message.Type

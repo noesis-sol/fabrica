@@ -10,6 +10,7 @@
     "./styles.css": "./src/styles.css",
     "./theme": "./src/theme/theme.ts",
     "./port": "./src/app/port.ts",
+    "./notify": "./src/app/notify.ts",
     "./window-colours": "./src/theme/windowColours.ts"
   },
   "scripts": {

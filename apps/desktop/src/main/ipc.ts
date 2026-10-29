@@ -2,6 +2,7 @@ import { Option, Schema } from 'effect'
 import type { MessagePortMain, WebContents } from 'electron'
 
 import type { ReleaseVersion } from '@fabrica/contracts'
+import { DesktopNotification } from '@fabrica/ui/notify'
 import { Theme } from '@fabrica/ui/theme'
 
 import { type FolderPick, type UpdateStatus, channels } from '../preload/api'
@@ -16,6 +17,8 @@ export interface MainActions {
   readonly toggleMaximize: () => void
   readonly close: () => void
   readonly setTheme: (theme: Theme) => void
+  /** Shows a system notification (§18.5). */
+  readonly notify: (notification: DesktopNotification) => void
   readonly pickFolder: () => Promise<FolderPick>
   readonly version: ReleaseVersion
   readonly updateStatus: () => UpdateStatus
@@ -50,6 +53,9 @@ export class RequestRefused extends Error {
 const noValues = Schema.Tuple([])
 const isNoValues = Schema.is(noValues)
 const decodeTheme = Schema.decodeUnknownOption(Schema.Tuple([Theme]))
+const decodeNotification = Schema.decodeUnknownOption(
+  Schema.Tuple([DesktopNotification]),
+)
 
 /** Registers `actions` on `ipc`, for messages from frames whose URL `trusted` takes. */
 export const registerIpc = ({
@@ -85,6 +91,11 @@ export const registerIpc = ({
   onSend(channels.close, plain(actions.close))
   onSend(channels.setTheme, values => {
     Option.map(decodeTheme(values), ([theme]) => actions.setTheme(theme))
+  })
+  onSend(channels.notify, values => {
+    Option.map(decodeNotification(values), ([notification]) =>
+      actions.notify(notification),
+    )
   })
 
   const onInvoke = (channel: string, answer: () => Promise<unknown>) =>

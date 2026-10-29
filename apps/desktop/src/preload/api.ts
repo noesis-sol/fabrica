@@ -1,14 +1,20 @@
 import { Option, Schema } from 'effect'
 
 import { ReleaseVersion } from '@fabrica/contracts'
+import {
+  DesktopNotification,
+  NotificationTarget,
+  type NotificationsApi,
+} from '@fabrica/ui/notify'
 import { enginePortMessage } from '@fabrica/ui/port'
 import { Theme } from '@fabrica/ui/theme'
 
 // The preload's API (spec §20.1): what the page may ask of main, and no more. The renderer is treated
 // as an untrusted web page, so every value crossing is decoded with these schemas on both sides: by
 // the preload, from the page and from main, and by main, from the preload. The window controls, the
-// folder picker, the app's version, the update status, and the engine port, which the preload hands
-// to the page as a window message (contextBridge can't carry a MessagePort).
+// folder picker, the app's version, the update status, the system notifications and their clicks
+// (§18.5), and the engine port, which the preload hands to the page as a window message
+// (contextBridge can't carry a MessagePort).
 
 /** The IPC channels between main and the preload, each named once. */
 export const channels = {
@@ -20,6 +26,8 @@ export const channels = {
   version: 'fabrica:version',
   updateStatus: 'fabrica:update-status',
   updateStatusChanged: 'fabrica:update-status-changed',
+  notify: 'fabrica:notify',
+  notificationClicked: 'fabrica:notification-clicked',
   enginePort: 'fabrica:engine-port',
 } as const
 
@@ -67,6 +75,8 @@ export interface FabricaApi {
   readonly onUpdateStatus: (
     listener: (status: UpdateStatus) => void,
   ) => () => void
+  /** System notifications, and the targets of those clicked. */
+  readonly notifications: NotificationsApi
 }
 
 /** The part of `ipcRenderer` the API uses; a listener gets a message's value and the ports it carries. */
@@ -88,6 +98,8 @@ const decodeVersion = Schema.decodeUnknownSync(ReleaseVersion)
 const decodeUpdateStatus = Schema.decodeUnknownSync(UpdateStatus)
 const decodeTheme = Schema.decodeUnknownSync(Theme)
 const decodeUpdateStatusOption = Schema.decodeUnknownOption(UpdateStatus)
+const decodeNotification = Schema.decodeUnknownSync(DesktopNotification)
+const decodeTargetOption = Schema.decodeUnknownOption(NotificationTarget)
 
 /** The API over `ipc`: what the page passes is decoded before it is sent, what main answers before the page sees it. */
 export const makeApi = (ipc: PreloadIpc): FabricaApi => ({
@@ -105,6 +117,14 @@ export const makeApi = (ipc: PreloadIpc): FabricaApi => ({
     ipc.on(channels.updateStatusChanged, value => {
       Option.map(decodeUpdateStatusOption(value), listener)
     }),
+  notifications: {
+    notify: notification =>
+      ipc.send(channels.notify, decodeNotification(notification)),
+    onClick: listener =>
+      ipc.on(channels.notificationClicked, value => {
+        Option.map(decodeTargetOption(value), listener)
+      }),
+  },
 })
 
 /** Hands the page each engine port main sends, as a window message of type `fabrica:engine-port`. */

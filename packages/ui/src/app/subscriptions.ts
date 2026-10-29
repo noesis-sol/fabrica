@@ -29,13 +29,17 @@ import { perFrame } from './frame'
 import type { Pressed } from './keys'
 import { Message } from './message'
 import type { Model } from './model'
+import { Notifier } from './notifier'
+import { watchedRuns } from './notify'
 import { Screen } from './screen'
 import { watchOf } from './streams'
 
 // The streams the app listens to (spec §18.1, §18.5): the keys, the client's link, and the engine's
 // streams, each subscribed only while a part that draws it is shown: the run view and attention for
 // the console's scope, the backlog while its screen is open, the host's load while connected. Each
-// stream's items go on once per animation frame, so a burst of patches costs one update.
+// stream's items go on once per animation frame, so a burst of patches costs one update. For the
+// app's notifications (§18.5), every project's attention requests and the events of each run going,
+// while connected, and the clicks on the notifications shown.
 
 /** What the subscriptions need from their host, injected so tests drive them. */
 export interface SubscriptionEnvironment {
@@ -160,6 +164,34 @@ export const loadMessages = (
     Stream.catch(() => Stream.empty),
   )
 
+/** Every project's open attention requests, read for those to notify. */
+export const attentionToNotifyMessages = (
+  client: EngineClientShape,
+  nextFrame: Effect.Effect<void>,
+): Stream.Stream<Message> =>
+  watchOf<ReadonlyArray<AttentionRequest>, typeof AttentionPatch.Type>(client)(
+    resume => client.rpc['attention.watch']({ project: Option.none(), resume }),
+  ).pipe(
+    perFrame(nextFrame),
+    Stream.map(items => Message.ReceivedAttentionToNotify({ items })),
+    Stream.catch(() => Stream.empty),
+  )
+
+/** A run's events, read for those to notify; their end, or a failure to read them, as a Message. */
+export const runEventMessages = (
+  client: EngineClientShape,
+  { project, run }: { readonly project: ProjectId; readonly run: RunId },
+  nextFrame: Effect.Effect<void>,
+): Stream.Stream<Message> =>
+  watchOf<ReadonlyArray<RunEvent>, ReadonlyArray<RunEvent>>(client)(resume =>
+    client.rpc['run.watchEvents']({ project, run: Option.some(run), resume }),
+  ).pipe(
+    perFrame(nextFrame),
+    Stream.map(items => Message.ReceivedRunEvents({ project, run, items })),
+    Stream.catch(() => Stream.empty),
+    Stream.concat(Stream.make(Message.EndedRunEvents({ project, run }))),
+  )
+
 /** The engine's projects and their runs' states, for the sidebar's rows. */
 export const projectMessages = (
   { client, hello }: EngineSession,
@@ -179,12 +211,15 @@ export const projectMessages = (
     Stream.catch(() => Stream.empty),
   )
 
+/** The services the subscriptions use: the engine connection, and the notifier. */
+type Services = EngineConnectionService | Notifier
+
 export const makeSubscriptions = ({
   nextFrame,
   keys,
   ticks,
 }: SubscriptionEnvironment) =>
-  Subscription.make<Model, Message, EngineConnectionService>()(entry => ({
+  Subscription.make<Model, Message, Services>()(entry => ({
     keys: Subscription.persistentEntry(
       Stream.map(keys, pressed => Message.PressedKey(pressed)),
     ),
@@ -293,5 +328,44 @@ export const makeSubscriptions = ({
             ? withClient(client => loadMessages(client, nextFrame))
             : Stream.empty,
       },
+    ),
+    attentionToNotify: entry(
+      { live: Schema.Boolean },
+      {
+        modelToDependencies: model => ({ live: isLive(model.connection) }),
+        dependenciesToStream: ({ live }) =>
+          live
+            ? withClient(client => attentionToNotifyMessages(client, nextFrame))
+            : Stream.empty,
+      },
+    ),
+    runEvents: entry(
+      {
+        runs: Schema.Array(Schema.Struct({ project: ProjectId, run: RunId })),
+      },
+      {
+        modelToDependencies: model => ({
+          runs: isLive(model.connection) ? watchedRuns(model.notify) : [],
+        }),
+        dependenciesToStream: ({ runs }) =>
+          runs.length === 0
+            ? Stream.empty
+            : withClient(client =>
+                Stream.mergeAll(
+                  runs.map(run => runEventMessages(client, run, nextFrame)),
+                  { concurrency: 'unbounded' },
+                ),
+              ),
+      },
+    ),
+    notificationClicks: Subscription.persistentEntry(
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const notifier = yield* Notifier
+          return Stream.map(notifier.clicks, target =>
+            Message.ClickedNotification({ target }),
+          )
+        }),
+      ),
     ),
   }))

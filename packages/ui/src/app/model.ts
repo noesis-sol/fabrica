@@ -2,6 +2,7 @@ import { Option, Schema } from 'effect'
 import { defineTaggedUnion } from 'foldkit/schema'
 
 import {
+  AttentionRef,
   AttentionRequest,
   HostLoad,
   Platform,
@@ -30,6 +31,7 @@ import * as Settings from '../screens/settings'
 import * as Talks from '../screens/talks'
 import * as Worker from '../screens/worker'
 import { Connection } from './connection'
+import * as Notify from './notify'
 import { Screen } from './screen'
 
 // The root Model (spec §18.1): the screen shown and any overlay over it, the scope the sidebar chose,
@@ -93,6 +95,10 @@ export const Model = Schema.Struct({
   events: Schema.Option(RunEvents),
   /** The scope's open attention requests. */
   attention: Schema.Option(Schema.Array(AttentionRequest)),
+  /** The request a clicked notification focused, which the attention column shows focused (§18.5). */
+  focusedRequest: Schema.Option(AttentionRef),
+  /** What the app's notifications have been told of (§18.5). */
+  notify: Notify.Model,
   /** The scoped project's tickets, while the Backlog screen shows them. */
   backlog: Schema.Option(Schema.Array(Ticket)),
   /** The engine host's load. */
@@ -121,6 +127,8 @@ export const initialModel = (flags: Flags): Model => ({
   runView: Option.none(),
   events: Option.none(),
   attention: Option.none(),
+  focusedRequest: Option.none(),
+  notify: Notify.init(),
   backlog: Option.none(),
   load: Option.none(),
   usage: Option.none(),

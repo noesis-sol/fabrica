@@ -336,6 +336,7 @@ const recordingActions = () => {
     toggleMaximize: () => done.push('toggleMaximize'),
     close: () => done.push('close'),
     setTheme: theme => done.push(`setTheme ${theme}`),
+    notify: ({ title }) => done.push(`notify ${title}`),
     pickFolder: () =>
       Promise.resolve(FolderPick.cases.Picked.make({ path: '/repo' })),
     version: '1.0.0',

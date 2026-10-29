@@ -12,6 +12,7 @@ import {
 } from './connection'
 import { Message } from './message'
 import { Flags, Model, initialModel } from './model'
+import { type NotifierShape, layerNotifier } from './notifier'
 import {
   type SubscriptionEnvironment,
   makeSubscriptions,
@@ -20,13 +21,15 @@ import { update } from './update'
 import { view } from './view'
 
 // The program the entries run (spec §18.1): the Model, its update and view, the engine connection as
-// a ManagedResource, and the subscriptions, given what they need of their host, injected so tests run
-// them against a test engine and their own frames and keys.
+// a ManagedResource, the subscriptions, and the notifier as a resource, given what they need of their
+// host, injected so tests run them against a test engine and their own frames and keys.
 
 /** What the program needs from its host. */
 export interface Environment extends SubscriptionEnvironment {
   /** The connection process's port, once the preload has handed it over. */
   readonly enginePort: Effect.Effect<MessagePort>
+  /** The app's notifications (§18.5): through the preload, or none without it. */
+  readonly notifier: NotifierShape
 }
 
 /** How the app names itself in its hello. */
@@ -71,5 +74,6 @@ export const program = (environment: Environment) => ({
   update,
   view,
   subscriptions: makeSubscriptions(environment),
+  resources: layerNotifier(environment.notifier),
   managedResources: makeManagedResources(environment),
 })

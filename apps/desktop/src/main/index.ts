@@ -5,6 +5,7 @@ import {
   type IpcMainInvokeEvent,
   MessageChannelMain,
   type MessagePortMain,
+  Notification,
   type OpenDialogOptions,
   type WebContents,
   app,
@@ -23,6 +24,7 @@ import { windowColours } from '@fabrica/ui/window-colours'
 import { FolderPick, UpdateStatus, channels } from '../preload/api'
 import { type MainIpc, registerIpc, sendEnginePort } from './ipc'
 import { AppPage, isAppUrl } from './navigation'
+import { makeNotifications } from './notifications'
 import { type BrokeredPage, localTarget, makeBroker } from './ports'
 import { guardPermissions, guardWebContents } from './security'
 import { makeUpdateStatusCell } from './updateStatus'
@@ -146,6 +148,20 @@ const makeAppWindow = () => {
 
 const appWindow = makeAppWindow()
 
+const notifications = makeNotifications({
+  system: Notification,
+  window: {
+    hasFocus: () => {
+      const window = appWindow.current()
+      return window !== undefined && window.isVisible() && window.isFocused()
+    },
+    reveal: () => {
+      appWindow.show()
+      return appWindow.current()?.webContents
+    },
+  },
+})
+
 const pickFolder = async (): Promise<FolderPick> => {
   const options: OpenDialogOptions = {
     properties: ['openDirectory', 'createDirectory'],
@@ -199,6 +215,7 @@ if (!app.requestSingleInstanceLock()) {
       },
       close: () => appWindow.current()?.close(),
       setTheme: appWindow.setTheme,
+      notify: notifications.notify,
       pickFolder,
       version,
       updateStatus: updateStatus.get,
