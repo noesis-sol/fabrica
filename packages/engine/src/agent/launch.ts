@@ -2,7 +2,11 @@ import { Effect, Option } from 'effect'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import type { ProjectId, TicketId } from '@fabrica/contracts'
+import {
+  type ProjectId,
+  ProjectTrustedVariable,
+  type TicketId,
+} from '@fabrica/contracts'
 
 import { writeFileWhole } from '../files'
 import type { ModelChoice } from './commands'
@@ -128,19 +132,25 @@ export const piArguments = ({
 /**
  * The variables Pi gets beyond the allowlisted ones (spec §20.2): its configuration folder, and no
  * network of its own (find and grep would fetch fd and rg, a version check, telemetry); `extra`, the
- * caller's (the control socket's path and token), over them. Provider keys are never allowlisted,
- * so none reaches Pi.
+ * caller's (the control socket's path and token), over them; and `FABRICA_PROJECT_TRUSTED=1` only
+ * where the user trusts the project (§12.1), whatever `extra` holds. Provider keys are never
+ * allowlisted, so none reaches Pi.
  */
 export const piEnvironment = ({
   config,
+  projectTrusted,
   extra,
 }: {
   readonly config: string
+  readonly projectTrusted: boolean
   readonly extra: Readonly<Record<string, string>>
 }): Readonly<Record<string, string>> => ({
   PI_CODING_AGENT_DIR: config,
   PI_OFFLINE: '1',
   PI_SKIP_VERSION_CHECK: '1',
   PI_TELEMETRY: '0',
-  ...extra,
+  ...Object.fromEntries(
+    Object.entries(extra).filter(([name]) => name !== ProjectTrustedVariable),
+  ),
+  ...(projectTrusted ? { [ProjectTrustedVariable]: '1' } : {}),
 })

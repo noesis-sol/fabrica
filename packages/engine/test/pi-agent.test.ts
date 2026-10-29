@@ -288,6 +288,7 @@ const startOptions = (
   model: Option.some({ provider: 'anthropic', modelId: 'claude-x' }),
   resume: Option.none(),
   env: { STUB_MODE: mode, STUB_LOG: log, FABRICA_SOCKET: '/tmp/s.sock' },
+  projectTrusted: false,
   nice: Option.none(),
   ...overrides,
 })

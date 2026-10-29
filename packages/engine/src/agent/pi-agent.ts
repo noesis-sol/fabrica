@@ -76,6 +76,8 @@ export interface AgentStart {
   readonly resume: Option.Option<string>
   /** Variables beyond the allowlisted ones: the control socket's path and token. */
   readonly env: Readonly<Record<string, string>>
+  /** The user trusts the project, so Pi may load its own settings and packages (§12.1, §20.2). */
+  readonly projectTrusted: boolean
   /** The nice value the agent runs at (`worker_nice`). */
   readonly nice: Option.Option<number>
 }
@@ -336,7 +338,11 @@ export const make = Effect.fn('PiAgent.make')(function* (
             model: options.model,
           }),
           cwd: options.worktree,
-          env: piEnvironment({ config: folder, extra: options.env }),
+          env: piEnvironment({
+            config: folder,
+            projectTrusted: options.projectTrusted,
+            extra: options.env,
+          }),
           stdin: 'pipe',
           ...Option.match(options.nice, {
             onNone: () => ({}),

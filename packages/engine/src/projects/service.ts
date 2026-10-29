@@ -59,6 +59,7 @@ import {
   findRecord,
   insertRecord,
   listRecords,
+  updateTrust,
 } from './records'
 import { readSettings, settingsExist, writeSettings } from './settings'
 import { makeStatusFeed } from './status'
@@ -94,6 +95,14 @@ export interface ProjectsShape {
   readonly find: (
     project: ProjectId,
   ) => Effect.Effect<ProjectRecord, ProjectNotFound>
+  /**
+   * Keeps whether the user trusts the project (§12.1, §20.2): its agents started from then on load
+   * its own Pi settings and packages only while it is trusted. A project is added untrusted.
+   */
+  readonly setTrusted: (options: {
+    readonly project: ProjectId
+    readonly trusted: boolean
+  }) => Effect.Effect<void, ProjectNotFound>
   /** Where the project's worktrees go (§10.2). */
   readonly worktreeHome: (
     project: ProjectId,
@@ -329,6 +338,7 @@ export const make = Effect.gen(function* () {
       origin: options.origin,
       url: options.url,
       base,
+      trusted: false,
     }
     yield* open(record).pipe(Effect.mapError(error => refused(error.message)))
     yield* withSql(insertRecord(record))
@@ -426,6 +436,14 @@ export const make = Effect.gen(function* () {
     )
   })
 
+  const setTrusted = Effect.fn('Projects.setTrusted')(function* (options: {
+    readonly project: ProjectId
+    readonly trusted: boolean
+  }) {
+    yield* find(options.project)
+    yield* withSql(updateTrust(options))
+  })
+
   const settings = Effect.fn('Projects.settings')(function* (
     project: ProjectId,
   ) {
@@ -457,6 +475,7 @@ export const make = Effect.gen(function* () {
     list,
     remove,
     find,
+    setTrusted,
     worktreeHome: project =>
       Effect.map(find(project), record =>
         worktreeHome({

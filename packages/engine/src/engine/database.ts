@@ -13,8 +13,9 @@ import { drawBase36 } from '../workgraph/ids'
 import { type Migrations, migrate, statements } from '../workgraph/migrations'
 
 // The engine's own database (spec §7.2): `<data>/engine.db`, the engine's state across its projects:
-// its identity, its settings, the projects it holds and its pairing tokens (hashed, §9.3). Its
-// migrations are bundled as a record and run as the work graph's are (`migrate`), with its own record.
+// its identity, its settings, the projects it holds (and whether the user trusts each) and its pairing
+// tokens (hashed, §9.3). Its migrations are bundled as a record and run as the work graph's are
+// (`migrate`), with its own record.
 // The groups' handlers that own a table read and write it themselves (`rpc/<group>.ts`).
 
 const engine = statements(
@@ -43,9 +44,16 @@ const engine = statements(
     last_used_at INTEGER)`,
 )
 
+// Whether the user trusts each project (§12.1, §20.2), so its agents may load its own Pi settings
+// and packages. Kept by the engine, never in the project's files, which a project's own commits change.
+const projectTrust = statements(
+  `ALTER TABLE projects ADD COLUMN trusted INTEGER NOT NULL DEFAULT 0 CHECK (trusted IN (0, 1))`,
+)
+
 /** The engine database's migrations, in order. */
 export const engineMigrations: Migrations = {
   '0001_engine': engine,
+  '0002_project_trust': projectTrust,
 }
 
 /** The engine's database at `filename` (`:memory:` for one in memory), migrated. */

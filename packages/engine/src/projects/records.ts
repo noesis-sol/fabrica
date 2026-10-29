@@ -17,6 +17,8 @@ export interface ProjectRecord {
   readonly url: Option.Option<string>
   /** Base: the branch finished tickets land on. */
   readonly base: string
+  /** The user trusts it, so its agents load its own Pi settings and packages (§12.1, §20.2). */
+  readonly trusted: boolean
 }
 
 interface Row {
@@ -26,6 +28,7 @@ interface Row {
   readonly origin: string
   readonly url: string | null
   readonly base: string
+  readonly trusted: number
 }
 
 const fromRow = (row: Row): ProjectRecord => ({
@@ -36,13 +39,14 @@ const fromRow = (row: Row): ProjectRecord => ({
   origin: row.origin === 'cloned' ? 'cloned' : 'registered',
   url: Option.fromNullOr(row.url),
   base: row.base,
+  trusted: row.trusted === 1,
 })
 
 /** Every project, oldest first. */
 export const listRecords = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
   const rows =
-    yield* sql<Row>`SELECT id, name, path, origin, url, base FROM projects ORDER BY added_at, id`
+    yield* sql<Row>`SELECT id, name, path, origin, url, base, trusted FROM projects ORDER BY added_at, id`
   return rows.map(fromRow)
 }).pipe(Effect.orDie, Effect.withSpan('Projects.listRecords'))
 
@@ -52,7 +56,7 @@ export const findRecord = Effect.fn('Projects.findRecord')(function* (
 ) {
   const sql = yield* SqlClient.SqlClient
   const rows =
-    yield* sql<Row>`SELECT id, name, path, origin, url, base FROM projects WHERE id = ${id}`.pipe(
+    yield* sql<Row>`SELECT id, name, path, origin, url, base, trusted FROM projects WHERE id = ${id}`.pipe(
       Effect.orDie,
     )
   return Option.map(Option.fromUndefinedOr(rows[0]), fromRow)
@@ -64,12 +68,25 @@ export const insertRecord = Effect.fn('Projects.insertRecord')(function* (
 ) {
   const sql = yield* SqlClient.SqlClient
   const now = yield* Clock.currentTimeMillis
-  yield* sql`INSERT INTO projects (id, name, path, origin, url, base, added_at)
+  yield* sql`INSERT INTO projects (id, name, path, origin, url, base, trusted, added_at)
     VALUES (${record.id}, ${record.name}, ${record.path}, ${record.origin},
-      ${Option.getOrNull(record.url)}, ${record.base}, ${now})`.pipe(
+      ${Option.getOrNull(record.url)}, ${record.base}, ${record.trusted ? 1 : 0}, ${now})`.pipe(
     Effect.orDie,
   )
 })
+
+/** Keeps whether the user trusts the project `id`. */
+export const updateTrust = Effect.fn('Projects.updateTrust')(
+  function* (options: {
+    readonly project: ProjectId
+    readonly trusted: boolean
+  }) {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`UPDATE projects SET trusted = ${options.trusted ? 1 : 0} WHERE id = ${options.project}`.pipe(
+      Effect.orDie,
+    )
+  },
+)
 
 /** Forgets the project `id`. */
 export const deleteRecord = Effect.fn('Projects.deleteRecord')(function* (
