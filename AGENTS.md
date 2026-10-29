@@ -176,8 +176,21 @@ back with the tool's result: a `PostToolUse` hook in `.claude/settings.json` for
 development-only Pi package `scripts/pi-checks` (loaded by `.pi/settings.json`) for Pi; both run
 `scripts/check-write.ts`. Fix what they report before going on.
 
+The Effect Language Service's diagnostics (a floating Effect, a missing `return yield*`, …) come from
+`@effect/tsgo`, TypeScript-Go with the Effect plugin that `tsconfig.base.json` configures; they show in
+editors and don't gate the checks (its `ignoreEffect*InTscExitCode` options; `tsgo` doesn't load the plugin).
+The modules the project uses although Effect marks them unstable (`effect/rpc`, `effect/sql`, `effect/cli`, …)
+are in its `allowedUnstableApis`. The first two leave `node_modules` as pnpm installed it:
+
+```bash
+pnpm exec effect-tsgo tsc --noEmit -p packages/engine/tsconfig.json  # a type check with Effect's diagnostics
+pnpm exec effect-tsgo tsc --lsp --stdio  # the language server, for an editor that takes a command (Neovim, Zed)
+pnpm exec effect-tsgo patch --typescript --no-oxlint  # for VS Code and Cursor, whose .vscode/settings.json
+    # runs node_modules/typescript: this makes it Effect's, the original kept aside; again when pnpm reinstalls it
+```
+
 Dependencies are pinned to exact versions (`saveExact` in `pnpm-workspace.yaml`): add one with
-`pnpm add --filter <package> <name>@<version>`. `effect` and every `@effect/*` package stay on one version,
+`pnpm add --filter <package> <name>@<version>`. `effect` and every `@effect/*` package (the tool `@effect/tsgo` aside) stay on one version,
 the Effect peer Foldkit pins (4.0.0 at Foldkit 0.169.0), held by `overrides` in `pnpm-workspace.yaml`; they
 are upgraded with Foldkit, never alone.
 

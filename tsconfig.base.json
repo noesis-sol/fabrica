@@ -14,6 +14,22 @@
     "verbatimModuleSyntax": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "allowedUnstableApis": [
+          "effect/cli",
+          "effect/http",
+          "effect/net",
+          "effect/reactivity",
+          "effect/rpc",
+          "effect/socket",
+          "effect/sql"
+        ],
+        "ignoreEffectWarningsInTscExitCode": true,
+        "ignoreEffectErrorsInTscExitCode": true
+      }
+    ]
   }
 }

@@ -21,6 +21,7 @@
     "build": "pnpm --recursive --workspace-concurrency=${FABRICA_CORES:-4} run build"
   },
   "devDependencies": {
+    "@effect/tsgo": "0.63.0",
     "@effect/vitest": "4.0.0",
     "@foldkit/oxlint-plugin": "0.15.3",
     "@types/node": "26.6.5",
