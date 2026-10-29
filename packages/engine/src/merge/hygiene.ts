@@ -1,4 +1,4 @@
-import { Context, Data, Effect, Match, Option } from 'effect'
+import { Context, Data, Deferred, Effect, Match, Option } from 'effect'
 import { existsSync, watch } from 'node:fs'
 import { mkdir, mkdtemp, readdir, rename, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -103,23 +103,34 @@ export const afterCheck = Effect.fn('MergeQueue.afterCheck')(function* ({
       })
 })
 
-/** Completes on the first change a watch of `folders` sees; never where none of them can be watched. */
-const changeIn = (folders: ReadonlyArray<string>): Effect.Effect<void> =>
-  Effect.callback<void>(resume => {
-    const watchers = folders.flatMap(folder => {
-      try {
-        const watcher = watch(folder, () => resume(Effect.void))
-        // A watch that fails is left to the poll beside it.
-        watcher.on('error', () => watcher.close())
-        return [watcher]
-      } catch {
-        return []
-      }
-    })
-    return Effect.sync(() => {
-      for (const watcher of watchers) watcher.close()
-    })
-  })
+/**
+ * Watches `folders` until the scope closes: the effect it gives completes on the first change seen
+ * since, and never where none of them can be watched.
+ */
+const watching = Effect.fnUntraced(function* (folders: ReadonlyArray<string>) {
+  const seen = yield* Deferred.make<void>()
+  yield* Effect.acquireRelease(
+    Effect.sync(() =>
+      folders.flatMap(folder => {
+        try {
+          const watcher = watch(folder, () => {
+            Deferred.doneUnsafe(seen, Effect.void)
+          })
+          // A watch that fails is left to the poll beside it.
+          watcher.on('error', () => watcher.close())
+          return [watcher]
+        } catch {
+          return []
+        }
+      }),
+    ),
+    watchers =>
+      Effect.sync(() => {
+        for (const watcher of watchers) watcher.close()
+      }),
+  )
+  return Deferred.await(seen)
+})
 
 /** The folders whose changes can clean the checkout: its root, its git folder, and each changed file's. */
 const watchedFolders = (
@@ -148,10 +159,12 @@ export const checkoutReady = Effect.fn('MergeQueue.checkoutReady')(function* (
     git.status({ worktree: checkout }),
     status => status.uncommitted,
   )
+  const same = (one: ReadonlyArray<string>, other: ReadonlyArray<string>) =>
+    one.join('\0') === other.join('\0')
   let files = yield* changed
   let named: ReadonlyArray<string> = []
   while (files.length > 0) {
-    if (files.join('\0') !== named.join('\0')) {
+    if (!same(files, named)) {
       named = files
       yield* turn.publish(
         MergeUpdate.MergesWait({
@@ -162,8 +175,17 @@ export const checkoutReady = Effect.fn('MergeQueue.checkoutReady')(function* (
         }),
       )
     }
-    yield* Effect.raceFirst(changeIn(watchedFolders(checkout, files)), poll)
-    files = yield* changed
+    const waited = files
+    files = yield* Effect.scoped(
+      Effect.gen(function* () {
+        // Watched first, then read: a change made before the watch began shows in the read.
+        const change = yield* watching(watchedFolders(checkout, waited))
+        const now = yield* changed
+        if (!same(now, waited)) return now
+        yield* Effect.raceFirst(change, poll)
+        return yield* changed
+      }),
+    )
   }
 })
 

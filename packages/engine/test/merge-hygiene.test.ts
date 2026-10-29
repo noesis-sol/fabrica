@@ -1,4 +1,4 @@
-import { Duration, Effect, Layer, Option, Ref, Stream } from 'effect'
+import { Deferred, Duration, Effect, Layer, Option, Ref, Stream } from 'effect'
 import { execFileSync } from 'node:child_process'
 import {
   chmodSync,
@@ -195,6 +195,13 @@ const waits = (given: Partial<MergeWaitsShape> = {}): MergeWaitsShape => ({
   poll: Effect.never,
   ...given,
 })
+
+/**
+ * Waits whose poll comes once `cleaned` completes, as the test cleans the checkout: the wait goes on
+ * whether the file watch saw the change or not, as a watch can miss one made as it begins.
+ */
+const settles = (cleaned: Deferred.Deferred<void>): MergeWaitsShape =>
+  waits({ poll: Deferred.await(cleaned) })
 
 const engine = EngineId.make('engine-1')
 const actor: Actor = { _tag: 'engine', engine }
@@ -593,6 +600,7 @@ describe('a dirty checkout', () => {
         const { worktree, change } = yield* changed(checkout)
         writeFileSync(join(checkout, 'src', 'a.ts'), 'export const a = 9\n')
         writeFileSync(join(checkout, 'notes.txt'), 'untracked\n')
+        const cleaned = yield* Deferred.make<void>()
         const { outcome, updates } = yield* mergeOne(
           config(checkout),
           worktree,
@@ -601,9 +609,9 @@ describe('a dirty checkout', () => {
               ? Effect.sync(() => {
                   expect(hash(checkout, 'main')).not.toBe(change)
                   git(checkout, 'checkout', '--', 'src/a.ts')
-                })
+                }).pipe(Effect.andThen(Deferred.succeed(cleaned, undefined)))
               : Effect.void,
-        ).pipe(Effect.provideService(MergeWaits, waits()))
+        ).pipe(Effect.provideService(MergeWaits, settles(cleaned)))
         expect(updates.filter(update => update._tag === 'MergesWait')).toEqual([
           expect.objectContaining({
             checkout,
@@ -658,6 +666,7 @@ describe('a dirty checkout', () => {
         const { worktree } = yield* changed(checkout)
         writeFileSync(join(checkout, 'README.md'), 'edited\n')
         let moved = Option.none<CommitHash>()
+        const cleaned = yield* Deferred.make<void>()
         const { outcome, updates } = yield* mergeOne(
           config(checkout),
           worktree,
@@ -668,9 +677,9 @@ describe('a dirty checkout', () => {
                     commit(checkout, 'Base moves', { 'docs/c.md': 'c\n' }),
                   )
                   git(checkout, 'checkout', '--', 'README.md')
-                })
+                }).pipe(Effect.andThen(Deferred.succeed(cleaned, undefined)))
               : Effect.void,
-        ).pipe(Effect.provideService(MergeWaits, waits()))
+        ).pipe(Effect.provideService(MergeWaits, settles(cleaned)))
         const merged = hash(checkout, 'main')
         expect(outcome).toEqual(
           MergeOutcome.Merged({
