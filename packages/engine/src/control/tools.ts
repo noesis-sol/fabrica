@@ -21,7 +21,9 @@ import {
   type FiledLink,
   type Files,
   type FinishCheckOwn,
+  type GateDecided,
   LinkedTicket,
+  type MergeStanding,
   Noted,
   type PermissionAsked,
   type PermissionDecision,
@@ -91,6 +93,8 @@ export interface ToolContext {
   readonly wake: Wake['Service']
   readonly passes: CheckOwnPassesShape
   readonly attention: AttentionShape
+  /** Where the ticket stands in the merge queue (§12.6, H59). */
+  readonly mergeStanding: Effect.Effect<MergeStanding>
   readonly outcomes: Queue.Queue<Outcome>
 }
 
@@ -545,6 +549,23 @@ export const makeTools = (context: ToolContext) => {
       })
       .pipe(Effect.withSpan('Control.request_permission'))
 
+  const mergeStanding = context.mergeStanding.pipe(
+    Effect.withSpan('Control.merge_standing'),
+  )
+
+  /** The gate's decision, logged with the session's ticket (§12.6). */
+  const reportGateDecision = (decided: GateDecided): Effect.Effect<void> =>
+    Effect.logInfo(`gate ${decided.verdict._tag}: ${decided.tool}`).pipe(
+      Effect.annotateLogs({
+        ticket,
+        session: context.session,
+        toolCall: decided.toolCall,
+        tool: decided.tool,
+        verdict: decided.verdict,
+      }),
+      Effect.withSpan('Control.report_gate_decision'),
+    )
+
   const reportUnfinished = publish(Outcome.Unfinished()).pipe(
     Effect.asVoid,
     Effect.withSpan('Control.report_unfinished'),
@@ -561,6 +582,8 @@ export const makeTools = (context: ToolContext) => {
     defer,
     waitFor,
     requestPermission,
+    mergeStanding,
+    reportGateDecision,
     reportUnfinished,
   }
 }

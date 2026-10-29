@@ -3,7 +3,7 @@ import { Effect, ManagedRuntime, Option, Ref } from 'effect'
 import { Control, layer as controlLayer } from './control'
 import { CopilotProvider, copilotBaseUrl, copilotProvider } from './copilot'
 import type { ExtensionEnvironment } from './environment'
-import { GateDecision, decide } from './gate'
+import { GateDecision, GateEngine, decide, gateEngine } from './gate'
 import type { PiApi } from './pi'
 import { StandingRulesSection, readProjectRules, standingRules } from './rules'
 import {
@@ -54,13 +54,28 @@ export const makeExtension =
       return undefined
     })
 
+    const gate = decide({
+      permissions: environment.permissions,
+      worktree: environment.worktree,
+      home: environment.home,
+    })
     pi.on('tool_call', async event => {
       if (WorkerToolNames.has(event.toolName)) return undefined
-      const decision = await Effect.runPromise(
-        decide({
-          toolCallId: event.toolCallId,
-          tool: event.toolName,
-          input: { ...event.input },
+      const call = {
+        toolCallId: event.toolCallId,
+        tool: event.toolName,
+        input: { ...event.input },
+      }
+      const decision = await run(
+        Effect.flatMap(Control, control =>
+          gate(call).pipe(
+            Effect.provideService(GateEngine, gateEngine(control)),
+          ),
+        ),
+        undefined,
+      ).catch((error: unknown) =>
+        GateDecision.Blocked({
+          reason: `Fabrica’s gate refused this call: it couldn’t reach the engine: ${error instanceof Error ? error.message : String(error)}`,
         }),
       )
       return GateDecision.$match(decision, {

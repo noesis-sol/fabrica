@@ -8,10 +8,18 @@ import { fromExtensionApi } from './pi'
 // facts read from the agent's environment.
 
 export default function fabrica(pi: ExtensionAPI): Promise<void> {
-  return makeExtension(readEnvironment(process.env))(fromExtensionApi(pi))
+  return makeExtension(readEnvironment(process.env, process.cwd()))(
+    fromExtensionApi(pi),
+  )
 }
 
-export { decide, GateDecision, type GateCall } from './gate'
+export {
+  decide,
+  GateDecision,
+  GateEngine,
+  type GateCall,
+  type GateFacts,
+} from './gate'
 export {
   ProjectRulesPath,
   StandingRulesTemplate,

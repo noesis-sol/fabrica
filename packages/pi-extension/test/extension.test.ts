@@ -31,6 +31,7 @@ import {
   Filed,
   NoteId,
   Noted,
+  PermissionsVariable,
   ProjectTrustedVariable,
   TicketId,
   TicketView,
@@ -205,7 +206,9 @@ const answers = (
         _tag: 'unanswered' as const,
         question: TicketId.make('fab-question.1'),
       }),
-    request_permission: () => Effect.die('the gate asks for nothing yet'),
+    request_permission: () => Effect.die('no call here is asked about'),
+    merge_standing: () => Effect.succeed('not_queued'),
+    report_gate_decision: () => Effect.void,
     report_unfinished: payload =>
       Effect.asVoid(record('report_unfinished', payload)),
   }
@@ -261,6 +264,9 @@ const loaded = Effect.fn(function* (
     control: Option.some({ socket, token: options.token ?? token }),
     projectTrusted: options.projectTrusted ?? false,
     configFolder: Option.fromUndefinedOr(options.configFolder),
+    permissions: 'workspace',
+    worktree: folder,
+    home: Option.none(),
   }
   const fake = fakePi()
   yield* Effect.promise(() => makeExtension(environment)(fake.pi))
@@ -584,7 +590,7 @@ describe('the first-party extension', () => {
   )
 
   it.live(
-    'the gate allows the extension’s own tools, and every call until it is filled',
+    'the gate allows the extension’s own tools, and a command in the worktree',
     () =>
       Effect.gen(function* () {
         const { handler } = yield* loaded()
@@ -648,23 +654,40 @@ describe('the first-party extension', () => {
 
   it('reads its facts from the agent’s environment', () => {
     expect(
-      readEnvironment({
-        [ControlSocketVariable]: '/run/a.sock',
-        [ControlTokenVariable]: 'secret',
-        [ProjectTrustedVariable]: '1',
-        PI_CODING_AGENT_DIR: '/data/agent-1',
-      }),
+      readEnvironment(
+        {
+          [ControlSocketVariable]: '/run/a.sock',
+          [ControlTokenVariable]: 'secret',
+          [ProjectTrustedVariable]: '1',
+          [PermissionsVariable]: 'full',
+          PI_CODING_AGENT_DIR: '/data/agent-1',
+          HOME: '/home/agent',
+        },
+        '/work/fa-1',
+      ),
     ).toEqual({
       control: Option.some({ socket: '/run/a.sock', token: 'secret' }),
       projectTrusted: true,
       configFolder: Option.some('/data/agent-1'),
+      permissions: 'full',
+      worktree: '/work/fa-1',
+      home: Option.some('/home/agent'),
     })
-    expect(readEnvironment({ [ControlSocketVariable]: '/run/a.sock' })).toEqual(
-      {
-        control: Option.none(),
-        projectTrusted: false,
-        configFolder: Option.none(),
-      },
-    )
+    expect(
+      readEnvironment(
+        {
+          [ControlSocketVariable]: '/run/a.sock',
+          [PermissionsVariable]: 'all',
+        },
+        '/work/fa-1',
+      ),
+    ).toEqual({
+      control: Option.none(),
+      projectTrusted: false,
+      configFolder: Option.none(),
+      permissions: 'workspace',
+      worktree: '/work/fa-1',
+      home: Option.none(),
+    })
   })
 })

@@ -24,6 +24,7 @@ import {
   ControlTokenHeader,
   ControlTokenVariable,
   ControlUnauthorized,
+  type MergeStanding,
   type ProjectId,
   type SessionId,
   type TicketId,
@@ -57,6 +58,8 @@ export interface ControlSession {
   readonly questionWait: Duration.Input
   /** How `check_own` runs for it. */
   readonly checkOwn: CheckOwnRun
+  /** Where its ticket stands in the merge queue, read when its gate asks (§12.6, H59). */
+  readonly mergeStanding: Effect.Effect<MergeStanding>
 }
 
 /** An agent's control channel, open. */
@@ -158,6 +161,8 @@ export const make = Effect.gen(function* () {
         wait_for: tools.waitFor,
         ask_and_wait: tools.askAndWait,
         request_permission: tools.requestPermission,
+        merge_standing: () => tools.mergeStanding,
+        report_gate_decision: tools.reportGateDecision,
         report_unfinished: () => tools.reportUnfinished,
       }),
     )

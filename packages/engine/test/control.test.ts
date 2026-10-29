@@ -36,6 +36,7 @@ import {
   ControlToken,
   ControlTokenVariable,
   Edge,
+  GateVerdict,
   PermissionDecision,
   PermissionShown,
   ProjectId,
@@ -252,6 +253,7 @@ const harness = Effect.gen(function* () {
     worktree,
     folder,
     questionWait: Duration.minutes(15),
+    mergeStanding: Effect.succeed('not_queued'),
     checkOwn: noCheckOwn(folder),
   })
   const client = yield* connect(control.socket, withToken(control))
@@ -343,6 +345,7 @@ describe('the socket and its token', () => {
           worktree: fixture().worktree,
           folder: fixture().folder,
           questionWait: Duration.minutes(15),
+          mergeStanding: Effect.succeed('not_queued'),
           checkOwn: noCheckOwn(root),
         })
         const stranger = yield* connect(control.socket, withToken(otherControl))
@@ -849,6 +852,40 @@ describe('request_permission and report_unfinished', () => {
             session,
             toolCall: 'call-1',
             tool: 'bash',
+          })
+        }),
+      ),
+  )
+
+  it.effect(
+    'answers the gate with the ticket’s merge standing, and takes its reports',
+    () =>
+      run(
+        Effect.gen(function* () {
+          const { client, graph } = yield* harness
+          expect(yield* client.merge_standing({})).toBe('not_queued')
+          const merging = yield* graph.create({
+            ticket: { type: 'task', title: 'A ticket merging' },
+            actor: maintainer,
+          })
+          const control = yield* (yield* ControlServer).open({
+            project,
+            ticket: merging.id,
+            session: SessionId.make('session-3'),
+            worktree: fixture().worktree,
+            folder: fixture().folder,
+            questionWait: Duration.minutes(15),
+            mergeStanding: Effect.succeed('merging'),
+            checkOwn: noCheckOwn(root),
+          })
+          const gate = yield* connect(control.socket, withToken(control))
+          expect(yield* gate.merge_standing({})).toBe('merging')
+          yield* gate.report_gate_decision({
+            toolCall: ToolCallId.make('call-2'),
+            tool: 'bash',
+            verdict: GateVerdict.cases.refused.make({
+              reason: 'git push: workers never push',
+            }),
           })
         }),
       ),

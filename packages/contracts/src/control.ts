@@ -25,11 +25,11 @@ import {
 
 // The worker's control channel (spec §12.2, §12.3, §20.2): what the first-party extension sends the
 // engine over its agent's own Unix socket, in the Schema RPC protocol. The worker's tools, one request
-// each, named and shaped as `tools.ts` has them; the gate's permission requests (§12.6); and the
-// extension's report of a session that settled twice with no outcome. The socket's path and the token
-// arrive in the agent's environment; every request carries the token in a header, which the engine
-// checks before it acts on the request, and which scopes the session to its own ticket and the tickets
-// linked to it.
+// each, named and shaped as `tools.ts` has them; the gate's permission requests, its reading of the
+// merge queue and its reports of what it decided (§12.6); and the extension's report of a session
+// that settled twice with no outcome. The socket's path and the token arrive in the agent's
+// environment; every request carries the token in a header, which the engine checks before it acts on
+// the request, and which scopes the session to its own ticket and the tickets linked to it.
 
 /** The variable holding the path of the agent's control socket. */
 export const ControlSocketVariable = 'FABRICA_CONTROL_SOCKET'
@@ -42,6 +42,9 @@ export const ControlTokenVariable = 'FABRICA_CONTROL_TOKEN'
  * then the extension refuses the project's own Pi settings and packages at Pi's `project_trust` step.
  */
 export const ProjectTrustedVariable = 'FABRICA_PROJECT_TRUSTED'
+
+/** The variable holding the project's `permissions` (§12.6), the level the extension's gate enforces. */
+export const PermissionsVariable = 'FABRICA_PERMISSIONS'
 
 /** The header every control request carries its token in. */
 export const ControlTokenHeader = 'x-fabrica-control-token'
@@ -76,6 +79,33 @@ export const PermissionAsked = Schema.Struct({
   why: Text,
 })
 export type PermissionAsked = typeof PermissionAsked.Type
+
+/**
+ * Where the session's ticket stands in the merge queue (§12.6, §13.7, H59): not in it, waiting in
+ * line, or merging. While it waits or merges, the gate refuses commits and other writes to its branch.
+ */
+export const MergeStanding = Schema.Literals([
+  'not_queued',
+  'waiting',
+  'merging',
+])
+export type MergeStanding = typeof MergeStanding.Type
+
+/** What the gate decided on a tool call (§12.6): allowed, asked and answered, or refused. */
+export const GateVerdict = Schema.TaggedUnion({
+  allowed: {},
+  asked: { why: Text, decision: PermissionDecision },
+  refused: { reason: Text },
+})
+export type GateVerdict = typeof GateVerdict.Type
+
+/** The gate's decision on one call, reported to the engine for its log and the reviewer's counts (§12.6). */
+export const GateDecided = Schema.Struct({
+  toolCall: ToolCallId,
+  tool: Text,
+  verdict: GateVerdict,
+})
+export type GateDecided = typeof GateDecided.Type
 
 export const ControlRpcs = RpcGroup.make(
   Rpc.make('get_ticket', {
@@ -128,6 +158,10 @@ export const ControlRpcs = RpcGroup.make(
     payload: PermissionAsked,
     success: PermissionDecision,
   }),
+  /** Where the session's ticket stands in the merge queue, which the gate reads before a write to its branch. */
+  Rpc.make('merge_standing', { payload: {}, success: MergeStanding }),
+  /** Every decision of the gate, for the engine's log. */
+  Rpc.make('report_gate_decision', { payload: GateDecided }),
   /** The session settled a second time with no outcome tool called: it ends unfinished (§12.3). */
   Rpc.make('report_unfinished', { payload: {} }),
 ).middleware(ControlToken)

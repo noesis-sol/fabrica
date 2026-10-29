@@ -1,14 +1,17 @@
-import { Option } from 'effect'
+import { Option, Schema } from 'effect'
 
 import {
   ControlSocketVariable,
   ControlTokenVariable,
+  Permissions,
+  PermissionsVariable,
   ProjectTrustedVariable,
 } from '@fabrica/contracts'
 
 // What the extension reads from its agent's environment, which the engine sets at spawn (spec §12.1,
-// §12.2, §20.2): the control socket's path and token, whether the user trusts the project, and Pi's
-// configuration folder. Read once, where the extension loads, and passed on.
+// §12.2, §12.6, §20.2): the control socket's path and token, whether the user trusts the project, the
+// level the gate enforces, Pi's configuration folder and the home folder; and the worktree, the folder
+// Pi runs in. Read once, where the extension loads, and passed on.
 
 /** Pi's variable naming its configuration folder, where the engine writes `models.json` (§12.9). */
 export const PiConfigFolderVariable = 'PI_CODING_AGENT_DIR'
@@ -23,14 +26,21 @@ export interface ExtensionEnvironment {
   readonly projectTrusted: boolean
   /** The agent's own Pi configuration folder. */
   readonly configFolder: Option.Option<string>
+  /** The project's `permissions`; `workspace`, the default, where the engine gave none it reads. */
+  readonly permissions: Permissions
+  /** The ticket's worktree, where Pi runs. */
+  readonly worktree: string
+  /** The home folder, for paths under `~`. */
+  readonly home: Option.Option<string>
 }
 
 const given = (value: string | undefined): Option.Option<string> =>
   Option.filter(Option.fromUndefinedOr(value), text => text.length > 0)
 
-/** The extension's facts, from an environment's variables. */
+/** The extension's facts, from an environment's variables and the folder Pi runs in. */
 export const readEnvironment = (
   variables: Readonly<Record<string, string | undefined>>,
+  cwd: string,
 ): ExtensionEnvironment => ({
   control: Option.zipWith(
     given(variables[ControlSocketVariable]),
@@ -39,4 +49,10 @@ export const readEnvironment = (
   ),
   projectTrusted: variables[ProjectTrustedVariable] === '1',
   configFolder: given(variables[PiConfigFolderVariable]),
+  permissions: Option.getOrElse(
+    Schema.decodeUnknownOption(Permissions)(variables[PermissionsVariable]),
+    () => 'workspace' as const,
+  ),
+  worktree: cwd,
+  home: given(variables['HOME']),
 })
