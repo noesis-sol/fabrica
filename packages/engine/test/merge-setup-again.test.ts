@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   watch,
   writeFileSync,
@@ -42,6 +43,7 @@ import {
   SetupOutcome,
   make as makeQueue,
   pendingSetup,
+  recordSetup,
 } from '../src/merge'
 import {
   type RunnerConfig,
@@ -339,6 +341,87 @@ describe('the setup a worktree waits for', () => {
           Effect.scoped,
           Effect.provide(services(recordingSetup(calls, outcome))),
         )
+      }),
+  )
+
+  it.live(
+    'is run before the check of a ride its worktree takes at its next merge',
+    () =>
+      Effect.gen(function* () {
+        const calls = yield* Ref.make<ReadonlyArray<Call>>([])
+        const log = freshPath('log')
+        const checkedFirst = yield* Ref.make<ReadonlyArray<boolean>>([])
+        const setup = Layer.succeed(
+          MergeSetup,
+          MergeSetup.of({
+            run: ({ ticket, worktree, files }) =>
+              Effect.as(
+                Effect.all([
+                  Ref.update(calls, made => [
+                    ...made,
+                    [ticket, files] as const,
+                  ]),
+                  // Whether the worktree's check had run before its setup.
+                  Ref.update(checkedFirst, seen => [
+                    ...seen,
+                    existsSync(log) &&
+                      readFileSync(log, 'utf8')
+                        .split('\n')
+                        .includes(basename(worktree)),
+                  ]),
+                ]),
+                SetupOutcome.Ready(),
+              ),
+          }),
+        )
+        return yield* Effect.gen(function* () {
+          const checkout = repository()
+          const a = yield* ticketWorktree(checkout, {
+            'src/b.ts': 'export const b = 2\n',
+          })
+          const b = yield* ticketWorktree(checkout, {
+            'src/c.ts': 'export const c = 3\n',
+          })
+          // As a stop's put-back of an earlier run's ride left it.
+          yield* Effect.flatMap(Git, git =>
+            recordSetup(git, {
+              worktree: b.worktree.path,
+              files: ['package.json'],
+            }),
+          )
+          const merges = yield* makeQueue(
+            config(checkout, `echo "$(basename "$PWD")" >> ${log}`),
+          )
+          const updates = yield* merges.updates
+          yield* merges.enqueue(a.worktree)
+          yield* merges.enqueue(b.worktree)
+          const all: ReadonlyArray<MergeUpdate> = yield* Stream.runCollect(
+            Stream.takeUntil(updates, update =>
+              isOutcome(update, b.worktree.ticket),
+            ),
+          )
+          expect(
+            all.find(update => isOutcome(update, b.worktree.ticket)),
+          ).toEqual(
+            MergeOutcome.Merged({
+              ticket: b.worktree.ticket,
+              commit: hash(checkout, 'main'),
+              unchecked: false,
+            }),
+          )
+          // It merged on its ride's check, which ran once it was set up.
+          expect(
+            all.flatMap(update =>
+              update._tag === 'Check' && update.ticket === b.worktree.ticket
+                ? [update.record.train]
+                : [],
+            ),
+          ).toEqual([true])
+          expect(yield* Ref.get(calls)).toEqual([
+            [b.worktree.ticket, ['package.json']],
+          ])
+          expect(yield* Ref.get(checkedFirst)).toEqual([false])
+        }).pipe(Effect.scoped, Effect.provide(services(setup)))
       }),
   )
 

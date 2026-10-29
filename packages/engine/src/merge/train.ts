@@ -23,6 +23,7 @@ import { MergeOutcome, MergeUpdate } from './outcome'
 import {
   MergeSetup,
   SetupOutcome,
+  pendingSetup,
   recordSetup,
   setUpRecorded,
   setupFilesBrought,
@@ -31,12 +32,12 @@ import type { MergeTurn } from './turn'
 
 // The merge train (spec §13.7, orchestra-8qk2): while one ticket's merge check runs, the next ticket in
 // line rides beside it: its branch is rebased onto the first's rebased head in its own worktree, set up
-// where that rebase calls for it, and checked there. If the first merges as checked, the second's turn
-// takes that check's outcome and merges with no further check; otherwise the second's branch is put
-// back where it was, set up again where the ride set it up, and its turn prepares it afresh. A stop puts
-// it back without waiting on a setup: the worktree records the files, and the ticket's next merge sets it
-// up at its rebase step. One ticket rides at most, never deeper (`merge.train`), and none while the
-// machine budget holds.
+// where that rebase, or a setup its worktree waits for, calls for it, and checked there. If the first
+// merges as checked, the second's turn takes that check's outcome and merges with no further check;
+// otherwise the second's branch is put back where it was, set up again where the ride set it up, and its
+// turn prepares it afresh. A stop puts it back without waiting on a setup: the worktree records the
+// files, and the ticket's next merge, or its next ride, sets it up. One ticket rides at most, never
+// deeper (`merge.train`), and none while the machine budget holds.
 
 /** Whether the machine budget holds (§14.3): no ticket rides while it does. Until it is built, it never holds. */
 export const MachineHold = Context.Reference<{
@@ -196,7 +197,13 @@ export const makeTrain = Effect.fn('MergeTrain.make')(function* ({
     readonly setUp: Ref.Ref<ReadonlyArray<string>>
   }) {
     const { ticket, path } = rider.worktree
-    const since = yield* git.mergeBase({ repo: path, branch: from, base: onto })
+    const { since, pending } = yield* Effect.all(
+      {
+        since: git.mergeBase({ repo: path, branch: from, base: onto }),
+        pending: pendingSetup(git, { worktree: path }),
+      },
+      { concurrency: 'unbounded' },
+    )
     const rebased = yield* git.rebase({ worktree: path, onto })
     if (!RebaseOutcome.$is('Rebased')(rebased)) {
       yield* git.abortRebase({ worktree: path })
@@ -204,12 +211,14 @@ export const makeTrain = Effect.fn('MergeTrain.make')(function* ({
     }
     const { head } = rebased
     if (head === onto) return Ridden.NotChecked()
-    const files = yield* setupFilesBrought(git, {
+    const brought = yield* setupFilesBrought(git, {
       worktree: path,
       onto,
       since,
       patterns: rider.config.setupFiles,
     })
+    // A worktree that waited for a setup is set up before its ride's check, as its own turn's would be.
+    const files = [...new Set([...pending, ...brought])]
     if (files.length > 0) {
       yield* Ref.set(setUp, files)
       const ready = yield* setUpRecorded(git, setup, {
