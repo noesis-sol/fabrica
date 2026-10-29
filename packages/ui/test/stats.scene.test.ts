@@ -282,6 +282,23 @@ describe('the run controls', () => {
     )
   })
 
+  test('Start run opens its modes whatever the controls showed while the run went, and closes them again', () => {
+    scene(
+      { update, view },
+      given({
+        ...connected,
+        console: {
+          ...connected.console,
+          stats: { ...Stats.init(), controls: Stats.Controls.ConfirmingStop() },
+        },
+      }),
+      click(role('button', { name: 'Start run' })),
+      expectScene(role('menu', { name: 'Start run' })).toExist(),
+      click(role('button', { name: 'Start run' })),
+      expectScene(role('menu', { name: 'Start run' })).toBeAbsent(),
+    )
+  })
+
   test('a started run is watched afresh', () => {
     story(
       update,

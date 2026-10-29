@@ -258,9 +258,9 @@ export const update = (model: Model, message: Message): Return =>
     ClickedStartRun: () => ({
       model: modifyFields(model, {
         controls: controls =>
-          Controls.guards.Closed(controls)
-            ? Controls.ChoosingMode()
-            : Controls.Closed(),
+          Controls.guards.ChoosingMode(controls)
+            ? Controls.Closed()
+            : Controls.ChoosingMode(),
       }),
     }),
     ChoseMode: ({ project, mode }) =>
