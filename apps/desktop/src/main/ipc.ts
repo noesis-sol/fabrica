@@ -1,6 +1,12 @@
 import { Option, Schema } from 'effect'
 import type { MessagePortMain, WebContents } from 'electron'
 
+import {
+  type CheckAnswer,
+  EngineHost,
+  type InstallAnswer,
+  InstallConsent,
+} from '@fabrica/client'
 import type { ReleaseVersion } from '@fabrica/contracts'
 import type { ServiceInstall } from '@fabrica/ui/host'
 import { DesktopNotification } from '@fabrica/ui/notify'
@@ -25,6 +31,13 @@ export interface MainActions {
   readonly updateStatus: () => UpdateStatus
   /** Installs the local engine's login service, from the bundled distribution (spec §7.1). */
   readonly installLoginService: () => Promise<ServiceInstall>
+  /** Checks a host for an engine, and what installing the app's would do (§9.2). */
+  readonly checkEngine: (host: EngineHost) => Promise<CheckAnswer>
+  /** Installs or updates the engine on a host, as the user agreed. */
+  readonly installEngine: (request: {
+    readonly host: EngineHost
+    readonly consent: InstallConsent
+  }) => Promise<InstallAnswer>
 }
 
 /** The part of `ipcMain` main uses; each listener gets the sending frame's URL (none once it has gone) and the values. */
@@ -58,6 +71,10 @@ const isNoValues = Schema.is(noValues)
 const decodeTheme = Schema.decodeUnknownOption(Schema.Tuple([Theme]))
 const decodeNotification = Schema.decodeUnknownOption(
   Schema.Tuple([DesktopNotification]),
+)
+const decodeCheck = Schema.decodeUnknownOption(Schema.Tuple([EngineHost]))
+const decodeInstall = Schema.decodeUnknownOption(
+  Schema.Tuple([EngineHost, InstallConsent]),
 )
 
 /** Registers `actions` on `ipc`, for messages from frames whose URL `trusted` takes. */
@@ -101,17 +118,36 @@ export const registerIpc = ({
     )
   })
 
-  const onInvoke = (channel: string, answer: () => Promise<unknown>) =>
+  /** Answers requests on `channel` from the app's page whose values `decode` takes. */
+  const onRequest = <A>(
+    channel: string,
+    decode: (values: ReadonlyArray<unknown>) => Option.Option<A>,
+    answer: (decoded: A) => Promise<unknown>,
+  ) =>
     ipc.handle(channel, (sender, values) =>
-      fromApp(sender) && isNoValues(values)
-        ? answer()
-        : Promise.reject(new RequestRefused(channel)),
+      Option.match(fromApp(sender) ? decode(values) : Option.none(), {
+        onNone: () => Promise.reject(new RequestRefused(channel)),
+        onSome: answer,
+      }),
+    )
+
+  const onInvoke = (channel: string, answer: () => Promise<unknown>) =>
+    onRequest(
+      channel,
+      values => (isNoValues(values) ? Option.some(values) : Option.none()),
+      () => answer(),
     )
 
   onInvoke(channels.pickFolder, actions.pickFolder)
   onInvoke(channels.version, () => Promise.resolve(actions.version))
   onInvoke(channels.updateStatus, () => Promise.resolve(actions.updateStatus()))
   onInvoke(channels.installLoginService, actions.installLoginService)
+  onRequest(channels.checkEngine, decodeCheck, ([host]) =>
+    actions.checkEngine(host),
+  )
+  onRequest(channels.installEngine, decodeInstall, ([host, consent]) =>
+    actions.installEngine({ host, consent }),
+  )
 }
 
 /** Hands the page in `contents` an engine port, which the preload passes on as a window message. */

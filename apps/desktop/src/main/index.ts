@@ -19,13 +19,21 @@ import { AppImageUpdater, MacUpdater, NsisUpdater } from 'electron-updater'
 import { homedir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import type {
+  CheckAnswer,
+  EngineHost,
+  InstallAnswer,
+  InstallConsent,
+} from '@fabrica/client'
 import { ReleaseVersion } from '@fabrica/contracts'
 import { ServiceInstall } from '@fabrica/ui/host'
 import { type Theme, defaultTheme } from '@fabrica/ui/theme'
 import { windowColours } from '@fabrica/ui/window-colours'
 
+import { definedOf } from '../connection/env'
 import { ConnectionTarget } from '../connection/target'
 import { FolderPick, UpdateStatus, channels } from '../preload/api'
+import { checkEngineOn, engineSource, installEngineOn } from './engine-install'
 import { type MainIpc, registerIpc, sendEnginePort } from './ipc'
 import { keptTheme, makeThemeKeeper } from './keptTheme'
 import {
@@ -107,6 +115,42 @@ const installService = (): Promise<ServiceInstall> =>
     ),
   )
 
+const version = Schema.decodeUnknownSync(ReleaseVersion)(app.getVersion())
+
+/**
+ * The engine Add engine installs: a packaged app's own version, from its signed release folder where it
+ * carries one, else from Fabrica's releases; a development build's, the latest release.
+ */
+const installSource = () =>
+  engineSource({
+    resources: app.isPackaged
+      ? Option.some(process.resourcesPath)
+      : Option.none(),
+    stage: app.getPath('temp'),
+    release: app.isPackaged ? Option.some(version) : Option.none(),
+  })
+
+const checkEngine = (host: EngineHost): Promise<CheckAnswer> =>
+  Effect.runPromise(
+    installSource().pipe(
+      Effect.flatMap(source =>
+        checkEngineOn({ host, source, env: definedOf(process.env) }),
+      ),
+    ),
+  )
+
+const installEngine = (request: {
+  readonly host: EngineHost
+  readonly consent: InstallConsent
+}): Promise<InstallAnswer> =>
+  Effect.runPromise(
+    installSource().pipe(
+      Effect.flatMap(source =>
+        installEngineOn({ ...request, source, env: definedOf(process.env) }),
+      ),
+    ),
+  )
+
 const broker = makeBroker<MessagePortMain>({
   spawn: onExit => {
     const child = utilityProcess.fork(connectionProcess)
@@ -142,7 +186,6 @@ const page: AppPage =
         ).href,
       })
 
-const version = Schema.decodeUnknownSync(ReleaseVersion)(app.getVersion())
 const updateStatus = makeUpdateStatusCell(
   UpdateStatus.cases.Unavailable.make({}),
 )
@@ -349,6 +392,8 @@ if (!app.requestSingleInstanceLock()) {
       version,
       updateStatus: updateStatus.get,
       installLoginService: installService,
+      checkEngine,
+      installEngine,
     },
   })
 

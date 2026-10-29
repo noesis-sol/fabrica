@@ -258,6 +258,10 @@ describe('main’s end of notify', () => {
       updateStatus: () => UpdateStatus.cases.Unavailable.make({}),
       installLoginService: () =>
         Promise.resolve({ _tag: 'Failed', reason: 'not this test’s' }),
+      checkEngine: () =>
+        Promise.resolve({ _tag: 'Failed', reason: 'not this test’s' }),
+      installEngine: () =>
+        Promise.resolve({ _tag: 'Failed', reason: 'not this test’s' }),
     }
     registerIpc({ ipc, trusted: url => url === app, actions })
     const send = (sender: string | undefined, ...values: Array<unknown>) =>

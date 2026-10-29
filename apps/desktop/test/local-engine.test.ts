@@ -248,6 +248,8 @@ describe("the user's choice of the login service", () => {
       version: '1.0.0',
       updateStatus: () => ({ _tag: 'Unavailable' }),
       installLoginService: answer,
+      checkEngine: unused,
+      installEngine: unused,
     }
     registerIpc({
       ipc: {

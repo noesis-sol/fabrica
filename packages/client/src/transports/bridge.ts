@@ -93,12 +93,24 @@ const keepTail = (stream: Readable) => {
 }
 
 /**
+ * `stream` as a web stream, typed as the global `ReadableStream`, which `Readable.toWeb`'s is in Node:
+ * `node:stream/web`'s type isn't the DOM lib's, which the app's main is checked with.
+ */
+const webReadable = (stream: Readable): ReadableStream<Uint8Array> => {
+  const web = Readable.toWeb(stream)
+  if (web instanceof ReadableStream) {
+    return web
+  }
+  throw new TypeError("Node's Readable.toWeb gave no ReadableStream")
+}
+
+/**
  * The bridge's stdout, which ends as the bridge does: once its stdout has ended and it has exited, an
  * end `ended` gives a cause for fails the stream with that cause, so the connection fails with it.
  */
 const readableOf = (child: Bridge, ended: BridgeCommand['ended']) => {
   if (ended === undefined || child.stderr === null) {
-    return Readable.toWeb(child.stdout)
+    return webReadable(child.stdout)
   }
   const stderr = keepTail(child.stderr)
   const exited = new Promise<BridgeEnd>(resolve =>
@@ -116,7 +128,7 @@ const readableOf = (child: Bridge, ended: BridgeCommand['ended']) => {
       }),
     )
   })
-  return Readable.toWeb(out)
+  return webReadable(out)
 }
 
 /** A bridge's stdio, its command made anew for each connection, in the connection's scope. */

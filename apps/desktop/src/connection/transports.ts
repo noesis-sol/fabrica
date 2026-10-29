@@ -8,6 +8,7 @@ import {
   layerWsl,
 } from '@fabrica/client/node'
 
+import { definedOf } from './env'
 import { ConnectionTarget } from './target'
 
 // The connection process's transports (spec §8.2, §9.1, §7.6): how it reaches the engine a target
@@ -23,16 +24,6 @@ export interface TransportHost {
   /** The connection process's environment, the user's: ssh's, for their agent and config, and wsl.exe's. */
   readonly env: Readonly<Record<string, string | undefined>>
 }
-
-/** `env` less its unset variables. */
-const definedOf = (
-  env: TransportHost['env'],
-): Readonly<Record<string, string>> =>
-  Object.fromEntries(
-    Object.entries(env).flatMap(([name, value]) =>
-      value === undefined ? [] : [[name, value]],
-    ),
-  )
 
 const socketOf = (layer: Layer.Layer<Socket.Socket>): EngineSocket =>
   Effect.map(Layer.build(layer), Context.get(Socket.Socket))

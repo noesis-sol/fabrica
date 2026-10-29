@@ -344,6 +344,10 @@ const recordingActions = () => {
     updateStatus: () => UpdateStatus.cases.Unavailable.make({}),
     installLoginService: () =>
       Promise.resolve(ServiceInstall.cases.Installed.make({})),
+    checkEngine: () =>
+      Promise.reject(new Error('the engine install’s tests answer it')),
+    installEngine: () =>
+      Promise.reject(new Error('the engine install’s tests answer it')),
   }
   return { done, actions }
 }

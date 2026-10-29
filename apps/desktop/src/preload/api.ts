@@ -1,7 +1,18 @@
 import { Option, Schema } from 'effect'
 
+import {
+  CheckAnswer,
+  EngineHost,
+  InstallAnswer,
+  InstallConsent,
+} from '@fabrica/client'
 import { ReleaseVersion } from '@fabrica/contracts'
-import { ServiceInstall, installLoginServiceMethod } from '@fabrica/ui/host'
+import {
+  ServiceInstall,
+  checkEngineMethod,
+  installEngineMethod,
+  installLoginServiceMethod,
+} from '@fabrica/ui/host'
 import {
   DesktopNotification,
   NotificationTarget,
@@ -14,8 +25,9 @@ import { Theme } from '@fabrica/ui/theme'
 // as an untrusted web page, so every value crossing is decoded with these schemas on both sides: by
 // the preload, from the page and from main, and by main, from the preload. The window controls, the
 // folder picker, the app's version, the update status, the system notifications and their clicks
-// (§18.5), installing the local engine's login service, and the engine port, which the preload hands
-// to the page as a window message (contextBridge can't carry a MessagePort).
+// (§18.5), installing the local engine's login service, checking a host for an engine and installing it
+// there (§9.2), and the engine port, which the preload hands to the page as a window message
+// (contextBridge can't carry a MessagePort).
 
 /** The IPC channels between main and the preload, each named once. */
 export const channels = {
@@ -30,6 +42,8 @@ export const channels = {
   notify: 'fabrica:notify',
   notificationClicked: 'fabrica:notification-clicked',
   installLoginService: 'fabrica:install-login-service',
+  checkEngine: 'fabrica:check-engine',
+  installEngine: 'fabrica:install-engine',
   enginePort: 'fabrica:engine-port',
 } as const
 
@@ -81,6 +95,13 @@ export interface FabricaApi {
   readonly notifications: NotificationsApi
   /** Installs the local engine as a login service, as the user chose (spec §7.1). */
   readonly [installLoginServiceMethod]: () => Promise<ServiceInstall>
+  /** Checks a host for an engine, and what installing the app's would do (§9.2). */
+  readonly [checkEngineMethod]: (host: EngineHost) => Promise<CheckAnswer>
+  /** Installs or updates the engine on a host, as the user agreed. */
+  readonly [installEngineMethod]: (
+    host: EngineHost,
+    consent: InstallConsent,
+  ) => Promise<InstallAnswer>
 }
 
 /** The part of `ipcRenderer` the API uses; a listener gets a message's value and the ports it carries. */
@@ -105,6 +126,10 @@ const decodeUpdateStatusOption = Schema.decodeUnknownOption(UpdateStatus)
 const decodeNotification = Schema.decodeUnknownSync(DesktopNotification)
 const decodeTargetOption = Schema.decodeUnknownOption(NotificationTarget)
 const decodeServiceInstall = Schema.decodeUnknownSync(ServiceInstall)
+const decodeEngineHost = Schema.decodeUnknownSync(EngineHost)
+const decodeConsent = Schema.decodeUnknownSync(InstallConsent)
+const decodeCheckAnswer = Schema.decodeUnknownSync(CheckAnswer)
+const decodeInstallAnswer = Schema.decodeUnknownSync(InstallAnswer)
 
 /** The API over `ipc`: what the page passes is decoded before it is sent, what main answers before the page sees it. */
 export const makeApi = (ipc: PreloadIpc): FabricaApi => ({
@@ -132,6 +157,21 @@ export const makeApi = (ipc: PreloadIpc): FabricaApi => ({
   },
   [installLoginServiceMethod]: () =>
     ipc.invoke(channels.installLoginService).then(decodeServiceInstall),
+  // Decoded inside the promise, so a host or consent that doesn't decode rejects it.
+  [checkEngineMethod]: host =>
+    Promise.resolve()
+      .then(() => ipc.invoke(channels.checkEngine, decodeEngineHost(host)))
+      .then(decodeCheckAnswer),
+  [installEngineMethod]: (host, consent) =>
+    Promise.resolve()
+      .then(() =>
+        ipc.invoke(
+          channels.installEngine,
+          decodeEngineHost(host),
+          decodeConsent(consent),
+        ),
+      )
+      .then(decodeInstallAnswer),
 })
 
 /** Hands the page each engine port main sends, as a window message of type `fabrica:engine-port`. */
