@@ -85,10 +85,14 @@ export type Role = 'c1' | 'c2' | 'c3' | 'c4' | 'c5'
 
 const roles: Array.NonEmptyReadonlyArray<Role> = ['c1', 'c2', 'c3', 'c4', 'c5']
 
+/** A project's chip: its colour and its two-digit label. */
+export interface Chip {
+  readonly role: Role
+  readonly label: string
+}
+
 /** The chip of the project at `index` (from 1): its colour, the five roles in turn, and its two-digit label. */
-export const chipOf = (
-  index: number,
-): { readonly role: Role; readonly label: string } => ({
+export const chipOf = (index: number): Chip => ({
   role: roles[(index - 1) % roles.length] ?? 'c1',
   label: String(index).padStart(2, '0'),
 })
@@ -112,7 +116,10 @@ export const rows = (model: Model): ReadonlyArray<Row> =>
     .map((row, at) => ({ ...row, index: at + 1 }))
 
 /** The chip of `project`, as its row has it: cards in the All projects scope carry it (§18.3). */
-export const projectChip = (model: Model, project: ProjectId) =>
+export const projectChip = (
+  model: Model,
+  project: ProjectId,
+): Option.Option<Chip> =>
   Option.map(
     Array.findFirst(rows(model), row => row.status.project === project),
     row => chipOf(row.index),
@@ -172,6 +179,19 @@ const chipBackground: Record<Role, string> = {
   c4: 'bg-c4',
   c5: 'bg-c5',
 }
+
+/** A project's chip as the handoff draws it, 22px (Appendix A.2): its label on its colour. */
+export const chipView = <Message>(chip: Chip, h: HtmlBuilder<Message>): Html =>
+  h.span(
+    [
+      h.DataAttribute('chip', chip.role),
+      h.Class(
+        `flex items-center justify-center rounded-button font-extrabold text-ink ${chipBackground[chip.role]}`,
+      ),
+      h.Style({ width: '22px', height: '22px', fontSize: '11px' }),
+    ],
+    [chip.label],
+  )
 
 const roleText: Record<Role, string> = {
   c1: 'text-c1',
@@ -244,7 +264,6 @@ const projectRow = <Message>(
 ): Html => {
   const { status } = row
   const selected = Option.contains(config.scope, status.project)
-  const chip = chipOf(row.index)
   const state = runLabel(status.run)
   const overnight = isOvernight(status.run)
   const base = baseLine(row, enginesKnown)
@@ -267,16 +286,7 @@ const projectRow = <Message>(
       h.Style(rowStyle),
     ],
     [
-      h.span(
-        [
-          h.DataAttribute('chip', chip.role),
-          h.Class(
-            `flex items-center justify-center rounded-button font-extrabold text-ink ${chipBackground[chip.role]}`,
-          ),
-          h.Style({ width: '22px', height: '22px', fontSize: '11px' }),
-        ],
-        [chip.label],
-      ),
+      chipView(chipOf(row.index), h),
       h.span(
         [h.Class('flex min-w-0 flex-col'), h.Style({ gap: '2px' })],
         [

@@ -43,9 +43,11 @@ import {
   EngineConnection,
   type EngineConnectionService,
 } from '../app/connection'
+import { type Chip, chipView } from './sidebar'
 
 // The console's Needs your attention column (spec §15.1, §18.3, H62, H92; Appendix A.2): what waits on
-// the maintainer, as the handoff's card with its kind tag, the ID and how long it has waited (`c2`).
+// the maintainer, as the handoff's card with its kind tag, the ID and how long it has waited (`c2`),
+// and under All projects its project's chip before the tag.
 // Approval (`c2`): a permission request, its input shown whole and rendered for its tool, why it asks;
 // Approve allows it once, its menu allows it for this run or refuses it with a note. Question (`c5`):
 // the question's own title, the tickets waiting on it, as much of its description as fits; Answer opens
@@ -664,6 +666,8 @@ export interface ViewInputs {
   readonly now: Option.Option<DateTime.Zoned>
   /** Whether the engine's client is held, so answers can be sent. */
   readonly live: boolean
+  /** The chip a request's card carries for its project: none in a project's own scope (§18.3). */
+  readonly chip: (project: ProjectId) => Option.Option<Chip>
 }
 
 const primaryButton =
@@ -687,12 +691,16 @@ const kindTag = (kind: Kind, h: HtmlBuilder<Message>): Html =>
 
 const firstRow = (
   request: AttentionRequest,
-  now: Option.Option<DateTime.Zoned>,
+  inputs: ViewInputs,
   h: HtmlBuilder<Message>,
 ): Html =>
   h.div(
     [h.Class('flex items-center gap-8')],
     [
+      Option.match(inputs.chip(request.project), {
+        onNone: () => h.empty,
+        onSome: chip => chipView(chip, h),
+      }),
       kindTag(kindOf(request), h),
       h.span(
         [
@@ -701,7 +709,7 @@ const firstRow = (
         ],
         [cardTicket(request)],
       ),
-      Option.match(now, {
+      Option.match(inputs.now, {
         onNone: () => h.empty,
         onSome: now =>
           h.span(
@@ -1260,7 +1268,7 @@ const card = (
       h.Style({ padding: '12px 14px' }),
     ],
     [
-      firstRow(request, inputs.now, h),
+      firstRow(request, inputs, h),
       ...AttentionRequest.match(request, {
         permission: permission => approvalBody(model, permission, inputs, h),
         question: question => questionBody(model, question, inputs, h),

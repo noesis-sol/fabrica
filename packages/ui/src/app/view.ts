@@ -160,19 +160,32 @@ const runRole = (model: Model): Sidebar.Role =>
   )
 const lazyAttention = createLazy()
 
-/** The attention column, a Submodel: given the scope's requests, the time and the connection. */
+/**
+ * The attention column, a Submodel: given the scope's requests, the time, the connection and, under All
+ * projects, each card's project's chip (§18.3).
+ */
 const attentionPart = (
   attention: Attention.Model,
   requests: Model['attention'],
   now: Model['now'],
   live: boolean,
+  scope: Model['scope'],
+  sidebar: Sidebar.Model,
   h: HtmlBuilder<Message>,
 ): Html =>
   h.submodel({
     slotId: 'attention',
     model: attention,
     view: Attention.view,
-    viewInputs: { requests, now, live },
+    viewInputs: {
+      requests,
+      now,
+      live,
+      chip: project =>
+        Option.isNone(scope)
+          ? Sidebar.projectChip(sidebar, project)
+          : Option.none(),
+    },
     toParentMessage: message => Message.GotAttentionMessage({ message }),
   })
 const lazyUpNext = createLazy()
@@ -311,6 +324,8 @@ const consoleView = (model: Model, h: HtmlBuilder<Message>): Html => {
                     model.attention,
                     model.now,
                     isLive(model.connection),
+                    model.scope,
+                    parts.sidebar,
                     h,
                   ]),
                 ],
