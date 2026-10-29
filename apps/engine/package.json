@@ -11,9 +11,11 @@
   "scripts": {
     "typecheck": "tsgo --noEmit -p tsconfig.json",
     "typecheck:tsc": "tsc --noEmit -p tsconfig.json",
-    "build": "vite build"
+    "build": "vite build",
+    "dist": "node build/dist.ts"
   },
   "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.4.0",
     "@effect/platform-node": "4.0.0",
     "@fabrica/client": "workspace:*",
     "@fabrica/contracts": "workspace:*",

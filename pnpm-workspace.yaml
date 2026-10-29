@@ -18,3 +18,6 @@ allowBuilds:
   electron: true
   esbuild: true
   msgpackr-extract: false
+  # Pi's dependencies (spec §22.1): a no-op preinstall and a version check, neither needed.
+  '@google/genai': false
+  protobufjs: false
