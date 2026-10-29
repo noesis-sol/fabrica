@@ -461,6 +461,68 @@ describe('the backlog over RPC', () => {
     }).pipe(Effect.scoped),
   )
 
+  it.live(
+    'changes nothing on a refused update, and clears a defer time without deferring',
+    () =>
+      Effect.gen(function* () {
+        const { client, project } = yield* newEngine
+        const { id } = yield* client['tickets.create']({
+          project,
+          ticket: newTicket({ type: 'task', title: 'Kept' }),
+        })
+        const show = client['tickets.show']({ project, ticket: id }).pipe(
+          Effect.map(({ ticket }) => ticket),
+        )
+
+        // Clearing the time of a ticket not deferred leaves it as it is.
+        yield* client['tickets.update']({
+          project,
+          ticket: id,
+          changes: { deferUntil: Option.none() },
+        })
+        expect((yield* show).status).toBe('open')
+
+        // Clearing a deferred ticket's time keeps it deferred, until undeferred.
+        const until = DateTime.makeUnsafe('2030-01-01T00:00:00.000Z')
+        yield* client['tickets.update']({
+          project,
+          ticket: id,
+          changes: { deferUntil: Option.some(until) },
+        })
+        yield* client['tickets.update']({
+          project,
+          ticket: id,
+          changes: { deferUntil: Option.none() },
+        })
+        const cleared = yield* show
+        expect(cleared.status).toBe('deferred')
+        expect(cleared.deferUntil).toStrictEqual(Option.none())
+
+        // A status change refused writes none of the fields sent with it.
+        yield* client['tickets.close']({
+          project,
+          ticket: id,
+          resolution: 'done',
+          reason: Option.none(),
+        })
+        const refusal = failureOf(
+          yield* Effect.exit(
+            client['tickets.update']({
+              project,
+              ticket: id,
+              changes: { title: 'Renamed', status: 'deferred' },
+            }),
+          ),
+        )
+        expect(refusal).toStrictEqual(
+          new Refused({ reason: `can't defer ${id}: it is closed` }),
+        )
+        const after = yield* show
+        expect(after.title).toBe('Kept')
+        expect(after.status).toBe('closed')
+      }).pipe(Effect.scoped),
+  )
+
   it.live('says what is ready, and why the rest isn’t in words', () =>
     Effect.gen(function* () {
       const { client, project } = yield* newEngine

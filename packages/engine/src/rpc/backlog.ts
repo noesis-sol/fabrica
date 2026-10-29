@@ -275,37 +275,53 @@ export const makeBacklogHandlers = Effect.gen(function* () {
         reason: 'a ticket reopened has no time to be deferred until',
       })
     const graph = yield* graphOf(project)
+    const { ticket: current } = yield* graph.show(ticket).pipe(found(project))
+    // The status change, decided and refused before any field is written, so a refused update changes
+    // nothing. A time to defer until defers the ticket; clearing it clears a deferred ticket's time.
+    const transition = yield* (() => {
+      if (status === 'open') {
+        switch (current.status) {
+          case 'closed':
+            return Effect.succeed(
+              graph.reopen({ id: ticket, actor: maintainer }),
+            )
+          case 'deferred':
+            return Effect.succeed(
+              graph.undefer({ id: ticket, actor: maintainer }),
+            )
+          case 'in_progress':
+            return Effect.fail(
+              new Refused({
+                reason: `can't reopen ${ticket}: it is in progress`,
+              }),
+            )
+          case 'open':
+            return Effect.succeed(undefined)
+        }
+      }
+      const defers =
+        status === 'deferred' ||
+        (deferUntil !== undefined &&
+          (Option.isSome(deferUntil) || current.status === 'deferred'))
+      if (!defers) return Effect.succeed(undefined)
+      if (current.status === 'closed')
+        return Effect.fail(
+          new Refused({ reason: `can't defer ${ticket}: it is closed` }),
+        )
+      return Effect.succeed(
+        graph.defer({
+          id: ticket,
+          until: deferUntil ?? Option.none(),
+          actor: maintainer,
+        }),
+      )
+    })()
     const plain: TicketUpdate = fields
     if (Object.values(plain).some(value => value !== undefined))
       yield* graph
         .update({ id: ticket, changes: plain, actor: maintainer })
         .pipe(answered(project))
-    // A time to defer until defers the ticket, where it isn't reopened.
-    if (status === 'open') {
-      const { ticket: current } = yield* graph
-        .show(ticket)
-        .pipe(answered(project))
-      if (current.status === 'closed')
-        yield* graph
-          .reopen({ id: ticket, actor: maintainer })
-          .pipe(answered(project))
-      else if (current.status === 'deferred')
-        yield* graph
-          .undefer({ id: ticket, actor: maintainer })
-          .pipe(answered(project))
-      else if (current.status === 'in_progress')
-        return yield* new Refused({
-          reason: `can't reopen ${ticket}: it is in progress`,
-        })
-    } else if (status === 'deferred' || deferUntil !== undefined) {
-      yield* graph
-        .defer({
-          id: ticket,
-          until: deferUntil ?? Option.none(),
-          actor: maintainer,
-        })
-        .pipe(answered(project))
-    }
+    if (transition !== undefined) yield* transition.pipe(answered(project))
   })
 
   const close = Effect.fn('Backlog.close')(function* ({
