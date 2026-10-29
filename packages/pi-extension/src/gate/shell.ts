@@ -231,6 +231,54 @@ class Reader {
     }
   }
 
+  /**
+   * The rest of a parameter expansion (`${…}`, up to `}`) or an arithmetic one (`$((…))`, up to `))`),
+   * the command substitutions inside it read as commands, since the shell runs them.
+   */
+  expansion(close: '}' | '))'): void {
+    let depth = 0
+    while (this.index < this.source.length) {
+      const char = this.peek()
+      const next = this.peek(1)
+      if (char === '\\') this.index += 2
+      else if (char === "'" && close === '}') {
+        const end = this.source.indexOf("'", this.index + 1)
+        if (end === -1) break
+        this.index = end + 1
+      } else if (char === '$' && next === '(' && this.peek(2) === '(') {
+        this.index += 3
+        this.expansion('))')
+      } else if (char === '$' && next === '(') {
+        this.index += 2
+        this.list(')')
+      } else if (char === '$' && next === '{') {
+        this.index += 2
+        this.expansion('}')
+      } else if (char === '`') {
+        this.index++
+        this.backticks++
+        this.list('`')
+        this.backticks--
+      } else if (close === '}' && char === '}') {
+        this.index++
+        return
+      } else if (close === '))' && char === '(') {
+        depth++
+        this.index++
+      } else if (close === '))' && char === ')') {
+        if (depth === 0 && next === ')') {
+          this.index += 2
+          return
+        }
+        depth--
+        this.index++
+      } else this.index++
+    }
+    throw new Unparsable({
+      reason: `a ${close === '}' ? '${' : '$(('} doesn’t close`,
+    })
+  }
+
   /** A word, and whether it was written plain (no quotes, escapes or substitutions). */
   word(): { readonly word: Word; readonly plain: boolean } {
     let text = ''
@@ -257,15 +305,7 @@ class Reader {
       if (next === '(' && this.peek(2) === '(') {
         const start = this.index
         this.index += 3
-        let depth = 2
-        while (depth > 0) {
-          if (this.index >= this.source.length)
-            throw new Unparsable({ reason: 'a $(( doesn’t close' })
-          const char = this.peek()
-          if (char === '(') depth++
-          else if (char === ')') depth--
-          this.index++
-        }
+        this.expansion('))')
         variable(this.source.slice(start, this.index), '')
       } else if (next === '(') {
         const start = this.index
@@ -273,10 +313,10 @@ class Reader {
         this.list(')')
         variable(this.source.slice(start, this.index), '')
       } else if (next === '{') {
-        const close = this.source.indexOf('}', this.index + 2)
-        if (close === -1) throw new Unparsable({ reason: 'a ${ doesn’t close' })
-        const written = this.source.slice(this.index, close + 1)
-        this.index = close + 1
+        const start = this.index
+        this.index += 2
+        this.expansion('}')
+        const written = this.source.slice(start, this.index)
         variable(written, written.slice(2, -1))
       } else if (nameStart.test(next)) {
         const start = this.index
