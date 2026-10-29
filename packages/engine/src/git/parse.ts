@@ -1,0 +1,118 @@
+import { Option } from 'effect'
+
+import { CommitHash } from '@fabrica/contracts'
+
+// How git's output is read: the one place each of its formats is parsed. Every format read is one git
+// keeps stable for scripts (`-z`, `--porcelain`), under `LC_ALL=C`.
+
+/** A worktree's files that aren't committed (spec §13.7). */
+export interface WorktreeStatus {
+  /** Tracked files changed, staged or not, deleted, or unmerged. */
+  readonly uncommitted: ReadonlyArray<string>
+  /** Files git doesn't track and doesn't ignore. */
+  readonly untracked: ReadonlyArray<string>
+}
+
+/** Whether a status has nothing uncommitted and nothing untracked. */
+export const isClean = (status: WorktreeStatus): boolean =>
+  status.uncommitted.length === 0 && status.untracked.length === 0
+
+/** The entries of a NUL-terminated list (`-z`), none for empty output. */
+export const nulList = (output: string): ReadonlyArray<string> =>
+  output.split('\0').filter(entry => entry !== '')
+
+/**
+ * `git status --porcelain=v1 -z --no-renames`: each entry `XY <path>`, `??` for an untracked file;
+ * without renames no entry has a second path. Output in another shape is none.
+ */
+export const parseStatus = (output: string): Option.Option<WorktreeStatus> => {
+  const uncommitted: Array<string> = []
+  const untracked: Array<string> = []
+  for (const entry of nulList(output)) {
+    if (entry.length < 4 || entry[2] !== ' ') return Option.none()
+    const path = entry.slice(3)
+    if (entry.startsWith('??')) untracked.push(path)
+    else uncommitted.push(path)
+  }
+  return Option.some({ uncommitted, untracked })
+}
+
+/** One line's commit hash, as `rev-parse` and `merge-base` print it. */
+export const parseHash = (output: string): Option.Option<CommitHash> =>
+  CommitHash.makeOption(output.trim())
+
+/** One worktree of a repository, as `git worktree list --porcelain -z` gives it. */
+export interface WorktreeEntry {
+  readonly path: string
+  /** Its HEAD's commit: none for a bare repository or an unborn branch. */
+  readonly head: Option.Option<CommitHash>
+  /** The branch checked out, its short name: none for a detached HEAD or a bare repository. */
+  readonly branch: Option.Option<string>
+  readonly bare: boolean
+  readonly locked: boolean
+  /** Its folder is gone: `git worktree prune` would drop it. */
+  readonly prunable: boolean
+}
+
+const HEADS = 'refs/heads/'
+
+/** A branch's short name from its full ref, none for a ref outside `refs/heads/`. */
+export const shortBranch = (ref: string): Option.Option<string> =>
+  ref.startsWith(HEADS) ? Option.some(ref.slice(HEADS.length)) : Option.none()
+
+/**
+ * `git worktree list --porcelain -z`: records of NUL-terminated lines, each record ended by an empty
+ * line; a record's first line is `worktree <path>`. Output in another shape is none.
+ */
+export const parseWorktrees = (
+  output: string,
+): Option.Option<ReadonlyArray<WorktreeEntry>> => {
+  const entries: Array<WorktreeEntry> = []
+  const records = output.split('\0\0').filter(record => record !== '')
+  for (const record of records) {
+    const [first, ...lines] = record.split('\0').filter(line => line !== '')
+    if (first === undefined || !first.startsWith('worktree ')) {
+      return Option.none()
+    }
+    let head = Option.none<CommitHash>()
+    let branch = Option.none<string>()
+    let bare = false
+    let locked = false
+    let prunable = false
+    for (const line of lines) {
+      const [key = '', ...rest] = line.split(' ')
+      const value = rest.join(' ')
+      if (key === 'HEAD') head = CommitHash.makeOption(value)
+      else if (key === 'branch') branch = shortBranch(value)
+      else if (key === 'bare') bare = true
+      else if (key === 'locked') locked = true
+      else if (key === 'prunable') prunable = true
+    }
+    entries.push({
+      path: first.slice('worktree '.length),
+      head,
+      branch,
+      bare,
+      locked,
+      prunable,
+    })
+  }
+  return Option.some(entries)
+}
+
+/** The oldest git the engine runs (spec §13.1, H85): `worktree list -z`, `merge-tree --write-tree`. */
+export const MINIMUM_GIT = { major: 2, minor: 38 } as const
+
+/** `git version`'s answer: its version, and whether it is `MINIMUM_GIT` or later; none when it isn't one. */
+export const parseGitVersion = (
+  output: string,
+): Option.Option<{ readonly version: string; readonly supported: boolean }> => {
+  const match = /^git version ((\d+)\.(\d+)\S*)/u.exec(output.trim())
+  if (match === null) return Option.none()
+  const [, version = '', major = '', minor = ''] = match
+  const [majorNumber, minorNumber] = [Number(major), Number(minor)]
+  const supported =
+    majorNumber > MINIMUM_GIT.major ||
+    (majorNumber === MINIMUM_GIT.major && minorNumber >= MINIMUM_GIT.minor)
+  return Option.some({ version, supported })
+}
