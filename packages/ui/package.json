@@ -8,7 +8,9 @@
   "exports": {
     ".": "./src/main.ts",
     "./styles.css": "./src/styles.css",
-    "./theme": "./src/theme/theme.ts"
+    "./theme": "./src/theme/theme.ts",
+    "./port": "./src/app/port.ts",
+    "./window-colours": "./src/theme/windowColours.ts"
   },
   "scripts": {
     "dev": "vite",

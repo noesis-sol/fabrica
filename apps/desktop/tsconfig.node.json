@@ -1,7 +1,11 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["node"]
+    // DOM for the preload's page and for the renderer's modules main and the preload share (the
+    // theme, the engine port's message).
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "allowImportingTsExtensions": true
   },
-  "include": ["src/main/**/*", "src/preload/**/*"]
+  "include": ["src/main/**/*", "src/preload/**/*", "build/**/*", "test/**/*"]
 }

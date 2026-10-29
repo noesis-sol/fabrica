@@ -73,6 +73,18 @@ export const parseColour = (text: string): Option.Option<LinearRgb> => {
   return Option.none()
 }
 
+const gammaOfLinear = (channel: number): number =>
+  channel <= 0.0031308 ? channel * 12.92 : 1.055 * channel ** (1 / 2.4) - 0.055
+
+const hexDigits = (channel: number): string =>
+  Math.round(clip(gammaOfLinear(channel)) * 255)
+    .toString(16)
+    .padStart(2, '0')
+
+/** A colour as `#rrggbb`, the form every consumer of a colour takes (Electron's among them). */
+export const hexOfColour = ({ red, green, blue }: LinearRgb): string =>
+  `#${hexDigits(red)}${hexDigits(green)}${hexDigits(blue)}`
+
 /** WCAG 2's relative luminance. */
 export const relativeLuminance = ({ red, green, blue }: LinearRgb): number =>
   0.2126 * red + 0.7152 * green + 0.0722 * blue

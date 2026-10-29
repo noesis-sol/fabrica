@@ -18,6 +18,10 @@
     "foldkit": "0.169.0"
   },
   "devDependencies": {
+    "@electron/fuses": "2.1.3",
+    "@fabrica/contracts": "workspace:*",
+    "@fabrica/engine": "workspace:*",
+    "@fabrica/testkit": "workspace:*",
     "@foldkit/devtools": "0.169.0",
     "@foldkit/vite-plugin": "0.28.0",
     "@tailwindcss/vite": "4.3.3",
