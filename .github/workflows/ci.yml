@@ -1,0 +1,82 @@
+# CI (spec §22.3, §24): on every push and pull request, the full check (the fast check, then every
+# package's build) on each engine target, and the fast check once more on Linux x64 held to 2 cores (H55):
+# a test that read the machine's cores passed on a 10-core Mac and failed on CI's 2-core runners.
+# Test files run on every core the job has (CI is set, FABRICA_CORES isn't; H88). The unit suite migrates
+# the work graph and telemetry databases up from empty.
+#
+# Every download is checked against a checksum (§20.4): the actions by their commit, mise against its
+# signed release checksums (mise-action), Node and pnpm against mise.lock (mise-action installs with
+# --locked when it is present), and the npm packages against pnpm-lock.yaml's integrity hashes, Electron's
+# binary against the checksums its package ships.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: ${{ matrix.check }} check, ${{ matrix.target }}${{ matrix.cpus && ', 2 cores' || '' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos-x64
+            runner: macos-26-intel
+            check: full
+          - target: macos-arm64
+            runner: macos-26
+            check: full
+          - target: linux-x64
+            runner: ubuntu-24.04
+            check: full
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            check: full
+          # GitHub's standard runners for a public repository have 3 or 4 cores: this job's processes
+          # are pinned to two of them, which os.availableParallelism() reports.
+          - target: linux-x64
+            runner: ubuntu-24.04
+            check: fast
+            cpus: '0,1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          version: 2026.10.22
+
+      - name: Find the pnpm store
+        id: pnpm-store
+        run: echo "path=$(mise exec -- pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-store-${{ matrix.target }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ matrix.target }}-
+
+      - name: Install dependencies
+        run: mise exec -- pnpm install --frozen-lockfile
+
+      - name: Check
+        env:
+          CHECK: ${{ matrix.check }}
+          CPUS: ${{ matrix.cpus }}
+        run: |
+          if [ -n "$CPUS" ]; then
+            set -- taskset --cpu-list "$CPUS"
+          fi
+          "$@" mise exec -- node --print "'cores: ' + require('node:os').availableParallelism()"
+          "$@" "scripts/check-$CHECK.sh"

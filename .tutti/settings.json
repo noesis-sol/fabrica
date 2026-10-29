@@ -45,6 +45,16 @@
       ],
       "check": "git --version | awk '{ split($3, v, \".\"); exit !(v[1] > 2 || (v[1] == 2 && v[2] >= 38)) }'",
       "manual": "Install git 2.38 or later (Ubuntu 22.04's git 2.34 is too old: use the git-core PPA, ppa:git-core/ppa)."
+    },
+    {
+      "name": "actionlint",
+      "check": "[ \"$(MISE_EXEC_AUTO_INSTALL=0 mise exec aqua:rhysd/actionlint@1.7.12 -- actionlint --version 2>/dev/null | head -n 1)\" = 1.7.12 ]",
+      "install": "mise install aqua:rhysd/actionlint@1.7.12"
+    },
+    {
+      "name": "shellcheck",
+      "check": "MISE_EXEC_AUTO_INSTALL=0 mise exec aqua:koalaman/shellcheck@0.11.0 -- shellcheck --version 2>/dev/null | grep -qx 'version: 0.11.0'",
+      "install": "mise install aqua:koalaman/shellcheck@0.11.0"
     }
   ],
   "checks": {

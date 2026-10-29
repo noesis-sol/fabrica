@@ -31,6 +31,12 @@ What this project needs of the machine, from `"requires"` in `.tutti/settings.js
 - **git-linux** (only on Linux)
   - check: `git --version | awk '{ split($3, v, "."); exit !(v[1] > 2 || (v[1] == 2 && v[2] >= 38)) }'`
   - by hand: Install git 2.38 or later (Ubuntu 22.04's git 2.34 is too old: use the git-core PPA, ppa:git-core/ppa).
+- **actionlint**
+  - check: `[ "$(MISE_EXEC_AUTO_INSTALL=0 mise exec aqua:rhysd/actionlint@1.7.12 -- actionlint --version 2>/dev/null | head -n 1)" = 1.7.12 ]`
+  - install: `mise install aqua:rhysd/actionlint@1.7.12`
+- **shellcheck**
+  - check: `MISE_EXEC_AUTO_INSTALL=0 mise exec aqua:koalaman/shellcheck@0.11.0 -- shellcheck --version 2>/dev/null | grep -qx 'version: 0.11.0'`
+  - install: `mise install aqua:koalaman/shellcheck@0.11.0`
 <!-- /tutti:requires -->
 
 ## Commands
@@ -45,7 +51,10 @@ scripts/check-full.sh           # the fast check, then every package's build, th
 pnpm test                       # the unit tests alone
 pnpm build                      # every package's build
 pnpm --filter @fabrica/desktop dev  # the app, in development
+mise exec aqua:rhysd/actionlint@1.7.12 aqua:koalaman/shellcheck@0.11.0 -- actionlint  # the CI workflows
 ```
+
+CI (`.github/workflows/ci.yml`) runs the full check on every engine target, and the fast check on 2 cores.
 
 `CLAUDE.md` (and `AGENTS.md`, its copy for other agents) has the rest: one package's tests, the layout, and
 the project's code rules.

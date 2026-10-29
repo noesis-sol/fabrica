@@ -1,5 +1,6 @@
-# The toolchain's pinned versions. Keep them in step with package.json (packageManager, engines)
-# and the requires list in .tutti/settings.json.
+# The toolchain's pinned versions. Keep them in step with package.json (packageManager, engines),
+# the requires list in .tutti/settings.json, and mise.lock, their checksums per engine target, which CI
+# installs from: refresh it with `mise lock --platform linux-x64,linux-arm64,macos-x64,macos-arm64`.
 [tools]
 node = "26.13.0"
 pnpm = "12.16.1"
