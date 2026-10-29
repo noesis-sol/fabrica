@@ -72,6 +72,7 @@ const statusWith = (clients: number): EngineStatus =>
     release: '0.1.0',
     startedAt: 1_793_268_900_000,
     host: { platform: 'darwin', arch: 'arm64', hostname: 'laptop', cores: 8 },
+    listening: null,
     projects: 0,
     runs: 0,
     liveWorkers: 0,

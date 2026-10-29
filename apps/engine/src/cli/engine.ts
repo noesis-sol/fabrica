@@ -8,6 +8,7 @@ import {
   ProtocolVersion,
   ReleaseVersion,
   UpdateStarted,
+  formatListenAddress,
   protocolVersion,
 } from '@fabrica/contracts'
 import { Daemon, Update } from '@fabrica/engine'
@@ -67,12 +68,25 @@ const versionText = (answer: typeof VersionAnswer.Type): string =>
     `engine  ${sanitiseLine(answer.engine.release)} (protocol ${answer.engine.protocol}, speaks ${answer.engine.supported.join(', ')})`,
   ].join('\n')
 
+/** Where the engine listens over TLS and its certificate's fingerprint, the user to compare it with the app's at pairing (§9.3). */
+const listeningText = (
+  listening: EngineStatus['listening'],
+): ReadonlyArray<string> =>
+  Option.match(listening, {
+    onNone: () => ['listens   on its local socket only'],
+    onSome: ({ address, fingerprint }) => [
+      `listens   ${sanitiseLine(formatListenAddress(address))} over TLS`,
+      `          certificate SHA-256 ${fingerprint}`,
+    ],
+  })
+
 const statusText = (status: EngineStatus): string =>
   [
     `engine    ${sanitiseLine(status.id)}`,
     `release   ${sanitiseLine(status.release)}`,
     `started   ${DateTime.formatIso(status.startedAt)}`,
     `host      ${sanitiseLine(status.host.hostname)} (${status.host.platform} ${sanitiseLine(status.host.arch)}, ${status.host.cores} cores)`,
+    ...listeningText(status.listening),
     `projects  ${status.projects}`,
     `runs      ${status.runs}`,
     `workers   ${status.liveWorkers} of ${status.machineWorkers}`,

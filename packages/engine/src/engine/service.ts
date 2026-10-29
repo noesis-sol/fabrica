@@ -18,6 +18,7 @@ import {
   EngineStatus,
   EngineVersion,
   type ReleaseVersion,
+  TlsListening,
   defaultMachineWorkers,
   protocolVersion,
   supportedVersions,
@@ -104,6 +105,10 @@ export const engineLayer = (
         ],
       })
       const settings = withSql(storedEngineSettings())
+      const listener = Option.map(
+        listening,
+        endpoint => new TlsListening(endpoint),
+      )
 
       const status = Effect.fn('Engine.status')(function* (options: {
         readonly clients: number
@@ -117,6 +122,7 @@ export const engineLayer = (
           release: facts.release,
           startedAt,
           host: facts.host,
+          listening: listener,
           projects,
           // No run or worker is kept by the engine yet: the run loop's tickets count them here.
           runs: 0,

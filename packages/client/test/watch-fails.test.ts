@@ -54,6 +54,7 @@ const status = Schema.decodeUnknownSync(EngineStatus)({
   release: '0.1.0',
   startedAt: 1_793_268_900_000,
   host: { platform: 'linux', arch: 'x64', hostname: 'server-1', cores: 16 },
+  listening: null,
   projects: 0,
   runs: 0,
   liveWorkers: 0,

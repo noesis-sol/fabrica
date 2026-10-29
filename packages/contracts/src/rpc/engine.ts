@@ -2,7 +2,7 @@ import { Schema } from 'effect'
 import { Rpc, RpcGroup } from 'effect/rpc'
 
 import { EngineId, ProjectId, TicketId } from '../ids'
-import { EngineSettings, Platform } from '../settings'
+import { EngineSettings, ListenAddressText, Platform } from '../settings'
 import { Text } from '../ticket'
 import { Bytes, Count, Moment, Ordinal, optional } from './common'
 import { resume, streamItem } from './stream'
@@ -64,12 +64,26 @@ export class EngineVersion extends Schema.Class<EngineVersion>('EngineVersion')(
   },
 ) {}
 
+/** A certificate's SHA-256 fingerprint: its 32 bytes in upper-case hex, colon-separated. */
+export const CertificateFingerprint = Schema.String.check(
+  Schema.isPattern(/^[0-9A-F]{2}(?::[0-9A-F]{2}){31}$/u),
+)
+
+/** Where the engine listens over TLS, and its certificate's fingerprint, for the user to compare at pairing (§9.3). */
+export class TlsListening extends Schema.Class<TlsListening>('TlsListening')({
+  /** `host:port`, `[v6]:port`, or `:port` where it listens on every interface. */
+  address: ListenAddressText,
+  fingerprint: CertificateFingerprint,
+}) {}
+
 /** The engine's state, as the Engines screen shows it (§18.4). */
 export class EngineStatus extends Schema.Class<EngineStatus>('EngineStatus')({
   id: EngineId,
   release: ReleaseVersion,
   startedAt: Moment,
   host: EngineHost,
+  /** Where it listens over TLS besides its local socket; none where it doesn't. */
+  listening: Schema.OptionFromNullOr(TlsListening),
   projects: Count,
   runs: Count,
   /** Workers live across every run, against `machine_workers` (§7.3). */

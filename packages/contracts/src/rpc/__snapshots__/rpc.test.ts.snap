@@ -721,6 +721,16 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
           "pattern": "^\\S+$",
           "type": "string",
         },
+        "listening": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TlsListeningEncoded",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
         "liveWorkers": {
           "minimum": 0,
           "type": "integer",
@@ -753,6 +763,7 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         "release",
         "startedAt",
         "host",
+        "listening",
         "projects",
         "runs",
         "liveWorkers",
@@ -6733,6 +6744,23 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         "startedAt",
         "solo",
         "handBacks",
+      ],
+      "type": "object",
+    },
+    "TlsListeningEncoded": {
+      "additionalProperties": true,
+      "properties": {
+        "address": {
+          "type": "string",
+        },
+        "fingerprint": {
+          "pattern": "^[0-9A-F]{2}(?::[0-9A-F]{2}){31}$",
+          "type": "string",
+        },
+      },
+      "required": [
+        "address",
+        "fingerprint",
       ],
       "type": "object",
     },

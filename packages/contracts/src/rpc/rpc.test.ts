@@ -43,6 +43,10 @@ const status = {
   release: '0.1.0',
   startedAt: at,
   host: { platform: 'linux', arch: 'x64', hostname: 'server-1', cores: 16 },
+  listening: {
+    address: '0.0.0.0:8443',
+    fingerprint: Array.from({ length: 32 }, () => 'A0').join(':'),
+  },
   projects: 2,
   runs: 1,
   liveWorkers: 3,
