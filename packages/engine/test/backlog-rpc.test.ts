@@ -27,6 +27,7 @@ import {
   ProjectSource,
   Refused,
   Resume,
+  TicketDetail,
   TicketId,
   TicketNotFound,
 } from '@fabrica/contracts'
@@ -191,6 +192,8 @@ describe('the backlog over RPC', () => {
         })
 
         const shown = yield* client['tickets.show']({ project, ticket: login })
+        // As the protocol's class: the server encodes nothing else.
+        expect(shown).toBeInstanceOf(TicketDetail)
         expect(shown.ticket.title).toBe('Log in')
         expect(shown.ticket.description).toStrictEqual(
           Option.some('With a password'),

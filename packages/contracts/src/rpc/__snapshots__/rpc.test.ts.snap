@@ -1640,6 +1640,23 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         },
       ],
     },
+    "NotReadyReasonEncoded": {
+      "additionalProperties": true,
+      "properties": {
+        "reason": {
+          "$ref": "#/$defs/NotReady",
+        },
+        "words": {
+          "pattern": "\\S",
+          "type": "string",
+        },
+      },
+      "required": [
+        "reason",
+        "words",
+      ],
+      "type": "object",
+    },
     "NoteEncoded": {
       "additionalProperties": true,
       "properties": {
@@ -8873,12 +8890,12 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
               },
               "reasons": {
                 "items": {
-                  "$ref": "#/$defs/NotReady",
+                  "$ref": "#/$defs/NotReadyReasonEncoded",
                 },
                 "minItems": 1,
                 "prefixItems": [
                   {
-                    "$ref": "#/$defs/NotReady",
+                    "$ref": "#/$defs/NotReadyReasonEncoded",
                   },
                 ],
                 "type": "array",

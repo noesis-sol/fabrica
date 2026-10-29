@@ -13,6 +13,7 @@ import {
   type Resume,
   type Ticket,
   type TicketChanges,
+  TicketDetail,
   type TicketFilter,
   type TicketId,
   TicketNotFound,
@@ -214,7 +215,11 @@ export const makeBacklogHandlers = Effect.gen(function* () {
     readonly ticket: TicketId
   }) {
     const graph = yield* graphOf(project)
-    return yield* graph.show(ticket).pipe(found(project))
+    // The work graph's detail, as the protocol's class, which the server encodes.
+    return yield* graph.show(ticket).pipe(
+      found(project),
+      Effect.map(detail => new TicketDetail(detail)),
+    )
   })
 
   const create = Effect.fn('Backlog.create')(function* ({
