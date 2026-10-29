@@ -1,35 +1,32 @@
 #!/usr/bin/env node
-import { Cause, Console, Effect } from 'effect'
+import { Effect, Layer } from 'effect'
 
-import { NodeRuntime } from '@effect/platform-node'
-import type { Host } from '@fabrica/contracts'
+import { NodeRuntime, NodeServices } from '@effect/platform-node'
+import { Host } from '@fabrica/contracts'
 import { layerNodeHost } from '@fabrica/engine'
 
-import { bridge } from './bridge'
-import { serve } from './serve'
-import { versionLine } from './version'
+import { LocalEngine } from './cli/connect'
+import { runCli } from './cli/main'
+import { hostPaths } from './host'
 
-// The `fabrica` command. `serve` and `bridge` run the engine and reach it; with no command it says its
-// version.
+// The `fabrica` command's entry: the CLI (`cli/main.ts`) on this host's Node services and its `Host`,
+// the local engine found where this host keeps its files. Its exit code is 1 when the command fails.
 
-const command = (
-  name: string | undefined,
-): Effect.Effect<void, { readonly message: string }, Host> => {
-  switch (name) {
-    case 'serve':
-      return serve
-    case 'bridge':
-      return bridge
-    default:
-      return Console.log(versionLine)
-  }
-}
+const localEngine = Layer.effect(
+  LocalEngine,
+  Effect.gen(function* () {
+    const host = yield* Host
+    return {
+      socket: host.facts.pipe(
+        Effect.flatMap(hostPaths),
+        Effect.map(paths => paths.socket),
+      ),
+    }
+  }),
+)
 
-command(process.argv[2]).pipe(
+runCli(process.argv.slice(2)).pipe(
+  Effect.provide([NodeServices.layer, localEngine]),
   Effect.provide(layerNodeHost),
-  Effect.tapError(error => Console.error(`fabrica: ${error.message}`)),
-  Effect.tapCause(cause =>
-    Cause.hasDies(cause) ? Console.error(Cause.pretty(cause)) : Effect.void,
-  ),
   NodeRuntime.runMain({ disableErrorReporting: true }),
 )
