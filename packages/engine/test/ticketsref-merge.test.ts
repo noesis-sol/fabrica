@@ -420,6 +420,28 @@ describe('the merge of a ticket file (examples)', () => {
     )
     // With no lease held, the later clock.
     expect(merge(stale, holders).file.ticket.assignee).toEqual(claim(fa, 's-1'))
+    // The holder's release, at the earlier clock, beats a claim under an expired lease too.
+    const claimed = edited(baseFile, hlc(100, fb), {
+      assignee: claim(fb, 's-2'),
+    })
+    for (const [ours, theirs] of [
+      [
+        edited(claimed, hlc(1500, fb), { assignee: Option.none() }),
+        edited(claimed, hlc(2000, fa), { assignee: claim(fa, 's-1') }),
+      ],
+      [
+        edited(claimed, hlc(2000, fa), { assignee: claim(fa, 's-1') }),
+        edited(claimed, hlc(1500, fb), { assignee: Option.none() }),
+      ],
+    ] as const) {
+      const released = mergeTicketFile({
+        base: Option.some(claimed),
+        ours,
+        theirs,
+        holder: Option.some(fb),
+      })
+      expect(released.file.ticket.assignee).toEqual(Option.none())
+    }
   })
 
   it('merges labels and edges as sets against the base', () => {
@@ -643,6 +665,11 @@ describe('the run lease merged', () => {
         some(lease(fa, 'r-1', 0, 1)),
       ),
     ).toEqual(some(lease(fa, 'r-1', 0, 2)))
+    // Two renewals in one millisecond that differ only in the host: both sides keep the same one.
+    const moved = new RunLease({ ...lease(fa, 'r-1', 0, 2), host: 'a.local' })
+    expect(both(some(held), some(lease(fa, 'r-1', 0, 2)), some(moved))).toEqual(
+      some(moved),
+    )
   })
 
   it('keeps the earlier start of two leases covering the same time', () => {
