@@ -1,6 +1,7 @@
 import {
   Clock,
   Context,
+  Data,
   DateTime,
   Deferred,
   Effect,
@@ -25,9 +26,17 @@ import {
 import type { StoredSettingsInvalid } from './database'
 import { engineIdentity, projectCount, storedEngineSettings } from './database'
 
-// The Engine service (spec §7.1, §8.1): the engine's identity, version, status and settings, and its
-// stop. Stopping asks the engine's root scope to end, which winds the runs down, then the agents,
-// then the servers (`EngineScopes`); from the moment it is asked, the engine's status says so.
+// The Engine service (spec §7.1, §8.1, §9.2): the engine's identity, version, status and settings, and
+// its stop. Stopping asks the engine's root scope to end, which winds the runs down, then the agents,
+// then the servers (`EngineScopes`); from the moment it is asked, the engine's status says so. A
+// restart into an update stops it the same way, and says which launcher starts the engine after it.
+
+/** What the engine does once its root scope has ended: stop, or start the updated engine's launcher. */
+export type EngineEnd = Data.TaggedEnum<{
+  Stop: {}
+  Restart: { readonly launcher: string }
+}>
+export const EngineEnd = Data.taggedEnum<EngineEnd>()
 
 export interface EngineShape {
   readonly id: EngineId
@@ -42,8 +51,15 @@ export interface EngineShape {
   >
   /** Asks the engine to stop; the engine's root scope ends once its caller has answered. */
   readonly stop: Effect.Effect<void>
-  /** Waits until the engine is asked to stop. */
-  readonly stopRequested: Effect.Effect<void>
+  /**
+   * Asks the engine to stop, as `stop` does, and then to start `launcher serve` in its place (§9.2).
+   * Where it was asked to stop already, it stops.
+   */
+  readonly restart: (launcher: string) => Effect.Effect<void>
+  /** Whether the engine has been asked to stop, or its scope is ending. */
+  readonly stopping: Effect.Effect<boolean>
+  /** Waits until the engine is asked to stop; what it does once it has stopped. */
+  readonly stopRequested: Effect.Effect<EngineEnd>
 }
 
 export class Engine extends Context.Service<Engine, EngineShape>()(
@@ -66,7 +82,7 @@ export const engineLayer = (facts: EngineFacts) =>
       const id = yield* engineIdentity()
       const startedAt = DateTime.makeUnsafe(yield* Clock.currentTimeMillis)
       const stopping = yield* Ref.make(false)
-      const asked = yield* Deferred.make<void>()
+      const asked = yield* Deferred.make<EngineEnd>()
       yield* Effect.addFinalizer(() => Ref.set(stopping, true))
 
       const version = new EngineVersion({
@@ -105,12 +121,18 @@ export const engineLayer = (facts: EngineFacts) =>
       })
 
       // The root scope is told from a fiber of its own, which runs once the caller's fiber yields: an
-      // RPC handler's fiber writes its answer before it does, so `engine.stop` is answered first.
-      const stop = Ref.set(stopping, true).pipe(
-        Effect.andThen(Effect.forkDetach(Deferred.succeed(asked, undefined))),
-        Effect.asVoid,
-        Effect.withSpan('Engine.stop'),
-      )
+      // RPC handler's fiber writes its answer before it does, so `engine.stop` is answered first. The
+      // first ask holds: a restart asked after a stop stops.
+      const end = (then: EngineEnd) =>
+        Ref.set(stopping, true).pipe(
+          Effect.andThen(Effect.forkDetach(Deferred.succeed(asked, then))),
+          Effect.asVoid,
+        )
+      const stop = end(EngineEnd.Stop()).pipe(Effect.withSpan('Engine.stop'))
+      const restart = (launcher: string) =>
+        end(EngineEnd.Restart({ launcher })).pipe(
+          Effect.withSpan('Engine.restart'),
+        )
 
       return Engine.of({
         id,
@@ -118,6 +140,8 @@ export const engineLayer = (facts: EngineFacts) =>
         status,
         settings,
         stop,
+        restart,
+        stopping: Ref.get(stopping),
         stopRequested: Deferred.await(asked),
       })
     }),

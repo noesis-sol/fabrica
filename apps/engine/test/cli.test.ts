@@ -270,7 +270,6 @@ describe('the command line', () => {
     ['service', 'install'],
     ['service', 'uninstall'],
     ['service', 'status'],
-    ['engine', 'update'],
     ['token', 'create'],
     ['token', 'list'],
     ['token', 'revoke'],

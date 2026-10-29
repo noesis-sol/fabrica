@@ -1,22 +1,33 @@
-import { DateTime, Effect, Schema } from 'effect'
-import { Command } from 'effect/cli'
+import { Data, DateTime, Effect, Schema } from 'effect'
+import { Argument, Command } from 'effect/cli'
 
 import {
   EngineStatus,
   EngineVersion,
   ProtocolVersion,
   ReleaseVersion,
+  UpdateStarted,
   protocolVersion,
 } from '@fabrica/contracts'
 
 import { version } from '../version'
 import { withEngine } from './connect'
-import { notYet } from './not-yet'
 import { printAnswer } from './output'
 import { sanitiseLine } from './sanitise'
 
-// `fabrica engine status|stop|update|version` (spec §19, §8.1): the engine's state, stopping it, updating
-// it and its version, with this CLI's beside it. Values the engine sends are printed one to a line.
+// `fabrica engine status|stop|update|version` (spec §19, §8.1, §9.2): the engine's state, stopping it,
+// updating it and its version, with this CLI's beside it. `update [<version>]` has the engine install
+// the release named, or the latest, and restart into it once its runs are wound down. Values the engine
+// sends are printed one to a line.
+
+/** The engine refused the update, or couldn't have or verify it. */
+export class UpdateRefused extends Data.TaggedError('UpdateRefused')<{
+  readonly reason: string
+}> {
+  override get message() {
+    return this.reason
+  }
+}
 
 /** `fabrica engine version`'s answer: this CLI's release and protocol, and the engine's. */
 const VersionAnswer = Schema.Struct({
@@ -78,16 +89,40 @@ const stop = Command.make('stop', {}, () =>
   ),
 ).pipe(Command.withDescription('Winds the runs down and stops the engine'))
 
+const updateText = (started: UpdateStarted): string =>
+  `the engine installed ${sanitiseLine(started.to)}, and restarts into it from ${sanitiseLine(started.from)} once its runs are wound down`
+
+const update = Command.make(
+  'update',
+  {
+    version: Argument.String('version').pipe(
+      Argument.withDescription(
+        'The release to update to, such as 0.2.0; the latest where none is given',
+      ),
+      Argument.withSchema(ReleaseVersion),
+      Argument.optional,
+    ),
+  },
+  ({ version }) =>
+    withEngine(client => client.rpc['engine.update']({ to: version })).pipe(
+      Effect.catchTag('UpdateFailed', ({ reason }) =>
+        Effect.fail(
+          new UpdateRefused({
+            reason: `the engine wasn't updated: ${sanitiseLine(reason)}`,
+          }),
+        ),
+      ),
+      Effect.flatMap(value =>
+        printAnswer({ schema: UpdateStarted, value, text: updateText }),
+      ),
+    ),
+).pipe(
+  Command.withDescription(
+    'Updates the engine, restarting it once its runs are wound down',
+  ),
+)
+
 export const engine = Command.make('engine').pipe(
   Command.withDescription('The engine'),
-  Command.withSubcommands([
-    status,
-    stop,
-    notYet({
-      group: ['engine'],
-      name: 'update',
-      description: 'Updates the engine once its runs are wound down',
-    }),
-    engineVersion,
-  ]),
+  Command.withSubcommands([status, stop, update, engineVersion]),
 )

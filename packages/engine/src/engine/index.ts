@@ -30,6 +30,7 @@ export {
 } from './serve'
 export {
   Engine,
+  EngineEnd,
   type EngineFacts,
   type EngineShape,
   engineLayer,
