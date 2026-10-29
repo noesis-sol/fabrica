@@ -363,6 +363,14 @@ describe('the key guard', () => {
         ),
       ),
     ).toEqual([['Answer', { key: questionKey, answer: answerWith(0) }]])
+    // The choice is made again from the changed request: its recommended option now.
+    expect(redrawn.model.console.attention.open).toEqual(
+      Attention.Open.Answering({
+        key: questionKey,
+        chosen: Option.some(0),
+        text: '',
+      }),
+    )
     // The same request again, unchanged, keeps the guard passed.
     const same = sent(passed.model, received([question]))
     expect(commandsOf(same)).toEqual([])

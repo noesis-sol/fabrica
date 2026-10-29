@@ -555,7 +555,8 @@ const openKey = (open: Open): Option.Option<string> =>
 /**
  * The column kept in step with the requests the stream gives: what a card has open closes when its
  * request leaves the list (answered elsewhere, or the scope changed), and drawn options whose request
- * changed are drawn afresh, their guard started again (§15.1, tutti-14o5).
+ * changed are drawn afresh, their guard started again and their choice made again from the new
+ * request, so an option chosen before can't stand for another (§15.1, tutti-14o5).
  */
 export const receivedRequests = (
   model: Model,
@@ -574,7 +575,20 @@ export const receivedRequests = (
       Option.match(find(attentionKey(drawn)), {
         onNone: () => ({ model: closed(model) }),
         onSome: current =>
-          sameRequest(current, drawn) ? { model } : drawing(model, current),
+          sameRequest(current, drawn)
+            ? { model }
+            : drawing(
+                modifyFields(model, {
+                  open: open =>
+                    Open.guards.Answering(open)
+                      ? Open.Answering({
+                          ...open,
+                          chosen: preselected(current),
+                        })
+                      : open,
+                }),
+                current,
+              ),
       }),
   })
 }
