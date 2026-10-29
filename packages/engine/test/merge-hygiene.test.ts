@@ -218,6 +218,7 @@ const config = (
   checkFast,
   checkTimeout: Duration.minutes(1),
   setupFiles: defaultSetupFiles,
+  train: 1,
   cores: 1,
   actor,
 })
