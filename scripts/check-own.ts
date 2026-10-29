@@ -677,7 +677,7 @@ const main = (): number => {
       step('test', () => {
         if (standing.length > 0) {
           console.log(
-            `check-own: ${count(standing.length, 'test file')} passed at ${since} ` +
+            `check-own: ${count(standing.length, 'test file')} passed in ${since} ` +
               'and nothing since touches them.',
           )
         }
