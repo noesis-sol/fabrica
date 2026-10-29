@@ -1,8 +1,8 @@
-import { Option, Result } from 'effect'
+import { Option, Result, Schema } from 'effect'
 import * as NodePath from 'node:path'
 
 import { UnsupportedPlatform, absoluteVariable } from '../engine/paths'
-import type { ServiceManager } from './outcome'
+import { ServiceManager } from './outcome'
 
 // The login service (spec §7.1, §12.1, §19): what it runs and the file its manager reads it from, a
 // launchd agent on macOS and a systemd user unit on Linux. It runs `fabrica serve` from the `fabrica`
@@ -16,6 +16,11 @@ import type { ServiceManager } from './outcome'
 // unit's cgroup once it exits, the backstop of §12.1 (fab-mgi.17). Both managers wait `STOP_TIMEOUT`
 // for the wind-down before they kill it, above an agent's release (abort, terminate, reap: 25 s).
 // Each restarts the engine where it fails, never where it stopped as asked (`fabrica engine stop`).
+//
+// The service tells the engine its manager runs it, in `FABRICA_SERVICE`, so that a restart into an
+// update (§9.2) exits with `RESTART_EXIT_CODE` for the manager to start the engine again from the link,
+// now the new release's: a `fabrica serve` the engine started itself would be in the unit's cgroup,
+// which systemd kills as the old engine exits, or beside the engine launchd starts again.
 
 /** The launchd agent's label, and its plist's name without `.plist`. */
 export const LAUNCHD_LABEL = 'fabrica.engine'
@@ -25,6 +30,21 @@ export const SYSTEMD_UNIT = 'fabrica.service'
 
 /** How long the manager waits for the engine to wind down before it kills it, in seconds. */
 export const STOP_TIMEOUT = 120
+
+/** The variable the service sets to its manager's name. */
+export const SERVICE_VARIABLE = 'FABRICA_SERVICE'
+
+/**
+ * The engine's exit code where it exits to be restarted (EX_TEMPFAIL): not 0, so both managers start
+ * it again (`KeepAlive`'s `SuccessfulExit` false, `Restart=on-failure`).
+ */
+export const RESTART_EXIT_CODE = 75
+
+/** The manager running the engine, as `environment` (the engine's, read once where it starts) names it. */
+export const runningService = (
+  environment: Readonly<Record<string, string | undefined>>,
+): Option.Option<ServiceManager> =>
+  Schema.decodeUnknownOption(ServiceManager)(environment[SERVICE_VARIABLE])
 
 /** The installing shell's variables the service carries, where they are set. */
 const CARRIED = [
@@ -52,7 +72,7 @@ export interface ServiceDefinition {
   /** The `fabrica` launcher it runs `serve` with. */
   readonly launcher: string
   readonly home: string
-  /** The variables it runs with, by name. */
+  /** The variables it carries, by name; it runs with `SERVICE_VARIABLE` too. */
   readonly environment: Readonly<Record<string, string>>
   /** Where launchd writes the engine's stdout and stderr (systemd's go to the journal). */
   readonly logFile: string
@@ -110,6 +130,15 @@ export const serviceFile = (
   }
 }
 
+/** The variables `manager`'s service runs with: its own, then those it carries. */
+const serviceEnvironment = (
+  manager: ServiceManager,
+  definition: ServiceDefinition,
+): ReadonlyArray<readonly [string, string]> => [
+  [SERVICE_VARIABLE, manager],
+  ...Object.entries(definition.environment),
+]
+
 const xml = (text: string): string =>
   text
     .replaceAll('&', '&amp;')
@@ -137,7 +166,7 @@ export const launchdPlist = (definition: ServiceDefinition): string =>
     `  ${xmlString(definition.home)}`,
     '  <key>EnvironmentVariables</key>',
     '  <dict>',
-    ...Object.entries(definition.environment).flatMap(([name, value]) => [
+    ...serviceEnvironment('launchd', definition).flatMap(([name, value]) => [
       `    <key>${xml(name)}</key>`,
       `    ${xmlString(value)}`,
     ]),
@@ -182,7 +211,7 @@ export const systemdUnit = (definition: ServiceDefinition): string =>
     'Type=simple',
     `ExecStart=${serviceCommand(definition).map(execWord).join(' ')}`,
     'WorkingDirectory=%h',
-    ...Object.entries(definition.environment).map(
+    ...serviceEnvironment('systemd', definition).map(
       ([name, value]) => `Environment=${unitQuoted(`${name}=${value}`)}`,
     ),
     'Restart=on-failure',

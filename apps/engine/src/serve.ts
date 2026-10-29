@@ -1,6 +1,6 @@
 import { Effect } from 'effect'
 
-import { Daemon, Update } from '@fabrica/engine'
+import { Daemon, LoginService, Update } from '@fabrica/engine'
 
 import { engineHost, hostFacts, hostPaths } from './host'
 import { version } from './version'
@@ -8,9 +8,11 @@ import { version } from './version'
 // `fabrica serve` (spec §19, §7.1, §9.2): runs the engine in the foreground, as the login service runs
 // it, until `fabrica engine stop`, `fabrica engine update` or SIGTERM. A second one on the machine exits,
 // saying an engine runs. Updated, the engine winds its runs down and ends its scope, releasing its lock,
-// and then starts the new release's `fabrica serve` in its place. `--listen <addr>` has it listen over
-// TLS too (§9.3), with the certificate `--listen-certificate` and `--listen-key` give, or its own; each
-// flag over the engine's setting of the same name.
+// and then starts the new release's `fabrica serve` in its place; run by the login service, it exits
+// instead, with the code its manager restarts it on, and the manager starts the new release from the
+// link the update switched. `--listen <addr>` has it listen over TLS too (§9.3), with the certificate
+// `--listen-certificate` and `--listen-key` give, or its own; each flag over the engine's setting of the
+// same name.
 
 export const serve = (flags: Daemon.ListenSettings) =>
   Effect.gen(function* () {
@@ -20,6 +22,7 @@ export const serve = (flags: Daemon.ListenSettings) =>
       engineHost(facts),
     ])
     const hostEnvironment = { ...process.env }
+    const service = LoginService.runningService(hostEnvironment)
     const end = yield* Daemon.serveEngine({
       paths,
       host,
@@ -33,7 +36,12 @@ export const serve = (flags: Daemon.ListenSettings) =>
     yield* Daemon.EngineEnd.$match(end, {
       Stop: () => Effect.void,
       Restart: ({ launcher }) =>
-        Update.relaunch({ launcher, cwd: facts.home, hostEnvironment }).pipe(
+        Update.restart({
+          launcher,
+          cwd: facts.home,
+          hostEnvironment,
+          service,
+        }).pipe(
           Effect.andThen(
             Effect.logInfo(`the engine restarts as ${launcher} serve`),
           ),
