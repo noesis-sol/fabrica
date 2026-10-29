@@ -17,14 +17,6 @@ import * as NodePath from 'node:path'
 
 import { NodeSocket } from '@effect/platform-node'
 import { describe, expect, it } from '@effect/vitest'
-import { make } from '@fabrica/client'
-import {
-  CertificateChanged,
-  type TlsEngine,
-  TokenRefused,
-  layerTls,
-  presentedFingerprint,
-} from '@fabrica/client/node'
 import {
   EngineHost,
   FabricaRpcs,
@@ -33,6 +25,15 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
+// The client by its sources, as the engine can't depend on the client, which depends on it.
+import { make } from '../../client/src'
+import {
+  CertificateChanged,
+  type TlsEngine,
+  TokenRefused,
+  layerTls,
+  presentedFingerprint,
+} from '../../client/src/node'
 import {
   type EnginePaths,
   type ListenSettings,

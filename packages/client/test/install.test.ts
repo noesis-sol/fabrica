@@ -303,6 +303,9 @@ const serveReleases = (root: string) =>
       }),
   )
 
+/** How long a test of the install has: each runs a dozen shells over the stub ssh, on a loaded machine. */
+const shellTime = 30_000
+
 layer(layerHosts)('the install over SSH', it => {
   it.effect(
     'a fresh install checks the host, places the engine, links fabrica and starts its service',
@@ -357,6 +360,7 @@ layer(layerHosts)('the install over SSH', it => {
           InstallPlan.cases.Current.make({ version: '0.1.0' }),
         )
       }),
+    shellTime,
   )
 
   it.effect(
@@ -426,6 +430,7 @@ layer(layerHosts)('the install over SSH', it => {
           '',
         ])
       }),
+    shellTime,
   )
 
   it.effect(
@@ -456,6 +461,7 @@ layer(layerHosts)('the install over SSH', it => {
         )
         expect(yield* listed(NodePath.join(host.home, '.local'))).toEqual([])
       }),
+    shellTime,
   )
 
   it.effect(
@@ -485,6 +491,7 @@ layer(layerHosts)('the install over SSH', it => {
         )
         expect(yield* listed(NodePath.join(host.home, '.local'))).toEqual([])
       }),
+    shellTime,
   )
 
   it.effect(
@@ -513,6 +520,7 @@ layer(layerHosts)('the install over SSH', it => {
           yield* listed(NodePath.join(host.home, '.local', 'bin')),
         ).toEqual([])
       }),
+    shellTime,
   )
 
   it.effect(
@@ -554,23 +562,27 @@ layer(layerHosts)('the install over SSH', it => {
         expect(served.asked.filter(path => path === archive)).toHaveLength(2)
         expect(yield* listed(stage)).toEqual([])
       }),
+    shellTime,
   )
 
-  it.effect("a host ssh can't sign in to fails the check, saying so", () =>
-    Effect.gen(function* () {
-      const host = yield* stubHost({ ...mac, sshRefuses: true })
-      const folder = yield* fixtureRelease({
-        version: '0.1.0',
-        targets: ['darwin-arm64'],
-      })
-      const failure = yield* onHost(host.shell)(
-        checkHost(folderSource(folder)),
-      ).pipe(Effect.flip)
-      expect(InstallFailure.$is('Unreachable')(failure)).toBe(true)
-      expect(
-        InstallFailure.$is('Unreachable')(failure) ? failure.reason : '',
-      ).toContain('ssh could not sign in to me@server-1')
-    }),
+  it.effect(
+    "a host ssh can't sign in to fails the check, saying so",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* stubHost({ ...mac, sshRefuses: true })
+        const folder = yield* fixtureRelease({
+          version: '0.1.0',
+          targets: ['darwin-arm64'],
+        })
+        const failure = yield* onHost(host.shell)(
+          checkHost(folderSource(folder)),
+        ).pipe(Effect.flip)
+        expect(InstallFailure.$is('Unreachable')(failure)).toBe(true)
+        expect(
+          InstallFailure.$is('Unreachable')(failure) ? failure.reason : '',
+        ).toContain('ssh could not sign in to me@server-1')
+      }),
+    shellTime,
   )
 })
 
