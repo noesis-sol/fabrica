@@ -371,6 +371,21 @@ describe('the key guard', () => {
         text: '',
       }),
     )
+    // While the maintainer's own words are typed, nothing is chosen for them.
+    const typing = sent(
+      passed.model,
+      attentionMessage(
+        Attention.Message.TypedAnswer({ key: questionKey, text: 'SQLite' }),
+      ),
+      received([changed]),
+    )
+    expect(typing.model.console.attention.open).toEqual(
+      Attention.Open.Answering({
+        key: questionKey,
+        chosen: Option.none(),
+        text: 'SQLite',
+      }),
+    )
     // The same request again, unchanged, keeps the guard passed.
     const same = sent(passed.model, received([question]))
     expect(commandsOf(same)).toEqual([])

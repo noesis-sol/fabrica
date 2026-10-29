@@ -556,7 +556,8 @@ const openKey = (open: Open): Option.Option<string> =>
  * The column kept in step with the requests the stream gives: what a card has open closes when its
  * request leaves the list (answered elsewhere, or the scope changed), and drawn options whose request
  * changed are drawn afresh, their guard started again and their choice made again from the new
- * request, so an option chosen before can't stand for another (§15.1, tutti-14o5).
+ * request (none while the maintainer's own words are typed), so an option chosen before can't stand
+ * for another (§15.1, tutti-14o5).
  */
 export const receivedRequests = (
   model: Model,
@@ -583,7 +584,10 @@ export const receivedRequests = (
                     Open.guards.Answering(open)
                       ? Open.Answering({
                           ...open,
-                          chosen: preselected(current),
+                          chosen:
+                            open.text.trim() === ''
+                              ? preselected(current)
+                              : Option.none(),
                         })
                       : open,
                 }),
