@@ -7,10 +7,12 @@ import {
 } from 'foldkit/html'
 
 import {
+  type AttentionRequest,
   MergeQueue,
   type Platform,
   type ProjectId,
   type TicketId,
+  type TicketRow,
 } from '@fabrica/contracts'
 
 import * as Attention from '../console/attention'
@@ -145,6 +147,16 @@ const runRole = (model: Model): Sidebar.Role =>
 const lazyAttention = createLazy()
 const lazyUpNext = createLazy()
 
+const noRequests: ReadonlyArray<AttentionRequest> = []
+
+/** Up next, memoised on the run view's ticket rows and attention requests, each the same value while unchanged. */
+const upNextView = (
+  upNext: UpNext.Model,
+  tickets: ReadonlyArray<TicketRow>,
+  attention: ReadonlyArray<AttentionRequest>,
+  h: HtmlBuilder<Message>,
+): Html => UpNext.view(upNext, { tickets, attention }, h)
+
 const panel =
   'flex flex-col overflow-hidden rounded-card border border-line bg-panel'
 const column = 'flex min-h-0 flex-col gap-8 overflow-auto'
@@ -239,7 +251,17 @@ const consoleView = (model: Model, h: HtmlBuilder<Message>): Html => {
               )
             : h.section(
                 [h.AriaLabel('Up next'), h.Class(column)],
-                [lazyUpNext(UpNext.view<Message>, [parts.upNext, h])],
+                [
+                  lazyUpNext(upNextView, [
+                    parts.upNext,
+                    run.tickets,
+                    Option.match(model.runView, {
+                      onNone: () => noRequests,
+                      onSome: runView => runView.attention,
+                    }),
+                    h,
+                  ]),
+                ],
               ),
         ],
       ),
