@@ -1,4 +1,5 @@
 import { Context, Effect, Layer, Option, Semaphore } from 'effect'
+import { SqlClient } from 'effect/sql'
 
 import { InsightsRpcs, type ProjectId } from '@fabrica/contracts'
 
@@ -13,10 +14,11 @@ import {
   readSummary,
   runNamedQuery,
 } from '../telemetry/queries'
-import { storeLayer as telemetryStoreLayer } from '../telemetry/store'
+import { TelemetryStore } from '../telemetry/store'
 
 // The Insights group's handlers (spec §8.1, §21): the summary and the named queries, over the query
-// layer's database. It is opened on the first request, not as the engine starts, so an engine whose
+// layer's database, on the daemon's telemetry store (`TelemetryStore`), the one its services record
+// into. The database is opened on the first request, not as the engine starts, so an engine whose
 // host can't load DuckDB still runs: each Insights request then answers a defect giving the reason,
 // kept to that request. A request reads the files of its project, or of every project where it names
 // none: each event stream and Pi's session files, found where they lie; it refreshes the copies of the
@@ -30,8 +32,8 @@ interface Place {
 }
 
 /** The Insights group's handlers, their database the one `database` gives, opened on the first request. */
-export const insightsHandlersOn = <E>(
-  database: (files: EnginePaths) => Layer.Layer<TelemetryDb, E>,
+export const insightsHandlersOn = <E, R>(
+  database: (files: EnginePaths) => Layer.Layer<TelemetryDb, E, R>,
 ) =>
   InsightsRpcs.toLayer(
     Effect.gen(function* () {
@@ -136,11 +138,13 @@ export const insightsHandlersOn = <E>(
     }),
   )
 
-/** The query layer's database at its place in the engine's data folder, on the telemetry rows' store. */
+/** The query layer's database at its place in the engine's data folder, on the daemon's telemetry store. */
 export const engineQueryLayer = (files: EnginePaths) =>
   telemetryDbLayer(files.telemetryQueries).pipe(
-    Layer.provide(telemetryStoreLayer(files.telemetry)),
+    Layer.provide(
+      Layer.effect(SqlClient.SqlClient, Effect.service(TelemetryStore)),
+    ),
   )
 
-/** The Insights group's handlers, on the engine's telemetry files. */
+/** The Insights group's handlers, on the engine's telemetry files and its store. */
 export const insightsHandlers = insightsHandlersOn(engineQueryLayer)

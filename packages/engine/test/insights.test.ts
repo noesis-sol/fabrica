@@ -36,7 +36,11 @@ import { Projects, WorkGraphUnopened } from '../src/projects/service'
 import { engineQueryLayer, insightsHandlersOn } from '../src/rpc/insights'
 import { eventsPath } from '../src/runlog'
 import { Telemetry, TelemetryRow, makeTelemetry } from '../src/telemetry'
-import { telemetryStoreLayer } from '../src/telemetry'
+import {
+  TelemetryStore,
+  telemetryLayer,
+  telemetryStoreLayer,
+} from '../src/telemetry'
 import {
   QueryLayerFailed,
   TelemetryDb,
@@ -1052,22 +1056,25 @@ describe('the Insights group', () => {
     })
   }
 
-  /** A client of the handlers, the engine's files in `data`, the project's checkout `checkout`. */
+  /**
+   * A client of the handlers, the engine's files in `data`, the project's checkout `checkout`, its
+   * telemetry store opened as the daemon opens it.
+   */
   const clientOf = (options: {
     readonly data: string
     readonly checkout: string
     readonly database?: (
       files: EnginePaths,
-    ) => Layer.Layer<TelemetryDb, unknown>
+    ) => Layer.Layer<TelemetryDb, unknown, TelemetryStore>
   }) =>
     Effect.gen(function* () {
+      const paths = pathsIn({ data: options.data, socketFolder: options.data })
       const services = yield* Layer.build(
         insightsHandlersOn(options.database ?? engineQueryLayer).pipe(
           Layer.provide(Layer.succeed(Projects)(projectsAt(options.checkout))),
+          Layer.provide(Layer.succeed(EngineFiles)(paths)),
           Layer.provide(
-            Layer.succeed(EngineFiles)(
-              pathsIn({ data: options.data, socketFolder: options.data }),
-            ),
+            telemetryLayer({ filename: paths.telemetry, retention }),
           ),
         ),
       )

@@ -30,6 +30,7 @@ export {
 export * from './service'
 export {
   type TelemetryOptions,
+  TelemetryStore,
   layer as telemetryLayer,
   makeTelemetry,
   storeLayer as telemetryStoreLayer,

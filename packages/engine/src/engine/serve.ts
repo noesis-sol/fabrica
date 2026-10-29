@@ -3,7 +3,12 @@ import type { SqlClient } from 'effect/sql'
 import * as NodePath from 'node:path'
 
 import type { SqliteClient } from '@effect/sql-sqlite-node'
-import { type ListenAddress, formatListenAddress } from '@fabrica/contracts'
+import {
+  type EngineSettings,
+  type ListenAddress,
+  decodeEngineSettings,
+  formatListenAddress,
+} from '@fabrica/contracts'
 
 import { Git, hostLayer as hostGitLayer } from '../git'
 import { Projects, layer as projectsLayer } from '../projects/service'
@@ -21,6 +26,7 @@ import {
   refusingTalkAgents,
   registeredModes,
 } from '../talks'
+import { Telemetry, TelemetryStore, telemetryLayer } from '../telemetry'
 import { Updater, layerRefusing } from '../update/service'
 import { engineDatabaseLayer, storedEngineSettings } from './database'
 import { acquireEngineLock } from './lock'
@@ -29,11 +35,12 @@ import { EngineScopes, engineScopesLayer } from './scopes'
 import { Engine, type EngineFacts, engineLayer } from './service'
 
 // The engine daemon (spec §7.1, §7.2, §8.2): `fabrica serve`. It makes its folders, takes the
-// single-instance lock (a second engine fails here, saying so), opens and migrates engine.db, and
-// serves the protocol on the local socket until it is asked to stop or its scope is interrupted
-// (SIGTERM). Its scope then ends in order: the engine says it is stopping, the runs wind down, then
-// the agents end, then the servers; then the projects' work graphs close, then the database, and the
-// lock goes last. Asked to restart into an update, it says so as it returns, for its caller to start
+// single-instance lock (a second engine fails here, saying so), opens and migrates engine.db and the
+// telemetry store (§21, kept as the engine's `telemetry.retention` says), and serves the protocol on
+// the local socket until it is asked to stop or its scope is interrupted (SIGTERM). Its scope then
+// ends in order: the engine says it is stopping, the runs wind down, then the agents end, then the
+// servers; then the projects' work graphs close, then the telemetry store, its open batch written,
+// then the database, and the lock goes last. Asked to restart into an update, it says so as it returns, for its caller to start
 // the new engine once the lock is released (§9.2). Where `fabrica serve --listen` or the engine's
 // `listen` setting gives an address, it listens there over TLS too (§9.3), with the certificate they
 // give or its own, the flags over the settings.
@@ -42,8 +49,10 @@ import { Engine, type EngineFacts, engineLayer } from './service'
  * The daemon's services, which every group's handler file may use as it builds its handlers and the
  * service layers it provides itself: the Engine, its lifetimes (a run's resources go in
  * `EngineScopes.runs`), its files, engine.db (`SqlClient`), whose tables their groups' handlers
- * read and write, its Git, its projects with their work graphs, its Updater, and its talks' agents
- * and modes. A handler file that needs another service provides it in its own file.
+ * read and write, its Git, its projects with their work graphs, its Updater, its talks' agents
+ * and modes, and its Telemetry, which records rows, with the store they are recorded in
+ * (`TelemetryStore`) for what reads them. A handler file that needs another service provides it in
+ * its own file.
  */
 export type DaemonServices =
   | Engine
@@ -57,6 +66,8 @@ export type DaemonServices =
   | PairingTokens
   | TalkAgents
   | TalkModes
+  | Telemetry
+  | TelemetryStore
 
 /** The TLS listener's settings (§9.3), as the engine's settings and `fabrica serve`'s flags name them. */
 export interface ListenSettings {
@@ -88,33 +99,26 @@ export interface ServeOptions extends EngineFacts {
   readonly talks?: Layer.Layer<TalkAgents | TalkModes>
 }
 
-/** The listener's settings: each flag given, else the engine's setting; none from settings that don't decode. */
-const listenSettings = Effect.fn('Engine.listenSettings')(function* (
+/** The engine's settings as it starts: as stored, or its defaults where they don't decode, saying so. */
+const startingSettings = storedEngineSettings().pipe(
+  Effect.catchTag('StoredSettingsInvalid', error =>
+    Effect.logWarning(
+      `the engine starts on its default settings: ${error.message}`,
+    ).pipe(Effect.andThen(Effect.orDie(decodeEngineSettings({})))),
+  ),
+)
+
+/** The listener's settings: each flag given, else the engine's setting. */
+const listenSettings = (
   flags: ListenSettings,
-) {
-  const stored = yield* storedEngineSettings().pipe(
-    Effect.map((settings): ListenSettings => ({
-      listen: settings.listen,
-      listen_certificate: settings.listen_certificate,
-      listen_key: settings.listen_key,
-    })),
-    Effect.catchTag('StoredSettingsInvalid', error =>
-      Effect.as(
-        Effect.logWarning(
-          `the TLS listener's settings weren't read: ${error.message}`,
-        ),
-        noListen,
-      ),
-    ),
-  )
-  return {
-    listen: Option.orElse(flags.listen, () => stored.listen),
-    listen_certificate: Option.orElse(
-      flags.listen_certificate,
-      () => stored.listen_certificate,
-    ),
-    listen_key: Option.orElse(flags.listen_key, () => stored.listen_key),
-  } satisfies ListenSettings
+  settings: EngineSettings,
+): ListenSettings => ({
+  listen: Option.orElse(flags.listen, () => settings.listen),
+  listen_certificate: Option.orElse(
+    flags.listen_certificate,
+    () => settings.listen_certificate,
+  ),
+  listen_key: Option.orElse(flags.listen_key, () => settings.listen_key),
 })
 
 /**
@@ -159,6 +163,14 @@ export const startEngine = Effect.fn('Engine.start')(function* (
     engineDatabaseLayer(options.paths.database),
   )
   const files = Context.make(EngineFiles, options.paths)
+  const settings = yield* startingSettings.pipe(Effect.provide(database))
+  // Built before the projects, so it closes after the work graphs and everything that records rows.
+  const telemetry = yield* Layer.build(
+    telemetryLayer({
+      filename: options.paths.telemetry,
+      retention: settings.telemetry.retention,
+    }),
+  )
   const git = yield* Layer.build(options.git ?? hostGitLayer)
   // Built before the scopes, so the work graphs close after the runs, the agents and the servers.
   const projects = yield* Layer.build(projectsLayer).pipe(
@@ -169,9 +181,7 @@ export const startEngine = Effect.fn('Engine.start')(function* (
   const tokens = yield* Layer.build(pairingTokensLayer).pipe(
     Effect.provide(database),
   )
-  const listen = yield* listenSettings(options.listen ?? noListen).pipe(
-    Effect.provide(database),
-  )
+  const listen = listenSettings(options.listen ?? noListen, settings)
   const listener = yield* Effect.transposeOption(
     Option.map(listen.listen, address =>
       listenerCertificate(options.paths, listen).pipe(
@@ -202,6 +212,7 @@ export const startEngine = Effect.fn('Engine.start')(function* (
     updater,
     tokens,
     talks,
+    telemetry,
   )
   yield* Layer.buildWithScope(
     localRpcServer(

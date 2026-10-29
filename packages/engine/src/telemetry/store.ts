@@ -205,10 +205,28 @@ export const makeTelemetry = Effect.fn('Telemetry.make')(function* (
   return Telemetry.of({ record, flush })
 })
 
-/** Telemetry on the engine's store at `filename`, migrated on opening. */
+/**
+ * The telemetry store's SQL client, for what reads the recorded rows (the query layer): never
+ * engine.db's, which is the daemon's `SqlClient`.
+ */
+export class TelemetryStore extends Context.Service<
+  TelemetryStore,
+  SqlClient.SqlClient
+>()('@fabrica/engine/TelemetryStore') {}
+
+/**
+ * Telemetry on the engine's store at `filename`, migrated on opening, and the store for its readers:
+ * one connection, whose open batch is written as the layer's scope closes, before the store closes.
+ */
 export const layer = (
   options: TelemetryOptions & { readonly filename: string },
 ) =>
-  Layer.effect(Telemetry, makeTelemetry(options)).pipe(
-    Layer.provide(storeLayer(options.filename)),
-  )
+  Layer.effectContext(
+    Effect.gen(function* () {
+      const telemetry = yield* makeTelemetry(options)
+      const sql = yield* SqlClient.SqlClient
+      return Context.make(Telemetry, telemetry).pipe(
+        Context.add(TelemetryStore, sql),
+      )
+    }),
+  ).pipe(Layer.provide(storeLayer(options.filename)))
