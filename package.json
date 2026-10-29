@@ -11,12 +11,13 @@
     "pnpm": "12.16.1"
   },
   "scripts": {
-    "typecheck": "pnpm --recursive --workspace-concurrency=${FABRICA_CORES:-4} run typecheck",
-    "typecheck:tsc": "pnpm --recursive --workspace-concurrency=${FABRICA_CORES:-4} run typecheck:tsc",
+    "typecheck": "pnpm --recursive --workspace-concurrency=${FABRICA_CORES:-4} run typecheck && tsgo --noEmit -p scripts/tsconfig.json",
+    "typecheck:tsc": "pnpm --recursive --workspace-concurrency=${FABRICA_CORES:-4} run typecheck:tsc && tsc --noEmit -p scripts/tsconfig.json",
     "lint": "oxlint --deny-warnings",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "test": "vitest run",
+    "check:own": "node scripts/check-own.ts",
     "build": "pnpm --recursive --workspace-concurrency=${FABRICA_CORES:-4} run build"
   },
   "devDependencies": {

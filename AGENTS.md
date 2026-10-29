@@ -137,6 +137,8 @@ mise install                    # Node and pnpm, as mise.toml pins them
 pnpm install --frozen-lockfile  # dependencies, exactly as pnpm-lock.yaml has them
 scripts/check-fast.sh           # type check (tsgo), lint (oxlint), format check (oxfmt), unit tests (Vitest)
 scripts/check-full.sh           # the fast check, then every package's build, electron-vite's included
+pnpm check:own                  # your change's check: its packages' type checks, lint and format on the
+                                # changed files, the tests its import graph reaches; a pass kept by tree
 ```
 
 Both check scripts run under mise's toolchain when mise is installed, run every suite, and fail when any

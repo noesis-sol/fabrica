@@ -7,7 +7,11 @@ const cores = Number.parseInt(process.env['FABRICA_CORES'] ?? '', 10)
 
 export default defineConfig({
   test: {
-    projects: ['apps/*/vitest.config.ts', 'packages/*/vitest.config.ts'],
+    projects: [
+      'apps/*/vitest.config.ts',
+      'packages/*/vitest.config.ts',
+      'scripts/vitest.config.ts',
+    ],
     maxWorkers:
       cores > 0 ? cores : Math.max(1, Math.floor(availableParallelism() / 2)),
     passWithNoTests: true,
