@@ -21,11 +21,14 @@ import {
   RebaseOutcome,
 } from './outcomes'
 import {
+  CHECK_ATTR_SOURCE_GIT,
   type CheckoutPlace,
   MINIMUM_GIT,
   type WorktreeEntry,
   type WorktreeStatus,
+  gitAtLeast,
   nulList,
+  parseCheckAttr,
   parseCheckoutPlace,
   parseDiff,
   parseGitVersion,
@@ -104,6 +107,16 @@ export interface GitShape {
     readonly repo: string
     readonly revision: string
   }) => Effect.Effect<ReadonlyArray<string>, CantTell>
+  /**
+   * The files tracked at `revision` that git merges by union, their `merge` attribute `union`
+   * (`merge=union` in `.gitattributes`), as paths from the repository's root (spec §13.4). The
+   * attributes are `revision`'s own where git reads them from a tree (2.40, `check-attr --source`);
+   * an older git reads them as they are checked out in `repo`'s worktree.
+   */
+  readonly unionMerged: (input: {
+    readonly repo: string
+    readonly revision: string
+  }) => Effect.Effect<ReadonlyArray<string>, CantTell>
   /** The repository's worktrees, its main one first. */
   readonly worktrees: (input: {
     readonly repo: string
@@ -171,6 +184,29 @@ export class Git extends Context.Service<Git, GitShape>()(
 ) {}
 
 const MINIMUM = `${MINIMUM_GIT.major}.${MINIMUM_GIT.minor}`
+
+/** The most bytes of paths one command takes as arguments, well under any system's limit. */
+const ARGUMENT_BYTES = 64 * 1024
+
+/** `paths` in batches of at most `ARGUMENT_BYTES` each, one command's arguments a batch. */
+const argumentBatches = (
+  paths: ReadonlyArray<string>,
+): ReadonlyArray<ReadonlyArray<string>> => {
+  const batches: Array<Array<string>> = []
+  let bytes = ARGUMENT_BYTES
+  for (const path of paths) {
+    const size = Buffer.byteLength(path) + 1
+    const last = batches.at(-1)
+    if (last === undefined || bytes + size > ARGUMENT_BYTES) {
+      batches.push([path])
+      bytes = size
+    } else {
+      last.push(path)
+      bytes += size
+    }
+  }
+  return batches
+}
 
 export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
   const runner = yield* ProcessRunner
@@ -555,6 +591,50 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     )
   })
 
+  /** The top folder of `repo`'s worktree, where `check-attr` reads paths from the repository's root. */
+  const topOf = (name: string, repo: string) =>
+    readExit(name, { cwd: repo, args: ['rev-parse', '--show-cdup'] }, exit =>
+      exit.code === 0
+        ? Option.some(resolve(repo, exit.stdout.trim()))
+        : Option.none(),
+    )
+
+  const unionMerged = Effect.fn('Git.unionMerged')(function* ({
+    repo,
+    revision,
+  }: {
+    readonly repo: string
+    readonly revision: string
+  }) {
+    const [files, top, git] = yield* Effect.all(
+      [trackedFiles({ repo, revision }), topOf('unionMerged', repo), version],
+      { concurrency: 'unbounded' },
+    )
+    const source =
+      GitVersion.$is('Supported')(git) &&
+      gitAtLeast(git.version, CHECK_ATTR_SOURCE_GIT)
+        ? [`--source=${revision}`]
+        : []
+    const unioned = yield* Effect.forEach(argumentBatches(files), paths =>
+      readExit(
+        'unionMerged',
+        {
+          cwd: top,
+          args: ['check-attr', '-z', ...source, 'merge', '--', ...paths],
+        },
+        exit =>
+          exit.code === 0
+            ? Option.map(parseCheckAttr(exit.stdout, 'merge'), values =>
+                values.flatMap(({ path, value }) =>
+                  value === 'union' ? [path] : [],
+                ),
+              )
+            : Option.none(),
+      ),
+    )
+    return unioned.flat()
+  })
+
   const worktrees = Effect.fn('Git.worktrees')(function* ({
     repo,
   }: {
@@ -871,6 +951,7 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     changedFiles,
     diff,
     trackedFiles,
+    unionMerged,
     worktrees,
     rebase,
     abortRebase,

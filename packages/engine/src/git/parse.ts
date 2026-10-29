@@ -224,16 +224,55 @@ export const parseWorktrees = (
 /** The oldest git the engine runs (spec §13.1, H85): `worktree list -z`, `merge-tree --write-tree`. */
 export const MINIMUM_GIT = { major: 2, minor: 38 } as const
 
+/** The first git whose `check-attr` reads attributes from a tree, `--source` (2.40). */
+export const CHECK_ATTR_SOURCE_GIT = { major: 2, minor: 40 } as const
+
+/** Whether `version`, as `git version` gives it (`2.54.0`), is `minimum` or later; false when it reads as none. */
+export const gitAtLeast = (
+  version: string,
+  minimum: { readonly major: number; readonly minor: number },
+): boolean => {
+  const match = /^(\d+)\.(\d+)/u.exec(version)
+  if (match === null) return false
+  const [major, minor] = [Number(match[1]), Number(match[2])]
+  return (
+    major > minimum.major || (major === minimum.major && minor >= minimum.minor)
+  )
+}
+
 /** `git version`'s answer: its version, and whether it is `MINIMUM_GIT` or later; none when it isn't one. */
 export const parseGitVersion = (
   output: string,
 ): Option.Option<{ readonly version: string; readonly supported: boolean }> => {
-  const match = /^git version ((\d+)\.(\d+)\S*)/u.exec(output.trim())
+  const match = /^git version (\d+\.\d+\S*)/u.exec(output.trim())
   if (match === null) return Option.none()
-  const [, version = '', major = '', minor = ''] = match
-  const [majorNumber, minorNumber] = [Number(major), Number(minor)]
-  const supported =
-    majorNumber > MINIMUM_GIT.major ||
-    (majorNumber === MINIMUM_GIT.major && minorNumber >= MINIMUM_GIT.minor)
-  return Option.some({ version, supported })
+  const [, version = ''] = match
+  return Option.some({ version, supported: gitAtLeast(version, MINIMUM_GIT) })
+}
+
+/** A file's value of one attribute, as `git check-attr` gives it. */
+export interface AttributeValue {
+  readonly path: string
+  /** `set`, `unset`, `unspecified`, or the value as written (`union` for `merge=union`). */
+  readonly value: string
+}
+
+/**
+ * `git check-attr -z <attribute>`: each entry `<path>\0<attribute>\0<value>\0`. Output in another
+ * shape, or naming another attribute, is none.
+ */
+export const parseCheckAttr = (
+  output: string,
+  attribute: string,
+): Option.Option<ReadonlyArray<AttributeValue>> => {
+  if (output === '') return Option.some([])
+  const fields = output.split('\0')
+  if (fields.pop() !== '' || fields.length % 3 !== 0) return Option.none()
+  const values: Array<AttributeValue> = []
+  for (let at = 0; at < fields.length; at += 3) {
+    const [path = '', named, value = ''] = fields.slice(at, at + 3)
+    if (path === '' || named !== attribute) return Option.none()
+    values.push({ path, value })
+  }
+  return Option.some(values)
 }
