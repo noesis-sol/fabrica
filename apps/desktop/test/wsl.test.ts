@@ -127,7 +127,10 @@ describe('the WSL2 host in main', () => {
             `-d Ubuntu --exec sh -c ${holdScript} sh 30 60`,
           ])
           // The connection process runs the bridge, failing the connection with why it ended.
-          const socket = yield* engineSocket(target, { env })
+          const socket = yield* engineSocket(target, {
+            env,
+            askpass: Option.none(),
+          })
           const failed = yield* Effect.flip(
             Effect.flatMap(socket.reader, reader => reader.pull),
           )

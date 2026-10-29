@@ -6,6 +6,7 @@ import {
   EngineHost,
   type InstallAnswer,
   InstallConsent,
+  SshPromptAnswer,
 } from '@fabrica/client'
 import type { ReleaseVersion } from '@fabrica/contracts'
 import type { ServiceInstall } from '@fabrica/ui/host'
@@ -38,6 +39,8 @@ export interface MainActions {
     readonly host: EngineHost
     readonly consent: InstallConsent
   }) => Promise<InstallAnswer>
+  /** The page's answer to what ssh asked (spec §9.1), for the connection process. */
+  readonly answerSshPrompt: (answer: SshPromptAnswer) => void
 }
 
 /** The part of `ipcMain` main uses; each listener gets the sending frame's URL (none once it has gone) and the values. */
@@ -75,6 +78,9 @@ const decodeNotification = Schema.decodeUnknownOption(
 const decodeCheck = Schema.decodeUnknownOption(Schema.Tuple([EngineHost]))
 const decodeInstall = Schema.decodeUnknownOption(
   Schema.Tuple([EngineHost, InstallConsent]),
+)
+const decodeSshAnswer = Schema.decodeUnknownOption(
+  Schema.Tuple([SshPromptAnswer]),
 )
 
 /** Registers `actions` on `ipc`, for messages from frames whose URL `trusted` takes. */
@@ -117,6 +123,11 @@ export const registerIpc = ({
       actions.notify(notification),
     )
   })
+  onSend(channels.answerSshPrompt, values => {
+    Option.map(decodeSshAnswer(values), ([answer]) =>
+      actions.answerSshPrompt(answer),
+    )
+  })
 
   /** Answers requests on `channel` from the app's page whose values `decode` takes. */
   const onRequest = <A>(
@@ -149,6 +160,10 @@ export const registerIpc = ({
     actions.installEngine({ host, consent }),
   )
 }
+
+/** Tells the page in `contents` that ssh asked something, or withdrew it, encoded as the preload decodes it. */
+export const sendSshPrompt = (contents: WebContents, event: unknown): void =>
+  contents.send(channels.sshPrompt, event)
 
 /** Hands the page in `contents` an engine port, which the preload passes on as a window message. */
 export const sendEnginePort = (

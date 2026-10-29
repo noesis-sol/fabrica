@@ -11,7 +11,7 @@ import { engineSocket } from '../src/connection/transports'
 
 // The connection process's SSH target (spec §8.2, §9.1): a page's connection to an engine an SSH
 // destination names runs ssh, through a stub that records its arguments and answers as OpenSSH does for
-// a host `known_hosts` doesn't know. ssh asks nothing in the connection process yet.
+// a host `known_hosts` doesn't know. Where main names no Node for the askpass helper, ssh asks nothing.
 
 const toolbox = layerToolbox({
   stubs: {
@@ -36,6 +36,7 @@ describe('the SSH target', () => {
         })
         const socket = yield* engineSocket(target, {
           env: { ...tools.env({ STUB_DIR: dir }), UNSET: undefined },
+          askpass: Option.none(),
         })
         const failed = yield* Effect.flip(
           Effect.flatMap(socket.reader, reader => reader.pull),

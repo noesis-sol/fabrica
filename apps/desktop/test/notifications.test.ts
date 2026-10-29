@@ -262,6 +262,7 @@ describe('main’s end of notify', () => {
         Promise.resolve({ _tag: 'Failed', reason: 'not this test’s' }),
       installEngine: () =>
         Promise.resolve({ _tag: 'Failed', reason: 'not this test’s' }),
+      answerSshPrompt: () => undefined,
     }
     registerIpc({ ipc, trusted: url => url === app, actions })
     const send = (sender: string | undefined, ...values: Array<unknown>) =>

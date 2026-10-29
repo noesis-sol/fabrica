@@ -9,6 +9,7 @@
     "src/main/wsl.ts",
     "test/connection.test.ts",
     "test/connection-ssh.test.ts",
+    "test/connection-prompts.test.ts",
     "test/wsl.test.ts"
   ]
 }

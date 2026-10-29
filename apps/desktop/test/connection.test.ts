@@ -52,7 +52,7 @@ import { tempFolder } from '@fabrica/testkit'
 import { mainPortEnd } from '../src/connection/port'
 import { relay } from '../src/connection/relay'
 import { ConnectionTarget } from '../src/connection/target'
-import { engineSocket } from '../src/connection/transports'
+import { engineSocket, refusalOf } from '../src/connection/transports'
 import {
   type BrokeredPage,
   type ConnectionProcess,
@@ -229,7 +229,8 @@ const runRelay = (relayEnd: MessagePort, target: ConnectionTarget) =>
   Effect.forkScoped(
     relay({
       port: webPortEnd(relayEnd),
-      engine: engineSocket(target, { env: {} }),
+      engine: engineSocket(target, { env: {}, askpass: Option.none() }),
+      refusal: refusalOf,
     }),
   )
 
@@ -567,6 +568,7 @@ describe('main’s brokering', () => {
         spawned.push({ relayed, exit: onExit })
         const child: ConnectionProcess<string> = {
           relay: (to, port) => relayed.push([to, port]),
+          post: () => undefined,
         }
         return child
       },

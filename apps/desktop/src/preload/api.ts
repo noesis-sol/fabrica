@@ -5,6 +5,10 @@ import {
   EngineHost,
   InstallAnswer,
   InstallConsent,
+  SshPromptAnswer,
+  SshPromptEvent,
+  type SshPromptsApi,
+  sshPromptsMember,
 } from '@fabrica/client'
 import { ReleaseVersion } from '@fabrica/contracts'
 import {
@@ -26,8 +30,8 @@ import { Theme } from '@fabrica/ui/theme'
 // the preload, from the page and from main, and by main, from the preload. The window controls, the
 // folder picker, the app's version, the update status, the system notifications and their clicks
 // (§18.5), installing the local engine's login service, checking a host for an engine and installing it
-// there (§9.2), and the engine port, which the preload hands to the page as a window message
-// (contextBridge can't carry a MessagePort).
+// there (§9.2), what ssh asks as it connects and the page's answers (§9.1), and the engine port, which
+// the preload hands to the page as a window message (contextBridge can't carry a MessagePort).
 
 /** The IPC channels between main and the preload, each named once. */
 export const channels = {
@@ -44,6 +48,8 @@ export const channels = {
   installLoginService: 'fabrica:install-login-service',
   checkEngine: 'fabrica:check-engine',
   installEngine: 'fabrica:install-engine',
+  sshPrompt: 'fabrica:ssh-prompt',
+  answerSshPrompt: 'fabrica:ssh-prompt-answer',
   enginePort: 'fabrica:engine-port',
 } as const
 
@@ -102,6 +108,8 @@ export interface FabricaApi {
     host: EngineHost,
     consent: InstallConsent,
   ) => Promise<InstallAnswer>
+  /** What ssh asks as the app connects, and the page's answers (spec §9.1). */
+  readonly [sshPromptsMember]: SshPromptsApi
 }
 
 /** The part of `ipcRenderer` the API uses; a listener gets a message's value and the ports it carries. */
@@ -130,6 +138,11 @@ const decodeEngineHost = Schema.decodeUnknownSync(EngineHost)
 const decodeConsent = Schema.decodeUnknownSync(InstallConsent)
 const decodeCheckAnswer = Schema.decodeUnknownSync(CheckAnswer)
 const decodeInstallAnswer = Schema.decodeUnknownSync(InstallAnswer)
+// A prompt crosses to the page encoded (contextBridge copies plain values only), and the page decodes it.
+const decodeSshEventOption = Schema.decodeUnknownOption(SshPromptEvent)
+const encodeSshEvent = Schema.encodeSync(SshPromptEvent)
+const decodeSshAnswer = Schema.decodeUnknownSync(SshPromptAnswer)
+const encodeSshAnswer = Schema.encodeSync(SshPromptAnswer)
 
 /** The API over `ipc`: what the page passes is decoded before it is sent, what main answers before the page sees it. */
 export const makeApi = (ipc: PreloadIpc): FabricaApi => ({
@@ -172,6 +185,19 @@ export const makeApi = (ipc: PreloadIpc): FabricaApi => ({
         ),
       )
       .then(decodeInstallAnswer),
+  [sshPromptsMember]: {
+    onEvent: listener =>
+      ipc.on(channels.sshPrompt, value => {
+        Option.map(decodeSshEventOption(value), event =>
+          listener(encodeSshEvent(event)),
+        )
+      }),
+    answer: answer =>
+      ipc.send(
+        channels.answerSshPrompt,
+        encodeSshAnswer(decodeSshAnswer(answer)),
+      ),
+  },
 })
 
 /** Hands the page each engine port main sends, as a window message of type `fabrica:engine-port`. */

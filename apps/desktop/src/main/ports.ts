@@ -22,6 +22,8 @@ export const localTarget = (host: HostPlaces): ConnectionTarget =>
 export interface ConnectionProcess<Port> {
   /** Hands it one end of a page's port, with the engine to relay it to. */
   readonly relay: (target: ConnectionTarget, port: Port) => void
+  /** Hands it a message without a port: the page's answer to what its ssh asked. */
+  readonly post: (message: unknown) => void
 }
 
 /** A page, as the broker sees it. */
@@ -45,7 +47,10 @@ export interface BrokerHost<Port> {
   readonly target: ConnectionTarget
 }
 
-/** The broker: `attach` gives a page a port at each of its loads, until it has gone. */
+/**
+ * The broker: `attach` gives a page a port at each of its loads, until it has gone; `post` reaches the
+ * connection process running.
+ */
 export const makeBroker = <Port>(host: BrokerHost<Port>) => {
   let child: Option.Option<ConnectionProcess<Port>> = Option.none()
   const pages = new Set<BrokeredPage<Port>>()
@@ -71,6 +76,10 @@ export const makeBroker = <Port>(host: BrokerHost<Port>) => {
   }
 
   return {
+    /** Hands the connection process `message` while it runs; nothing once it has exited. */
+    post: (message: unknown): void => {
+      Option.map(child, running => running.post(message))
+    },
     attach: (page: BrokeredPage<Port>): void => {
       page.onLoad(() => {
         pages.add(page)

@@ -15,9 +15,17 @@ import {
 // app and `fabrica bridge` agree on when an engine answers. A development build bundles no engine:
 // it reaches one the developer started, and starts none.
 
-/** The engine distribution a packaged app bundles: unpacked under its resources, as `engine/` (§22.2). */
+/** A part of the engine distribution a packaged app bundles: unpacked under its resources, as `engine/` (§22.2). */
+const bundledPart = (resources: string, part: string): string =>
+  NodePath.join(resources, 'engine', part)
+
+/** The bundled distribution's `fabrica`. */
 export const bundledLauncher = (resources: string): string =>
-  NodePath.join(resources, 'engine', DISTRIBUTION_LAYOUT.launcher)
+  bundledPart(resources, DISTRIBUTION_LAYOUT.launcher)
+
+/** The bundled distribution's Node. */
+export const bundledNode = (resources: string): string =>
+  bundledPart(resources, DISTRIBUTION_LAYOUT.node)
 
 export interface LocalEngineOptions {
   /** The local engine's socket (§8.2). */

@@ -30,11 +30,12 @@ import { ServiceInstall } from '@fabrica/ui/host'
 import { type Theme, defaultTheme } from '@fabrica/ui/theme'
 import { windowColours } from '@fabrica/ui/window-colours'
 
+import { askpassArguments } from '../connection/askpass'
 import { definedOf } from '../connection/env'
 import { ConnectionTarget } from '../connection/target'
 import { FolderPick, UpdateStatus, channels } from '../preload/api'
 import { checkEngineOn, engineSource, installEngineOn } from './engine-install'
-import { type MainIpc, registerIpc, sendEnginePort } from './ipc'
+import { type MainIpc, registerIpc, sendEnginePort, sendSshPrompt } from './ipc'
 import { keptTheme, makeThemeKeeper } from './keptTheme'
 import {
   bundledLauncher,
@@ -45,6 +46,7 @@ import { AppPage, isAppUrl } from './navigation'
 import { makeNotifications } from './notifications'
 import { type BrokeredPage, localTarget, makeBroker } from './ports'
 import { guardPermissions, guardWebContents } from './security'
+import { askpassNode, makePromptDesk } from './ssh-prompts'
 import { makeUpdateStatusCell } from './updateStatus'
 import {
   UpdateChannel,
@@ -62,8 +64,9 @@ import {
 } from './window'
 
 // Electron main (spec §5): the window, its title bar and its confinement, the preload's API, the
-// connection process, to which it brokers each page's engine port, and the local engine, started at
-// launch when none answers (§7.1). It runs no orchestration and stays out of the data path.
+// connection process, to which it brokers each page's engine port and whose ssh prompts it asks the
+// page (§9.1), and the local engine, started at launch when none answers (§7.1). It runs no
+// orchestration and stays out of the data path.
 
 const preload = fileURLToPath(new URL('../preload/index.cjs', import.meta.url))
 const connectionProcess = fileURLToPath(
@@ -151,11 +154,36 @@ const installEngine = (request: {
     ),
   )
 
+const promptDesk = makePromptDesk({
+  // The broker and the window are made below; the desk reaches them once the connection process asks.
+  toPage: event =>
+    Option.map(Option.fromUndefinedOr(appWindow.current()), window =>
+      sendSshPrompt(window.webContents, event),
+    ),
+  toConnection: answer => broker.post(answer),
+})
+
 const broker = makeBroker<MessagePortMain>({
   spawn: onExit => {
-    const child = utilityProcess.fork(connectionProcess)
-    child.once('exit', onExit)
-    return { relay: (target, port) => child.postMessage(target, [port]) }
+    const child = utilityProcess.fork(
+      connectionProcess,
+      askpassArguments(
+        askpassNode({
+          platform: process.platform,
+          packaged: app.isPackaged,
+          resources: process.resourcesPath,
+        }),
+      ),
+    )
+    child.on('message', promptDesk.fromConnection)
+    child.once('exit', () => {
+      promptDesk.connectionGone()
+      onExit()
+    })
+    return {
+      relay: (target, port) => child.postMessage(target, [port]),
+      post: message => child.postMessage(message),
+    }
   },
   afterExit: restart => {
     setTimeout(restart, connectionRestartPause)
@@ -236,6 +264,7 @@ const makeAppWindow = () => {
       }),
     )
     window.once('ready-to-show', () => window.show())
+    window.webContents.on('did-finish-load', promptDesk.pageLoaded)
     broker.attach(brokeredPage(window.webContents))
     const stopUpdates = updateStatus.subscribe(status =>
       window.webContents.send(channels.updateStatusChanged, status),
@@ -394,6 +423,7 @@ if (!app.requestSingleInstanceLock()) {
       installLoginService: installService,
       checkEngine,
       installEngine,
+      answerSshPrompt: promptDesk.answer,
     },
   })
 

@@ -46,3 +46,16 @@ export const SshPromptAnswer = Schema.Struct({
   answer: SshAnswer,
 })
 export type SshPromptAnswer = typeof SshPromptAnswer.Type
+
+/** The prompts as the desktop app's preload hands them to the page: `window.fabrica.sshPrompts`. */
+export interface SshPromptsApi {
+  /** Calls `listener` with each prompt asked or withdrawn, encoded; the function returned stops it. */
+  readonly onEvent: (
+    listener: (event: typeof SshPromptEvent.Encoded) => void,
+  ) => () => void
+  /** Answers a prompt the page was asked. */
+  readonly answer: (answer: typeof SshPromptAnswer.Encoded) => void
+}
+
+/** The `window.fabrica` member the preload exposes the prompts as. */
+export const sshPromptsMember = 'sshPrompts'
