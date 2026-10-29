@@ -8992,6 +8992,33 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
     },
     {
       "error": {
+        "$ref": "#/$defs/ProjectNotFoundEncoded",
+      },
+      "group": "backlog",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "project": {
+            "pattern": "^\\S+$",
+            "type": "string",
+          },
+        },
+        "required": [
+          "project",
+        ],
+        "type": "object",
+      },
+      "stream": false,
+      "success": {
+        "items": {
+          "$ref": "#/$defs/EdgeEncoded",
+        },
+        "type": "array",
+      },
+      "tag": "tickets.edges",
+    },
+    {
+      "error": {
         "anyOf": [
           {
             "$ref": "#/$defs/ProjectNotFoundEncoded",

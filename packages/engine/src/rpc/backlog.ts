@@ -424,6 +424,15 @@ export const makeBacklogHandlers = Effect.gen(function* () {
     return whyOf(reasons)
   })
 
+  const edges = Effect.fn('Backlog.edges')(function* ({
+    project,
+  }: {
+    readonly project: ProjectId
+  }) {
+    const graph = yield* graphOf(project)
+    return yield* graph.edges().pipe(Effect.orDie)
+  })
+
   /** A backlog stream for `graph`: subscribed to its changes before its tickets are read, so none is missed. */
   const startFeed = (project: ProjectId, graph: WorkGraphShape) =>
     Effect.gen(function* () {
@@ -533,6 +542,7 @@ export const makeBacklogHandlers = Effect.gen(function* () {
     'tickets.note': note,
     'tickets.ready': ready,
     'tickets.why': why,
+    'tickets.edges': edges,
     'tickets.import': importBeads,
     'tickets.watch': watch,
   })

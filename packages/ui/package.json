@@ -25,6 +25,8 @@
     "@fabrica/client": "workspace:*",
     "@fabrica/contracts": "workspace:*",
     "@foldkit/ui": "0.169.0",
+    "cytoscape": "3.34.4",
+    "cytoscape-dagre": "4.0.1",
     "effect": "4.0.0",
     "foldkit": "0.169.0",
     "monaco-editor": "0.57.0"

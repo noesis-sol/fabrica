@@ -7,12 +7,14 @@ import {
   type NoRun,
   ProjectId,
   RunId,
+  type Ticket,
 } from '@fabrica/contracts'
 
 import * as Attention from '../console/attention'
 import * as History from '../console/history'
 import * as Sidebar from '../console/sidebar'
 import * as Stats from '../console/stats'
+import * as Backlog from '../screens/backlog'
 import * as Engines from '../screens/engines'
 import * as Review from '../screens/review'
 import * as Settings from '../screens/settings'
@@ -310,10 +312,52 @@ const openSettings = (model: Model): Return => {
   }
 }
 
+const foldBacklog = Update.foldChild({
+  update: Backlog.update,
+  read: (model: Model) => Option.some(model.screens.backlog),
+  write: (model: Model, backlog: Backlog.Model) =>
+    modifyFields(model, {
+      screens: screens => modifyFields(screens, { backlog: () => backlog }),
+    }),
+  toParentMessage: (message: Backlog.Message) =>
+    Message.GotBacklogMessage({ message }),
+})
+
+/** The Backlog screen as it opens or its project changes: nothing of another backlog kept. */
+const openBacklog = (model: Model): Model =>
+  modifyFields(model, {
+    screens: screens => modifyFields(screens, { backlog: Backlog.opened }),
+  })
+
+/** The Backlog screen told of its project's tickets, and what it asks of them lifted. */
+const tellBacklog = (
+  model: Model,
+  project: ProjectId,
+  tickets: Option.Option<ReadonlyArray<Ticket>>,
+): Return =>
+  Option.match(tickets, {
+    onNone: () => ({ model }),
+    onSome: tickets => {
+      const told = Backlog.receivedBacklog(model.screens.backlog, {
+        project,
+        tickets,
+      })
+      return {
+        model: modifyFields(model, {
+          screens: screens =>
+            modifyFields(screens, { backlog: () => told.model }),
+        }),
+        commands: Command.mapMessages(told.commands, message =>
+          Message.GotBacklogMessage({ message }),
+        ),
+      }
+    },
+  })
+
 /**
  * Shows `screen`; a screen that wasn't shown already asks what it shows as it opens: the Engines
  * screen, its engine's status and credentials; the Settings screen, its settings; the Review screen,
- * the scope's report, log and diff (§18.4).
+ * the scope's report, log and diff (§18.4); the Backlog screen starts afresh.
  */
 const enterScreen = (model: Model, screen: Screen): Return => {
   const shown = showScreen(model, screen)
@@ -323,7 +367,9 @@ const enterScreen = (model: Model, screen: Screen): Return => {
       ? openSettings(shown)
       : Screen.guards.Review(screen) && !Screen.guards.Review(model.screen)
         ? reviewScope(shown)
-        : { model: shown }
+        : Screen.guards.Backlog(screen) && !Screen.guards.Backlog(model.screen)
+          ? { model: openBacklog(shown) }
+          : { model: shown }
 }
 
 /** What the screen shown asks again of the engine just reached, or of the scope just chosen. */
@@ -358,7 +404,7 @@ export const update = (model: Model, message: Message): Return =>
         return { model }
       }
       const scoped = foldRequests(
-        modifyFields(model, {
+        modifyFields(openBacklog(model), {
           scope: () => project,
           runView: () => Option.none(),
           events: () => [],
@@ -408,6 +454,7 @@ export const update = (model: Model, message: Message): Return =>
     PressedReviewTab: ({ tab }) => ({
       model: writeReview(model, Review.selectTab(model.screens.review, tab)),
     }),
+    GotBacklogMessage: ({ message }) => foldBacklog(model, message),
 
     ConnectedToEngine: ({ engine, release, protocol }) => {
       const connected = modifyFields(model, {
@@ -421,7 +468,7 @@ export const update = (model: Model, message: Message): Return =>
     }),
     ReleasedEngine: () =>
       foldRequests(
-        modifyFields(model, {
+        modifyFields(openBacklog(model), {
           runView: () => Option.none(),
           events: () => [],
           attention: () => Option.none(),
@@ -501,14 +548,13 @@ export const update = (model: Model, message: Message): Return =>
       })
       return foldRequests(received, received.attention)
     },
-    ReceivedBacklog: ({ project, items }) =>
-      Option.contains(model.scope, project)
-        ? {
-            model: modifyFields(model, {
-              backlog: backlog => applyBacklog(backlog, items),
-            }),
-          }
-        : { model },
+    ReceivedBacklog: ({ project, items }) => {
+      if (!Option.contains(model.scope, project)) return { model }
+      const received = modifyFields(model, {
+        backlog: backlog => applyBacklog(backlog, items),
+      })
+      return tellBacklog(received, project, received.backlog)
+    },
     ReceivedLoad: ({ items }) => ({
       model: modifyFields(model, { load: load => applyLoad(load, items) }),
     }),

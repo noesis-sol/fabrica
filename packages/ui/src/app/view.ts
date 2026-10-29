@@ -359,7 +359,19 @@ const screenView = (model: Model, h: HtmlBuilder<Message>): Html =>
     Console: () => consoleView(model, h),
     Worker: ({ ticket }) => Worker.view(model.screens.worker, ticket, h),
     Talks: () => Talks.view(model.screens.talks, h),
-    Backlog: () => Backlog.view(model.screens.backlog, h),
+    Backlog: () =>
+      h.submodel({
+        slotId: 'backlog',
+        view: Backlog.view,
+        model: model.screens.backlog,
+        viewInputs: {
+          project: model.scope,
+          tickets: model.backlog,
+          runView: model.runView,
+          today: model.today,
+        },
+        toParentMessage: message => Message.GotBacklogMessage({ message }),
+      }),
     Review: () =>
       h.submodel({
         slotId: 'review',

@@ -206,6 +206,12 @@ export const BacklogRpcs = RpcGroup.make(
     success: Why,
     error: Schema.Union([ProjectNotFound, TicketNotFound]),
   }),
+  /** Every link between the project's tickets, as the backlog's graph draws them (§18.4). */
+  Rpc.make('tickets.edges', {
+    payload: { project: ProjectId },
+    success: Schema.Array(Edge),
+    error: ProjectNotFound,
+  }),
   /** A `bd export` JSONL file's text: the client reads it, so a remote engine needn't. */
   Rpc.make('tickets.import', {
     payload: { project: ProjectId, beads: Schema.String },

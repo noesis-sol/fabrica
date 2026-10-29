@@ -572,6 +572,11 @@ const samples: Record<string, Samples> = {
     ],
     error: [noTicket],
   },
+  'tickets.edges': {
+    payload: [{ project }],
+    success: [[], [edge, { from: ticket, to: other, kind: 'parent' }]],
+    error: [notFound],
+  },
   'tickets.import': {
     payload: [{ project, beads: '{"id":"bd-1","title":"x"}\n' }],
     success: [
@@ -1009,6 +1014,7 @@ describe('the protocol’s groups', () => {
       'tickets.note',
       'tickets.ready',
       'tickets.why',
+      'tickets.edges',
       'tickets.import',
       'run.start',
       'run.stop',

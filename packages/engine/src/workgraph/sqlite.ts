@@ -412,6 +412,18 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
     },
   )
 
+  const edges: WorkGraphShape['edges'] = Effect.fn('WorkGraph.edges')(
+    function* () {
+      return yield* read(
+        'edges',
+        Effect.flatMap(
+          sql<EdgeRow>`SELECT * FROM edges ORDER BY kind, from_id, to_id`,
+          rows => Effect.forEach(rows, edgeFromRow),
+        ),
+      )
+    },
+  )
+
   const filterClauses = (filter: TicketFilter) => [
     ...(filter.statuses === undefined
       ? []
@@ -1180,6 +1192,7 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
       )
     }),
     show,
+    edges,
     list,
     create,
     update,

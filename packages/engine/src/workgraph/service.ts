@@ -159,6 +159,8 @@ export interface WorkGraphShape {
     options: ReadyOptions & { readonly id: TicketId },
   ) => Effect.Effect<ReadonlyArray<WaitReason>, TicketNotFound | StoreFailed>
   readonly show: (id: TicketId) => Found<TicketDetail>
+  /** Every edge, by kind, then its tickets. */
+  readonly edges: () => Effect.Effect<ReadonlyArray<Edge>, StoreFailed>
   /** The tickets the filter takes, most urgent first, then oldest; read in batches that yield. */
   readonly list: (
     filter?: TicketFilter,

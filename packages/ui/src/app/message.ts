@@ -14,6 +14,7 @@ import {
 import * as Attention from '../console/attention'
 import * as History from '../console/history'
 import * as Stats from '../console/stats'
+import * as Backlog from '../screens/backlog'
 import * as Engines from '../screens/engines'
 import * as Review from '../screens/review'
 import * as Settings from '../screens/settings'
@@ -49,6 +50,8 @@ export const Message = defineMessageUnion({
   /** The sidebar's "+ Add project": the engines screen's add-project flow (§10.1). */
   RequestedAddProject: {},
   GotHistoryMessage: { message: History.Message },
+  /** A Message of the Backlog screen's. */
+  GotBacklogMessage: { message: Backlog.Message },
   /** A Message of the Engines and projects screen's. */
   GotEnginesMessage: { message: Engines.Message },
   /** A Message of the Settings screen's. */
