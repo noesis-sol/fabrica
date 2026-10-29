@@ -94,6 +94,8 @@ export const Message = defineMessageUnion({
     update: UpdateSide,
   },
   WaitedToReconnect: {},
+  /** Main handed the page a new engine port, the connection's dead with the relay that served it. */
+  ReplacedEnginePort: {},
 
   ReceivedRunView: { project: ProjectId, items: itemsOf(RunViewItem) },
   /** The project's run view ended: no run, or the project gone. */

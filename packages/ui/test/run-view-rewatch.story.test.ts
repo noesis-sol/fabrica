@@ -82,6 +82,7 @@ const { runView } = makeSubscriptions({
   nextFrame: Effect.void,
   keys: Stream.empty,
   ticks: Stream.empty,
+  replacedEnginePorts: Stream.empty,
 })
 
 const sameDependencies = Schema.toEquivalence(runView.dependenciesSchema)

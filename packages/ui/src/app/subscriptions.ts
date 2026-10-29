@@ -39,8 +39,8 @@ import { liveRuns, watchedRuns } from './notify'
 import { Screen } from './screen'
 import { watchOf } from './streams'
 
-// The streams the app listens to (spec §18.1, §18.5): the keys, the client's link, and the engine's
-// streams, each subscribed only while a part that draws it is shown: the run view and attention for
+// The streams the app listens to (spec §18.1, §18.5): the keys, the engine ports that replace the
+// connection's, the client's link, and the engine's streams, each subscribed only while a part that draws it is shown: the run view and attention for
 // the console's scope, History's events (under All projects, every project's run going), the backlog while its screen is open, the host's load while connected. Each
 // stream's items go on once per animation frame, so a burst of patches costs one update. The scope's
 // run talk is opened as the scope changes, and every talk the app holds has its transcript watched.
@@ -55,6 +55,8 @@ export interface SubscriptionEnvironment {
   readonly keys: Stream.Stream<Pressed>
   /** The time now in the viewer's zone, about every second (clock.ts). */
   readonly ticks: Stream.Stream<DateTime.Zoned>
+  /** Each engine port that replaces the one the connection took (engine-ports.ts). */
+  readonly replacedEnginePorts: Stream.Stream<void>
 }
 
 /** The keys going down in `target`'s window, each with whether focus was in a text field. */
@@ -275,10 +277,14 @@ export const makeSubscriptions = ({
   nextFrame,
   keys,
   ticks,
+  replacedEnginePorts,
 }: SubscriptionEnvironment) =>
   Subscription.make<Model, Message, Services>()(entry => ({
     keys: Subscription.persistentEntry(
       Stream.map(keys, pressed => Message.PressedKey(pressed)),
+    ),
+    enginePort: Subscription.persistentEntry(
+      Stream.map(replacedEnginePorts, () => Message.ReplacedEnginePort()),
     ),
     link: entry(
       { live: Schema.Boolean },

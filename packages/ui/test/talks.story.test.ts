@@ -205,6 +205,7 @@ describe('the run talk', () => {
       nextFrame: Effect.void,
       keys: Stream.empty,
       ticks: Stream.empty,
+      replacedEnginePorts: Stream.empty,
     })
     expect(opening.modelToDependencies(connected).project).toEqual(
       Option.none(),
@@ -328,6 +329,7 @@ describe('the run talk', () => {
       nextFrame: Effect.void,
       keys: Stream.empty,
       ticks: Stream.empty,
+      replacedEnginePorts: Stream.empty,
     })
     expect(transcripts.modelToDependencies(connected).talks).toEqual([])
     expect(transcripts.modelToDependencies(scopedToAuth).talks).toEqual([

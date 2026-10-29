@@ -78,6 +78,7 @@ const { runView } = makeSubscriptions({
   nextFrame: Effect.void,
   keys: Stream.empty,
   ticks: Stream.empty,
+  replacedEnginePorts: Stream.empty,
 })
 
 const dependencies = (model: Model) => runView.modelToDependencies(model)

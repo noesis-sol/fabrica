@@ -29,7 +29,7 @@ import { view } from './view'
 
 /** What the program needs from its host. */
 export interface Environment extends SubscriptionEnvironment {
-  /** The connection process's port, once the preload has handed it over. */
+  /** The connection process's newest port, once the preload has handed one over. */
   readonly enginePort: Effect.Effect<MessagePort>
   /** The app's notifications (§18.5): through the preload, or none without it. */
   readonly notifier: NotifierShape

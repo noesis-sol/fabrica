@@ -287,6 +287,7 @@ const { events: eventsWatch } = makeSubscriptions({
   nextFrame: Effect.void,
   keys: Stream.empty,
   ticks: Stream.empty,
+  replacedEnginePorts: Stream.empty,
 })
 
 const watched = (model: Model) => eventsWatch.modelToDependencies(model).runs

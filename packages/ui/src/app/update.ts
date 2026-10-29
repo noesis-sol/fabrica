@@ -806,6 +806,15 @@ export const update = (model: Model, message: Message): Return =>
         connection: () => Connection.Connecting(),
       }),
     }),
+    // The connection is acquired again over the new port; one refused waits for an update still.
+    ReplacedEnginePort: () => ({
+      model: Connection.guards.Refused(model.connection)
+        ? model
+        : modifyFields(model, {
+            attempt: attempt => attempt + 1,
+            connection: () => Connection.Connecting(),
+          }),
+    }),
 
     ReceivedRunView: ({ project, items }) =>
       Option.contains(model.scope, project)

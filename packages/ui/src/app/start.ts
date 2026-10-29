@@ -5,11 +5,12 @@ import type { Platform } from '@fabrica/contracts'
 
 import { defaultTheme } from '../theme/theme'
 import { localTicks } from './clock'
+import { holdEnginePorts } from './engine-ports'
 import { nextAnimationFrame } from './frame'
 import { appHostOf } from './host'
 import { Message } from './message'
 import { type NotifierShape, silentNotifier } from './notifier'
-import { receiveEnginePort } from './port'
+import { onEnginePorts } from './port'
 import { program } from './program'
 import { documentKeys } from './subscriptions'
 import { themeHostOf } from './theme-host'
@@ -37,10 +38,13 @@ export const start = (
   const themeHost = themeHostOf(target)
   const theme = Effect.runSync(themeHost.kept)
   Effect.runSync(themeHost.show(Option.getOrElse(theme, () => defaultTheme)))
-  const enginePort = receiveEnginePort(target)
+  const enginePorts = holdEnginePorts<MessagePort>(listener =>
+    onEnginePorts(target, listener),
+  )
   const application = Runtime.makeApplication({
     ...program({
-      enginePort: Effect.promise(() => enginePort),
+      enginePort: enginePorts.take,
+      replacedEnginePorts: enginePorts.replaced,
       nextFrame: nextAnimationFrame,
       keys: documentKeys(target.document),
       ticks: localTicks,
