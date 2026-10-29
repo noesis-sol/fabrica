@@ -1,4 +1,5 @@
-import { Array, Option, Schema } from 'effect'
+import { Array, Effect, Option, Schema } from 'effect'
+import { Command, Dom } from 'foldkit'
 import type { Html, HtmlBuilder } from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
 
@@ -21,6 +22,7 @@ export const init = (): Model => ({ query: '', selected: 0 })
 
 export const Message = defineMessageUnion({
   ChangedQuery: { query: Schema.String },
+  CompletedScrollToEntry: {},
 })
 export type Message = typeof Message.Type
 
@@ -29,6 +31,7 @@ export const update = (model: Model, message: Message): Model =>
   Message.match(message, {
     ChangedQuery: ({ query }) =>
       query === model.query ? model : { query, selected: 0 },
+    CompletedScrollToEntry: () => model,
   })
 
 /** What an entry does: one of the screen's commands, or a way to a project, a ticket, a worker or a theme. */
@@ -119,6 +122,17 @@ const keyCap = <M>(label: string, h: HtmlBuilder<M>): Html =>
 const listId = 'palette-entries'
 
 const entryId = (id: string): string => `palette-entry-${id}`
+
+/** Scrolls the list to the entry `id`, where the arrows moved the selection: an entry gone keeps it still. */
+export const ScrollToEntry = Command.define('ScrollToEntry', {
+  args: { id: Schema.String },
+  messages: [Message.CompletedScrollToEntry],
+  execute: ({ id }) =>
+    Dom.scrollIntoView(`#${CSS.escape(entryId(id))}`).pipe(
+      Effect.ignore,
+      Effect.as(Message.CompletedScrollToEntry()),
+    ),
+})
 
 export const view = <ParentMessage>(
   model: Model,

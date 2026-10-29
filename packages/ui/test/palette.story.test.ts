@@ -13,7 +13,13 @@ import {
   type,
   within,
 } from 'foldkit/scene'
-import { given, message, model, story } from 'foldkit/story'
+import {
+  Command as StoryCommand,
+  given,
+  message,
+  model,
+  story,
+} from 'foldkit/story'
 
 import { describe, expect, test } from '@effect/vitest'
 import {
@@ -164,6 +170,18 @@ const key = (pressed: string, { mod = false, inField = false } = {}) =>
 /** A key pressed in the palette's search field, where focus starts. */
 const fieldKey = (pressed: string) => key(pressed, { inField: true })
 
+/** The list scrolled to the selection, where the arrows moved it. */
+const scrolledScene = () =>
+  SceneCommand.resolve(
+    Palette.ScrollToEntry,
+    Palette.Message.CompletedScrollToEntry(),
+  )
+const scrolledStory = () =>
+  StoryCommand.resolve(
+    Palette.ScrollToEntry,
+    Palette.Message.CompletedScrollToEntry(),
+  )
+
 const palette = role('dialog', { name: 'Command palette' })
 const search = role('textbox', { name: 'Search commands' })
 /** The palette's entries, each a button in its list. */
@@ -312,8 +330,15 @@ describe('running a command', () => {
       expectScene(
         within(palette, role('button', { name: 'Neon Grid' })),
       ).toHaveAttr('aria-current', 'true'),
+      SceneCommand.expectExact(
+        Palette.ScrollToEntry({ id: 'theme.neon-grid' }),
+      ),
+      scrolledScene(),
       Subscription.emit(fieldKey('ArrowDown')),
+      scrolledScene(),
       Subscription.emit(fieldKey('ArrowDown')),
+      SceneCommand.expectExact(Palette.ScrollToEntry({ id: 'theme.classic' })),
+      scrolledScene(),
       expectScene(
         within(palette, role('button', { name: 'Classic' })),
       ).toHaveAttr('aria-current', 'true'),
@@ -383,6 +408,7 @@ describe('running a command', () => {
         }),
       ),
       message(fieldKey('ArrowDown')),
+      scrolledStory(),
       message(fieldKey('Escape')),
       model(shown => {
         expect(shown.overlay).toEqual(Overlay.Closed())
@@ -392,6 +418,29 @@ describe('running a command', () => {
         expect(shown.overlay).toEqual(Overlay.Palette())
         expect(shown.screens.palette).toEqual(Palette.init())
       }),
+    )
+  })
+
+  test('Enter and the arrows on a focused entry, outside the search field, are the entry’s own', () => {
+    story(
+      update,
+      given(connected),
+      message(key('k', { mod: true })),
+      message(key('ArrowDown')),
+      StoryCommand.expectNone(),
+      message(key('Enter')),
+      model(shown => {
+        expect(shown.overlay).toEqual(Overlay.Palette())
+        expect(shown.screens.palette).toEqual(Palette.init())
+      }),
+      // The focused button's own click runs it, though another is selected.
+      message(Message.RanPaletteEntry({ id: 'theme.classic' })),
+      StoryCommand.expectExact(ShowTheme({ theme: 'classic' })),
+      model(shown => {
+        expect(shown.theme).toEqual(Option.some('classic'))
+        expect(shown.overlay).toEqual(Overlay.Closed())
+      }),
+      StoryCommand.resolve(ShowTheme, Message.CompletedShowTheme()),
     )
   })
 

@@ -305,7 +305,7 @@ const writePalette = (model: Model, palette: Palette.Model): Model =>
 
 /**
  * Runs a palette entry where there is one, while the palette is open: it closes, then the entry's
- * Message is sent. Enter on a focused entry runs the selection, and its click then finds it closed.
+ * Message is sent. An entry asked for once it has closed runs nothing.
  */
 const runPaletteEntry = (
   model: Model,
@@ -529,17 +529,26 @@ export const update = (model: Model, message: Message): Return =>
         Palette.update(model.screens.palette, message),
       ),
     }),
-    MovedPaletteSelection: ({ by }) => ({
-      model: writePalette(
-        model,
-        Palette.moved(
-          model.screens.palette,
-          by,
-          Palette.matching(paletteEntries(model), model.screens.palette.query)
-            .length,
-        ),
-      ),
-    }),
+    MovedPaletteSelection: ({ by }) => {
+      const entries = paletteEntries(model)
+      const palette = Palette.moved(
+        model.screens.palette,
+        by,
+        Palette.matching(entries, model.screens.palette.query).length,
+      )
+      // The list scrolls to keep the selection in view.
+      return {
+        model: writePalette(model, palette),
+        commands: Option.match(Palette.selected(palette, entries), {
+          onNone: () => [],
+          onSome: ({ id }) => [
+            Command.mapMessage(Palette.ScrollToEntry({ id }), message =>
+              Message.GotPaletteMessage({ message }),
+            ),
+          ],
+        }),
+      }
+    },
     RanPaletteSelection: () =>
       runPaletteEntry(
         model,

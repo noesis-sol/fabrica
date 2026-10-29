@@ -16,8 +16,11 @@ import { Screen, screenTitle } from './screen'
 export interface Chord {
   readonly key: string
   readonly mod: boolean
-  /** A plain key that runs its command while focus is in a text field too, as the palette's arrows do. */
-  readonly inField?: boolean
+  /**
+   * A plain key that runs its command only while focus is in a text field, as the palette's arrows and
+   * Enter do from its search field: Enter on a focused entry is that entry's own click.
+   */
+  readonly onlyInField?: boolean
 }
 
 /** One command: what it says, its key where it has one, whether the screen hints at it, and what it sends. */
@@ -35,7 +38,7 @@ const plain = (key: string): Option.Option<Chord> =>
 const withMod = (key: string): Option.Option<Chord> =>
   Option.some({ key, mod: true })
 const fieldKey = (key: string): Option.Option<Chord> =>
-  Option.some({ key, mod: false, inField: true })
+  Option.some({ key, mod: false, onlyInField: true })
 
 const goTo = (
   screen: Screen,
@@ -207,10 +210,9 @@ const matches = (chord: Chord, pressed: Pressed): boolean =>
   chord.key.toLowerCase() === pressed.key.toLowerCase() &&
   chord.mod === pressed.mod &&
   !pressed.alt &&
-  (chord.mod ||
-    chord.key === 'Escape' ||
-    chord.inField === true ||
-    !pressed.inField)
+  (chord.onlyInField === true
+    ? pressed.inField
+    : chord.mod || chord.key === 'Escape' || !pressed.inField)
 
 /** The command a key runs: the first in the list whose chord it is. */
 export const commandFor = (
