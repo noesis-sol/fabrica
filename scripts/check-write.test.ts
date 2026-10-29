@@ -135,6 +135,7 @@ describe('which files and type checks a write reaches', () => {
     ])
     expect(own.find(({ dir }) => dir === 'apps/desktop')?.tsconfigs).toEqual([
       'apps/desktop/tsconfig.node.json',
+      'apps/desktop/tsconfig.connection.json',
       'apps/desktop/tsconfig.web.json',
     ])
   })
