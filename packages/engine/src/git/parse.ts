@@ -49,7 +49,7 @@ export const parseTreeHash = (output: string): Option.Option<TreeHash> =>
 const rawChanges: Readonly<Record<string, FileChange>> = {
   A: 'added',
   M: 'modified',
-  // A type change (a file made a link) is a modification of its path.
+  // A type change (a file made a link) is a modification of its path, its patch git's two.
   T: 'modified',
   D: 'deleted',
   R: 'renamed',
@@ -71,6 +71,7 @@ export const parseDiff = (
     readonly change: FileChange
     readonly path: string
     readonly from: Option.Option<string>
+    readonly typeChange: boolean
   }> = []
   let at = 0
   /** The field from `at` to its NUL, `at` moved past it; none where no NUL ends it. */
@@ -84,15 +85,22 @@ export const parseDiff = (
   while (output.startsWith(':', at)) {
     const header = field()
     if (Option.isNone(header)) return Option.none()
-    const change = rawChanges[header.value.split(' ')[4]?.charAt(0) ?? '']
+    const status = header.value.split(' ')[4]?.charAt(0) ?? ''
+    const change = rawChanges[status]
     if (change === undefined) return Option.none()
     const first = field()
     if (Option.isNone(first)) return Option.none()
     if (change === 'renamed') {
       const to = field()
       if (Option.isNone(to)) return Option.none()
-      entries.push({ change, path: to.value, from: first })
-    } else entries.push({ change, path: first.value, from: Option.none() })
+      entries.push({ change, path: to.value, from: first, typeChange: false })
+    } else
+      entries.push({
+        change,
+        path: first.value,
+        from: Option.none(),
+        typeChange: status === 'T',
+      })
   }
   const patches = output.slice(output.startsWith('\0', at) ? at + 1 : at)
   if (entries.length === 0)
@@ -105,12 +113,20 @@ export const parseDiff = (
     next = patches.indexOf(`\n${PATCH_START}`, next + 1)
   )
     starts.push(next + 1)
-  if (starts.length !== entries.length) return Option.none()
+  // A type change is written as two patches, its old file's deletion and its new file's addition: its
+  // entry takes both.
+  const ends: Array<number> = []
+  for (const entry of entries)
+    ends.push((ends.at(-1) ?? 0) + (entry.typeChange ? 2 : 1))
+  if (ends.at(-1) !== starts.length) return Option.none()
   return Option.all(
-    entries.map((entry, index) =>
+    entries.map(({ typeChange: _, ...entry }, index) =>
       FileDiff.makeOption({
         ...entry,
-        patch: patches.slice(starts[index], starts[index + 1]),
+        patch: patches.slice(
+          starts[ends[index - 1] ?? 0],
+          starts[ends[index] ?? starts.length],
+        ),
       }),
     ),
   )

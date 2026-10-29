@@ -124,21 +124,29 @@ export const makeReviewHandlers = Effect.gen(function* () {
     readonly run: Option.Option<RunId>
   }) {
     const { path } = yield* projectOf(project)
-    const runs = Effect.map(
-      Effect.orDie(readEvents({ root: path, run: Option.none() })),
-      ({ events }) =>
+    const started = yield* Effect.orDie(
+      readEvents({ root: path, run: Option.none() }),
+    ).pipe(
+      Effect.map(({ events }) =>
         events.filter(RunEvent.guards.start).map(({ run }) => run),
+      ),
     )
     const named = yield* Option.match(run, {
-      onSome: Effect.succeed,
+      // Only a run the stream started, its report a file of its own in the reports folder: a name the
+      // client gives never reaches another file of the checkout.
+      onSome: named =>
+        started.includes(named) && !named.includes('/')
+          ? Effect.succeed(named)
+          : Effect.fail(new RunNotFound({ project, run: named })),
       // The last run's: the last to start.
       onNone: () =>
-        Effect.flatMap(runs, started =>
-          Option.match(Option.fromUndefinedOr(started.at(-1)), {
-            onNone: () => Effect.fail(new NoRun({ project })),
-            onSome: Effect.succeed,
-          }),
-        ),
+        Option.match(Option.fromUndefinedOr(started.at(-1)), {
+          onNone: () => Effect.fail(new NoRun({ project })),
+          onSome: last =>
+            last.includes('/')
+              ? Effect.fail(new RunNotFound({ project, run: last }))
+              : Effect.succeed(last),
+        }),
     })
     const written = yield* readFileTextWritten(
       { root: path, path: reportPath(named) },
@@ -146,14 +154,7 @@ export const makeReviewHandlers = Effect.gen(function* () {
     ).pipe(
       Effect.catch(error =>
         error._tag === 'FileMissing'
-          ? // No report: the run's not written yet, or no such run.
-            Effect.flatMap(runs, started =>
-              Effect.fail(
-                started.includes(named)
-                  ? new NoReport({ project, run: named })
-                  : new RunNotFound({ project, run: named }),
-              ),
-            )
+          ? Effect.fail(new NoReport({ project, run: named }))
           : Effect.die(error),
       ),
     )

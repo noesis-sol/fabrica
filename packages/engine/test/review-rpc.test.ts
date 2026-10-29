@@ -308,6 +308,32 @@ describe('diff.ticket', () => {
       }),
   )
 
+  it.effect(
+    "takes a type change as one file's change, its patch git's two",
+    () =>
+      Effect.gen(function* () {
+        const { checkout } = repository()
+        git(checkout, 'switch', '--quiet', '--create', ticketBranch(ticket))
+        git(checkout, 'rm', '--quiet', 'gone.txt')
+        symlinkSync('README.md', join(checkout, 'gone.txt'))
+        commit(checkout, 'link', { 'src/b.ts': 'export const b = 1\n' })
+
+        const client = yield* clientFor(checkout)
+        const diff = yield* client['diff.ticket']({ project, ticket })
+
+        expect(diff.files.map(file => [file.path, file.change])).toEqual([
+          ['gone.txt', 'modified'],
+          ['src/b.ts', 'added'],
+        ])
+        const [link, added] = diff.files
+        expect(link?.patch.match(/^diff --git /gmu)).toHaveLength(2)
+        expect(link?.patch).toContain('deleted file mode 100644')
+        expect(link?.patch).toContain('new file mode 120000')
+        expect(added?.patch.match(/^diff --git /gmu)).toHaveLength(1)
+        expect(added?.patch).toContain('+export const b = 1')
+      }),
+  )
+
   it.effect('answers NoBranch for a ticket with no branch', () =>
     Effect.gen(function* () {
       const { checkout } = repository()
@@ -455,6 +481,39 @@ describe('report.get', () => {
       const { checkout } = withReports()
       const client = yield* clientFor(checkout)
       const run = RunId.make('run-9')
+      expect(
+        yield* Effect.flip(
+          client['report.get']({ project, run: Option.some(run) }),
+        ),
+      ).toEqual(new RunNotFound({ project, run }))
+    }),
+  )
+
+  it.effect("never reads another file of the checkout for a run's name", () =>
+    Effect.gen(function* () {
+      const { checkout } = withReports()
+      const client = yield* clientFor(checkout)
+      // `.fabrica/reports/../../README.md` is the checkout's README.md.
+      const run = RunId.make('../../README')
+      expect(
+        yield* Effect.flip(
+          client['report.get']({ project, run: Option.some(run) }),
+        ),
+      ).toEqual(new RunNotFound({ project, run }))
+    }),
+  )
+
+  it.effect('takes no run the stream names with a folder for its report', () =>
+    Effect.gen(function* () {
+      const { checkout, first } = repository()
+      const run = RunId.make('../../README')
+      writeEvents(checkout, runRecords(run, first, []))
+      const client = yield* clientFor(checkout)
+      expect(
+        yield* Effect.flip(
+          client['report.get']({ project, run: Option.none() }),
+        ),
+      ).toEqual(new RunNotFound({ project, run }))
       expect(
         yield* Effect.flip(
           client['report.get']({ project, run: Option.some(run) }),
