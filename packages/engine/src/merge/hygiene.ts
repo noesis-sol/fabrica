@@ -1,23 +1,36 @@
-import { Context, Data, Deferred, Effect, Match, Option } from 'effect'
+import {
+  Context,
+  Data,
+  Deferred,
+  Effect,
+  Exit,
+  Match,
+  Option,
+  Result,
+} from 'effect'
 import { existsSync, watch } from 'node:fs'
 import { mkdir, mkdtemp, readdir, rename, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 import type { CommitHash, SetAsideReason } from '@fabrica/contracts'
 
+import { Leftovers, leftovers } from '../checks'
 import {
   type CantTell,
   type FastForwardOutcome,
   Git,
+  type GitFailed,
+  type GitShape,
   type WorktreeHome,
   Worktrees,
 } from '../git'
 import { type LeftBy, type MergeStopKind, MergeUpdate } from './outcome'
+import { dropRecord, readRecord, writeRecord } from './records'
 import type { MergeTurn } from './turn'
 
 // Merge hygiene (spec §13.7, H71, H72): a refused fast-forward diagnosed and tried again, a merge
-// turn's budget of rechecks, what a setup or check leaves in the worktree, merged worktrees cleaned up
-// out of the queue, and fast-forwards waiting on a dirty checkout.
+// turn's budget of rechecks, what a setup or check leaves in the worktree and the record of the files
+// it wrote, merged worktrees cleaned up out of the queue, and fast-forwards waiting on a dirty checkout.
 
 /** Why a ticket is set aside, and its detail in words. */
 export interface Aside {
@@ -71,6 +84,95 @@ export const mayGoRound = ({
   readonly rounds: number
 }): Effect.Effect<boolean> => Effect.succeed(rounds <= RECHECKS)
 
+/** The record, in a worktree's own git folder, of the untracked files the queue's setups and checks wrote there. */
+const WROTE = 'fabrica-wrote'
+
+/** The untracked files the queue's setups and checks wrote in the worktree, as it recorded them. */
+export const wroteRecorded = (
+  git: GitShape,
+  { worktree }: { readonly worktree: string },
+): Effect.Effect<ReadonlyArray<string>, CantTell> =>
+  readRecord(git, { worktree, name: WROTE })
+
+/** Adds `files` to the worktree's record of what the queue's setups and checks wrote there. */
+const recordWrote = (
+  git: GitShape,
+  {
+    worktree,
+    files,
+  }: { readonly worktree: string; readonly files: ReadonlyArray<string> },
+): Effect.Effect<void, CantTell | GitFailed> =>
+  files.length === 0
+    ? Effect.void
+    : Effect.gen(function* () {
+        const recorded = yield* wroteRecorded(git, { worktree })
+        const all = [...new Set([...recorded, ...files])]
+        if (all.length > recorded.length)
+          yield* writeRecord(git, { worktree, name: WROTE, files: all })
+      })
+
+/**
+ * Runs `effect`, a setup or a check the queue runs in `worktree`, and records the untracked files it
+ * wrote there however it ends, one cut short or failed too, as git's status before and after it
+ * shows them; with its value, what it left. A status that can't be read records nothing.
+ */
+export const recordingWrites = <A, E, R>(
+  git: GitShape,
+  worktree: string,
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<
+  { readonly value: A; readonly left: Leftovers },
+  E | CantTell | GitFailed,
+  R
+> =>
+  Effect.gen(function* () {
+    const before = yield* Effect.result(git.status({ worktree }))
+    const seen = Effect.map(Effect.result(git.status({ worktree })), after =>
+      Result.isFailure(before)
+        ? Leftovers.CantTell({ reason: before.failure.reason })
+        : Result.isFailure(after)
+          ? Leftovers.CantTell({ reason: after.failure.reason })
+          : leftovers(before.success, after.success),
+    )
+    const record = (left: Leftovers) =>
+      Leftovers.$match(left, {
+        Seen: ({ wrote }) => recordWrote(git, { worktree, files: wrote }),
+        CantTell: () => Effect.void,
+      })
+    const value = yield* Effect.onExit(effect, exit =>
+      Exit.isSuccess(exit)
+        ? Effect.void
+        : seen.pipe(
+            Effect.flatMap(record),
+            Effect.catch(error =>
+              Effect.logWarning(
+                `Couldn't record the files written in ${worktree}`,
+                error,
+              ),
+            ),
+          ),
+    )
+    const left = yield* seen
+    yield* record(left)
+    return { value, left }
+  })
+
+/**
+ * Removes the untracked files the queue's setups and checks wrote in the worktree, and their record: a
+ * ticket set aside goes back with its worker's own files only, which `enter` and `finish` would
+ * otherwise refuse as its worker's. Tracked files are never removed.
+ */
+export const removeWrote = Effect.fn('MergeQueue.removeWrote')(function* (
+  git: GitShape,
+  { worktree }: { readonly worktree: string },
+) {
+  if (!existsSync(worktree)) return
+  const recorded = yield* wroteRecorded(git, { worktree })
+  if (recorded.length === 0) return
+  yield* git.removeUntracked({ worktree, files: recorded })
+  yield* dropRecord(git, { worktree, name: WROTE })
+})
+
 const leaver: { readonly [L in LeftBy]: string } = {
   setup: "the merge's setup",
   check: 'the merge check',
@@ -79,7 +181,7 @@ const leaver: { readonly [L in LeftBy]: string } = {
 /**
  * What a setup or the merge check left in the worktree, read from git's status: tracked files changed set
  * the ticket aside (`DIRTY_WORKTREE`), as it passed on files that wouldn't merge; untracked files it
- * wrote are published, and go with the worktree once it merges.
+ * wrote, recorded as it ran, are published, and go with the worktree once it merges.
  */
 export const afterCheck = Effect.fn('MergeQueue.afterCheck')(function* ({
   turn,

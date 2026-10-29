@@ -29,7 +29,7 @@ export type MergeUpdate = Data.TaggedEnum<{
   Step: { readonly ticket: TicketId; readonly step: MergeStep }
   /** A check of a ticket's merge ended: its record, for the event stream. */
   Check: { readonly ticket: TicketId; readonly record: CheckRecord }
-  /** The merge's setup or check wrote untracked `files` in the worktree: recorded, and they go with it. */
+  /** The merge's setup or check wrote untracked `files` in the worktree: recorded, and removed with it or as it is set aside. */
   Wrote: {
     readonly ticket: TicketId
     readonly by: LeftBy

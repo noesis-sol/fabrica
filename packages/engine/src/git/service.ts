@@ -143,6 +143,14 @@ export interface GitShape {
     readonly worktree: string
     readonly to: CommitHash
   }) => Effect.Effect<void, GitFailed>
+  /**
+   * Removes the untracked `files` (paths from the worktree's root, as its status names them) from the
+   * worktree, never a tracked file: one named that git tracks, or that is gone, is left as it is.
+   */
+  readonly removeUntracked: (input: {
+    readonly worktree: string
+    readonly files: ReadonlyArray<string>
+  }) => Effect.Effect<void, GitFailed>
   /** Fast-forwards the branch `base`, checked out in `checkout`, to the commit `to`, by its hash. */
   readonly fastForward: (input: {
     readonly checkout: string
@@ -859,6 +867,25 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     })
   })
 
+  const removeUntracked = Effect.fn('Git.removeUntracked')(function* ({
+    worktree,
+    files,
+  }: {
+    readonly worktree: string
+    readonly files: ReadonlyArray<string>
+  }) {
+    // Literal pathspecs: a file named `*.png` removes that file, never every match.
+    yield* Effect.forEach(
+      argumentBatches(files),
+      paths =>
+        writeOnly({
+          cwd: worktree,
+          args: ['--literal-pathspecs', 'clean', '-f', '-q', '--', ...paths],
+        }),
+      { discard: true },
+    )
+  })
+
   const addWorktree = Effect.fn('Git.addWorktree')(function* ({
     repo,
     path,
@@ -995,6 +1022,7 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     rebase,
     abortRebase,
     resetTo,
+    removeUntracked,
     fastForward,
     addWorktree,
     addWorktreeOn,

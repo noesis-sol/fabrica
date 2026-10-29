@@ -11,6 +11,8 @@ export {
   cleanUp,
   clearAside,
   diagnose,
+  removeWrote,
+  wroteRecorded,
 } from './hygiene'
 export {
   type MergeLine,

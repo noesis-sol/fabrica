@@ -6,6 +6,7 @@ import type {
   FileRefused,
   PathOutsideRoot,
 } from '../files'
+import type { WorktreeStatus } from '../git'
 import { type ExitStatus, StartFailure } from '../process'
 import type { EventDraft } from '../runlog'
 
@@ -21,13 +22,31 @@ export type Leftovers = Data.TaggedEnum<{
   Seen: {
     /** Tracked files changed after it that weren't before (`DIRTY_WORKTREE`). */
     readonly changed: ReadonlyArray<string>
-    /** Untracked files after it that weren't before: recorded, and removed with the worktree. */
+    /** Untracked files after it that weren't before: recorded, and removed with the worktree or as its ticket is set aside. */
     readonly wrote: ReadonlyArray<string>
   }
   /** A status read failed: what the check left can't be told, and is never taken as nothing. */
   CantTell: { readonly reason: string }
 }>
 export const Leftovers = Data.taggedEnum<Leftovers>()
+
+/** What git's status after a check or a setup shows that it didn't before. */
+export const leftovers = (
+  before: WorktreeStatus,
+  after: WorktreeStatus,
+): Leftovers => {
+  const newIn = (
+    now: ReadonlyArray<string>,
+    then: ReadonlyArray<string>,
+  ): ReadonlyArray<string> => {
+    const earlier = new Set(then)
+    return now.filter(path => !earlier.has(path))
+  }
+  return Leftovers.Seen({
+    changed: newIn(after.uncommitted, before.uncommitted),
+    wrote: newIn(after.untracked, before.untracked),
+  })
+}
 
 /** The check's log couldn't be opened or written. */
 export type LogError = PathOutsideRoot | FileRefused | FileFailed | FileMissing

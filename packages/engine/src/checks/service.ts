@@ -9,7 +9,7 @@ import type {
 } from '@fabrica/contracts'
 
 import { openFileTruncating } from '../files'
-import { Git, type WorktreeStatus } from '../git'
+import { Git } from '../git'
 import {
   CommandOutcome,
   ExitStatus,
@@ -19,7 +19,13 @@ import {
 import { toSeconds } from '../runlog'
 import { elapsed, startStopwatch } from '../time'
 import { checkLogPath, runnable, shellArgs } from './command'
-import { CheckOutcome, type CheckRecord, Leftovers, NotRun } from './outcome'
+import {
+  CheckOutcome,
+  type CheckRecord,
+  Leftovers,
+  NotRun,
+  leftovers,
+} from './outcome'
 
 // The Checks service (spec §13.6–§13.9, §20.2): the engine's one way to run a project's check or
 // setup in a worktree. The command runs in the shell through the process runner, so it gets the
@@ -55,24 +61,6 @@ export interface ChecksShape {
 export class Checks extends Context.Service<Checks, ChecksShape>()(
   '@fabrica/engine/Checks',
 ) {}
-
-/** What git's status after a check shows that it didn't before. */
-const leftovers = (
-  before: WorktreeStatus,
-  after: WorktreeStatus,
-): Leftovers => {
-  const newIn = (
-    now: ReadonlyArray<string>,
-    then: ReadonlyArray<string>,
-  ): ReadonlyArray<string> => {
-    const earlier = new Set(then)
-    return now.filter(path => !earlier.has(path))
-  }
-  return Leftovers.Seen({
-    changed: newIn(after.uncommitted, before.uncommitted),
-    wrote: newIn(after.untracked, before.untracked),
-  })
-}
 
 export const make = Effect.gen(function* () {
   const runner = yield* ProcessRunner

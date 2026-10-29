@@ -19,6 +19,7 @@ import {
   RebaseOutcome,
   type Worktree,
 } from '../git'
+import { recordingWrites } from './hygiene'
 import { MergeOutcome, MergeUpdate } from './outcome'
 import {
   MergeSetup,
@@ -133,7 +134,7 @@ export interface MergeTrain {
     readonly onto: CommitHash
     readonly head: CommitHash
     readonly command: string
-  }) => Effect.Effect<CheckOutcome>
+  }) => Effect.Effect<CheckOutcome, CantTell | GitFailed>
   /** A turn ended with `outcome`: a ride beside it is kept when it merged as checked, and put back otherwise. */
   readonly settle: (outcome: MergeOutcome) => Effect.Effect<void>
 }
@@ -171,14 +172,24 @@ export const makeTrain = Effect.fn('MergeTrain.make')(function* ({
       }),
     )
 
-  /** Runs a turn's merge check and publishes its record, marked as the train's where `train`. */
+  /**
+   * Runs a turn's merge check and publishes its record, marked as the train's where `train`; the
+   * untracked files it writes are recorded as the queue's, however it ends.
+   */
   const runCheck = (turn: MergeTurn, command: string, train: boolean) =>
-    Effect.tap(checks.run(mergeCheckInput(turn, command)), outcome =>
-      turn.publish(
-        MergeUpdate.Check({
-          ticket: turn.worktree.ticket,
-          record: train ? { ...outcome.record, train: true } : outcome.record,
-        }),
+    recordingWrites(
+      git,
+      turn.worktree.path,
+      checks.run(mergeCheckInput(turn, command)),
+    ).pipe(
+      Effect.map(({ value }) => value),
+      Effect.tap(outcome =>
+        turn.publish(
+          MergeUpdate.Check({
+            ticket: turn.worktree.ticket,
+            record: train ? { ...outcome.record, train: true } : outcome.record,
+          }),
+        ),
       ),
     )
 
@@ -221,7 +232,7 @@ export const makeTrain = Effect.fn('MergeTrain.make')(function* ({
     const files = [...new Set([...pending, ...brought])]
     if (files.length > 0) {
       yield* Ref.set(setUp, files)
-      const ready = yield* setUpRecorded(git, setup, {
+      const { ready } = yield* setUpRecorded(git, setup, {
         ticket,
         worktree: path,
         files,
@@ -260,7 +271,7 @@ export const makeTrain = Effect.fn('MergeTrain.make')(function* ({
       if ((yield* headOf(path)) !== ride.from)
         yield* git.resetTo({ worktree: path, to: ride.from })
       if (!setUpAgain || files.length === 0) return Carriage.Empty()
-      const ready = yield* setUpRecorded(git, setup, {
+      const { ready } = yield* setUpRecorded(git, setup, {
         ticket,
         worktree: path,
         files,

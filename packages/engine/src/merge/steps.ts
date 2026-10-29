@@ -14,7 +14,6 @@ import {
   type GitFailed,
   RebaseOutcome,
   Worktrees,
-  isClean,
 } from '../git'
 import { StartFailure } from '../process'
 import {
@@ -32,6 +31,8 @@ import {
   cleanUp,
   diagnose,
   mayGoRound,
+  removeWrote,
+  wroteRecorded,
 } from './hygiene'
 import { MergeOutcome, MergeUpdate } from './outcome'
 import {
@@ -174,11 +175,23 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
     const stranded = yield* train.arrive(turn)
     if (Option.isSome(stranded)) return done(stranded.value)
     yield* git.abortRebase({ worktree: path })
-    const status = yield* git.status({ worktree: path })
-    if (!isClean(status)) {
+    const { status, wrote } = yield* Effect.all(
+      {
+        status: git.status({ worktree: path }),
+        wrote: wroteRecorded(git, { worktree: path }),
+      },
+      { concurrency: 'unbounded' },
+    )
+    // What the queue's setups and checks wrote, on an earlier turn or a ride, isn't its worker's.
+    const queues = new Set(wrote)
+    const own = [
+      ...status.uncommitted,
+      ...status.untracked.filter(file => !queues.has(file)),
+    ]
+    if (own.length > 0) {
       return aside(turn, {
         reason: 'CLOSED_UNCOMMITTED',
-        detail: `CLOSED_UNCOMMITTED: ${[...status.uncommitted, ...status.untracked].join(', ')}`,
+        detail: `CLOSED_UNCOMMITTED: ${own.join(', ')}`,
       })
     }
     return Step.Locate({ rounds: 0 })
@@ -236,7 +249,7 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
           })
           const files = [...new Set([...pending, ...brought])]
           if (files.length > 0) {
-            const ready = yield* setUpRecorded(git, setup, {
+            const { ready, left } = yield* setUpRecorded(git, setup, {
               ticket,
               worktree: path,
               files,
@@ -245,13 +258,14 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
               return done(
                 MergeOutcome.SetupFailed({ ticket, detail: ready.detail }),
               )
-            // The worktree was clean before it: what git's status shows now, the setup left.
-            const left = yield* git.status({ worktree: path })
-            const dirty = yield* afterCheck({
-              turn,
-              by: 'setup',
-              changed: left.uncommitted,
-              wrote: left.untracked,
+            const dirty = yield* Leftovers.$match(left, {
+              CantTell: ({ reason }) =>
+                Effect.succeedSome<Aside>({
+                  reason: 'GIT_FAILED',
+                  detail: `GIT_FAILED: what the merge's setup left can't be told: ${reason}`,
+                }),
+              Seen: ({ changed, wrote }) =>
+                afterCheck({ turn, by: 'setup', changed, wrote }),
             })
             if (Option.isSome(dirty)) return aside(turn, dirty.value)
           }
@@ -310,7 +324,7 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
       Unset: (): Effect.Effect<Step> =>
         Effect.succeed(done(MergeOutcome.NoMergeCheck({ ticket }))),
       None: (): Effect.Effect<Step> => Effect.succeed(confirm(head, true)),
-      Command: ({ command }): Effect.Effect<Step> =>
+      Command: ({ command }): Effect.Effect<Step, CantTell | GitFailed> =>
         Effect.gen(function* () {
           const outcome = yield* train.check({ turn, onto, head, command })
           return yield* CheckOutcome.$match(outcome, {
@@ -486,7 +500,21 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
       ),
     )
 
-  /** What an outcome records in the work graph: a ticket with no change closed, one set aside deferred. */
+  /** The files the queue wrote in a set-aside ticket's worktree removed; a failure is logged, and they stay recorded. */
+  const dropWrote = (turn: MergeTurn) =>
+    removeWrote(git, { worktree: turn.worktree.path }).pipe(
+      Effect.catch(error =>
+        Effect.logWarning(
+          `Couldn't remove the files the merge wrote in ${turn.worktree.ticket}'s worktree`,
+          error,
+        ),
+      ),
+    )
+
+  /**
+   * What an outcome records in the work graph: a ticket with no change closed, one set aside deferred,
+   * the files the queue wrote in its worktree removed first.
+   */
   const settle = (turn: MergeTurn, outcome: MergeOutcome) => {
     const { ticket } = turn.worktree
     const { actor } = turn.config
@@ -505,7 +533,8 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
             Effect.uninterruptible,
           ),
       SetAside: ({ detail }) =>
-        graph.note({ id: ticket, body: detail, actor }).pipe(
+        dropWrote(turn).pipe(
+          Effect.andThen(graph.note({ id: ticket, body: detail, actor })),
           Effect.andThen(
             graph.defer({ id: ticket, until: Option.none(), actor }),
           ),
