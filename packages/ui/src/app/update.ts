@@ -20,8 +20,8 @@ import { Screen } from './screen'
 import {
   applyAttention,
   applyBacklog,
-  applyEvents,
   applyLoad,
+  applyProjectEvents,
   applyRunView,
 } from './streams'
 
@@ -254,7 +254,7 @@ export const update = (model: Model, message: Message): Return =>
             modifyFields(model, {
               scope: () => project,
               runView: () => Option.none(),
-              events: () => Option.none(),
+              events: () => [],
               attention: () => Option.none(),
               focusedRequest: () => Option.none(),
               backlog: () => Option.none(),
@@ -293,7 +293,7 @@ export const update = (model: Model, message: Message): Return =>
       foldRequests(
         modifyFields(model, {
           runView: () => Option.none(),
-          events: () => Option.none(),
+          events: () => [],
           attention: () => Option.none(),
           backlog: () => Option.none(),
           load: () => Option.none(),
@@ -334,10 +334,10 @@ export const update = (model: Model, message: Message): Return =>
         ? { model: modifyFields(model, { runView: () => Option.none() }) }
         : { model },
     ReceivedEvents: ({ project, items }) =>
-      Option.contains(model.scope, project)
+      Option.isNone(model.scope) || Option.contains(model.scope, project)
         ? {
             model: modifyFields(model, {
-              events: events => applyEvents(events, items),
+              events: events => applyProjectEvents(events, project, items),
             }),
           }
         : { model },

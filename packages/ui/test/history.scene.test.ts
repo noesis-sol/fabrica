@@ -69,7 +69,7 @@ const connected: Model = {
 const withEvents = (
   events: ReadonlyArray<RunEvent>,
   model: Model = connected,
-): Model => ({ ...model, events: Option.some([...events].reverse()) })
+): Model => ({ ...model, events: [{ project, events: [...events].reverse() }] })
 
 /**
  * The list measured by its Mount (the virtual list's `ObserveVirtualList`, matched by its name), as
@@ -633,10 +633,12 @@ describe('the list', () => {
 
   test('rows keep their keys as new events go on above them', () => {
     const events = [dispatch(1), dispatch(2)]
-    const before = historyRows([...events].reverse()).map(row => row.key)
-    const after = historyRows([dispatch(3), ...[...events].reverse()]).map(
-      row => row.key,
-    )
+    const of = (shown: ReadonlyArray<RunEvent>) =>
+      historyRows([{ project, events: shown, chip: Option.none() }]).map(
+        row => row.key,
+      )
+    const before = of([...events].reverse())
+    const after = of([dispatch(3), ...[...events].reverse()])
     expect(after.slice(1)).toEqual(before)
   })
 
@@ -670,6 +672,6 @@ describe('the list', () => {
       withEvents([dispatch(1)]),
       Message.SelectedScope({ project: Option.some(ProjectId.make('p-2')) }),
     )
-    expect(shown.events).toEqual(Option.none())
+    expect(shown.events).toEqual([])
   })
 })

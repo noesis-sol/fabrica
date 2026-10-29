@@ -4,7 +4,7 @@ import { type Html, type HtmlBuilder, childAttributes } from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
 import { modifyFields } from 'foldkit/struct'
 
-import { type LocalTime, RunEvent } from '@fabrica/contracts'
+import { type LocalTime, type ProjectId, RunEvent } from '@fabrica/contracts'
 import * as VirtualList from '@foldkit/ui/virtualList'
 
 import { sameDay, sayMoment } from '../app/clock'
@@ -14,7 +14,8 @@ import { sameDay, sayMoment } from '../app/clock'
 // §7.7), a 6×6 dot in its role's colour and one line, cut. The line is the event's own, as the log says
 // it; the kinds that only count or measure (a turn, a phase, the queue's size, a check's record, a
 // usage window) have none. New events go on at the top, and the list is virtualised (§18.5): only the
-// rows in view are drawn.
+// rows in view are drawn. Under All projects it shows every project's events, merged newest first by
+// the moment each was recorded, each row marked with its project's chip.
 
 /** A status role (§18.2): working, needs you, failed or set aside, merged or done, information. */
 export type Role = 'c1' | 'c2' | 'c3' | 'c4' | 'c5'
@@ -91,24 +92,84 @@ export const historyLine = (event: RunEvent): Option.Option<HistoryLine> =>
     turn: () => Option.none(),
   })
 
-/** A row of the list: its event's time and line, keyed by the event's place in the run's stream. */
+/** A project's chip, as the sidebar draws it: its colour and its two-digit label. */
+export interface Chip {
+  readonly role: Role
+  readonly label: string
+}
+
+/** One project's events, newest first, and the chip its rows carry: none in a project's own scope. */
+export interface ProjectEvents {
+  readonly project: ProjectId
+  readonly events: ReadonlyArray<RunEvent>
+  readonly chip: Option.Option<Chip>
+}
+
+/**
+ * A row of the list: its event's time and line and its project's chip, keyed by the event's project
+ * and its place in the run's stream.
+ */
 export interface HistoryRow extends HistoryLine {
   readonly key: string
   readonly time: LocalTime
+  readonly chip: Option.Option<Chip>
 }
 
-/** The rows of `events`, newest first as they are kept: each event that has a line. */
-export const historyRows = (
-  events: ReadonlyArray<RunEvent>,
-): ReadonlyArray<HistoryRow> =>
+const momentOf = (time: LocalTime): DateTime.Utc => DateTime.makeUnsafe(time)
+
+/** One project's rows, newest first as its events are kept: each event that has a line. */
+const projectRows = ({
+  project,
+  events,
+  chip,
+}: ProjectEvents): ReadonlyArray<HistoryRow> =>
   Array.getSomes(
     Array.map(events, (event, index) =>
       Option.map(historyLine(event), said => ({
         ...said,
-        key: `${event.run}:${events.length - 1 - index}`,
+        key: `${project}:${event.run}:${events.length - 1 - index}`,
         time: event.time,
+        chip,
       })),
     ),
+  )
+
+/**
+ * Two lists of rows, each newest first, merged newest first by the moment each was recorded (times of
+ * engines in different zones compare as instants); on a tie, `newer`'s row first, and each list keeps
+ * its own order.
+ */
+const mergeRows = (
+  newer: ReadonlyArray<HistoryRow>,
+  older: ReadonlyArray<HistoryRow>,
+): ReadonlyArray<HistoryRow> => {
+  const merged: Array<HistoryRow> = []
+  let a = 0
+  let b = 0
+  for (;;) {
+    const left = newer[a]
+    const right = older[b]
+    if (left === undefined || right === undefined) {
+      return [...merged, ...newer.slice(a), ...older.slice(b)]
+    }
+    if (DateTime.isLessThan(momentOf(left.time), momentOf(right.time))) {
+      merged.push(right)
+      b += 1
+    } else {
+      merged.push(left)
+      a += 1
+    }
+  }
+}
+
+const noRows: ReadonlyArray<HistoryRow> = []
+
+/** The rows of every project's events, newest first: each event that has a line. */
+export const historyRows = (
+  projects: ReadonlyArray<ProjectEvents>,
+): ReadonlyArray<HistoryRow> =>
+  Array.reduce(projects, noRows, (rows, project) =>
+    mergeRows(rows, projectRows(project)),
   )
 
 /** A row's height: 5px above and below a 16px line (Appendix A.2). */
@@ -116,8 +177,6 @@ export const rowHeightPx = 26
 
 /** The time column's width: a time, or a day and a time (`Wed 28 Oct 23:30`) once the oldest row isn't today's. */
 export const timeWidth = { today: '40px', otherDay: '116px' }
-
-const momentOf = (time: LocalTime): DateTime.Utc => DateTime.makeUnsafe(time)
 
 /**
  * A row's time in the viewer's zone, with its day when it isn't today (`sayMoment`, §7.7); before the
@@ -180,8 +239,8 @@ export const update = (
 
 /** What the frame gives the panel. */
 export interface Inputs<ParentMessage> {
-  /** The scope's events, newest first; none before the first snapshot. */
-  readonly events: Option.Option<ReadonlyArray<RunEvent>>
+  /** The scope's events, each project's newest first, from its first snapshot. */
+  readonly events: ReadonlyArray<ProjectEvents>
   /** The start of the viewer's day, in their zone; none before the first tick. */
   readonly today: Option.Option<DateTime.Zoned>
   readonly toParentMessage: (message: Message) => ParentMessage
@@ -199,7 +258,9 @@ const rowView = <ParentMessage>(
       h.Title(row.text),
       h.Class('grid items-center gap-8 text-xs'),
       h.Style({
-        gridTemplateColumns: `${width} 6px minmax(0,1fr)`,
+        gridTemplateColumns: Option.isSome(row.chip)
+          ? `${width} 6px 16px minmax(0,1fr)`
+          : `${width} 6px minmax(0,1fr)`,
         padding: '5px 12px',
       }),
     ],
@@ -214,6 +275,20 @@ const rowView = <ParentMessage>(
         h.Class(dotColour[row.role]),
         h.Style({ width: '6px', height: '6px' }),
       ]),
+      Option.match(row.chip, {
+        onNone: () => h.empty,
+        onSome: chip =>
+          h.span(
+            [
+              h.DataAttribute('history-chip', chip.role),
+              h.Class(
+                `flex items-center justify-center rounded-button font-extrabold text-ink ${dotColour[chip.role]}`,
+              ),
+              h.Style({ width: '16px', height: '16px', fontSize: '9px' }),
+            ],
+            [chip.label],
+          ),
+      }),
       h.span(
         [
           h.DataAttribute('history-line', ''),
@@ -255,8 +330,8 @@ export const view = <ParentMessage>(
   { events, today, toParentMessage }: Inputs<ParentMessage>,
   h: HtmlBuilder<ParentMessage>,
 ): Html => {
-  const rows = Option.map(events, historyRows)
-  const oldest = Option.flatMap(rows, Array.last)
+  const rows = historyRows(events)
+  const oldest = Array.last(rows)
   const allToday = Option.match(oldest, {
     onNone: () => true,
     onSome: row => onToday(row.time, today),
@@ -265,32 +340,28 @@ export const view = <ParentMessage>(
     [h.Class('flex min-h-0 flex-1 flex-col')],
     [
       header(Option.isSome(oldest) && allToday, h),
-      Option.match(rows, {
-        onNone: () => notice('No events yet', h),
-        onSome: shown =>
-          shown.length === 0
-            ? notice('No events yet', h)
-            : h.submodel({
-                slotId: 'history-list',
-                model: model.list,
-                view: VirtualList.view<HistoryRow>(),
-                viewInputs: {
-                  items: shown,
-                  itemToKey: row => row.key,
-                  itemToView: row =>
-                    rowView(
-                      row,
-                      today,
-                      allToday ? timeWidth.today : timeWidth.otherDay,
-                      h,
-                    ),
-                  containerClassName: 'min-h-0 flex-1',
-                  containerAttributes: childAttributes([h.AriaLabel('Events')]),
-                },
-                toParentMessage: message =>
-                  toParentMessage(Message.GotListMessage({ message })),
-              }),
-      }),
+      rows.length === 0
+        ? notice('No events yet', h)
+        : h.submodel({
+            slotId: 'history-list',
+            model: model.list,
+            view: VirtualList.view<HistoryRow>(),
+            viewInputs: {
+              items: rows,
+              itemToKey: row => row.key,
+              itemToView: row =>
+                rowView(
+                  row,
+                  today,
+                  allToday ? timeWidth.today : timeWidth.otherDay,
+                  h,
+                ),
+              containerClassName: 'min-h-0 flex-1',
+              containerAttributes: childAttributes([h.AriaLabel('Events')]),
+            },
+            toParentMessage: message =>
+              toParentMessage(Message.GotListMessage({ message })),
+          }),
     ],
   )
 }

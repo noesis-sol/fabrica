@@ -31,13 +31,13 @@ import type { Pressed } from './keys'
 import { Message } from './message'
 import type { Model } from './model'
 import { Notifier } from './notifier'
-import { watchedRuns } from './notify'
+import { liveRuns, watchedRuns } from './notify'
 import { Screen } from './screen'
 import { watchOf } from './streams'
 
 // The streams the app listens to (spec §18.1, §18.5): the keys, the client's link, and the engine's
 // streams, each subscribed only while a part that draws it is shown: the run view and attention for
-// the console's scope, the backlog while its screen is open, the host's load while connected. Each
+// the console's scope, History's events (under All projects, every project's run going), the backlog while its screen is open, the host's load while connected. Each
 // stream's items go on once per animation frame, so a burst of patches costs one update. For the
 // app's notifications (§18.5), every project's attention requests and the events of each run going,
 // while connected, and the clicks on the notifications shown.
@@ -222,6 +222,25 @@ const viewedRun = (model: Model, project: ProjectId): Option.Option<RunId> =>
     Option.map(model.runView, view => view.header.run),
   )
 
+/**
+ * The runs whose events History shows (§18.3): the scoped project's viewed run, or under All projects
+ * every project's run its sidebar row shows going.
+ */
+const historyRuns = (
+  model: Model,
+): ReadonlyArray<{ readonly project: ProjectId; readonly run: RunId }> =>
+  Option.match(model.scope, {
+    onSome: () =>
+      Option.match(model.runView, {
+        onNone: () => [],
+        onSome: view => [
+          { project: view.header.project, run: view.header.run },
+        ],
+      }),
+    onNone: () =>
+      liveRuns(Sidebar.rows(model.console.sidebar).map(row => row.status)),
+  })
+
 /** The services the subscriptions use: the engine connection, and the notifier. */
 type Services = EngineConnectionService | Notifier
 
@@ -267,23 +286,21 @@ export const makeSubscriptions = ({
     ),
     events: entry(
       {
-        run: Schema.Option(Schema.Struct({ project: ProjectId, run: RunId })),
+        runs: Schema.Array(Schema.Struct({ project: ProjectId, run: RunId })),
       },
       {
         modelToDependencies: model => ({
-          run: isLive(model.connection)
-            ? Option.map(model.runView, view => ({
-                project: view.header.project,
-                run: view.header.run,
-              }))
-            : Option.none(),
+          runs: isLive(model.connection) ? historyRuns(model) : [],
         }),
-        dependenciesToStream: ({ run }) =>
-          Option.match(run, {
-            onNone: () => Stream.empty,
-            onSome: of =>
-              withClient(client => eventMessages(client, of, nextFrame)),
-          }),
+        dependenciesToStream: ({ runs }) =>
+          runs.length === 0
+            ? Stream.empty
+            : withClient(client =>
+                Stream.mergeAll(
+                  runs.map(run => eventMessages(client, run, nextFrame)),
+                  { concurrency: 'unbounded' },
+                ),
+              ),
       },
     ),
     attention: entry(

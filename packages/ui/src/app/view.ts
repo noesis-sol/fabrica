@@ -184,13 +184,30 @@ const needsYou = (model: Model): boolean =>
 const toHistoryMessage = (message: History.Message): Message =>
   Message.GotHistoryMessage({ message })
 
+/** History, given the scope's events: under All projects each row carries its project's chip (§18.3). */
 const historyView = (
   history: History.Model,
   events: Model['events'],
+  scope: Model['scope'],
+  sidebar: Sidebar.Model,
   today: Model['today'],
   h: HtmlBuilder<Message>,
 ): Html =>
-  History.view(history, { events, today, toParentMessage: toHistoryMessage }, h)
+  History.view(
+    history,
+    {
+      events: events.map(({ project, events }) => ({
+        project,
+        events,
+        chip: Option.isNone(scope)
+          ? Sidebar.projectChip(sidebar, project)
+          : Option.none(),
+      })),
+      today,
+      toParentMessage: toHistoryMessage,
+    },
+    h,
+  )
 
 const consoleView = (model: Model, h: HtmlBuilder<Message>): Html => {
   const parts = model.console
@@ -231,6 +248,8 @@ const consoleView = (model: Model, h: HtmlBuilder<Message>): Html => {
               lazyHistory(historyView, [
                 parts.history,
                 model.events,
+                model.scope,
+                parts.sidebar,
                 model.today,
                 h,
               ]),

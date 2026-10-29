@@ -8,7 +8,6 @@ import {
   Platform,
   ProjectId,
   ReleaseVersion,
-  RunEvents,
   RunView,
   Ticket,
   UsageWindow,
@@ -33,6 +32,7 @@ import * as Worker from '../screens/worker'
 import { Connection } from './connection'
 import * as Notify from './notify'
 import { Screen } from './screen'
+import { ProjectEvents } from './streams'
 
 // The root Model (spec §18.1): the screen shown and any overlay over it, the scope the sidebar chose,
 // the connection, each stream's latest value, and every part's submodel. Each part draws its own slice,
@@ -91,8 +91,11 @@ export const Model = Schema.Struct({
   scope: Schema.Option(ProjectId),
   /** The scoped project's run view, while it has a run. */
   runView: Schema.Option(RunView),
-  /** The scoped project's run's events, newest first, as History shows them. */
-  events: Schema.Option(RunEvents),
+  /**
+   * The events History shows, each project's newest first, from its stream's first snapshot: the
+   * scoped project's run's, or under All projects every project's run going (§18.3).
+   */
+  events: Schema.Array(ProjectEvents),
   /** The scope's open attention requests. */
   attention: Schema.Option(Schema.Array(AttentionRequest)),
   /** The request a clicked notification focused, which the attention column shows focused (§18.5). */
@@ -125,7 +128,7 @@ export const initialModel = (flags: Flags): Model => ({
   overlay: Overlay.Closed(),
   scope: Option.none(),
   runView: Option.none(),
-  events: Option.none(),
+  events: [],
   attention: Option.none(),
   focusedRequest: Option.none(),
   notify: Notify.init(),

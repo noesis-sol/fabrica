@@ -7,6 +7,7 @@ import {
   AttentionRequest,
   BacklogPatch,
   HostLoad,
+  ProjectId,
   type Resume,
   type RunEvent,
   RunEvents,
@@ -101,6 +102,41 @@ export const applyEvents = (
           Array.appendAll(Array.reverse(item.value), before),
         ),
   )
+
+/** One project's run's events, newest first, from its stream's first snapshot. */
+export const ProjectEvents = Schema.Struct({
+  project: ProjectId,
+  events: RunEvents,
+})
+export type ProjectEvents = typeof ProjectEvents.Type
+
+/**
+ * `project`'s events with `items` applied (`applyEvents`): its entry takes their place, or joins the
+ * list at its end; a patch before its first snapshot changes nothing, and the other entries keep their
+ * identity.
+ */
+export const applyProjectEvents = (
+  current: ReadonlyArray<ProjectEvents>,
+  project: ProjectId,
+  items: Array.NonEmptyReadonlyArray<typeof EventsItem.Type>,
+): ReadonlyArray<ProjectEvents> => {
+  const known = Array.findFirst(current, entry => entry.project === project)
+  return Option.match(
+    applyEvents(
+      Option.map(known, entry => entry.events),
+      items,
+    ),
+    {
+      onNone: () => current,
+      onSome: events =>
+        Option.isSome(known)
+          ? current.map(entry =>
+              entry.project === project ? { project, events } : entry,
+            )
+          : [...current, { project, events }],
+    },
+  )
+}
 
 /** A load sample replaces the one before. */
 export const applyLoad = (
