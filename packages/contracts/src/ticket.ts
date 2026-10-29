@@ -10,6 +10,11 @@ import { CommitHash, EngineId, NoteId, SessionId, TicketId } from './ids'
 /** Text with something in it besides whitespace. */
 export const Text = Schema.String.check(Schema.isPattern(/\S/u))
 
+/** Text on one line. */
+export const Line = Text.check(
+  Schema.isPattern(/^[^\n\r]*$/u, { expected: 'one line' }),
+)
+
 /** A moment, encoded as milliseconds since the epoch, as the store keeps it. */
 const Moment = Schema.DateTimeUtcFromMillis
 
@@ -135,8 +140,8 @@ export type TicketMetadata = typeof TicketMetadata.Type
 export class QuestionOption extends Schema.Class<QuestionOption>(
   'QuestionOption',
 )({
-  label: Text.annotate({ description: 'A short label.' }),
-  tradeOff: Text.annotate({ description: 'Its trade-off, in one line.' }),
+  label: Line.annotate({ description: 'A short label.' }),
+  tradeOff: Line.annotate({ description: 'Its trade-off, in one line.' }),
 }) {}
 
 /** A question's options, 2 to 4, and the index of the one recommended. */

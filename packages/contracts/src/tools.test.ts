@@ -3,19 +3,19 @@ import { Effect, Exit, Option, Schema } from 'effect'
 import { describe, expect, it } from '@effect/vitest'
 
 import {
-  AddNote,
+  AddNoteTool,
   AnswerToolName,
-  AskAndWait,
-  AskQuestion,
+  AskAndWaitTool,
+  AskQuestionTool,
   Awaited,
-  Defer,
-  FileTicket,
-  Finish,
-  GetTicket,
+  DeferTool,
+  FileTicketTool,
+  FinishTool,
+  GetTicketTool,
   type Tool,
   ToolRefusal,
   VerdictTool,
-  WaitFor,
+  WaitForTool,
   WorkerTools,
   answerTool,
   decodeArguments,
@@ -75,22 +75,24 @@ const finish = {
 describe('get_ticket', () => {
   it.effect('reads the worker’s own ticket when given no ID', () =>
     Effect.gen(function* () {
-      const { id } = yield* decodeArguments(GetTicket)({})
+      const { id } = yield* decodeArguments(GetTicketTool)({})
       expect(Option.isNone(id)).toBe(true)
     }),
   )
 
   it.effect('reads a linked ticket by its ID', () =>
     Effect.gen(function* () {
-      const { id } = yield* decodeArguments(GetTicket)({ id: 'fab-mgi.3.1' })
+      const { id } = yield* decodeArguments(GetTicketTool)({
+        id: 'fab-mgi.3.1',
+      })
       expect(id).toEqual(Option.some('fab-mgi.3.1'))
     }),
   )
 
   it.effect('refuses an ID that isn’t one, and keys it doesn’t name', () =>
     Effect.gen(function* () {
-      yield* refuses(GetTicket, { id: 'not an id' })
-      yield* refuses(GetTicket, { ticket: 'fab-mgi.3.1' })
+      yield* refuses(GetTicketTool, { id: 'not an id' })
+      yield* refuses(GetTicketTool, { ticket: 'fab-mgi.3.1' })
     }),
   )
 })
@@ -98,7 +100,7 @@ describe('get_ticket', () => {
 describe('file_ticket', () => {
   it.effect('files a follow-up with its files and link', () =>
     Effect.gen(function* () {
-      const filed = yield* decodeArguments(FileTicket)(followUp)
+      const filed = yield* decodeArguments(FileTicketTool)(followUp)
       expect(filed.files).toEqual(['packages/engine/src/merge/queue.ts'])
       expect(filed.link).toBe('blocks')
       expect(Option.isNone(filed.priority)).toBe(true)
@@ -108,7 +110,7 @@ describe('file_ticket', () => {
 
   it.effect('takes unknown files, a priority and labels', () =>
     Effect.gen(function* () {
-      const filed = yield* decodeArguments(FileTicket)({
+      const filed = yield* decodeArguments(FileTicketTool)({
         ...followUp,
         files: 'unknown',
         priority: 1,
@@ -123,10 +125,10 @@ describe('file_ticket', () => {
 
   it.effect('refuses a title over 60 characters, or of two lines', () =>
     Effect.gen(function* () {
-      yield* accepts(FileTicket, { ...followUp, title: 'x'.repeat(60) })
-      yield* refuses(FileTicket, { ...followUp, title: 'x'.repeat(61) })
-      yield* refuses(FileTicket, { ...followUp, title: 'Retry\nonce' })
-      yield* refuses(FileTicket, { ...followUp, title: '   ' })
+      yield* accepts(FileTicketTool, { ...followUp, title: 'x'.repeat(60) })
+      yield* refuses(FileTicketTool, { ...followUp, title: 'x'.repeat(61) })
+      yield* refuses(FileTicketTool, { ...followUp, title: 'Retry\nonce' })
+      yield* refuses(FileTicketTool, { ...followUp, title: '   ' })
     }),
   )
 
@@ -134,25 +136,49 @@ describe('file_ticket', () => {
     'refuses files that are none, absolute or outside the repository',
     () =>
       Effect.gen(function* () {
-        yield* refuses(FileTicket, { ...followUp, files: [] })
-        yield* refuses(FileTicket, { ...followUp, files: ['/etc/hosts'] })
-        yield* refuses(FileTicket, { ...followUp, files: ['../other/x.ts'] })
-        yield* refuses(FileTicket, { ...followUp, files: ['src/../../x.ts'] })
-        yield* refuses(FileTicket, { ...followUp, files: ['src/'] })
-        yield* refuses(FileTicket, { ...followUp, files: 'none' })
-        yield* refuses(FileTicket, { ...followUp, files: undefined })
-        yield* accepts(FileTicket, { ...followUp, files: ['src/..x/a.ts'] })
+        yield* refuses(FileTicketTool, { ...followUp, files: [] })
+        yield* refuses(FileTicketTool, { ...followUp, files: ['/etc/hosts'] })
+        yield* refuses(FileTicketTool, {
+          ...followUp,
+          files: ['../other/x.ts'],
+        })
+        yield* refuses(FileTicketTool, {
+          ...followUp,
+          files: ['src/../../x.ts'],
+        })
+        yield* refuses(FileTicketTool, { ...followUp, files: ['src/'] })
+        yield* refuses(FileTicketTool, { ...followUp, files: 'none' })
+        yield* refuses(FileTicketTool, { ...followUp, files: undefined })
+        yield* accepts(FileTicketTool, { ...followUp, files: ['src/..x/a.ts'] })
+      }),
+  )
+
+  it.effect(
+    'takes a description whose first word only begins like the title',
+    () =>
+      Effect.gen(function* () {
+        yield* accepts(FileTicketTool, {
+          ...followUp,
+          title: 'Add foo',
+          description:
+            'Add foobar support to the parser, since the old one drops it.',
+        })
+        yield* accepts(FileTicketTool, {
+          ...followUp,
+          title: 'Fix log',
+          description: 'Fix logging of refused merges: they go to stderr only.',
+        })
       }),
   )
 
   it.effect('refuses a description restating the title', () =>
     Effect.gen(function* () {
-      yield* refuses(FileTicket, {
+      yield* refuses(FileTicketTool, {
         ...followUp,
         description:
           'Retry a refused fast-forward once. The merge queue gives up on the first refusal.',
       })
-      yield* refuses(FileTicket, {
+      yield* refuses(FileTicketTool, {
         ...followUp,
         description:
           'retry a refused FAST-FORWARD once: because a lock clears.',
@@ -162,11 +188,11 @@ describe('file_ticket', () => {
 
   it.effect('refuses a type, priority or link a worker doesn’t file', () =>
     Effect.gen(function* () {
-      yield* refuses(FileTicket, { ...followUp, type: 'epic' })
-      yield* refuses(FileTicket, { ...followUp, type: 'question' })
-      yield* refuses(FileTicket, { ...followUp, priority: 5 })
-      yield* refuses(FileTicket, { ...followUp, link: 'parent' })
-      yield* refuses(FileTicket, { ...followUp, labels: ['two words'] })
+      yield* refuses(FileTicketTool, { ...followUp, type: 'epic' })
+      yield* refuses(FileTicketTool, { ...followUp, type: 'question' })
+      yield* refuses(FileTicketTool, { ...followUp, priority: 5 })
+      yield* refuses(FileTicketTool, { ...followUp, link: 'parent' })
+      yield* refuses(FileTicketTool, { ...followUp, labels: ['two words'] })
     }),
   )
 })
@@ -174,10 +200,10 @@ describe('file_ticket', () => {
 describe('ask_question and ask_and_wait', () => {
   it.effect('asks about the worker’s own ticket or another one', () =>
     Effect.gen(function* () {
-      const own = yield* decodeArguments(AskQuestion)(question)
+      const own = yield* decodeArguments(AskQuestionTool)(question)
       expect(Option.isNone(own.blocks)).toBe(true)
       expect(own.choices.options).toHaveLength(2)
-      const other = yield* decodeArguments(AskAndWait)({
+      const other = yield* decodeArguments(AskAndWaitTool)({
         ...question,
         choices: choices(4, 3),
         consequential: true,
@@ -192,7 +218,7 @@ describe('ask_question and ask_and_wait', () => {
 
   it.effect('refuses 1 or 5 options, and a recommendation not among them', () =>
     Effect.gen(function* () {
-      for (const tool of [AskQuestion, AskAndWait]) {
+      for (const tool of [AskQuestionTool, AskAndWaitTool]) {
         yield* refuses(tool, { ...question, choices: choices(1, 0) })
         yield* refuses(tool, { ...question, choices: choices(5, 0) })
         yield* refuses(tool, { ...question, choices: choices(3, 3) })
@@ -204,10 +230,25 @@ describe('ask_question and ask_and_wait', () => {
   it.effect('refuses a question without its flags or options', () =>
     Effect.gen(function* () {
       const { maintainerOnly: _, ...unflagged } = question
-      yield* refuses(AskQuestion, unflagged)
+      yield* refuses(AskQuestionTool, unflagged)
       const { choices: __, ...unchosen } = question
-      yield* refuses(AskQuestion, unchosen)
-      yield* refuses(AskQuestion, { ...question, title: 'x'.repeat(61) })
+      yield* refuses(AskQuestionTool, unchosen)
+      yield* refuses(AskQuestionTool, { ...question, title: 'x'.repeat(61) })
+      const [first, second] = question.choices.options
+      yield* refuses(AskQuestionTool, {
+        ...question,
+        choices: {
+          ...question.choices,
+          options: [first, { ...second, tradeOff: 'line one\nline two' }],
+        },
+      })
+      yield* refuses(AskQuestionTool, {
+        ...question,
+        choices: {
+          ...question.choices,
+          options: [{ ...first, label: 'B\nsecond line' }, second],
+        },
+      })
     }),
   )
 
@@ -237,23 +278,23 @@ describe('ask_question and ask_and_wait', () => {
 describe('add_note, defer and wait_for', () => {
   it.effect('take their text and refuse it blank', () =>
     Effect.gen(function* () {
-      yield* accepts(AddNote, { body: 'Kept the test next to its module.' })
-      yield* refuses(AddNote, { body: ' \n' })
-      yield* accepts(Defer, { reason: 'The Pi spike has not merged.' })
-      yield* refuses(Defer, { reason: '' })
-      yield* refuses(Defer, {})
+      yield* accepts(AddNoteTool, { body: 'Kept the test next to its module.' })
+      yield* refuses(AddNoteTool, { body: ' \n' })
+      yield* accepts(DeferTool, { reason: 'The Pi spike has not merged.' })
+      yield* refuses(DeferTool, { reason: '' })
+      yield* refuses(DeferTool, {})
     }),
   )
 
   it.effect('wait_for names the ticket and what it needs from it', () =>
     Effect.gen(function* () {
-      const waiting = yield* decodeArguments(WaitFor)({
+      const waiting = yield* decodeArguments(WaitForTool)({
         ticket: 'fab-mgi.3.9',
         needs: 'The SQLite store’s ticket CRUD.',
       })
       expect(waiting.ticket).toBe('fab-mgi.3.9')
-      yield* refuses(WaitFor, { ticket: 'fab-mgi.3.9' })
-      yield* refuses(WaitFor, { ticket: 'FAB', needs: 'x' })
+      yield* refuses(WaitForTool, { ticket: 'fab-mgi.3.9' })
+      yield* refuses(WaitForTool, { ticket: 'FAB', needs: 'x' })
     }),
   )
 })
@@ -261,7 +302,7 @@ describe('add_note, defer and wait_for', () => {
 describe('finish', () => {
   it.effect('gives check_own’s pass and a result', () =>
     Effect.gen(function* () {
-      const finished = yield* decodeArguments(Finish)(finish)
+      const finished = yield* decodeArguments(FinishTool)(finish)
       expect(finished.checkOwn.tree).toBe(tree)
       expect(finished.checkOwn.commit).toBe(commit)
       expect(finished.result._tag).toBe('summary')
@@ -270,17 +311,17 @@ describe('finish', () => {
 
   it.effect('refuses a pass without its tree, commit or output file', () =>
     Effect.gen(function* () {
-      yield* refuses(Finish, { result: finish.result })
-      yield* refuses(Finish, {
+      yield* refuses(FinishTool, { result: finish.result })
+      yield* refuses(FinishTool, {
         ...finish,
         checkOwn: { ...checkOwn, tree: 'HEAD' },
       })
-      yield* refuses(Finish, {
+      yield* refuses(FinishTool, {
         ...finish,
         checkOwn: { ...checkOwn, commit: commit.slice(0, 7) },
       })
-      yield* refuses(Finish, { ...finish, checkOwn: { tree, commit } })
-      yield* refuses(Finish, {
+      yield* refuses(FinishTool, { ...finish, checkOwn: { tree, commit } })
+      yield* refuses(FinishTool, {
         checkOwn,
         result: { _tag: 'summary', summary: '' },
       })
@@ -300,7 +341,7 @@ describe('finish', () => {
       yield* refuses(migration, finish)
       yield* accepts(finishFor('summary'), finish)
       yield* refuses(finishFor('summary'), { checkOwn, result })
-      yield* accepts(Finish, { checkOwn, result })
+      yield* accepts(FinishTool, { checkOwn, result })
     }),
   )
 })

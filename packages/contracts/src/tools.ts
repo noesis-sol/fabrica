@@ -4,6 +4,7 @@ import { CommitHash, NoteId, TicketId, TreeHash } from './ids'
 import {
   Edge,
   LabelName,
+  Line,
   Note,
   Priority,
   QuestionChoices,
@@ -45,10 +46,9 @@ export const decodeArguments = <
 ) => Schema.decodeUnknownEffect(tool.parameters, { onExcessProperty: 'error' })
 
 /** A ticket's title: one line, at most 60 characters, a plain summary of the change. */
-export const Title = Text.check(
-  Schema.isPattern(/^[^\n\r]*$/u, { expected: 'one line' }),
-  Schema.isMaxLength(60),
-).annotate({ description: 'One line, at most 60 characters.' })
+export const Title = Line.check(Schema.isMaxLength(60)).annotate({
+  description: 'One line, at most 60 characters.',
+})
 export type Title = typeof Title.Type
 
 /** A path in the repository: relative, `/`-separated, never climbing out with `..`. */
@@ -72,7 +72,16 @@ const words = (text: string) =>
     .toLowerCase()
     .split(/[^\p{L}\p{N}]+/u)
     .filter(word => word.length > 0)
-    .join(' ')
+
+/** Whether `text` opens with `title`'s words, whole words each. */
+const opensWith = (text: string, title: string) => {
+  const opening = words(text)
+  const titleWords = words(title)
+  return (
+    titleWords.length > 0 &&
+    titleWords.every((word, index) => opening[index] === word)
+  )
+}
 
 // ---------------------------------------------------------------------------------------------------
 // What the engine answers and refuses
@@ -139,7 +148,7 @@ export const GetTicketParameters = Schema.Struct({
   ),
 })
 
-export const GetTicket = {
+export const GetTicketTool = {
   name: 'get_ticket',
   description:
     'Reads your ticket, or one linked to it: its description, design, acceptance criteria, notes, ' +
@@ -186,7 +195,7 @@ export const FileTicketParameters = Schema.Struct({
   link: FiledLink,
 }).check(
   Schema.makeFilter(({ title, description }) =>
-    words(description).startsWith(words(title))
+    opensWith(description, title)
       ? {
           path: ['description'],
           issue:
@@ -196,7 +205,7 @@ export const FileTicketParameters = Schema.Struct({
   ),
 )
 
-export const FileTicket = {
+export const FileTicketTool = {
   name: 'file_ticket',
   description:
     'Files a follow-up or an issue you discovered, linked to your ticket. Keep the title a plain ' +
@@ -230,7 +239,7 @@ export const AskQuestionParameters = Schema.Struct({
   ),
 })
 
-export const AskQuestion = {
+export const AskQuestionTool = {
   name: 'ask_question',
   description:
     'Asks the maintainer a decision only they can make, blocking your ticket or the one it is about. ' +
@@ -242,7 +251,7 @@ export const AskQuestion = {
 
 export const AddNoteParameters = Schema.Struct({ body: Text })
 
-export const AddNote = {
+export const AddNoteTool = {
   name: 'add_note',
   description:
     'Writes a note on your ticket: a decision you made, a gap you left, what a later session needs to know.',
@@ -280,7 +289,7 @@ const finishDescription =
   'with nothing uncommitted or untracked in the worktree. The verifier then checks your change, ' +
   'and the merge queue merges it.'
 
-export const Finish = {
+export const FinishTool = {
   name: 'finish',
   description: finishDescription,
   parameters: FinishParameters,
@@ -303,7 +312,7 @@ export const DeferParameters = Schema.Struct({
   }),
 })
 
-export const Defer = {
+export const DeferTool = {
   name: 'defer',
   description:
     'Ends your turn without finishing, when you cannot: commit the work done so far first. The ticket ' +
@@ -321,7 +330,7 @@ export const WaitForParameters = Schema.Struct({
   }),
 })
 
-export const WaitFor = {
+export const WaitForTool = {
   name: 'wait_for',
   description:
     'Ends your turn when your ticket needs work from another ticket that is not on your base yet. ' +
@@ -331,7 +340,7 @@ export const WaitFor = {
   success: Ended,
 } satisfies AnyTool
 
-export const AskAndWait = {
+export const AskAndWaitTool = {
   name: 'ask_and_wait',
   description:
     'Asks as ask_question does, for a quick choice you need now to go on, then waits for the answer ' +
@@ -343,14 +352,14 @@ export const AskAndWait = {
 
 /** The worker's tools, in the order the extension registers them. */
 export const WorkerTools = [
-  GetTicket,
-  FileTicket,
-  AskQuestion,
-  AddNote,
-  Finish,
-  Defer,
-  WaitFor,
-  AskAndWait,
+  GetTicketTool,
+  FileTicketTool,
+  AskQuestionTool,
+  AddNoteTool,
+  FinishTool,
+  DeferTool,
+  WaitForTool,
+  AskAndWaitTool,
 ] as const
 
 /** The tools that end a worker's turn: one of them, or `ask_question` on its own ticket, is its outcome (§12.3). */

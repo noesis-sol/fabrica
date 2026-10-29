@@ -1,7 +1,7 @@
 - `packages/contracts` has the agents' tools (spec §12.3, §13.6, §16), each its name, its description and the
   Effect Schemas of its arguments and its answer: the worker's `get_ticket`, `file_ticket` (a one-line title
   of at most 60 characters, `files` or `unknown`, a description not restating the title, its link),
-  `ask_question` and `ask_and_wait` (2 to 4 options, one recommended, `consequential`, `maintainerOnly`, the
+  `ask_question` and `ask_and_wait` (2 to 4 options of one-line labels and trade-offs, one recommended, `consequential`, `maintainerOnly`, the
   ticket it blocks), `add_note`, `finish` (check_own's tree, commit and output file, and a result; `finishFor`
   narrows it to a ticket's `result_kind`), `defer` and `wait_for`; the verifier's `verdict` (`PASS`, or
   `FAIL` with a blocking finding, a finding naming the round it disagrees with); the organs' forced

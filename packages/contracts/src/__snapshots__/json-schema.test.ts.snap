@@ -39,12 +39,22 @@ exports[`the tools’ JSON Schema > ask_and_wait matches its snapshot 1`] = `
               "additionalProperties": false,
               "properties": {
                 "label": {
-                  "description": "A short label.",
+                  "allOf": [
+                    {
+                      "description": "A short label.",
+                      "pattern": "^[^\\n\\r]*$",
+                    },
+                  ],
                   "pattern": "\\S",
                   "type": "string",
                 },
                 "tradeOff": {
-                  "description": "Its trade-off, in one line.",
+                  "allOf": [
+                    {
+                      "description": "Its trade-off, in one line.",
+                      "pattern": "^[^\\n\\r]*$",
+                    },
+                  ],
                   "pattern": "\\S",
                   "type": "string",
                 },
@@ -128,12 +138,22 @@ exports[`the tools’ JSON Schema > ask_question matches its snapshot 1`] = `
               "additionalProperties": false,
               "properties": {
                 "label": {
-                  "description": "A short label.",
+                  "allOf": [
+                    {
+                      "description": "A short label.",
+                      "pattern": "^[^\\n\\r]*$",
+                    },
+                  ],
                   "pattern": "\\S",
                   "type": "string",
                 },
                 "tradeOff": {
-                  "description": "Its trade-off, in one line.",
+                  "allOf": [
+                    {
+                      "description": "Its trade-off, in one line.",
+                      "pattern": "^[^\\n\\r]*$",
+                    },
+                  ],
                   "pattern": "\\S",
                   "type": "string",
                 },
