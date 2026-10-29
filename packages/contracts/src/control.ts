@@ -37,6 +37,12 @@ export const ControlSocketVariable = 'FABRICA_CONTROL_SOCKET'
 /** The variable holding the agent's control token. */
 export const ControlTokenVariable = 'FABRICA_CONTROL_TOKEN'
 
+/**
+ * The variable saying the user trusts the agent's project (§12.1, §20.2): `1` when they do. Until
+ * then the extension refuses the project's own Pi settings and packages at Pi's `project_trust` step.
+ */
+export const ProjectTrustedVariable = 'FABRICA_PROJECT_TRUSTED'
+
 /** The header every control request carries its token in. */
 export const ControlTokenHeader = 'x-fabrica-control-token'
 

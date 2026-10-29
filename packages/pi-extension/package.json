@@ -14,7 +14,13 @@
     "build": "tsgo -p tsconfig.build.json"
   },
   "dependencies": {
+    "@effect/platform-node-shared": "4.0.0",
     "@fabrica/contracts": "workspace:*",
-    "effect": "4.0.0"
+    "effect": "4.0.0",
+    "typebox": "1.3.27"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@fabrica/testkit": "workspace:*"
   }
 }

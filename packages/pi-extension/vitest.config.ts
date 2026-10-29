@@ -3,6 +3,6 @@ import { defineProject } from 'vitest/config'
 export default defineProject({
   test: {
     name: 'pi-extension',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'test/**/*.test.ts'],
   },
 })
