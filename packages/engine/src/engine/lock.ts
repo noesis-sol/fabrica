@@ -6,9 +6,12 @@ import type { EnginePaths } from './paths'
 // The single-instance lock (spec §7.1): one engine per user per machine. The engine holds an
 // exclusive lock on `<data>/engine.lock` for as long as it runs, and the kernel lets it go when the
 // process ends, however it ends, so no stale lock outlives a crash. Node has no `flock(2)` and the
-// engine takes no native addon (§22.4), so the lock is SQLite's: the file is a database held in an
-// exclusive transaction under `locking_mode = EXCLUSIVE`, which SQLite keeps with the kernel's
-// advisory lock (`fcntl`), refused to every other connection, in this process or another.
+// engine takes no native addon (§22.4), so the lock is SQLite's: the file is a database held in a
+// write transaction (`BEGIN IMMEDIATE`) that never ends, whose RESERVED lock SQLite keeps with the
+// kernel's advisory lock (`fcntl`), refused to every other connection, in this process or another.
+// The engine never asks for more than RESERVED, so a second engine's passing SHARED lock can't make
+// it fail: of two engines starting at once exactly one wins, where two asking for EXCLUSIVE could
+// both be refused and neither run.
 
 /** SQLite's `SQLITE_BUSY`: another connection holds the lock. */
 const sqliteBusy = 5
@@ -45,8 +48,7 @@ export const acquireEngineLock = Effect.fn('Engine.acquireLock')(function* (
       try: () => {
         const database = new DatabaseSync(paths.lock, { timeout: 0 })
         try {
-          database.exec('PRAGMA locking_mode = EXCLUSIVE')
-          database.exec('BEGIN EXCLUSIVE')
+          database.exec('BEGIN IMMEDIATE')
           return database
         } catch (error) {
           database.close()

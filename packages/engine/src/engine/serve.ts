@@ -1,9 +1,12 @@
 import { Context, Effect, Layer } from 'effect'
+import type { SqlClient } from 'effect/sql'
+
+import type { SqliteClient } from '@effect/sql-sqlite-node'
 
 import { localRpcServer, removeStaleSocket } from '../rpc/server'
 import { engineDatabaseLayer } from './database'
 import { acquireEngineLock } from './lock'
-import { type EnginePaths, prepareFolders } from './paths'
+import { EngineFiles, type EnginePaths, prepareFolders } from './paths'
 import { EngineScopes, engineScopesLayer } from './scopes'
 import { Engine, type EngineFacts, engineLayer } from './service'
 
@@ -12,6 +15,19 @@ import { Engine, type EngineFacts, engineLayer } from './service'
 // serves the protocol on the local socket until it is asked to stop or its scope is interrupted
 // (SIGTERM). Its scope then ends in order: the engine says it is stopping, the runs wind down, then
 // the agents end, then the servers; then the database closes and the lock goes last.
+
+/**
+ * The daemon's services, which every group's handler file may use as it builds its handlers and the
+ * service layers it provides itself: the Engine, its lifetimes (a run's resources go in
+ * `EngineScopes.runs`), its files, and engine.db (`SqlClient`), whose tables their groups' handlers
+ * read and write. A handler file that needs another service provides it in its own file.
+ */
+export type DaemonServices =
+  | Engine
+  | EngineScopes
+  | EngineFiles
+  | SqlClient.SqlClient
+  | SqliteClient.SqliteClient
 
 export interface ServeOptions extends EngineFacts {
   readonly paths: EnginePaths
@@ -31,10 +47,16 @@ export const startEngine = Effect.fn('Engine.start')(function* (
   const engine = yield* Layer.build(engineLayer(options)).pipe(
     Effect.provide(database),
   )
+  const services: Context.Context<DaemonServices> = Context.mergeAll(
+    database,
+    scopes,
+    engine,
+    Context.make(EngineFiles, options.paths),
+  )
   yield* Layer.buildWithScope(
     localRpcServer(options.paths.socket),
     Context.get(scopes, EngineScopes).servers,
-  ).pipe(Effect.provide(engine))
+  ).pipe(Effect.provide(services))
   return Context.get(engine, Engine)
 })
 

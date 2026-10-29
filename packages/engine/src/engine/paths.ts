@@ -1,4 +1,4 @@
-import { Data, Effect, Option, Result } from 'effect'
+import { Context, Data, Effect, Option, Result } from 'effect'
 import { chmod, lstat, mkdir } from 'node:fs/promises'
 import * as NodePath from 'node:path'
 
@@ -28,6 +28,11 @@ export interface EnginePaths {
   /** `<data>/logs`: the engine's own log's folder. */
   readonly logs: string
 }
+
+/** The running engine's files, for the services and handlers that use them. */
+export class EngineFiles extends Context.Service<EngineFiles, EnginePaths>()(
+  '@fabrica/engine/EngineFiles',
+) {}
 
 /** A platform the engine doesn't run on: the engine is POSIX-only (§4). */
 export class UnsupportedPlatform extends Data.TaggedError(

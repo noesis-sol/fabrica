@@ -9,6 +9,7 @@ export {
 export { EngineAlreadyRunning, LockFailed, acquireEngineLock } from './lock'
 export {
   DataFolderFailed,
+  EngineFiles,
   type EnginePaths,
   type HostPlaces,
   UnsupportedPlatform,
@@ -21,7 +22,12 @@ export {
   type EngineScopesShape,
   engineScopesLayer,
 } from './scopes'
-export { type ServeOptions, serveEngine, startEngine } from './serve'
+export {
+  type DaemonServices,
+  type ServeOptions,
+  serveEngine,
+  startEngine,
+} from './serve'
 export {
   Engine,
   type EngineFacts,

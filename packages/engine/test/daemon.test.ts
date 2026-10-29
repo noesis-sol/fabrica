@@ -13,7 +13,7 @@ import {
 import { RpcClient, RpcSerialization } from 'effect/rpc'
 import { Socket } from 'effect/socket'
 import { TestClock } from 'effect/testing'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { lstat, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import * as NodePath from 'node:path'
@@ -104,6 +104,49 @@ const hello = new ClientHello({
   release,
   protocol: protocolVersion,
 })
+
+/** The engine package's folder, from which a child process finds `effect`. */
+const packageFolder = NodePath.join(import.meta.dirname, '..')
+
+/**
+ * A child process that takes the engine's lock at `lock` with the lock module itself (Node strips its
+ * types), says `got` or `busy`, and holds what it got until it is released.
+ */
+const takeLockInChild = (lock: string) =>
+  new Promise<{
+    readonly answer: string
+    readonly release: () => Promise<void>
+  }>((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `const [lockModule, lock] = process.argv.slice(1)
+const { Effect, Exit } = await import('effect')
+const { acquireEngineLock } = await import(lockModule)
+const exit = await Effect.runPromiseExit(Effect.scoped(acquireEngineLock({ lock, socket: lock }).pipe(
+  Effect.andThen(Effect.sync(() => console.log('got'))),
+  Effect.andThen(Effect.promise(() => new Promise(done => process.stdin.on('end', done).resume()))))))
+if (Exit.isFailure(exit)) console.log('busy')`,
+        NodePath.join(packageFolder, 'src', 'engine', 'lock.ts'),
+        lock,
+      ],
+      { cwd: packageFolder, env: {}, stdio: ['pipe', 'pipe', 'inherit'] },
+    )
+    const exited = new Promise<void>(done => child.once('exit', () => done()))
+    child.once('error', reject)
+    child.stdout.setEncoding('utf8')
+    child.stdout.once('data', (text: string) =>
+      resolve({
+        answer: text.trim(),
+        release: () => {
+          child.stdin.end()
+          return exited
+        },
+      }),
+    )
+  })
 
 /** The mode bits of the file at `path`. */
 const modeOf = (path: string) =>
@@ -245,6 +288,25 @@ describe('one engine per data folder', () => {
         yield* Scope.close(scope, Exit.void)
         yield* Effect.scoped(start(paths))
       }),
+  )
+
+  it.effect('of two engines taking the lock at once, exactly one gets it', () =>
+    Effect.gen(function* () {
+      const root = yield* scratch
+      for (const trial of [1, 2, 3, 4, 5, 6, 7, 8]) {
+        const lock = NodePath.join(root, `engine-${trial}.lock`)
+        const both = yield* Effect.promise(() =>
+          Promise.all([takeLockInChild(lock), takeLockInChild(lock)]),
+        )
+        expect(
+          both.map(({ answer }) => answer).toSorted(),
+          `trial ${trial}`,
+        ).toEqual(['busy', 'got'])
+        yield* Effect.promise(() =>
+          Promise.all(both.map(({ release }) => release())),
+        )
+      }
+    }),
   )
 
   it.effect('replaces the socket an engine that died left behind', () =>
