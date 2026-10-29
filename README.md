@@ -7,6 +7,18 @@ on your machine or on a server and keeps runs going with no client attached, and
 `fabrica` command line attach to it. Workers are [Pi](https://github.com/earendil-works/pi) agents, so any
 model Pi reaches will do. The spec is [`docs/spec/fabrica-spec.md`](docs/spec/fabrica-spec.md).
 
+## Installing the engine
+
+```sh
+curl -fsSL https://github.com/noesis-sol/fabrica/releases/latest/download/install.sh | sh
+```
+
+The install script checks the host (macOS 13.5 or later; on Linux glibc 2.28 or later and `libatomic.so.1`; the
+CPU), verifies the release's signed checksums, unpacks the engine into `~/.local/share/fabrica/engine/<version>/`
+and links `~/.local/bin/fabrica` to it, saying how to put that folder on the PATH. `FABRICA_VERSION` names
+another release, and `FABRICA_INSTALL_DIR` another folder for the link. How a release is made is in
+`.github/workflows/release.yml`.
+
 <!-- tutti:requires -->
 <!-- Generated from "requires" in .tutti/settings.json: change the list, then run tutti requires --readme. -->
 ## What to install

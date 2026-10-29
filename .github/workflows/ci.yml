@@ -8,6 +8,11 @@
 # signed release checksums (mise-action), Node and pnpm against mise.lock (mise-action installs with
 # --locked when it is present), and the npm packages against pnpm-lock.yaml's integrity hashes, Electron's
 # binary against the checksums its package ships.
+#
+# A release commit pushed alone (scripts/release-commit.sh) is left to the release workflow
+# (release.yml), which checks it and finds its parent's checks here: its tree is its parent's but for the
+# changelog and the version, and its parent was checked when it was pushed. It is told by this gate,
+# never by GitHub's skip marker in a commit message, which skips every workflow of the push (§22.5).
 name: CI
 
 on:
@@ -22,8 +27,35 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  release-commit:
+    name: release commit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      alone: ${{ steps.gate.outputs.alone }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Is it a release commit pushed alone?
+        id: gate
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = push ] && scripts/release-commit.sh "$BEFORE"; then
+            echo "alone=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "alone=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # The release workflow reads these jobs' names, `full check, <target>`, for each engine target.
   check:
     name: ${{ matrix.check }} check, ${{ matrix.target }}${{ matrix.cpus && ', 2 cores' || '' }}
+    needs: release-commit
+    if: needs.release-commit.outputs.alone != 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
