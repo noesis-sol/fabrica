@@ -3,7 +3,7 @@ import { FetchHttpClient } from 'effect/http'
 import { readFile } from 'node:fs/promises'
 import * as NodePath from 'node:path'
 
-import { describe, expect, it, layer } from '@effect/vitest'
+import { describe, expect, layer } from '@effect/vitest'
 import { Toolbox, layerToolbox, shStub, tempFolder } from '@fabrica/testkit'
 
 import { CheckAnswer, SshDestination } from '../src'

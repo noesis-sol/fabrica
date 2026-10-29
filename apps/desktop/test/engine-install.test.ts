@@ -239,11 +239,15 @@ describe('where the engine comes from', () => {
   )
 })
 
-/** The stub ssh logs its arguments and refuses the key; the stub sh logs its own and can't tell the system. */
+/**
+ * The stub ssh says it is OpenSSH 9.6 to `-V`, else logs its arguments and refuses the key; the stub sh
+ * logs its own and can't tell the system.
+ */
 const toolbox = layerToolbox({
   stubs: {
     ssh: shStub(
       [
+        'if [ "$1" = "-V" ]; then echo "OpenSSH_9.6p1, OpenSSL 3.0.13" >&2; exit 0; fi',
         `printf 'ssh %s\\n' "$*" >> "$STUB_LOG"`,
         "echo 'me@server-1: Permission denied (publickey).' >&2",
         'exit 255',
