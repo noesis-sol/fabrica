@@ -8,7 +8,8 @@ import { type DiffSides, diffColours } from './diff'
 // the app starts without it; read-only; in the theme the root names, its colours from themes.css's
 // tokens (diff.ts). Only the editor worker runs: the languages are their syntax colours alone, no
 // language service, since a diff's hunks aren't a program to check. A file's language is told from
-// its path, as Monaco tells it.
+// its path, as Monaco tells it. editor.api brings no codicon.css (editor.main does), so the view's icons
+// (its gutter's +/−, its unchanged regions' folds) come with Monaco's codicon feature, its font with it.
 
 const decodeTheme = Schema.decodeUnknownOption(Theme)
 
@@ -24,6 +25,7 @@ const loadMonaco = Effect.tryPromise({
       import('monaco-editor/editor/editor.api'),
       import('monaco-editor/editor/editor.worker?worker'),
       import('monaco-editor/basic-languages/monaco.contribution'),
+      import('monaco-editor/features/codicon/register'),
     ])
     globalThis.MonacoEnvironment = { getWorker: () => new EditorWorker() }
     return monaco
