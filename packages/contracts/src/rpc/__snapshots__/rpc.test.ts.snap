@@ -7294,6 +7294,40 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
       ],
       "type": "object",
     },
+    "UsageWindowEncoded": {
+      "additionalProperties": true,
+      "properties": {
+        "provider": {
+          "type": "string",
+        },
+        "resetsAt": {
+          "anyOf": [
+            {
+              "type": "integer",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "utilization": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number",
+        },
+        "window": {
+          "pattern": "\\S",
+          "type": "string",
+        },
+      },
+      "required": [
+        "provider",
+        "window",
+        "utilization",
+        "resetsAt",
+      ],
+      "type": "object",
+    },
     "VersionMismatchEncoded": {
       "additionalProperties": true,
       "properties": {
@@ -8496,6 +8530,105 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         ],
       },
       "tag": "projects.watchStatus",
+    },
+    {
+      "error": {
+        "$ref": "#/$defs/ProjectNotFoundEncoded",
+      },
+      "group": "projects",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "project": {
+            "pattern": "^\\S+$",
+            "type": "string",
+          },
+          "resume": {
+            "additionalProperties": true,
+            "properties": {
+              "after": {
+                "minimum": 0,
+                "type": "integer",
+              },
+              "epoch": {
+                "pattern": "^\\S+$",
+                "type": "string",
+              },
+            },
+            "required": [
+              "epoch",
+              "after",
+            ],
+            "type": "object",
+          },
+        },
+        "required": [
+          "project",
+        ],
+        "type": "object",
+      },
+      "stream": true,
+      "success": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": [
+                  "snapshot",
+                ],
+                "type": "string",
+              },
+              "epoch": {
+                "pattern": "^\\S+$",
+                "type": "string",
+              },
+              "seq": {
+                "minimum": 0,
+                "type": "integer",
+              },
+              "value": {
+                "items": {
+                  "$ref": "#/$defs/UsageWindowEncoded",
+                },
+                "type": "array",
+              },
+            },
+            "required": [
+              "_tag",
+              "epoch",
+              "seq",
+              "value",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": [
+                  "patch",
+                ],
+                "type": "string",
+              },
+              "seq": {
+                "minimum": 0,
+                "type": "integer",
+              },
+              "value": {
+                "$ref": "#/$defs/UsageWindowEncoded",
+              },
+            },
+            "required": [
+              "_tag",
+              "seq",
+              "value",
+            ],
+            "type": "object",
+          },
+        ],
+      },
+      "tag": "projects.watchUsage",
     },
     {
       "error": {

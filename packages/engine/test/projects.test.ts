@@ -59,6 +59,7 @@ import {
   workGraphPath,
 } from '../src/projects'
 import { projectsHandlers } from '../src/rpc/projects'
+import { refusingRuns } from '../src/run/hosting'
 
 // Projects (spec §10.1, §10.2, §8.1): a checkout registered where it is and a clone of a bare
 // repository, against real git in temp folders; listing and removing them; their settings read and
@@ -165,6 +166,7 @@ const engineAt = (options: {
       projectsHandlers.pipe(
         Layer.provideMerge(projectsLayer),
         Layer.provide(testHost),
+        Layer.provide(refusingRuns('this test runs nothing')),
         Layer.provide(
           gitLayer(gitConfig).pipe(
             Layer.provide(runnerLayer(runnerConfig())),

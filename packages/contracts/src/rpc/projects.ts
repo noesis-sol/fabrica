@@ -11,8 +11,9 @@ import { keyedPatch, resume, streamItem } from './stream'
 
 // The Projects group (spec §8.1, §10): adding a checkout on the engine's host or a clone of a URL,
 // the host's folders a client browses for that checkout, listing and removing projects, the user's
-// trust in each (§12.1), their settings, `init`, and the stream of their status that the sidebar
-// shows (§18.3).
+// trust in each (§12.1), their settings, `init`, the stream of their status that the sidebar
+// shows (§18.3), and the stream of a project's provider account's usage windows that the title bar
+// shows (§12.9, H90).
 
 /** Where a project comes from (§10.1): a checkout the engine can read, or a git URL it clones. */
 export const ProjectSource = Schema.TaggedUnion({
@@ -96,6 +97,10 @@ export class UsageWindow extends Schema.Class<UsageWindow>('UsageWindow')({
   utilization: Utilization,
   resetsAt: Schema.OptionFromNullOr(Moment),
 }) {}
+
+/** The usage stream's items: the windows' latest figures, then each window as it moves, whole. */
+export const UsageWindowItem = streamItem(Schema.Array(UsageWindow), UsageWindow)
+export type UsageWindowItem = typeof UsageWindowItem.Type
 
 /** What `init` wrote, in order. */
 export class Initialized extends Schema.Class<Initialized>('Initialized')({
@@ -185,6 +190,17 @@ export const ProjectRpcs = RpcGroup.make(
   Rpc.make('projects.watchStatus', {
     payload: { resume },
     success: ProjectStatusItem,
+    stream: true,
+  }),
+  /**
+   * The project's provider account's usage windows (§12.9, H90), for the title bar (§18.3): the model
+   * proxy's latest figure of each, then each window as it moves. A window is named by its provider
+   * and its name, one account to a provider.
+   */
+  Rpc.make('projects.watchUsage', {
+    payload: { project: ProjectId, resume },
+    success: UsageWindowItem,
+    error: ProjectNotFound,
     stream: true,
   }),
 )

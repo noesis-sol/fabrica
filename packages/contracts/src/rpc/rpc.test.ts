@@ -465,6 +465,26 @@ const samples: Record<string, Samples> = {
       patch({ upsert: [projectStatus], remove: ['p-2'] }),
     ],
   },
+  'projects.watchUsage': {
+    payload: [{ project }],
+    success: [
+      snapshot([
+        {
+          provider: 'anthropic',
+          window: 'five_hour',
+          utilization: 0.41,
+          resetsAt: 1_767_225_600_000,
+        },
+      ]),
+      patch({
+        provider: 'anthropic',
+        window: 'seven_day',
+        utilization: 0.12,
+        resetsAt: null,
+      }),
+    ],
+    error: [notFound],
+  },
   'tickets.list': {
     payload: [
       { project, filter: {} },
@@ -1403,6 +1423,7 @@ describe('the protocol’s JSON Schema', () => {
       'engine.watchLoad',
       'credentials.login',
       'projects.watchStatus',
+      'projects.watchUsage',
       'tickets.watch',
       'run.watchView',
       'run.watchEvents',

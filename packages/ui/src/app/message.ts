@@ -42,6 +42,7 @@ import {
   EventsItem,
   LoadItem,
   RunViewItem,
+  UsageItem,
   itemsOf,
 } from './streams'
 
@@ -166,6 +167,8 @@ export const Message = defineMessageUnion({
   ReceivedBacklog: { project: EngineProject, items: itemsOf(BacklogItem) },
   /** The host's load of the engine named `engine`, the scoped project's. */
   ReceivedLoad: { engine: Schema.String, items: itemsOf(LoadItem) },
+  /** The usage windows of `project`'s provider account, the scoped project's. */
+  ReceivedUsage: { project: EngineProject, items: itemsOf(UsageItem) },
   /** An engine's project rows, for the sidebar; `name` is the engine's, as the app knows it. */
   ReceivedProjects: {
     engine: EngineId,

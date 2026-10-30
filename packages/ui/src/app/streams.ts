@@ -13,6 +13,8 @@ import {
   RunView,
   RunViewPatch,
   Ticket,
+  type UsageWindow,
+  UsageWindowItem,
   applyAttentionPatch,
   applyKeyedPatch,
   applyRunViewPatch,
@@ -33,6 +35,7 @@ export const AttentionItem = streamItem(
 )
 export const BacklogItem = streamItem(Schema.Array(Ticket), BacklogPatch)
 export const LoadItem = streamItem(HostLoad, HostLoad)
+export const UsageItem = UsageWindowItem
 export const EventsItem = streamItem(RunEvents, RunEvents)
 
 /**
@@ -261,3 +264,19 @@ export const applyLoad = (
   current: Option.Option<HostLoad>,
   items: Array.NonEmptyReadonlyArray<typeof LoadItem.Type>,
 ): Option.Option<HostLoad> => applyItems(current, items, (_, sample) => sample)
+
+/** A window's patch replaces the window of its provider and name, in its place; a new one goes at the end. */
+export const applyUsage = (
+  current: Option.Option<ReadonlyArray<UsageWindow>>,
+  items: Array.NonEmptyReadonlyArray<typeof UsageItem.Type>,
+): Option.Option<ReadonlyArray<UsageWindow>> =>
+  applyItems(current, items, (windows, moved) =>
+    applyKeyedPatch(
+      windows,
+      { upsert: [moved], remove: [] },
+      {
+        of: ({ provider, window }) => JSON.stringify([provider, window]),
+        gone: (gone: never) => gone,
+      },
+    ),
+  )

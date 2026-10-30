@@ -184,6 +184,8 @@ const engineServing = ({
     'projects.init': notServed,
     'projects.watchStatus': () =>
       Stream.concat(Stream.make(rows), Stream.never),
+    'projects.watchUsage': ({ project }) =>
+      askedStream('projects.watchUsage', Option.some(project)),
     'run.start': notServed,
     'run.stop': notServed,
     'run.drain': notServed,
@@ -433,8 +435,8 @@ describe('a known engine’s project', () => {
           ),
         ).toEqual([])
 
-        // The build-box's project scoped: its run view, its attention, its host's load and its run talk
-        // are the build-box's.
+        // The build-box's project scoped: its run view, its attention, its host's load, its usage windows
+        // and its run talk are the build-box's.
         yield* Queue.offer(
           ticks,
           DateTime.makeZonedUnsafe(0, { timeZone: 'UTC' }),
@@ -442,6 +444,7 @@ describe('a known engine’s project', () => {
         yield* awaiting(boxAsked, of('run.watchView', Option.some(site)))
         yield* awaiting(boxAsked, of('attention.watch', Option.some(site)))
         yield* awaiting(boxAsked, of('engine.watchLoad', Option.none()))
+        yield* awaiting(boxAsked, of('projects.watchUsage', Option.some(site)))
         yield* awaiting(boxAsked, of('talk.open', Option.some(site)))
         // Its Commands too: the answer, the setting read, and what is sent to its run talk.
         yield* awaiting(boxAsked, of('attention.answer', Option.some(site)))

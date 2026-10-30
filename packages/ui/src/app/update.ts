@@ -49,6 +49,7 @@ import {
   applyProjectEvents,
   applyProjectRunView,
   applyRunView,
+  applyUsage,
   joinedAttention,
 } from './streams'
 import { ShowTheme, type ThemeHost } from './theme-host'
@@ -1239,6 +1240,11 @@ const receive = (model: Model, message: Message): Return =>
         engine === scopeEngine(model.scope)
           ? modifyFields(model, { load: load => applyLoad(load, items) })
           : model,
+    }),
+    ReceivedUsage: ({ project, items }) => ({
+      model: Option.contains(model.scope, project)
+        ? modifyFields(model, { usage: usage => applyUsage(usage, items) })
+        : model,
     }),
     ReceivedProjects: ({ engine, name, items }) => {
       const sidebar = Sidebar.receivedProjects(model.console.sidebar, {

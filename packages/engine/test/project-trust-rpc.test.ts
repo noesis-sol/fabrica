@@ -38,6 +38,7 @@ import {
 } from '../src/process'
 import { Projects, layer as projectsLayer } from '../src/projects'
 import { projectsHandlers } from '../src/rpc/projects'
+import { refusingRuns } from '../src/run/hosting'
 
 // `projects.trust` (spec §8.1, §12.1, §20.2): the user gives and takes back their trust in a
 // project over the protocol; `projects.list` and its record say it, and the project's status row is
@@ -115,6 +116,7 @@ const newEngine = Effect.gen(function* () {
     projectsHandlers.pipe(
       Layer.provideMerge(projectsLayer),
       Layer.provide(testHost),
+      Layer.provide(refusingRuns('this test runs nothing')),
       Layer.provide(
         gitLayer(gitConfig).pipe(
           Layer.provide(runnerLayer(runnerConfig())),

@@ -27,6 +27,7 @@ import {
 } from '../src/process'
 import { listFolders, layer as projectsLayer } from '../src/projects'
 import { projectsHandlers } from '../src/rpc/projects'
+import { refusingRuns } from '../src/run/hosting'
 
 // Browsing the engine host's folders for a checkout to add (spec §10.1): a folder's subfolders by
 // name, hidden ones, files and broken links left out, a link to a folder listed, each marked where it
@@ -181,6 +182,7 @@ const newClient = Effect.gen(function* () {
   const services = yield* Layer.build(
     projectsHandlers.pipe(
       Layer.provide(projectsLayer),
+      Layer.provide(refusingRuns('this test runs nothing')),
       Layer.provide(
         layerHostFrom({
           availableParallelism: () => 2,

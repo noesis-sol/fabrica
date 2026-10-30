@@ -26,6 +26,7 @@ import {
   TalkId,
   type Ticket,
   type TranscriptEntry,
+  type UsageWindow,
 } from '@fabrica/contracts'
 
 import * as Sidebar from '../console/sidebar'
@@ -64,9 +65,9 @@ import { watchOf } from './streams'
 // draws it is shown: the run view and attention for the console's scope (under All projects, the run
 // view of every project's run going and every connected engine's attention), History's events (under
 // All projects, every project's run going), the
-// backlog while its screen is open, the host's load while connected. Each project's streams go through
-// the engine holding it, which the project names, while that engine is connected (engine-route.ts),
-// and the load is the scoped project's engine's. Each stream's items go on once per animation frame,
+// backlog while its screen is open, the host's load while connected, and the scoped project's provider
+// account's usage windows. Each project's streams go through the engine holding it, which the project
+// names, while that engine is connected (engine-route.ts), and the load is the scoped project's engine's. Each stream's items go on once per animation frame,
 // so a burst of patches costs one update. The scope's run talk is opened as the scope changes, and
 // every talk the app holds has its transcript watched. For the app's notifications (§18.5), every
 // connected engine's attention requests and the events of each run going, and the clicks on the
@@ -214,6 +215,20 @@ export const loadMessages = (
   ).pipe(
     perFrame(nextFrame),
     Stream.map(items => Message.ReceivedLoad({ engine, items })),
+    Stream.catch(() => Stream.empty),
+  )
+
+/** The usage windows of the project's provider account. */
+export const usageMessages = (
+  client: EngineClientShape,
+  project: EngineProject,
+  nextFrame: Effect.Effect<void>,
+): Stream.Stream<Message> =>
+  watchOf<ReadonlyArray<UsageWindow>, UsageWindow>(client)(resume =>
+    client.rpc['projects.watchUsage']({ project: project.project, resume }),
+  ).pipe(
+    perFrame(nextFrame),
+    Stream.map(items => Message.ReceivedUsage({ project, items })),
     Stream.catch(() => Stream.empty),
   )
 
@@ -668,6 +683,21 @@ export const makeSubscriptions = ({
                 loadMessages(client, engine, nextFrame),
               )
             : Stream.empty,
+      },
+    ),
+    // The title bar's usage windows: the scoped project's provider account's, through its engine.
+    usage: entry(
+      { project: Schema.Option(EngineProject) },
+      {
+        modelToDependencies: model => ({ project: liveScope(model) }),
+        dependenciesToStream: ({ project }) =>
+          Option.match(project, {
+            onNone: () => Stream.empty,
+            onSome: project =>
+              withEngineClient(project.engine, client =>
+                usageMessages(client, project, nextFrame),
+              ),
+          }),
       },
     ),
     attentionToNotify: entry(

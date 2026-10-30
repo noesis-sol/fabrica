@@ -437,6 +437,7 @@ const handlers = served.toLayer({
   'projects.settings.set': notServed,
   'projects.init': notServed,
   'projects.watchStatus': () => Stream.fromIterable(projectItems),
+  'projects.watchUsage': () => Stream.never,
 })
 
 describe("the engine's project rows", () => {

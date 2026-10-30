@@ -531,6 +531,7 @@ const engineAnswering = (answer: Effect.Effect<EngineHello, VersionMismatch>) =>
     'projects.settings.set': notServed,
     'projects.init': notServed,
     'projects.watchStatus': () => Stream.fromIterable(projectItems),
+    'projects.watchUsage': () => Stream.never,
   })
 
 /** A port pair, closed with the scope: the page's end, and the relay's. */
