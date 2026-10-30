@@ -25,6 +25,7 @@ import {
 } from '@fabrica/contracts'
 
 import { ndjson } from './frames'
+import { interruptingOnProtocolErrors } from './protocol-errors'
 import { Reconnect, type StreamItem, isDefect, resumable } from './resume'
 
 // The engine client (spec §8): Effect RPC over a transport's `Socket`, its frames NDJSON. The client
@@ -130,9 +131,13 @@ export const clientErrorWords = (
 /**
  * `rpc`, its requests and streams failing with `defectFailure` where they would die: the engine's
  * defect, carried by the protocol as one, reaches the caller as a failure it catches. (A stream taken
- * `asQueue` keeps its defects; the client takes none so.)
+ * `asQueue` keeps its defects; the client takes none so.) Each is made once `settled`, so that a
+ * protocol error failing the requests in flight fails none made after it (`protocol-errors.ts`).
  */
-const failingOnDefects = (rpc: FabricaClient): FabricaClient =>
+const failingOnDefects = (
+  rpc: FabricaClient,
+  settled: Effect.Effect<void>,
+): FabricaClient =>
   new Proxy(rpc, {
     get: (target, tag, receiver) => {
       const call: unknown = Reflect.get(target, tag, receiver)
@@ -142,13 +147,21 @@ const failingOnDefects = (rpc: FabricaClient): FabricaClient =>
       return (...args: ReadonlyArray<unknown>) => {
         const answer: unknown = Reflect.apply(call, target, args)
         if (Stream.isStream(answer)) {
-          return Stream.catchDefect(answer, defect =>
-            Stream.fail(defectFailure(tag, defect)),
+          return Stream.unwrap(
+            Effect.as(
+              settled,
+              Stream.catchDefect(answer, defect =>
+                Stream.fail(defectFailure(tag, defect)),
+              ),
+            ),
           )
         }
         if (Effect.isEffect(answer)) {
-          return Effect.catchDefect(answer, defect =>
-            Effect.fail(defectFailure(tag, defect)),
+          return Effect.andThen(
+            settled,
+            Effect.catchDefect(answer, defect =>
+              Effect.fail(defectFailure(tag, defect)),
+            ),
           )
         }
         return answer
@@ -230,10 +243,12 @@ export const make = Effect.fn('EngineClient.make')(function* (
     Effect.provideService(RpcClient.ConnectionHooks, hooks),
     Effect.provideService(RpcSerialization.RpcSerialization, ndjson),
   )
+  const errors = yield* interruptingOnProtocolErrors(protocol)
   const rpc = failingOnDefects(
     yield* RpcClient.make(FabricaRpcs).pipe(
-      Effect.provideService(RpcClient.Protocol, protocol),
+      Effect.provideService(RpcClient.Protocol, errors.protocol),
     ),
+    errors.settled,
   )
   const sayHello = rpc['engine.connect'](hello)
 
