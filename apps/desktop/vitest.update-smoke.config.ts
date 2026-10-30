@@ -3,7 +3,7 @@ import { defineConfig } from 'vitest/config'
 import { smokeHost } from './vitest.smoke.config.ts'
 
 // The published app's update test (spec §22.2, §22.5), test/update-smoke.test.ts, run on an earlier
-// release's AppImage once a release is published: `FABRICA_UPDATE_APP=<its AppImage>
+// release's app once a release is published: `FABRICA_UPDATE_APP=<its AppImage, NSIS installer or zip>
 // FABRICA_UPDATE_VERSION=<the release's version> pnpm --filter @fabrica/desktop smoke:update`, as
 // .github/workflows/release.yml's `update` job runs it. It is not one of the unit suite's
 // (vitest.config.ts leaves it out): it needs a published release, and downloads it.

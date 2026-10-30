@@ -10,8 +10,8 @@
 # as checksums.txt.sig (orchestra's scheme, scripts/sign-checksums.ts), attests their build provenance
 # (actions/attest) and publishes the GitHub Release, tagging the commit v<version> as it does, with the
 # commit's scripts/install.sh among its assets. The app's updates (electron-updater) read its feeds there:
-# once it is published, the newest earlier release's Linux x64 AppImage is checked to update itself to it
-# (the `update` job).
+# once it is published, the newest earlier release's app is checked to update itself to it on Linux x64,
+# Windows x64 and each macOS architecture (the `update` job).
 #
 # It tags only once main's check has passed on every engine target in CI (ci.yml's `full check, <target>`
 # jobs; H87): a job GitHub couldn't place, or that failed, is rerun there first, then this. A release
@@ -598,22 +598,52 @@ jobs:
               --notes-file "$RUNNER_TEMP/notes.md" --prerelease="$prerelease" --latest="$latest" "$@"
           fi
 
-  # The published app updating itself (§22.2): the newest earlier release's Linux x64 AppImage, which needs
-  # no signing, launched with its update checks on under Xvfb, finds this release in the feeds just
-  # published, downloads it and installs it as it quits; launched again it is this release
-  # (apps/desktop/test/update-smoke.test.ts). The app's updates read GitHub's latest release, so the job
-  # says why and tests nothing for a pre-release, a release that isn't the latest (an older version
-  # released again), or where no earlier release has the AppImage (scripts/earlier-app.ts), as before the
-  # second release that publishes the app. macOS's Squirrel.Mac needs the signed app, and the Windows
-  # installer's update a Windows runner: they are not tested here yet.
+  # The published app updating itself (§22.2): on each target the app updates itself on, the newest
+  # earlier release's app (scripts/earlier-app.ts), installed as a user installs it and launched with its
+  # update checks on, finds this release in the feeds just published, downloads it and installs it as it
+  # quits; launched again it is this release (apps/desktop/test/update-smoke.test.ts). Linux x64's
+  # AppImage runs under Xvfb. Windows x64's NSIS installer installs it silently, and the update's installer
+  # runs silently as it quits; electron-updater checks the update's signature only where the app names its
+  # publisher (publisherName), which an unsigned app doesn't. Each macOS architecture's zip updates through
+  # Squirrel.Mac, which updates only a signed app: the target says why and tests nothing where this release
+  # isn't notarised or the earlier app isn't signed with a Developer ID. The app's updates read GitHub's
+  # latest release, so every target says why and tests nothing for a pre-release, a release that isn't the
+  # latest (an older version released again), or where no earlier release has the target's app, as before
+  # the second release that publishes it.
   update:
-    name: update, linux-x64
+    name: update, ${{ matrix.target }}
     needs: [prepare, publish]
     if: always() && needs.publish.result == 'success'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+            os: linux
+            feed: latest-linux.yml
+          - target: windows-x64
+            runner: windows-2025
+            os: windows
+            feed: latest.yml
+          - target: macos-arm64
+            runner: macos-26
+            os: macos
+            feed: latest-mac.yml
+          - target: macos-x64
+            runner: macos-26-intel
+            os: macos
+            feed: latest-mac.yml
+    defaults:
+      run:
+        shell: bash
     env:
       LATEST: ${{ needs.publish.outputs.latest }}
+      NOTARISED: ${{ needs.prepare.outputs.notarised }}
+      TARGET: ${{ matrix.target }}
+      OS: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -628,30 +658,35 @@ jobs:
       - name: Install dependencies
         run: mise exec -- pnpm install --frozen-lockfile
 
-      # The earlier release's AppImage, checked against its release's checksums.txt.
+      # The earlier release's app for the target, checked against its release's checksums.txt; for macOS,
+      # its bundle's signature.
       - name: Find the earlier app
         id: earlier
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          skip() {
+            echo "::notice title=No update test::$1"
+            echo "skip=$1" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
           if [ "$LATEST" != true ]; then
             case "$VERSION" in
-            *-*) reason="$VERSION is a pre-release, never GitHub's latest, which the app's updates read" ;;
-            *) reason="v$VERSION isn't GitHub's latest release, which the app's updates read" ;;
+            *-*) skip "$VERSION is a pre-release, never GitHub's latest, which the app's updates read" ;;
+            *) skip "v$VERSION isn't GitHub's latest release, which the app's updates read" ;;
             esac
-            echo "::notice title=No update test::$reason"
-            echo "skip=$reason" >> "$GITHUB_OUTPUT"
-            exit 0
+          fi
+          if [ "$OS" = macos ] && [ "$NOTARISED" != true ]; then
+            skip "v$VERSION's macOS app isn't signed and notarised: Squirrel.Mac updates only a signed app"
           fi
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
             --jq '.[] | {tag: .tag_name, draft, prerelease, assets: [.assets[].name]} | tojson' \
             > "$RUNNER_TEMP/releases.jsonl"
-          mise exec -- node scripts/earlier-app.ts "$VERSION" "$RUNNER_TEMP/releases.jsonl" > "$RUNNER_TEMP/earlier"
-          cat "$RUNNER_TEMP/earlier" >> "$GITHUB_OUTPUT"
-          skip=$(sed -n 's/^skip=//p' "$RUNNER_TEMP/earlier")
-          if [ -n "$skip" ]; then
-            echo "::notice title=No update test::$skip"
-            exit 0
+          mise exec -- node scripts/earlier-app.ts "$VERSION" "$RUNNER_TEMP/releases.jsonl" "$TARGET" \
+            > "$RUNNER_TEMP/earlier"
+          reason=$(sed -n 's/^skip=//p' "$RUNNER_TEMP/earlier")
+          if [ -n "$reason" ]; then
+            skip "$reason"
           fi
           tag=$(sed -n 's/^tag=//p' "$RUNNER_TEMP/earlier")
           asset=$(sed -n 's/^asset=//p' "$RUNNER_TEMP/earlier")
@@ -659,16 +694,28 @@ jobs:
           mkdir "$RUNNER_TEMP/earlier-app"
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/earlier-app" \
             --pattern "$asset" --pattern checksums.txt
-          (cd "$RUNNER_TEMP/earlier-app" && grep -F "  $asset" checksums.txt | sha256sum -c -)
+          if command -v sha256sum > /dev/null; then sum=sha256sum; else sum='shasum -a 256'; fi
+          (cd "$RUNNER_TEMP/earlier-app" && grep -F "  $asset" checksums.txt | $sum -c -)
+          # Squirrel.Mac updates an app signed with a Developer ID Application certificate only.
+          if [ "$OS" = macos ]; then
+            ditto -x -k "$RUNNER_TEMP/earlier-app/$asset" "$RUNNER_TEMP/earlier-bundle"
+            if ! codesign --verify --deep --strict \
+              -R='=anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' \
+              "$RUNNER_TEMP/earlier-bundle/Fabrica.app"; then
+              skip "$tag's macOS app isn't signed with a Developer ID: Squirrel.Mac updates only a signed app"
+            fi
+          fi
           echo "app=$RUNNER_TEMP/earlier-app/$asset" >> "$GITHUB_OUTPUT"
 
       # GitHub may take a moment to serve a release just published as its latest; the app checks once at
       # launch.
       - name: Wait for the feeds
         if: steps.earlier.outputs.skip == ''
+        env:
+          FEED: ${{ matrix.feed }}
         run: |
           latest="https://github.com/$GITHUB_REPOSITORY/releases/latest"
-          feed="https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/latest-linux.yml"
+          feed="https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/$FEED"
           for attempt in $(seq 1 30); do
             tag=$(curl -fsSL -H 'Accept: application/json' "$latest" | jq -r '.tag_name // ""' || true)
             if [ "$tag" = "v$VERSION" ] && curl -fsSL -o /dev/null "$feed"; then
@@ -678,13 +725,13 @@ jobs:
             echo "Attempt $attempt: GitHub's latest is ${tag:-unknown}"
             sleep 10
           done
-          echo "::error::GitHub doesn't serve v$VERSION as its latest release with latest-linux.yml"
+          echo "::error::GitHub doesn't serve v$VERSION as its latest release with $FEED"
           exit 1
 
       # FUSE 2 to mount the AppImage, and Chromium's sandbox let use unprivileged user namespaces, as
       # app.yml's smoke test has them.
       - name: Install the AppImage's needs
-        if: steps.earlier.outputs.skip == ''
+        if: steps.earlier.outputs.skip == '' && matrix.os == 'linux'
         run: |
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libfuse2t64
@@ -695,4 +742,9 @@ jobs:
         env:
           FABRICA_UPDATE_APP: ${{ steps.earlier.outputs.app }}
           FABRICA_UPDATE_VERSION: ${{ inputs.version }}
-        run: xvfb-run -a mise exec -- pnpm --filter @fabrica/desktop smoke:update
+        run: |
+          if [ "$OS" = linux ]; then
+            xvfb-run -a mise exec -- pnpm --filter @fabrica/desktop smoke:update
+          else
+            mise exec -- pnpm --filter @fabrica/desktop smoke:update
+          fi

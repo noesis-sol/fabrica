@@ -13,14 +13,14 @@ import {
 import {
   EarlierApp,
   type Release,
-  appImageName,
+  appAssetName,
   earlierApp,
   outputLines,
   readReleases,
 } from './earlier-app'
 
 // The earlier release whose app the release's update test updates (spec §22.2, §22.5): the newest
-// published one below the release's version with the Linux x64 AppImage, or a reason to skip the test.
+// published one below the release's version with the target's app, or a reason to skip the test.
 
 /** A published release of `version`, with the app's files where `app` says so. */
 const release = (
@@ -39,20 +39,30 @@ const release = (
     'checksums.txt',
     ...(options.app === false
       ? []
-      : [appImageName(version), `Fabrica-${version}-linux-arm64.AppImage`]),
+      : [
+          appAssetName('linux-x64', version),
+          `Fabrica-${version}-linux-arm64.AppImage`,
+          appAssetName('windows-x64', version),
+          appAssetName('macos-x64', version),
+          appAssetName('macos-arm64', version),
+        ]),
   ],
 })
 
 describe('earlierApp', () => {
   it('finds the newest earlier release with the AppImage', () => {
     expect(
-      earlierApp('0.10.0', [
-        release('0.10.0'),
-        release('0.2.0'),
-        release('0.9.0'),
-        release('0.9.1-rc.1', { prerelease: true }),
-        release('0.1.0'),
-      ]),
+      earlierApp({
+        version: '0.10.0',
+        target: 'linux-x64',
+        releases: [
+          release('0.10.0'),
+          release('0.2.0'),
+          release('0.9.0'),
+          release('0.9.1-rc.1', { prerelease: true }),
+          release('0.1.0'),
+        ],
+      }),
     ).toEqual(
       EarlierApp.Found({
         tag: 'v0.9.0',
@@ -63,13 +73,17 @@ describe('earlierApp', () => {
 
   it('passes over releases without the app, drafts, pre-releases and later versions', () => {
     expect(
-      earlierApp('1.2.0', [
-        release('1.3.0'),
-        release('1.1.0', { app: false }),
-        release('1.0.9', { draft: true }),
-        release('1.0.8-rc.1', { prerelease: true }),
-        release('1.0.0'),
-      ]),
+      earlierApp({
+        version: '1.2.0',
+        target: 'linux-x64',
+        releases: [
+          release('1.3.0'),
+          release('1.1.0', { app: false }),
+          release('1.0.9', { draft: true }),
+          release('1.0.8-rc.1', { prerelease: true }),
+          release('1.0.0'),
+        ],
+      }),
     ).toEqual(
       EarlierApp.Found({
         tag: 'v1.0.0',
@@ -80,31 +94,84 @@ describe('earlierApp', () => {
 
   it('has nothing to update before the second release that publishes the app', () => {
     expect(
-      earlierApp('0.2.0', [release('0.2.0'), release('0.1.0', { app: false })]),
+      earlierApp({
+        version: '0.2.0',
+        target: 'linux-x64',
+        releases: [release('0.2.0'), release('0.1.0', { app: false })],
+      }),
     ).toEqual(EarlierApp.NoEarlierApp())
-    expect(earlierApp('0.1.0', [])).toEqual(EarlierApp.NoEarlierApp())
+    expect(
+      earlierApp({ version: '0.1.0', target: 'windows-x64', releases: [] }),
+    ).toEqual(EarlierApp.NoEarlierApp())
   })
 
   it('skips a pre-release, which the app never updates to', () => {
-    expect(earlierApp('0.2.0-rc.1', [release('0.1.0')])).toEqual(
-      EarlierApp.PreRelease(),
+    expect(
+      earlierApp({
+        version: '0.2.0-rc.1',
+        target: 'macos-arm64',
+        releases: [release('0.1.0')],
+      }),
+    ).toEqual(EarlierApp.PreRelease())
+  })
+
+  it("finds each target's own app, the Windows installer and a macOS architecture's zip", () => {
+    const releases = [
+      release('0.3.0'),
+      release('0.2.0'),
+      {
+        ...release('0.1.0', { app: false }),
+        assets: [appAssetName('macos-arm64', '0.1.0')],
+      },
+    ]
+    expect(
+      earlierApp({ version: '0.3.0', target: 'windows-x64', releases }),
+    ).toEqual(
+      EarlierApp.Found({ tag: 'v0.2.0', asset: 'Fabrica-0.2.0-win-x64.exe' }),
     )
+    expect(
+      earlierApp({ version: '0.3.0', target: 'macos-x64', releases }),
+    ).toEqual(
+      EarlierApp.Found({ tag: 'v0.2.0', asset: 'Fabrica-0.2.0-mac-x64.zip' }),
+    )
+    expect(
+      earlierApp({ version: '0.2.0', target: 'macos-arm64', releases }),
+    ).toEqual(
+      EarlierApp.Found({ tag: 'v0.1.0', asset: 'Fabrica-0.1.0-mac-arm64.zip' }),
+    )
+    expect(
+      earlierApp({ version: '0.2.0', target: 'macos-x64', releases }),
+    ).toEqual(EarlierApp.NoEarlierApp())
   })
 })
 
 describe('outputLines', () => {
   it("writes the step's outputs", () => {
     expect(
-      outputLines(
-        EarlierApp.Found({ tag: 'v0.1.0', asset: appImageName('0.1.0') }),
-        '0.2.0',
-      ),
+      outputLines({
+        app: EarlierApp.Found({
+          tag: 'v0.1.0',
+          asset: appAssetName('linux-x64', '0.1.0'),
+        }),
+        version: '0.2.0',
+        target: 'linux-x64',
+      }),
     ).toBe('tag=v0.1.0\nasset=Fabrica-0.1.0-linux-x86_64.AppImage\n')
-    expect(outputLines(EarlierApp.PreRelease(), '0.2.0-rc.1')).toMatch(
-      /^skip=0\.2\.0-rc\.1 is a pre-release[^\n]*\n$/u,
-    )
-    expect(outputLines(EarlierApp.NoEarlierApp(), '0.1.0')).toMatch(
-      /^skip=no release before 0\.1\.0 [^\n]*\n$/u,
+    expect(
+      outputLines({
+        app: EarlierApp.PreRelease(),
+        version: '0.2.0-rc.1',
+        target: 'linux-x64',
+      }),
+    ).toMatch(/^skip=0\.2\.0-rc\.1 is a pre-release[^\n]*\n$/u)
+    expect(
+      outputLines({
+        app: EarlierApp.NoEarlierApp(),
+        version: '0.1.0',
+        target: 'windows-x64',
+      }),
+    ).toMatch(
+      /^skip=no release before 0\.1\.0 has the app's Windows x64 installer: [^\n]*\n$/u,
     )
   })
 })
@@ -150,18 +217,38 @@ layer(layerToolbox({ tools: ['node'] }))('the script', it => {
             .join(''),
         ),
       )
-      expect(yield* script(root, ['0.2.0', 'releases.jsonl'])).toEqual({
+      expect(
+        yield* script(root, ['0.2.0', 'releases.jsonl', 'linux-x64']),
+      ).toEqual({
         code: 0,
         stdout: 'tag=v0.1.0\nasset=Fabrica-0.1.0-linux-x86_64.AppImage\n',
         stderr: '',
       })
-      expect(yield* script(root, ['0.2.0', 'none.jsonl'])).toEqual({
-        code: 1,
-        stdout: '',
-        stderr: 'earlier-app: none.jsonl lists no releases as gh api does\n',
+      expect(
+        yield* script(root, ['0.2.0', 'releases.jsonl', 'macos-arm64']),
+      ).toEqual({
+        code: 0,
+        stdout: 'tag=v0.1.0\nasset=Fabrica-0.1.0-mac-arm64.zip\n',
+        stderr: '',
       })
-      const usage = yield* script(root, ['0.2.0'])
+      expect(yield* script(root, ['0.2.0', 'none.jsonl', 'linux-x64'])).toEqual(
+        {
+          code: 1,
+          stdout: '',
+          stderr: 'earlier-app: none.jsonl lists no releases as gh api does\n',
+        },
+      )
+      const usage = yield* script(root, ['0.2.0', 'releases.jsonl'])
       expect(usage.code).toBe(2)
+      const unknown = yield* script(root, [
+        '0.2.0',
+        'releases.jsonl',
+        'linux-armv7l',
+      ])
+      expect(unknown.code).toBe(2)
+      expect(unknown.stderr).toContain(
+        'linux-x64|windows-x64|macos-x64|macos-arm64',
+      )
     }),
   )
 })
