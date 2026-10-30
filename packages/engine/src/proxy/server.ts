@@ -276,7 +276,24 @@ const listen = (server: Server) =>
     })
   })
 
-/** Sends a request to the provider; its response, once its head has come. */
+/**
+ * Ends when the agent drops its call before its answer has been sent whole (Pi's abort, or its agent
+ * ended mid-call), at once where it has dropped it already.
+ */
+const dropped = (response: ServerResponse) =>
+  Effect.callback<void>(resume => {
+    if (response.destroyed) {
+      resume(Effect.void)
+      return
+    }
+    const closed = () => {
+      if (!response.writableFinished) resume(Effect.void)
+    }
+    response.once('close', closed)
+    return Effect.sync(() => response.off('close', closed))
+  })
+
+/** Sends a request to the provider, aborted as the effect is interrupted; its response, once its head has come. */
 const send = (options: {
   readonly url: URL
   readonly method: string
@@ -378,6 +395,12 @@ const relay = (options: {
     Option.match(options.sink, {
       onNone: () => upstream.resume(),
       onSome: response => {
+        // The agent dropped the call as its head came: there is nothing to pass it on to.
+        if (response.destroyed) {
+          upstream.destroy()
+          finish()
+          return
+        }
         response.writeHead(
           upstream.statusCode ?? 502,
           upstream.statusMessage,
@@ -551,6 +574,8 @@ export const make = Effect.fn('ModelProxy.make')(function* (
       },
     )
 
+  // The call ends when the agent drops it, whatever it waits on: its permit, the provider's head, its
+  // body. The upstream request is aborted, and its permit and the provider's response let go.
   const handle = (request: IncomingMessage, response: ServerResponse) =>
     Effect.gen(function* () {
       const target = targetOf(request.url ?? '')
@@ -600,6 +625,7 @@ export const make = Effect.fn('ModelProxy.make')(function* (
           }),
       })
     }).pipe(
+      Effect.raceFirst(dropped(response)),
       Effect.scoped,
       Effect.onInterrupt(() => Effect.sync(() => response.destroy())),
       Effect.catchCause(cause =>
