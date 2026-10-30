@@ -11,5 +11,7 @@
   records hold for it, never the page's. A connection whose engine presents another certificate than the one
   pinned, or refuses the token (wrong, or revoked), stops and says so on the engine's card, never tried again
   silently; the card offers Try again and Pair again, which opens the TLS form at its address under its name.
+  An engine paired again with the certificate it was kept with (its token revoked) has its new token kept in
+  safeStorage at once.
 - The client's TLS connection and fingerprint read can be interrupted while they connect, so a timeout gives
   up on an engine that never finishes its handshake.

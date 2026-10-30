@@ -121,7 +121,11 @@ export const makePairings = ({
       Effect.withSpan('Pairing.readFingerprint'),
     )
 
-  /** Holds the pairing the user agreed to, where its fingerprint is the one read and a token can be kept. */
+  /**
+   * Holds the pairing the user agreed to, where its fingerprint is the one read and a token can be
+   * kept. One for an engine the state knows already with that certificate (paired again, as its token
+   * was refused) has its new token kept at once: the page, its engine kept, keeps it no more.
+   */
   const pair = (request: PairRequest): Effect.Effect<PairAnswer> =>
     Effect.gen(function* () {
       const at = tlsEndpointText(request.endpoint)
@@ -130,18 +134,34 @@ export const makePairings = ({
           `${request.fingerprint} isn't the fingerprint the engine at ${at} presented: read its certificate again`,
         )
       }
-      return yield* state.secretsReady.pipe(
-        Effect.map(() => {
-          held.set(request.name, request)
-          return PairAnswer.cases.Paired.make({})
-        }),
-        Effect.catch(({ reason }) =>
+      yield* state.secretsReady
+      const known = yield* state.engines
+      if (
+        known.some(
+          engine =>
+            engine.name === request.name &&
+            pinnedAt(engine.address, request.endpoint, request.fingerprint),
+        )
+      ) {
+        yield* state.saveToken({ engine: request.name, token: request.token })
+      }
+      held.set(request.name, request)
+      return PairAnswer.cases.Paired.make({})
+    }).pipe(
+      Effect.catchTags({
+        NoSecretStorage: ({ reason }) =>
           Effect.succeed(
             failed(`the app can't keep the pairing token: ${reason}`),
           ),
-        ),
-      )
-    }).pipe(Effect.withSpan('Pairing.pair'))
+        AppStateFailed: ({ reason }) =>
+          Effect.succeed(
+            failed(`the app can't keep the pairing token: ${reason}`),
+          ),
+        EngineUnknown: ({ name }) =>
+          Effect.succeed(failed(`the app's state knows no engine ${name}`)),
+      }),
+      Effect.withSpan('Pairing.pair'),
+    )
 
   /**
    * Keeps `engine` in the app's state; one over TLS only as it was paired, its token kept with it, or

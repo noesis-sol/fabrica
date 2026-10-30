@@ -366,6 +366,34 @@ describe('main’s pairings', () => {
   )
 
   it.effect(
+    'keep the new token at once of an engine paired again with the certificate it was kept with',
+    () =>
+      Effect.gen(function* () {
+        const { state, pairings } = yield* pairingsIn()
+        yield* pairings.readFingerprint(endpoint)
+        yield* pairings.pair(request())
+        yield* pairings.keep(paired)
+        // Its token was revoked: paired again, the same certificate, a new token. The page keeps the
+        // engine no more, as the state holds it so already.
+        yield* pairings.readFingerprint(endpoint)
+        expect(
+          yield* pairings.pair(request({ token: Redacted.make('fab_new') })),
+        ).toEqual(PairAnswer.cases.Paired.make({}))
+        expect(
+          Option.map(yield* state.token('build-box'), Redacted.value),
+        ).toEqual(Option.some('fab_new'))
+        // As the next start reaches it, from the state alone.
+        const restarted = makePairings({
+          state,
+          read: () => Effect.die('not read'),
+        })
+        expect(tokenOf(yield* restarted.target(paired.address, local))).toEqual(
+          Option.some('fab_new'),
+        )
+      }).pipe(Effect.scoped),
+  )
+
+  it.effect(
     'refuse a pairing whose fingerprint isn’t the one read, or whose token can’t be kept',
     () =>
       Effect.gen(function* () {
