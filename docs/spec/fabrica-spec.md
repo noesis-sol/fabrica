@@ -467,6 +467,10 @@ CREATE TABLE leases (               -- engine-local; never synced
 CREATE TABLE check_own_passes (     -- engine-local; never synced; the last pass has the highest seq
   seq INTEGER PRIMARY KEY, ticket_id TEXT NOT NULL REFERENCES tickets(id), tree TEXT NOT NULL,
   UNIQUE (ticket_id, tree));
+CREATE TABLE verifier_rounds (      -- engine-local; never synced; the rounds handed back (§13.6)
+  ticket_id TEXT NOT NULL REFERENCES tickets(id), round INTEGER NOT NULL,
+  verdict TEXT NOT NULL,            -- JSON: the round's verdict, its findings
+  PRIMARY KEY (ticket_id, round));
 ```
 
 **Rules**
@@ -476,6 +480,7 @@ CREATE TABLE check_own_passes (     -- engine-local; never synced; the last pass
 - Rows decode into Schema classes from `contracts`; the same types reach the UI unchanged.
 - A lease renews from its worker's activity; an expired lease (the engine crashed) returns the ticket to the carry-over on the next start (§13.10), not straight to `ready`.
 - `check_own`'s passes are kept by the tree each ran on (H89), so a carried-over ticket's passes, and its `FABRICA_CHECK_OWN_PASSED_AT`, outlast the engine's restart (§13.10); they are dropped in the transaction that closes the ticket (its merge closes it) or deletes it.
+- The verifier's rounds that handed a ticket's change back are kept with it (§13.6), so a ticket dispatched again (its question answered, carried over, undeferred) goes on counting toward `verifier.rounds`, and its verifier weighs the earlier findings; they are dropped as its passes are.
 
 ### 11.3 The tickets ref
 
@@ -696,7 +701,7 @@ orchestra 0.9.1's rules \[DECISION\], made precise by what tutti's runs measured
 
 ### 13.6 The verifier
 
-\[DECISION\] When a worker calls `finish`, the engine starts a verifier: a separate Pi session in the worktree, read-only (Read, Grep, Glob, Bash for reading and running tests), given the ticket and the diff but none of the worker's reasoning, using `verifier.model` (default: a different provider's model from the worker's where one is configured, else the same). It reuses the worker's passing `check_own` on the same tree rather than running it again, and checks the suites on what the change touches. A pass is recorded with the tree it ran on (HEAD's, with the uncommitted and untracked files), so committing what was checked keeps it (H89). In tutti a worker's own check was 37% of its time, and 131 of 212 sessions ran it again after a pass (tutti-gr4z.11); the engine passes the last pass's tree to the check command (`FABRICA_CHECK_OWN_PASSED_AT`), so a project's `check_own` that selects tests can leave out those that passed and that nothing since touches, as tutti's own does. It answers through its `verdict` tool (`PASS`, or `FAIL` with findings). A FAIL goes back to the worker, the earlier rounds' findings carried, for at most `verifier.rounds` (default 3); a later round that disagrees with an earlier one says so (`DISAGREES WITH ROUND <n>`), and the worker asks the maintainer rather than going round again (orchestra-nr1v.12). `verifier.enabled` per project (default on).
+\[DECISION\] When a worker calls `finish`, the engine starts a verifier: a separate Pi session in the worktree, read-only (Read, Grep, Glob, Bash for reading and running tests), given the ticket and the diff but none of the worker's reasoning, using `verifier.model` (default: a different provider's model from the worker's where one is configured, else the same). It reuses the worker's passing `check_own` on the same tree rather than running it again, and checks the suites on what the change touches. A pass is recorded with the tree it ran on (HEAD's, with the uncommitted and untracked files), so committing what was checked keeps it (H89). In tutti a worker's own check was 37% of its time, and 131 of 212 sessions ran it again after a pass (tutti-gr4z.11); the engine passes the last pass's tree to the check command (`FABRICA_CHECK_OWN_PASSED_AT`), so a project's `check_own` that selects tests can leave out those that passed and that nothing since touches, as tutti's own does. It answers through its `verdict` tool (`PASS`, or `FAIL` with findings). A FAIL goes back to the worker, the earlier rounds' findings carried, for at most `verifier.rounds` (default 3); a later round that disagrees with an earlier one says so (`DISAGREES WITH ROUND <n>`), and the worker asks the maintainer rather than going round again (orchestra-nr1v.12). The rounds are the ticket's, not the dispatch's: kept in the work graph (§11.2), they carry over to its next dispatch, after the maintainer answers, a carry-over or an undeferral, which goes on from its last round with every earlier round's findings. `verifier.enabled` per project (default on).
 
 ### 13.7 The merge queue
 

@@ -84,10 +84,22 @@ const checkOwnPasses = statements(
     UNIQUE (ticket_id, tree))`,
 )
 
+/**
+ * The rounds the verifier handed each ticket's change back in (§13.6), engine-local as its passes
+ * are: kept across a re-dispatch and the engine's restarts, dropped as the ticket closes. `verdict`
+ * is the round's verdict, encoded, as JSON.
+ */
+const verifierRounds = statements(
+  `CREATE TABLE verifier_rounds (
+    ticket_id TEXT NOT NULL REFERENCES tickets(id), round INTEGER NOT NULL, verdict TEXT NOT NULL,
+    PRIMARY KEY (ticket_id, round))`,
+)
+
 /** The engine's migrations, in order. */
 export const migrations: Migrations = {
   '0001_work_graph': workGraph,
   '0002_check_own_passes': checkOwnPasses,
+  '0003_verifier_rounds': verifierRounds,
 }
 
 /** The schema version a set of migrations brings a database to: its highest number. */

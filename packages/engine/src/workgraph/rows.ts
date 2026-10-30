@@ -4,13 +4,16 @@ import {
   Actor,
   Edge,
   Note,
+  Round,
   Ticket,
   TicketChange,
   TicketEvent,
   TreeHash,
+  Verdict,
 } from '@fabrica/contracts'
 
 import { InvalidTicket, StoreFailed } from './errors'
+import type { VerifierRound } from './service'
 
 // How the store's rows map to the contracts' classes (spec §11.2): a row is the class's encoded form,
 // flattened into columns, its JSON columns as text. Every row read decodes through the class's schema.
@@ -247,6 +250,29 @@ const decodePassRow = decodeRow(TreeHash, 'check_own_passes')
 export const treeFromPassRow = (
   row: CheckOwnPassRow,
 ): Effect.Effect<TreeHash, StoreFailed> => decodePassRow(row, row => row.tree)
+
+/** A row of `verifier_rounds`, as read for its round. */
+export type VerifierRoundRow = {
+  readonly round: number
+  readonly verdict: string
+}
+
+const decodeRoundRow = decodeRow(
+  Schema.Struct({ round: Round, verdict: Verdict }),
+  'verifier_rounds',
+)
+
+/** A verifier round, from its row. */
+export const roundFromRow = (
+  row: VerifierRoundRow,
+): Effect.Effect<VerifierRound, StoreFailed> =>
+  decodeRoundRow(row, row => ({ round: row.round, verdict: json(row.verdict) }))
+
+const encodeVerdict = Schema.encodeSync(Verdict)
+
+/** A verdict's column: its encoded form, as JSON. */
+export const verdictColumn = (verdict: Verdict): string =>
+  JSON.stringify(encodeVerdict(verdict))
 
 const encodeActor = Schema.encodeSync(Actor)
 const encodeChange = Schema.encodeSync(TicketChange)

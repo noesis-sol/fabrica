@@ -52,6 +52,7 @@ import {
   type EventRow,
   type NoteRow,
   type TicketRow,
+  type VerifierRoundRow,
   actorColumn,
   changeColumns,
   edgeFromRow,
@@ -59,9 +60,11 @@ import {
   invalid,
   makeTicket,
   noteFromRow,
+  roundFromRow,
   rowFromTicket,
   ticketFromRow,
   treeFromPassRow,
+  verdictColumn,
 } from './rows'
 import {
   DroppedEdge,
@@ -214,9 +217,12 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
   const dropLease = (id: TicketId) =>
     sql`DELETE FROM leases WHERE ticket_id = ${id}`
 
-  /** Drops the ticket's `check_own` passes: it closed, or is deleted. */
+  /** Drops the ticket's `check_own` passes and verifier rounds: it closed, or is deleted. */
   const dropPasses = (id: TicketId) =>
-    sql`DELETE FROM check_own_passes WHERE ticket_id = ${id}`
+    Effect.andThen(
+      sql`DELETE FROM check_own_passes WHERE ticket_id = ${id}`,
+      sql`DELETE FROM verifier_rounds WHERE ticket_id = ${id}`,
+    )
 
   /** A new top-level ID no ticket or tombstone has. */
   const freeTicketId = Effect.gen(function* () {
@@ -585,6 +591,35 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
     return yield* Effect.transposeOption(
       Option.map(Option.fromUndefinedOr(rows[0]), treeFromPassRow),
     )
+  })
+
+  // A verifier round is engine-local, as a pass is: no event, and nothing the reactive queries show.
+  const recordVerifierRound: WorkGraphShape['recordVerifierRound'] = Effect.fn(
+    'WorkGraph.recordVerifierRound',
+  )(function* ({ ticket, round }) {
+    return yield* read(
+      'recordVerifierRound',
+      sql.withTransaction(
+        Effect.gen(function* () {
+          yield* requireTicket(ticket)
+          yield* sql`INSERT OR REPLACE INTO verifier_rounds ${sql.insert({
+            ticket_id: ticket,
+            round: round.round,
+            verdict: verdictColumn(round.verdict),
+          })}`
+        }),
+      ),
+    )
+  })
+
+  const verifierRounds: WorkGraphShape['verifierRounds'] = Effect.fn(
+    'WorkGraph.verifierRounds',
+  )(function* (ticket) {
+    const rows = yield* read(
+      'verifierRounds',
+      sql<VerifierRoundRow>`SELECT round, verdict FROM verifier_rounds WHERE ticket_id = ${ticket} ORDER BY round`,
+    )
+    return yield* Effect.forEach(rows, roundFromRow)
   })
 
   const closeTicket = (options: {
@@ -1221,6 +1256,8 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
     recordCheckOwnPass,
     checkOwnPassed,
     lastCheckOwnPass,
+    recordVerifierRound,
+    verifierRounds,
     close,
     closeEpics,
     reopen,

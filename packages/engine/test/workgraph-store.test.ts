@@ -835,9 +835,13 @@ describe('list', () => {
 })
 
 describe('migrations', () => {
+  /** The engine's schema version: its migrations are numbered from 1, one each. */
+  const known = Object.keys(migrations).length
+  /** A key for the migration after the engine's last, `<number>_<name>`. */
+  const next = (name: string) => `${String(known + 1).padStart(4, '0')}_${name}`
   const later = {
     ...migrations,
-    '0003_later': Effect.flatMap(SqlClient.SqlClient, sql =>
+    [next('later')]: Effect.flatMap(SqlClient.SqlClient, sql =>
       Effect.asVoid(sql`CREATE TABLE later (id INTEGER PRIMARY KEY)`),
     ),
   }
@@ -851,16 +855,18 @@ describe('migrations', () => {
         expect(yield* sql`PRAGMA busy_timeout`).toEqual([{ timeout: 5000 }])
         expect(
           yield* sql`SELECT migration_id FROM effect_sql_migrations ORDER BY migration_id`,
-        ).toEqual([{ migration_id: 1 }, { migration_id: 2 }])
-        expect(yield* migrate()).toBe(2)
+        ).toEqual(
+          Array.from({ length: known }, (_, at) => ({ migration_id: at + 1 })),
+        )
+        expect(yield* migrate()).toBe(known)
       }).pipe(Effect.provide(storeLayer(':memory:'))),
   )
 
   it.effect('refuses a database a newer engine migrated', () =>
     Effect.gen(function* () {
-      expect(yield* migrate(later)).toBe(2)
+      expect(yield* migrate(later)).toBe(known)
       expect(yield* Effect.flip(migrate())).toEqual(
-        new DatabaseTooNew({ filename: ':memory:', found: 3, known: 2 }),
+        new DatabaseTooNew({ filename: ':memory:', found: known + 1, known }),
       )
     }).pipe(Effect.provide(storeLayer(':memory:'))),
   )
@@ -888,13 +894,13 @@ describe('migrations', () => {
           yield* migrate(later)
         }).pipe(Effect.provide(storeLayer(filename)))
 
-        const backup = `${filename}.v2.backup`
+        const backup = `${filename}.v${known}.backup`
         yield* Effect.promise(() => access(backup))
         yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient
           expect(
             yield* sql`SELECT max(migration_id) AS version FROM effect_sql_migrations`,
-          ).toEqual([{ version: 2 }])
+          ).toEqual([{ version: known }])
         }).pipe(
           Effect.provide(
             SqliteClient.layer({ filename: backup, readonly: true }),
@@ -905,7 +911,7 @@ describe('migrations', () => {
           Layer.build(storeLayer(filename)).pipe(Effect.scoped),
         )
         expect(refused).toEqual(
-          new DatabaseTooNew({ filename, found: 3, known: 2 }),
+          new DatabaseTooNew({ filename, found: known + 1, known }),
         )
       }).pipe(Effect.scoped),
   )
@@ -914,7 +920,7 @@ describe('migrations', () => {
     Effect.gen(function* () {
       const failing = {
         ...migrations,
-        '0003_failing': Effect.flatMap(SqlClient.SqlClient, sql =>
+        [next('failing')]: Effect.flatMap(SqlClient.SqlClient, sql =>
           Effect.andThen(
             sql`CREATE TABLE half (id INTEGER)`,
             sql`NOT SQL AT ALL`,
@@ -923,12 +929,14 @@ describe('migrations', () => {
       }
       const failed = yield* Effect.flip(migrate(failing))
       expect(failed).toBeInstanceOf(MigrationFailed)
-      expect(failed.message).toMatch(/3_failing.*syntax error/u)
+      expect(failed.message).toMatch(
+        new RegExp(`${known + 1}_failing.*syntax error`, 'u'),
+      )
       const sql = yield* SqlClient.SqlClient
       expect(
         yield* sql`SELECT name FROM sqlite_master WHERE name = 'half'`,
       ).toEqual([])
-      expect(yield* migrate()).toBe(2)
+      expect(yield* migrate()).toBe(known)
     }).pipe(Effect.provide(storeLayer(':memory:'))),
   )
 })

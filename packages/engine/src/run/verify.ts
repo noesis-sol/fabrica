@@ -32,7 +32,7 @@ import {
 } from '../control'
 import { Git, type Worktree } from '../git'
 import { ModelProxy } from '../proxy'
-import { WorkGraph } from '../workgraph'
+import { type VerifierRound, WorkGraph } from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
 import { recordTurns } from './turns'
 import { type WorkerContext, modelOf, runVariables, standingOf } from './worker'
@@ -45,13 +45,10 @@ import { type WorkerContext, modelOf, runVariables, standingOf } from './worker'
 // pass's tree (`FABRICA_CHECK_OWN_PASSED_AT`) for a check that selects tests. Its verdict comes back
 // through its control channel; the run loop hands a FAIL back to the worker with the rounds' findings
 // (`handBackPrompt`), at most `verifier.rounds` times, and a round that disagrees with an earlier one
-// to the worker to ask the maintainer.
+// to the worker to ask the maintainer. The rounds are kept with the ticket in the work graph, so a
+// ticket dispatched again (its question answered, carried over, undeferred) goes on from its last.
 
-/** A round the verifier gave its verdict in, counted from 1. */
-export interface VerifierRound {
-  readonly round: number
-  readonly verdict: Verdict
-}
+export type { VerifierRound } from '../workgraph'
 
 /** What a verifier round came to. */
 export type Verified = Data.TaggedEnum<{

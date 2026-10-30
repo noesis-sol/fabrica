@@ -9,6 +9,7 @@ import {
   FiberSet,
   Option,
   Ref,
+  Result,
   Scope,
   Stream,
 } from 'effect'
@@ -1050,11 +1051,15 @@ const runStarted = Effect.fn('Run.started')(function* (
       )
     })
 
-  /** A verifier round's verdict, noted on the ticket so it outlasts the session (§13.6), and in the log. */
+  /**
+   * A verifier round's verdict, noted on the ticket so it outlasts the session, kept with it so a
+   * later dispatch goes on counting from it (§13.6), and in the log.
+   */
   const verdictNoted = (ticket: TicketId, round: VerifierRound) =>
     Effect.gen(function* () {
       const text = `Verifier ${roundText(round)}`
       yield* tracked(graph.note({ id: ticket, body: text, actor }))
+      yield* tracked(graph.recordVerifierRound({ ticket, round }))
       yield* record(log, {
         kind: 'warn',
         ticket,
@@ -1070,12 +1075,12 @@ const runStarted = Effect.fn('Run.started')(function* (
    * The ticket's worker, each finish verified (§13.6): a PASS to the merge queue; a FAIL handed back
    * to the worker with the rounds' findings, at most `verifier.rounds` times, and a finish after the
    * last to the merge queue unverified; a disagreement handed back for the worker to ask the
-   * maintainer. The verifier off, a finish goes to the merge queue as it is.
+   * maintainer. The verifier off, a finish goes to the merge queue as it is. The rounds are the
+   * ticket's, kept in the work graph: a ticket dispatched again goes on counting from its last.
    */
   const workOn = (taken: Ticket, session: SessionId, first: WorkerTurn) =>
     Effect.gen(function* () {
       const ticket = taken.id
-      const rounds: Array<VerifierRound> = []
       let turn: WorkerTurn = first
       while (true) {
         const end = yield* supervision.watch({
@@ -1091,6 +1096,19 @@ const runStarted = Effect.fn('Run.started')(function* (
         const verifier = project.verifier
         if (!verifier.enabled)
           return yield* Effect.uninterruptible(workerEnded(ticket, end))
+        const kept = yield* Effect.result(graph.verifierRounds(ticket))
+        if (Result.isFailure(kept))
+          return yield* Effect.uninterruptible(
+            Effect.andThen(
+              setAside(
+                ticket,
+                'TOOL_DEFECT',
+                `its verifier's earlier rounds couldn't be read: ${kept.failure.message}`,
+              ),
+              wakes.wake(WakeReason.Settled({ ticket })),
+            ),
+          )
+        const rounds = kept.success
         if (rounds.length >= verifier.rounds)
           return yield* Effect.uninterruptible(
             workerEnded(
@@ -1153,7 +1171,6 @@ const runStarted = Effect.fn('Run.started')(function* (
           rounds: verifier.rounds,
           earlier: rounds,
         })
-        rounds.push(given)
         yield* state.move({
           ticket,
           to: Phase.cases.working.make({}),

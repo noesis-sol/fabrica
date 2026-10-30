@@ -27,6 +27,7 @@ import type {
   TicketStatus,
   TicketType,
   TreeHash,
+  Verdict,
 } from '@fabrica/contracts'
 
 import type {
@@ -143,6 +144,12 @@ export interface CheckOwnPassOf {
   readonly tree: TreeHash
 }
 
+/** A round the verifier gave its verdict in on a ticket's change, counted from 1 (§13.6). */
+export interface VerifierRound {
+  readonly round: number
+  readonly verdict: Verdict
+}
+
 type Found<A> = Effect.Effect<A, TicketNotFound | StoreFailed>
 type Changed<A, E = never> = Effect.Effect<
   A,
@@ -199,6 +206,20 @@ export interface WorkGraphShape {
   readonly lastCheckOwnPass: (
     ticket: TicketId,
   ) => Effect.Effect<Option.Option<TreeHash>, StoreFailed>
+  /**
+   * Keeps a round the verifier handed the ticket's change back in (§13.6), engine-local as its
+   * `check_own` passes are: kept across the ticket's re-dispatch and the engine's restarts, so a
+   * resumed ticket goes on counting its rounds and its verifier weighs the earlier findings, and
+   * dropped as the ticket closes or is deleted. A round kept again is written afresh.
+   */
+  readonly recordVerifierRound: (options: {
+    readonly ticket: TicketId
+    readonly round: VerifierRound
+  }) => Found<void>
+  /** The verifier's rounds kept for the ticket, first first; none before its first, or once it closed. */
+  readonly verifierRounds: (
+    ticket: TicketId,
+  ) => Effect.Effect<ReadonlyArray<VerifierRound>, StoreFailed>
   readonly close: (options: {
     readonly id: TicketId
     readonly resolution: Resolution
