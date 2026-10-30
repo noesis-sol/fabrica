@@ -99,9 +99,12 @@ export const makeProjectSetup = (
     }),
 })
 
+/** What a new worktree tracking no setup file is set up for: all of it. */
+const WHOLE_WORKTREE = '.'
+
 /**
  * The setup files a dispatch's worktree is to be set up for: in a new one, those it tracks (the
- * project's `setup_files` themselves where it tracks none, so a setup cut short is still known); in a
+ * worktree as a whole where it tracks none, so it is always set up and a setup cut short is known); in a
  * reused one, those its rebase onto `base` brought and those an earlier setup that didn't pass left
  * waiting. None, nothing runs.
  */
@@ -124,7 +127,7 @@ export const filesToSetUp = Effect.fn('Run.filesToSetUp')(function* (
         git.trackedFiles({ repo: worktree, revision: 'HEAD' }),
         tracked => {
           const files = tracked.filter(file => isSetupFile(file, patterns))
-          return files.length > 0 ? files : patterns
+          return files.length > 0 ? files : [WHOLE_WORKTREE]
         },
       ),
     Reused: ({ rebase }) =>

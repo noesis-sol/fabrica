@@ -99,6 +99,22 @@ describe('setup in worktrees', () => {
   )
 
   it.effect(
+    'runs the setup in a new worktree where setup_files names none',
+    () =>
+      Effect.gen(function* () {
+        const fixture = project()
+        const log = besideOf(fixture, 'setups.log')
+        withSetup(fixture, logging(log), { setup_files: [] })
+        const { end, made } = yield* runOf(
+          fixture,
+          file('Add the parser', 'finish'),
+        )
+        expect(end).toEqual({ kind: 'READY_EMPTY', code: 0 })
+        expect(setUpFor(log)).toEqual([made.id])
+      }),
+  )
+
+  it.effect(
     'runs the setup again in a reused worktree whose rebase brought a lockfile change',
     () =>
       Effect.gen(function* () {
