@@ -9,6 +9,7 @@ import {
 } from 'effect'
 import { Socket } from 'effect/socket'
 
+import { ConnectionFailed, ConnectionRefused } from '@fabrica/client'
 import {
   SshPrompting,
   type SshPrompts,
@@ -22,11 +23,15 @@ import {
 } from '@fabrica/client/node'
 
 import { definedOf } from './env'
+import { LocalEngineReach } from './local-engine'
+import type { Said } from './relay'
 import { ConnectionTarget } from './target'
 
 // The connection process's transports (spec §8.2, §9.1, §7.6): how it reaches the engine a target
 // names, one new connection (a socket connection, or an `ssh` or `wsl.exe` child) for each connection
-// the page opens; over TLS, a WebSocket to the engine's listener, its certificate checked against the
+// the page opens. Before each connection to the local socket main is asked to make sure the engine
+// answers there, starting it where none does (§7.1); why it couldn't is said to the page, whose client
+// tries again later. Over TLS, a WebSocket to the engine's listener, its certificate checked against the
 // fingerprint pinned at pairing and its token presented. Its ssh's prompts (an unknown host's key, a passphrase, a password) are relayed to the
 // app through `SSH_ASKPASS`, by a helper the Node main names runs; where main names none (Windows, until
 // the app ships a helper of its own), ssh asks nothing (`BatchMode`): it reaches hosts `known_hosts`
@@ -41,6 +46,8 @@ export type EngineSocket = Effect.Effect<Socket.Socket, never, Scope.Scope>
 export interface TransportHost {
   /** The connection process's environment, the user's: ssh's, for their agent and config, and wsl.exe's. */
   readonly env: Readonly<Record<string, string | undefined>>
+  /** Asks main to make sure the local engine answers, starting it where none does. */
+  readonly localEngine: Effect.Effect<LocalEngineReach>
   /** How ssh's prompts reach the user: none asks nothing. */
   readonly askpass: Option.Option<{
     /** The Node the `SSH_ASKPASS` helper runs on. */
@@ -53,6 +60,15 @@ export interface TransportHost {
 
 /** A target main refused: no connection is tried. */
 class TargetRefused extends Data.TaggedError('TargetRefused')<{
+  readonly reason: string
+}> {
+  override get message() {
+    return this.reason
+  }
+}
+
+/** The local engine couldn't be started: no connection is tried. */
+class LocalEngineDown extends Data.TaggedError('LocalEngineDown')<{
   readonly reason: string
 }> {
   override get message() {
@@ -79,7 +95,14 @@ export const engineSocket = (
   host: TransportHost,
 ): EngineSocket =>
   ConnectionTarget.match(target, {
-    LocalSocket: ({ path }) => socketOf(layerUnixSocket(path)),
+    LocalSocket: ({ path }) =>
+      Effect.flatMap(
+        host.localEngine,
+        LocalEngineReach.match({
+          Reached: () => socketOf(layerUnixSocket(path)),
+          Failed: ({ reason }) => failing(new LocalEngineDown({ reason })),
+        }),
+      ),
     Ssh: ({ destination }) =>
       socketOf(
         layerSsh({
@@ -98,13 +121,13 @@ export const engineSocket = (
     Refused: ({ reason }) => failing(new TargetRefused({ reason })),
   })
 
-/** The refusal of a target main refused, that a connection's error carries. */
-const targetRefused = (
+/** The cause a connection's error carries, where it is one of main's: a refused target, a local engine down. */
+const mainsCause = <Cause>(
   error: Socket.SocketError,
-): Option.Option<TargetRefused> => {
+  is: (cause: unknown) => cause is Cause,
+): Option.Option<Cause> => {
   const { reason } = error
-  return Predicate.hasProperty(reason, 'cause') &&
-    reason.cause instanceof TargetRefused
+  return Predicate.hasProperty(reason, 'cause') && is(reason.cause)
     ? Option.some(reason.cause)
     : Option.none()
 }
@@ -124,5 +147,21 @@ export const refusalOf = (error: Socket.SocketError): Option.Option<string> =>
       failed => failed.message,
     ),
     Option.map(tlsRefused(error), refused => refused.message),
-    Option.map(targetRefused(error), refused => refused.reason),
+    Option.map(
+      mainsCause(error, cause => cause instanceof TargetRefused),
+      refused => refused.reason,
+    ),
+  ])
+
+/**
+ * What the relay says of a connection's failure: a refusal (`refusalOf`), or why the local engine
+ * couldn't be started, which a later connection may mend; nothing for any other.
+ */
+export const saidOf: Said = error =>
+  Option.firstSomeOf([
+    Option.map(refusalOf(error), reason => new ConnectionRefused({ reason })),
+    Option.map(
+      mainsCause(error, cause => cause instanceof LocalEngineDown),
+      ({ reason }) => new ConnectionFailed({ reason }),
+    ),
   ])

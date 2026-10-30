@@ -26,11 +26,16 @@ import { windowColours } from '@fabrica/ui/window-colours'
 
 import { askpassArguments } from '../connection/askpass'
 import { definedOf } from '../connection/env'
+import { LocalEngineReach } from '../connection/local-engine'
 import { ConnectionTarget, encodeTarget } from '../connection/target'
 import { UpdateStatus, channels } from '../preload/api'
 import { appDataFolder, userDataSwitch } from './dataFolder'
 import { type MainIpc, sendEnginePort, sendSshPrompt } from './ipc'
-import { bundledEngine, ensureLocalEngine } from './local-engine'
+import {
+  bundledEngine,
+  ensureLocalEngine,
+  makeLocalEngineDesk,
+} from './local-engine'
 import { AppPage } from './navigation'
 import { makeFingerprintDesk, makePairings } from './pairing'
 import { type BrokeredPage, localTarget, makeBroker } from './ports'
@@ -55,9 +60,10 @@ import { launchDistro, reachWslEngine } from './wsl'
 
 // Electron main's shared parts (spec §5), made once as the process starts, in the app's data folder
 // set first: the window, its page and the connection process, to which it brokers each page's engine
-// port, and a port to each known engine, and whose ssh prompts it asks the page (§9.1); the app's state
-// with its known engines, the pairings with engines over TLS (§9.3), the local engine (§7.1) and the
-// engine in WSL2 (§7.6), and the update status. The features under ./features take them as
+// port, and a port to each known engine, and whose ssh prompts it asks the page (§9.1); the app's
+// state with its known engines, the pairings with engines over TLS (§9.3), the local engine, started
+// when none answers, at launch and before each connection the connection process makes to it (§7.1)
+// and the engine in WSL2 (§7.6), and the update status. The features under ./features take them as
 // `MainContext`, and index.ts starts them; only index.ts imports this module, the rest its types.
 
 const preload = fileURLToPath(new URL('../preload/index.cjs', import.meta.url))
@@ -114,21 +120,28 @@ const localEngine = {
   env: process.env,
 }
 
-/** Starts the local engine where none answers; the connection reaches it once it does. */
-export const reachLocalEngine = ConnectionTarget.match(target, {
-  LocalSocket: ({ path }) =>
-    ensureLocalEngine({ socket: path, ...localEngine }).pipe(
-      Effect.asVoid,
-      Effect.catch(error =>
-        Effect.logWarning(`the local engine: ${error.message}`),
-      ),
-    ),
-  Ssh: () => Effect.void,
-  Wsl: () => Effect.void,
-  Tls: () => Effect.void,
-  Unavailable: () => Effect.void,
-  Refused: () => Effect.void,
-})
+/** Starts the local engine where none answers, at launch and as the connection process asks. */
+const localEngineDesk = makeLocalEngineDesk(
+  ConnectionTarget.match(target, {
+    LocalSocket: ({ path }) =>
+      Effect.asVoid(ensureLocalEngine({ socket: path, ...localEngine })),
+    Ssh: () => Effect.void,
+    Wsl: () => Effect.void,
+    Tls: () => Effect.void,
+    Unavailable: () => Effect.void,
+    Refused: () => Effect.void,
+  }),
+)
+
+/** The local engine at launch; the connection reaches it once it answers, and says to the page why not. */
+export const reachLocalEngine = localEngineDesk.reach.pipe(
+  Effect.flatMap(
+    LocalEngineReach.match({
+      Reached: () => Effect.void,
+      Failed: ({ reason }) => Effect.logWarning(`the local engine: ${reason}`),
+    }),
+  ),
+)
 
 /** wsl.exe as the app runs it: the user's environment, `wsl.exe` found on its PATH. */
 const wslRunner = { env: definedOf(process.env) }
@@ -181,9 +194,19 @@ const broker = makeBroker<MessagePortMain>({
         }),
       ),
     )
+    let running = true
     child.on('message', promptDesk.fromConnection)
     child.on('message', fingerprintDesk.fromConnection)
+    // Each ask is answered to the connection process that asked, while it runs.
+    child.on('message', message =>
+      localEngineDesk.fromConnection(message, answer => {
+        if (running) {
+          child.postMessage(answer)
+        }
+      }),
+    )
     child.once('exit', () => {
+      running = false
       promptDesk.connectionGone()
       fingerprintDesk.connectionGone()
       onExit()

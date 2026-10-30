@@ -49,16 +49,20 @@ import {
 } from '@fabrica/contracts'
 import { tempFolder } from '@fabrica/testkit'
 
+import { LocalEngineReach } from '../src/connection/local-engine'
 import { mainPortEnd } from '../src/connection/port'
 import { relay } from '../src/connection/relay'
 import { ConnectionTarget } from '../src/connection/target'
-import { engineSocket, refusalOf } from '../src/connection/transports'
+import { engineSocket, saidOf } from '../src/connection/transports'
 import {
   type BrokeredPage,
   type ConnectionProcess,
   localTarget,
   makeBroker,
 } from '../src/main/ports'
+
+/** The local engine answers: main's answer to every ask. */
+const engineAnswers = Effect.succeed(LocalEngineReach.cases.Reached.make({}))
 
 // The connection process (spec §5, §8.2): the page's engine client over a MessagePort pair, the relay
 // on the other end copying its frames to a test engine on a Unix socket, as the app's renderer and
@@ -229,8 +233,12 @@ const runRelay = (relayEnd: MessagePort, target: ConnectionTarget) =>
   Effect.forkScoped(
     relay({
       port: webPortEnd(relayEnd),
-      engine: engineSocket(target, { env: {}, askpass: Option.none() }),
-      refusal: refusalOf,
+      engine: engineSocket(target, {
+        env: {},
+        localEngine: engineAnswers,
+        askpass: Option.none(),
+      }),
+      said: saidOf,
     }),
   )
 

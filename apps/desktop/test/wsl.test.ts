@@ -7,9 +7,13 @@ import { UbuntuInstall } from '@fabrica/client'
 import { bridgeScript, holdScript, wslFailed } from '@fabrica/client/node'
 import { Toolbox, layerToolbox, shStub, tempFolder } from '@fabrica/testkit'
 
+import { LocalEngineReach } from '../src/connection/local-engine'
 import { ConnectionTarget } from '../src/connection/target'
 import { engineSocket } from '../src/connection/transports'
 import { installUbuntu, reachWslEngine } from '../src/main/wsl'
+
+/** The local engine answers: main's answer to every ask. */
+const engineAnswers = Effect.succeed(LocalEngineReach.cases.Reached.make({}))
 
 // Main's WSL2 host and the connection process's WSL2 target (spec §7.6, H31) against a stub `wsl.exe`
 // that records each run's arguments: `--install -d Ubuntu` ends with its folder's `install-code`, and
@@ -131,6 +135,7 @@ describe('the WSL2 host in main', () => {
           // The connection process runs the bridge, failing the connection with why it ended.
           const socket = yield* engineSocket(target, {
             env,
+            localEngine: engineAnswers,
             askpass: Option.none(),
           })
           const failed = yield* Effect.flip(

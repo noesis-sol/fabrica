@@ -1,4 +1,4 @@
-import { Data, type Duration, Effect, Option } from 'effect'
+import { Data, Deferred, type Duration, Effect, Option, Schema } from 'effect'
 import { execFile } from 'node:child_process'
 import * as NodePath from 'node:path'
 
@@ -19,6 +19,12 @@ import {
   versionFolder,
 } from '@fabrica/engine/update'
 
+import {
+  LocalEngineAnswer,
+  LocalEngineReach,
+  LocalEngineRequest,
+} from '../connection/local-engine'
+
 // The local engine (spec §7.1, §22.2): the app starts it when it can't reach one, as a detached daemon,
 // or installs it as a login service when the user chooses (`fabrica service install`). Either runs
 // from a copy of the engine distribution the app bundles, installed as on any host (§9.2) into
@@ -26,7 +32,9 @@ import {
 // app's own folder, which goes or is replaced under it (an AppImage's mount, a dmg, an update). It is
 // reached as the stdio bridge reaches it, through its socket, so the app and `fabrica bridge` agree on
 // when an engine answers. A development build bundles no engine: it reaches one the developer
-// started, and starts none.
+// started, and starts none. It is made sure of at launch, and again before each connection the
+// connection process makes to it, so one that stopped while the app runs (a crash, `fabrica engine
+// stop`, a restart after an update) is started again; why it couldn't be goes to the page.
 
 /** A part of the engine distribution a packaged app bundles: unpacked under its resources, as `engine/` (§22.2). */
 const bundledPart = (resources: string, part: string): string =>
@@ -143,6 +151,63 @@ export const ensureLocalEngine = Effect.fn('LocalEngine.ensure')(function* (
       : { startWait: options.startWait }),
   })
 })
+
+const decodeRequest = Schema.decodeUnknownOption(LocalEngineRequest)
+const encodeAnswer = Schema.encodeSync(LocalEngineAnswer)
+
+/**
+ * Main's end of the connection process's asks for the local engine: each runs `ensure`, the one
+ * running shared by every ask made meanwhile (the launch's included), and is answered with whether
+ * the engine answers or why it couldn't be started.
+ */
+export const makeLocalEngineDesk = <E extends { readonly message: string }>(
+  ensure: Effect.Effect<unknown, E>,
+) => {
+  let running: Option.Option<Deferred.Deferred<LocalEngineReach>> =
+    Option.none()
+
+  const reach: Effect.Effect<LocalEngineReach> = Effect.suspend(() =>
+    Option.match(running, {
+      onSome: Deferred.await,
+      onNone: () => {
+        const done = Deferred.makeUnsafe<LocalEngineReach>()
+        running = Option.some(done)
+        return ensure.pipe(
+          Effect.as(LocalEngineReach.cases.Reached.make({})),
+          Effect.catch(error =>
+            Effect.succeed(
+              LocalEngineReach.cases.Failed.make({ reason: error.message }),
+            ),
+          ),
+          Effect.onExit(exit =>
+            Effect.sync(() => {
+              running = Option.none()
+              Deferred.doneUnsafe(done, exit)
+            }),
+          ),
+        )
+      },
+    }),
+  )
+
+  return {
+    /** Makes sure the local engine answers, joining the ensure running where one is. */
+    reach,
+    /** What a connection process said: an ask, answered through `reply`; anything else is dropped. */
+    fromConnection: (
+      message: unknown,
+      reply: (answer: unknown) => void,
+    ): void => {
+      Option.map(decodeRequest(message), ({ id }) =>
+        Effect.runFork(
+          Effect.map(reach, answer =>
+            reply(encodeAnswer(LocalEngineAnswer.make({ id, answer }))),
+          ),
+        ),
+      )
+    },
+  }
+}
 
 /** The most of `fabrica service install`'s output kept, to say why it failed. */
 const outputCap = 64 * 1024

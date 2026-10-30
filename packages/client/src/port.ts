@@ -22,7 +22,8 @@ import { Socket, SocketServer } from 'effect/socket'
 // frames cross as they are, bytes or text; beside them a few signals, each naming the connection it
 // is about: the page opens a connection and closes it; the relay says it took one, whose frames
 // follow, and that one ended, or was refused (ssh refused the engine's host, say) in a way another
-// connection wouldn't mend, which the page's client stops reconnecting at. Each open of the page's socket is a new connection, so a connection the
+// connection wouldn't mend, or failed in words a connection could mend (the local engine couldn't be
+// started); the page's client stops reconnecting at either, and its next attempt says why. Each open of the page's socket is a new connection, so a connection the
 // engine dropped reaches the page's client, which reconnects and resumes its streams as over any
 // other transport; and a connection never reads frames its predecessor was sent.
 //
@@ -40,12 +41,13 @@ export type PageSignal = typeof PageSignal.Type
 
 /**
  * What the relay says on the port: it took connection `connection`, whose frames follow; or that
- * connection ended, or was refused, in `reason`'s words.
+ * connection ended, or was refused or failed, in `reason`'s words.
  */
 export const RelaySignal = Schema.TaggedUnion({
   Opened: { connection: Schema.Int },
   Closed: { connection: Schema.Int },
   Refused: { connection: Schema.Int, reason: Schema.String },
+  Failed: { connection: Schema.Int, reason: Schema.String },
 })
 export type RelaySignal = typeof RelaySignal.Type
 
@@ -61,16 +63,41 @@ export class ConnectionRefused extends Data.TaggedError('ConnectionRefused')<{
   }
 }
 
-/** The ConnectionRefused a connection's error carries, if the relay refused it. */
-export const connectionRefused = (
+/**
+ * A connection the relay couldn't make, in words a later one may not end with (the local engine
+ * couldn't be started): the failure a relay's handler ends with to say so, and the cause of the page's
+ * socket error for it.
+ */
+export class ConnectionFailed extends Data.TaggedError('ConnectionFailed')<{
+  readonly reason: string
+}> {
+  override get message() {
+    return this.reason
+  }
+}
+
+/** The cause a connection's error carries, where it is a `Said`. */
+const causeOf = <Said>(
   error: Socket.SocketError | RpcClientError.RpcClientError,
-): Option.Option<ConnectionRefused> => {
+  is: (cause: unknown) => cause is Said,
+): Option.Option<Said> => {
   const { reason } = error
-  return Predicate.hasProperty(reason, 'cause') &&
-    reason.cause instanceof ConnectionRefused
+  return Predicate.hasProperty(reason, 'cause') && is(reason.cause)
     ? Option.some(reason.cause)
     : Option.none()
 }
+
+/** The ConnectionRefused a connection's error carries, if the relay refused it. */
+export const connectionRefused = (
+  error: Socket.SocketError | RpcClientError.RpcClientError,
+): Option.Option<ConnectionRefused> =>
+  causeOf(error, cause => cause instanceof ConnectionRefused)
+
+/** The ConnectionFailed a connection's error carries, if the relay said why it failed. */
+export const connectionFailed = (
+  error: Socket.SocketError | RpcClientError.RpcClientError,
+): Option.Option<ConnectionFailed> =>
+  causeOf(error, cause => cause instanceof ConnectionFailed)
 
 /** Effect's own back-off between reconnects, the client's unless it is given another. */
 export const reconnectBackOff = Schedule.min([
@@ -78,11 +105,19 @@ export const reconnectBackOff = Schedule.min([
   Schedule.spaced(5000),
 ])
 
-/** The page's reconnect schedule over the port: `base` until the relay refuses a connection. */
+/**
+ * The page's reconnect schedule over the port: `base` until the relay refuses a connection, or says
+ * why it failed, which the page's next attempt says.
+ */
 export const portReconnect = (
   base: Schedule.Schedule<unknown, Socket.SocketError> = reconnectBackOff,
 ): Schedule.Schedule<unknown, Socket.SocketError> =>
-  Schedule.while(base, ({ input }) => Option.isNone(connectionRefused(input)))
+  Schedule.while(
+    base,
+    ({ input }) =>
+      Option.isNone(connectionRefused(input)) &&
+      Option.isNone(connectionFailed(input)),
+  )
 
 const decodePageSignal = Schema.decodeUnknownOption(PageSignal)
 const decodeRelaySignal = Schema.decodeUnknownOption(RelaySignal)
@@ -157,7 +192,7 @@ const inbox = () => {
   const feed = {
     push: (_frame: Frame) => {},
     end: () => {},
-    fail: (_error: ConnectionRefused) => {},
+    fail: (_error: ConnectionRefused | ConnectionFailed) => {},
   }
   // A stream's start runs as it is made, so `feed` holds its controller's ends from here on.
   const readable = new ReadableStream<Frame>({
@@ -191,8 +226,9 @@ const inbox = () => {
 /**
  * The page's end: each open is a new connection, which opens once the relay says `Opened` for it, and
  * whose frames are read from then until its `Closed` (or the port's closing), and written to the port;
- * a `Refused` fails its reads with the relay's ConnectionRefused. One the relay ends before it opened
- * fails its open: with the ConnectionRefused where it was refused. Closing the open tells the relay.
+ * a `Refused` fails its reads with the relay's ConnectionRefused, a `Failed` with its ConnectionFailed.
+ * One the relay ends before it opened fails its open: with the ConnectionRefused where it was refused,
+ * the ConnectionFailed where it failed. Closing the open tells the relay.
  * The port itself stays open: it is the page's for its life.
  */
 export const portSocket = (port: PortEnd): Effect.Effect<Socket.Socket> => {
@@ -241,6 +277,13 @@ export const portSocket = (port: PortEnd): Effect.Effect<Socket.Socket> => {
                   })
                   notOpened(refused)
                   frames.fail(refused)
+                }
+              },
+              Failed: signal => {
+                if (signal.connection === connection) {
+                  const failed = new ConnectionFailed({ reason: signal.reason })
+                  notOpened(failed)
+                  frames.fail(failed)
                 }
               },
             }),
@@ -294,13 +337,28 @@ const release = (taken: Taken): void => {
   taken.frames.end()
 }
 
+/** What the relay says as connection `connection`'s handler ends with `exit`. */
+const endSignal = (
+  connection: number,
+  exit: Exit.Exit<unknown, unknown>,
+): RelaySignal =>
+  Option.match(Exit.findErrorOption(exit), {
+    onNone: () => RelaySignal.cases.Closed.make({ connection }),
+    onSome: error =>
+      error instanceof ConnectionRefused
+        ? RelaySignal.cases.Refused.make({ connection, reason: error.reason })
+        : error instanceof ConnectionFailed
+          ? RelaySignal.cases.Failed.make({ connection, reason: error.reason })
+          : RelaySignal.cases.Closed.make({ connection }),
+  })
+
 /**
  * The relay's end: each connection the page opens is a `Socket` the handler gets, its frames the
  * page's, its writes posted to the page while the page keeps it. The page is told the connection is
  * `Opened` as the handler first reads it (a socket's writes wait for that read): a handler that reads
  * once the engine is reached opens the page's connection only then. A connection the page closes, or
  * replaces with a new one, ends its socket's reads; one whose handler ends is `Closed` to the page,
- * or `Refused` where the handler failed with a ConnectionRefused.
+ * `Refused` where the handler failed with a ConnectionRefused, `Failed` with a ConnectionFailed.
  * Once the port has closed, every connection's reads end and `run` waits on (`portClosed` says when).
  */
 export const portServer = (
@@ -354,23 +412,7 @@ export const portServer = (
               Effect.sync(() => {
                 if (taken.live) {
                   release(taken)
-                  port.post(
-                    Option.match(
-                      Option.filter(
-                        Exit.findErrorOption(exit),
-                        error => error instanceof ConnectionRefused,
-                      ),
-                      {
-                        onNone: () =>
-                          RelaySignal.cases.Closed.make({ connection }),
-                        onSome: ({ reason }) =>
-                          RelaySignal.cases.Refused.make({
-                            connection,
-                            reason,
-                          }),
-                      },
-                    ),
-                  )
+                  port.post(endSignal(connection, exit))
                 }
               }),
             ),

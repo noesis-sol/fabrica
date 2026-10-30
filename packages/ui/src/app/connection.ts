@@ -9,6 +9,7 @@ import {
   type EngineClientShape,
   Link,
   clientErrorWords,
+  connectionFailed,
   connectionRefused,
   isDefect,
   make as makeClient,
@@ -30,8 +31,9 @@ import {
 // stopped reconnecting, or Refused by an engine that was updated meanwhile, comes in as Messages
 // through a subscription. An attempt that fails is tried again after a pause; a refused one waits for
 // an update, since retrying can't help; one the connection process refused (ssh refused the engine's
-// host: its key changed, the sign-in failed) stops, saying why, until the user tries again. The
-// client's reconnects stop at such a refusal too, and the attempt after says it.
+// host: its key changed, the sign-in failed) stops, saying why, until the user tries again. One it
+// failed in words (the local engine couldn't be started) is tried again, saying them. The client's
+// reconnects stop at either too, and the attempt after says it.
 
 /** The connection, as the app shows it. */
 export const Connection = defineTaggedUnion({
@@ -162,21 +164,28 @@ export const failureText = (error: unknown, fallback: string): string => {
   return typeof tag === 'string' ? tag : fallback
 }
 
-/** The connection process's refusal an attempt's error carries, in its words. */
-const refusalOf = (error: unknown): Option.Option<string> =>
+/** What the connection process said of an attempt's error, refused or failed, in its words. */
+const saidOf = (
+  error: unknown,
+  said: (
+    error: RpcClientError.RpcClientError | Socket.SocketError,
+  ) => Option.Option<{ readonly reason: string }>,
+): Option.Option<string> =>
   error instanceof RpcClientError.RpcClientError ||
   error instanceof Socket.SocketError
-    ? Option.map(connectionRefused(error), ({ reason }) => reason)
+    ? Option.map(said(error), ({ reason }) => reason)
     : Option.none()
 
 export const attemptFailure = (error: unknown): AttemptFailure =>
   isMismatch(error)
     ? AttemptFailure.Refused({ mismatch: error })
-    : Option.match(refusalOf(error), {
+    : Option.match(saidOf(error, connectionRefused), {
         onSome: reason => AttemptFailure.Stopped({ reason }),
         onNone: () =>
           AttemptFailure.Unreachable({
-            reason: failureText(error, 'the engine could not be reached'),
+            reason: Option.getOrElse(saidOf(error, connectionFailed), () =>
+              failureText(error, 'the engine could not be reached'),
+            ),
           }),
       })
 

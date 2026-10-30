@@ -6,8 +6,12 @@ import { describe, expect, it, layer } from '@effect/vitest'
 import { bridgeRemote, sshFailed } from '@fabrica/client/node'
 import { Toolbox, layerToolbox, shStub, tempFolder } from '@fabrica/testkit'
 
+import { LocalEngineReach } from '../src/connection/local-engine'
 import { ConnectionTarget } from '../src/connection/target'
 import { engineSocket } from '../src/connection/transports'
+
+/** The local engine answers: main's answer to every ask. */
+const engineAnswers = Effect.succeed(LocalEngineReach.cases.Reached.make({}))
 
 // The connection process's SSH target (spec §8.2, §9.1): a page's connection to an engine an SSH
 // destination names runs ssh, through a stub that records its arguments and answers as OpenSSH does for
@@ -36,6 +40,7 @@ describe('the SSH target', () => {
         })
         const socket = yield* engineSocket(target, {
           env: { ...tools.env({ STUB_DIR: dir }), UNSET: undefined },
+          localEngine: engineAnswers,
           askpass: Option.none(),
         })
         const failed = yield* Effect.flip(

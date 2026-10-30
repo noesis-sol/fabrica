@@ -10,13 +10,17 @@ import { Link, make, portSocket, webPortEnd } from '@fabrica/client'
 import { EngineHello, EngineId, EngineRpcs } from '@fabrica/contracts'
 import { tempFolder } from '@fabrica/testkit'
 
+import { LocalEngineReach } from '../src/connection/local-engine'
 import { relay } from '../src/connection/relay'
 import { ConnectionTarget } from '../src/connection/target'
 import {
   type EngineSocket,
   engineSocket,
-  refusalOf,
+  saidOf,
 } from '../src/connection/transports'
+
+/** The local engine answers: main's answer to every ask. */
+const engineAnswers = Effect.succeed(LocalEngineReach.cases.Reached.make({}))
 
 // The page's connection through the relay opens once the relay's own connection to the engine has
 // (H61): while that waits (ssh asking for a passphrase, a cold engine starting), the page's client waits
@@ -65,6 +69,7 @@ const heldEngine = (
   Effect.map(
     engineSocket(ConnectionTarget.cases.LocalSocket.make({ path }), {
       env: {},
+      localEngine: engineAnswers,
       askpass: Option.none(),
     }),
     socket =>
@@ -113,7 +118,7 @@ describe('a page connection through the relay', () => {
           relay({
             port: webPortEnd(channel.port2),
             engine: heldEngine(path, opening, reached),
-            refusal: refusalOf,
+            said: saidOf,
           }),
         )
         const starting = yield* Effect.forkChild(

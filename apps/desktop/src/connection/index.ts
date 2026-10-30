@@ -9,28 +9,36 @@ import {
   FingerprintRequest,
   readFingerprint,
 } from './fingerprint'
+import { LocalEngineAnswer, makeLocalEngineAsks } from './local-engine'
 import { mainPortEnd } from './port'
 import { makeAskedPrompts } from './prompts'
 import { relay } from './relay'
 import { ConnectionTarget } from './target'
-import { type TransportHost, engineSocket, refusalOf } from './transports'
+import { type TransportHost, engineSocket, saidOf } from './transports'
 
 // The connection process (spec §5, §8.2), Electron's utilityProcess: main sends it, for each page it
 // brokers, one end of the page's port with the engine to reach, and it relays the port to that
 // engine until the port closes. What ssh asks as it connects goes to main, and main's answers come
 // back, as messages without a port; so do main's requests for the fingerprint of the certificate an
-// engine presents over TLS, at a first pairing, and their answers. It renders nothing and touches no
-// repository.
+// engine presents over TLS, at a first pairing, and their answers; so do its asks, before each
+// connection to the local engine, that main make sure it answers, and main's answers. It renders
+// nothing and touches no repository.
 
 const decodeTarget = Schema.decodeUnknownOption(ConnectionTarget)
 const decodeAnswer = Schema.decodeUnknownOption(SshPromptAnswer)
+const decodeLocalEngineAnswer = Schema.decodeUnknownOption(LocalEngineAnswer)
 const decodeFingerprintRequest = Schema.decodeUnknownOption(FingerprintRequest)
 const encodeFingerprintRead = Schema.encodeSync(FingerprintRead)
 
 const asked = makeAskedPrompts(event => process.parentPort.postMessage(event))
 
+const localEngineAsks = makeLocalEngineAsks(request =>
+  process.parentPort.postMessage(request),
+)
+
 const host: TransportHost = {
   env: process.env,
+  localEngine: localEngineAsks.reach,
   askpass: Option.map(askpassNodeOf(process.argv), node => ({
     node,
     folder: tmpdir(),
@@ -41,6 +49,7 @@ const host: TransportHost = {
 process.parentPort.on('message', event => {
   if (event.ports.length === 0) {
     Option.map(decodeAnswer(event.data), asked.answered)
+    Option.map(decodeLocalEngineAnswer(event.data), localEngineAsks.answered)
     Option.map(decodeFingerprintRequest(event.data), ({ id, endpoint }) =>
       Effect.runFork(
         readFingerprint(endpoint).pipe(
@@ -65,7 +74,7 @@ process.parentPort.on('message', event => {
         relay({
           port: mainPortEnd(port),
           engine: engineSocket(target, host),
-          refusal: refusalOf,
+          said: saidOf,
         }).pipe(Effect.ensuring(Effect.sync(() => port.close()))),
       ),
   })

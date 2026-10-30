@@ -11,10 +11,14 @@ import {
 } from '@fabrica/client'
 import { Toolbox, layerToolbox, shStub, tempFolder } from '@fabrica/testkit'
 
+import { LocalEngineReach } from '../src/connection/local-engine'
 import { makeAskedPrompts } from '../src/connection/prompts'
 import { relay } from '../src/connection/relay'
 import { ConnectionTarget } from '../src/connection/target'
-import { engineSocket, refusalOf } from '../src/connection/transports'
+import { engineSocket, saidOf } from '../src/connection/transports'
+
+/** The local engine answers: main's answer to every ask. */
+const engineAnswers = Effect.succeed(LocalEngineReach.cases.Reached.make({}))
 
 // The connection process's end of ssh's prompts and refusals (spec §9.1): what ssh asks through
 // `SSH_ASKPASS` is asked of main, numbered, and waited on until its answer comes, or withdrawn where ssh
@@ -166,6 +170,7 @@ describe('a connection over ssh', () => {
                 ConnectionTarget.cases.Ssh.make({ destination: 'u@server-1' }),
                 {
                   env: tools.env({ STUB_DIR: dir, STUB_PROMPT: hostKeyText }),
+                  localEngine: engineAnswers,
                   askpass: Option.some({
                     node: process.execPath,
                     folder: dir,
@@ -173,7 +178,7 @@ describe('a connection over ssh', () => {
                   }),
                 },
               ),
-              refusal: refusalOf,
+              said: saidOf,
             }),
           )
           const socket = yield* portSocket(webPortEnd(channel.port1))

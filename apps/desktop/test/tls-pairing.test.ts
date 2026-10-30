@@ -32,14 +32,18 @@ import {
   fingerprintTimeout,
   readFingerprint,
 } from '../src/connection/fingerprint'
+import { LocalEngineReach } from '../src/connection/local-engine'
 import { relay } from '../src/connection/relay'
 import { ConnectionTarget, encodeTarget } from '../src/connection/target'
-import { engineSocket, refusalOf } from '../src/connection/transports'
+import { engineSocket, saidOf } from '../src/connection/transports'
 import { tlsPairingChannels } from '../src/main/features/tls-pairing'
 import { makeIpcRegistrar } from '../src/main/ipc'
 import { makeFingerprintDesk, makePairings } from '../src/main/pairing'
 import { type SecretBox, makeAppState } from '../src/main/state'
 import { type PreloadIpc, channels, makeApi } from '../src/preload/api'
+
+/** The local engine answers: main's answer to every ask. */
+const engineAnswers = Effect.succeed(LocalEngineReach.cases.Reached.make({}))
 
 // Pairing with an engine over TLS (spec §9.1, §9.3, §8.2): the connection process reads the fingerprint
 // of the certificate an engine presents, as main asks it; main pairs only with the fingerprint read,
@@ -112,8 +116,12 @@ const refusalSaid = (target: ConnectionTarget) =>
     yield* Effect.forkScoped(
       relay({
         port: webPortEnd(channel.port2),
-        engine: engineSocket(target, { env: {}, askpass: Option.none() }),
-        refusal: refusalOf,
+        engine: engineSocket(target, {
+          env: {},
+          localEngine: engineAnswers,
+          askpass: Option.none(),
+        }),
+        said: saidOf,
       }),
     )
     const socket = yield* portSocket(webPortEnd(channel.port1))
