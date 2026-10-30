@@ -1,12 +1,20 @@
-import { Effect, Layer, Option, Ref, Stream } from 'effect'
+import { Effect, Fiber, Layer } from 'effect'
+import { TestClock } from 'effect/testing'
+import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { beforeAll, describe, expect, it } from '@effect/vitest'
-import { PermissionsVariable, TicketId } from '@fabrica/contracts'
+import {
+  AgentRoleVariable,
+  type MergeStanding,
+  PermissionsVariable,
+  type TicketId,
+} from '@fabrica/contracts'
 
 import { type AgentStart, PiAgent, piEnvironment } from '../src/agent'
-import type { MergeLine, MergeQueueShape } from '../src/merge'
+import { ControlServer } from '../src/control'
 import { runProject } from '../src/run'
-import { standingOf } from '../src/run/worker'
 import {
   configOf,
   file,
@@ -20,7 +28,7 @@ import {
 // What an agent the run starts is told of its gate's facts (spec §12.6, H59): the project's
 // `permissions` in FABRICA_PERMISSIONS, among the variables its process starts with, and where its
 // ticket stands in the merge queue, the `mergeStanding` its control channel answers merge_standing
-// with. The run is a whole run on the harness, its agents' starts noted.
+// with. The runs are whole runs on the harness, their agents' starts and control channels noted.
 
 beforeAll(setUpRuns)
 
@@ -39,7 +47,10 @@ const noting = (agents: Array<AgentStart>) =>
     ),
   )
 
-/** The FABRICA_PERMISSIONS of each agent a run of one finishing ticket starts, on `projectSettings`. */
+/**
+ * The role and FABRICA_PERMISSIONS of each agent a run of one finishing ticket starts, on
+ * `projectSettings`, as Pi's process gets them.
+ */
 const permissionsOfAgents = (projectSettings: object) => {
   const fixture = project(projectSettings)
   const agents: Array<AgentStart> = []
@@ -51,15 +62,17 @@ const permissionsOfAgents = (projectSettings: object) => {
         Effect.provide(noting(agents)),
       )
       expect(end).toEqual({ kind: 'READY_EMPTY', code: 0 })
-      // As Pi's process gets them.
-      return agents.map(
-        agent =>
-          piEnvironment({
-            config: '/pi',
-            projectTrusted: agent.projectTrusted,
-            extra: agent.env,
-          })[PermissionsVariable],
-      )
+      return agents.map(agent => {
+        const environment = piEnvironment({
+          config: '/pi',
+          projectTrusted: agent.projectTrusted,
+          extra: agent.env,
+        })
+        return [
+          environment[AgentRoleVariable] ?? 'worker',
+          environment[PermissionsVariable],
+        ]
+      })
     }),
   )
 }
@@ -69,57 +82,112 @@ describe("the gate's facts in an agent's start", () => {
     Effect.gen(function* () {
       expect(
         yield* permissionsOfAgents({ ...settings, permissions: 'ask' }),
-      ).toEqual(['ask'])
+      ).toEqual([['worker', 'ask']])
     }),
   )
 
   it.effect('gives an agent the default permissions where none is set', () =>
     Effect.gen(function* () {
-      expect(yield* permissionsOfAgents(settings)).toEqual(['workspace'])
+      expect(yield* permissionsOfAgents(settings)).toEqual([
+        ['worker', 'workspace'],
+      ])
+    }),
+  )
+
+  it.effect("gives the verifier the project's permissions too", () =>
+    Effect.gen(function* () {
+      // The harness's stub is no verifier: whatever comes of its round, it started as one.
+      const started = yield* permissionsOfAgents({
+        ...settings,
+        permissions: 'ask',
+        verifier: { enabled: true },
+      })
+      expect(started.slice(0, 2)).toEqual([
+        ['worker', 'ask'],
+        ['verifier', 'ask'],
+      ])
     }),
   )
 })
 
-/** A merge line of the run's, moved by hand: `enqueue` puts a ticket in line, as a finish does. */
-const lineQueue = Effect.map(
-  Ref.make<MergeLine>({ merging: Option.none(), waiting: [] }),
-  line => ({
-    line,
-    queue: {
-      enqueue: worktree =>
-        Ref.modify(line, current => [
-          true,
-          { ...current, waiting: [...current.waiting, worktree.ticket] },
-        ]),
-      line: Ref.get(line),
-      updates: Effect.succeed(Stream.empty),
-    } satisfies MergeQueueShape,
-  }),
-)
+/** The control server the run is given, the services' own, the merge standing of each channel opened noted by its ticket. */
+const notingStandings = (
+  standings: Map<TicketId, Effect.Effect<MergeStanding>>,
+) =>
+  Layer.effect(
+    ControlServer,
+    Effect.map(ControlServer, real =>
+      ControlServer.of({
+        open: session => {
+          standings.set(session.ticket, session.mergeStanding)
+          return real.open(session)
+        },
+      }),
+    ),
+  )
+
+/**
+ * Reads the merge standing of `ticket`'s channel until it is `wanted`, between waits on the live
+ * clock, as the run's processes run in real time; no channel open yet is read again too.
+ */
+const untilStanding = (
+  standings: ReadonlyMap<TicketId, Effect.Effect<MergeStanding>>,
+  ticket: TicketId,
+  wanted: MergeStanding,
+): Effect.Effect<MergeStanding> =>
+  Effect.flatMap(standings.get(ticket) ?? Effect.succeed(undefined), now =>
+    now === wanted
+      ? Effect.succeed(now)
+      : Effect.andThen(
+          TestClock.withLive(Effect.sleep('50 millis')),
+          untilStanding(standings, ticket, wanted),
+        ),
+  )
 
 describe("a ticket's merge standing", () => {
   it.effect(
-    'is not_queued before its finish, waiting once in line, merging at its turn',
-    () =>
-      Effect.gen(function* () {
-        const ticket = TicketId.make('fa-1')
-        const other = TicketId.make('fa-2')
-        const { line, queue } = yield* lineQueue
-        const standing = standingOf(queue, ticket)
-        expect(yield* standing).toBe('not_queued')
-
-        yield* queue.enqueue({ ticket: other, path: '/w/fa-2', branch: 'b2' })
-        yield* queue.enqueue({ ticket, path: '/w/fa-1', branch: 'b1' })
-        expect(yield* standing).toBe('waiting')
-
-        yield* Ref.set(line, { merging: Option.some(other), waiting: [ticket] })
-        expect(yield* standing).toBe('waiting')
-
-        yield* Ref.set(line, { merging: Option.some(ticket), waiting: [] })
-        expect(yield* standing).toBe('merging')
-
-        yield* Ref.set(line, { merging: Option.none(), waiting: [] })
-        expect(yield* standing).toBe('not_queued')
-      }),
+    'answers merging for the ticket merging, waiting once a finish puts the next in line',
+    () => {
+      const gates = realpathSync(mkdtempSync(join(tmpdir(), 'fab-hold-')))
+      const mergeFirst = join(gates, 'merge')
+      const finishSecond = join(gates, 'finish')
+      const fixture = project({
+        ...settings,
+        // The merge check holds on a ticket that brings a hold file, until the test lets it go.
+        check_fast: `if [ -f hold ]; then while [ ! -f ${mergeFirst} ]; do sleep 0.05; done; fi; echo passing`,
+      })
+      const standings = new Map<TicketId, Effect.Effect<MergeStanding>>()
+      return withRuns(
+        fixture,
+        Effect.gen(function* () {
+          const first = (yield* file('First', 'finish hold', { priority: 1 }))
+            .id
+          const second = (yield* file('Second', `wait ${finishSecond}`)).id
+          const running = yield* Effect.forkChild(
+            runProject(configOf(fixture, options())).pipe(
+              Effect.provide(notingStandings(standings)),
+            ),
+          )
+          yield* untilStanding(standings, first, 'merging')
+          // The second is working still: not in line.
+          yield* untilStanding(standings, second, 'not_queued')
+          writeFileSync(finishSecond, '')
+          yield* untilStanding(standings, second, 'waiting')
+          expect(yield* untilStanding(standings, first, 'merging')).toBe(
+            'merging',
+          )
+          writeFileSync(mergeFirst, '')
+          expect(yield* Fiber.join(running)).toEqual({
+            kind: 'READY_EMPTY',
+            code: 0,
+          })
+          // Both merged: neither is in line.
+          for (const ticket of [first, second])
+            expect(yield* standings.get(ticket) ?? Effect.die('none')).toBe(
+              'not_queued',
+            )
+        }),
+      )
+    },
   )
 })
