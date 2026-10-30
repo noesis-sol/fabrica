@@ -94,9 +94,23 @@ export interface SshOptions {
   readonly ssh?: string
   /** Seconds between keepalives, three of them unanswered ending the link: 15 unless given. */
   readonly keepalive?: number
-  /** The command run on the host: `fabrica bridge` unless given. */
+  /** The command run on the host: `bridgeRemote` unless given. */
   readonly remote?: ReadonlyArray<string>
 }
+
+/**
+ * The command ssh runs on the host unless `remote` is given: `fabrica bridge`, or the engine's link
+ * `~/.local/bin/fabrica` (spec §9.2) where fabrica isn't on the PATH, as on a host whose profile adds
+ * `~/.local/bin` but which a non-interactive ssh command doesn't read (Ubuntu's `~/.profile`). One POSIX
+ * script run by `sh`, single-quoted with neither a quote nor a backslash inside, so that every login shell
+ * ssh hands it to (sh, bash, zsh, fish, csh) passes it on as it is. With neither there, it exits 127, as a
+ * shell does for a command it can't find, which `sshEnded` reads as `BridgeMissing`.
+ */
+export const bridgeRemote: ReadonlyArray<string> = [
+  'sh',
+  '-c',
+  `'if command -v fabrica >/dev/null 2>&1; then exec fabrica bridge; fi; if [ -x "$HOME/.local/bin/fabrica" ]; then exec "$HOME/.local/bin/fabrica" bridge; fi; echo fabrica: not found >&2; exit 127'`,
+]
 
 /** Why ssh ended a connection, from its exit and stderr. Every one but `Lost` is a refusal. */
 export type SshFailure = Data.TaggedEnum<{
@@ -106,7 +120,7 @@ export type SshFailure = Data.TaggedEnum<{
   HostKeyUnknown: { readonly detail: string }
   /** The host took none of the user's keys or passwords. */
   AuthenticationFailed: { readonly detail: string }
-  /** The host has no `fabrica` on its PATH. */
+  /** The host has no `fabrica`, on its PATH or at `~/.local/bin/fabrica`. */
   BridgeMissing: { readonly detail: string }
   /** This ssh can't relay prompts: it isn't OpenSSH 8.4 or later. */
   TooOld: { readonly version: string }
@@ -138,7 +152,7 @@ export class SshFailed extends Data.TaggedError('SshFailed')<{
       AuthenticationFailed: ({ detail }) =>
         `ssh could not sign in to ${at}: ${detail}`,
       BridgeMissing: () =>
-        `${at} has no fabrica on its PATH: install the engine there`,
+        `${at} has no fabrica, on its PATH or in ~/.local/bin: install the engine there`,
       TooOld: ({ version }) =>
         `this ssh is ${version}: the app relays ssh's prompts, which takes OpenSSH ${askpassFloor.major}.${askpassFloor.minor} or later; ${
           /for_Windows/u.test(version)
@@ -243,7 +257,7 @@ export const sshArguments = (options: SshOptions): ReadonlyArray<string> => [
     : []),
   '--',
   options.destination,
-  ...(options.remote ?? ['fabrica', 'bridge']),
+  ...(options.remote ?? bridgeRemote),
 ]
 
 /** OpenSSH's version in `ssh -V`'s words: `OpenSSH_9.6p1 …`, `OpenSSH_for_Windows_8.1p1, …`. */

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import * as NodePath from 'node:path'
 
 import { describe, expect, it, layer } from '@effect/vitest'
-import { sshFailed } from '@fabrica/client/node'
+import { bridgeRemote, sshFailed } from '@fabrica/client/node'
 import { Toolbox, layerToolbox, shStub, tempFolder } from '@fabrica/testkit'
 
 import { ConnectionTarget } from '../src/connection/target'
@@ -47,12 +47,11 @@ describe('the SSH target', () => {
         const args = yield* Effect.promise(() =>
           readFile(NodePath.join(dir, 'args'), 'utf8'),
         )
-        expect(args.split('\n').slice(-6)).toEqual([
+        expect(args.split('\n').slice(-7)).toEqual([
           'BatchMode=yes',
           '--',
           'u@server-1',
-          'fabrica',
-          'bridge',
+          ...bridgeRemote,
           '',
         ])
       }).pipe(Effect.scoped),

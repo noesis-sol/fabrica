@@ -340,7 +340,7 @@ The engine samples its host's load every few seconds for the console's system st
 | Where | Transport |
 |---|---|
 | Same machine | Unix domain socket `<data>/engine.sock` (or `$XDG_RUNTIME_DIR/fabrica/engine.sock`), mode 0600, through Effect's `Socket` (`RpcClient.makeProtocolSocket`) |
-| Remote, default (H30) | **The SSH stdio bridge.** The client runs the system's `ssh <destination> fabrica bridge` (OpenSSH; the user's config, keys and agent). On the host, `fabrica bridge` connects to the engine's local socket (starting the engine when it isn't running) and copies bytes both ways, so the RPC runs over ssh's stdin and stdout. No port opens on either machine and nothing is forwarded; it works the same with Windows' OpenSSH client. SSH keepalives (`ServerAliveInterval`) detect a dead link; the client reconnects and resumes its streams (§8.3) |
+| Remote, default (H30) | **The SSH stdio bridge.** The client runs the system's `ssh <destination> fabrica bridge` (OpenSSH; the user's config, keys and agent), falling back to `~/.local/bin/fabrica` (§9.2) where the host's PATH for a non-interactive ssh command lacks it. On the host, `fabrica bridge` connects to the engine's local socket (starting the engine when it isn't running) and copies bytes both ways, so the RPC runs over ssh's stdin and stdout. No port opens on either machine and nothing is forwarded; it works the same with Windows' OpenSSH client. SSH keepalives (`ServerAliveInterval`) detect a dead link; the client reconnects and resumes its streams (§8.3) |
 | WSL2 (H31) | The same bridge, run as `wsl.exe -d <distro> -- fabrica bridge` |
 | Remote, option | WebSocket over TLS on a configured address (`RpcServer.makeProtocolWebsocket`), authenticated with a pairing token (§9.3) |
 

@@ -46,6 +46,7 @@ import {
   SshPrompting,
   type SshPrompts,
   type TextPrompt,
+  bridgeRemote,
   layerSsh,
   parseSshVersion,
   sshEnded,
@@ -378,8 +379,7 @@ describe('the SSH bridge', () => {
             'ServerAliveCountMax=3',
             '--',
             'u@server-1',
-            'fabrica',
-            'bridge',
+            ...bridgeRemote,
           ])
           expect(run?.askpass).toBeNull()
         }),
@@ -390,13 +390,12 @@ describe('the SSH bridge', () => {
         const { env, runs } = yield* setUp('bridge')
         yield* clientOver(env, SshPrompting.None())
         const [run] = yield* runs
-        expect(run?.args.slice(-6)).toEqual([
+        expect(run?.args.slice(-7)).toEqual([
           '-o',
           'BatchMode=yes',
           '--',
           'u@server-1',
-          'fabrica',
-          'bridge',
+          ...bridgeRemote,
         ])
       }),
     )

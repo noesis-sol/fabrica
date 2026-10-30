@@ -4,6 +4,7 @@ import * as NodePath from 'node:path'
 
 import { NodeServices } from '@effect/platform-node'
 import { describe, expect, layer } from '@effect/vitest'
+import { bridgeRemote } from '@fabrica/client/node'
 import { EngineHost, protocolVersion } from '@fabrica/contracts'
 import { Daemon } from '@fabrica/engine'
 import {
@@ -138,11 +139,10 @@ describe('fabrica --engine ssh://', () => {
             supported: [protocolVersion],
           },
         })
-        expect((yield* args).slice(-5)).toEqual([
+        expect((yield* args).slice(-6)).toEqual([
           '--',
           'ssh://u@server-1:2222',
-          'fabrica',
-          'bridge',
+          ...bridgeRemote,
           '',
         ])
       }).pipe(Effect.scoped),
