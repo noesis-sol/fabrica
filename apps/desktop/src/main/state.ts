@@ -81,7 +81,7 @@ export class EngineUnknown extends Data.TaggedError('EngineUnknown')<{
 
 /** What encrypts the app's secrets: safeStorage, or a stand-in in tests. */
 export interface SecretBox {
-  /** Why secrets can't be kept here, when they can't. */
+  /** Why secrets can't be kept here, when they can't: asked again at each use, as it may change. */
   readonly unavailable: () => Option.Option<string>
   readonly encrypt: (text: string) => Uint8Array
   readonly decrypt: (bytes: Uint8Array) => string
@@ -203,10 +203,14 @@ export const makeAppState = Effect.fn('AppState.make')(function* ({
       read.pipe(Effect.flatMap(change), Effect.flatMap(write)),
     )
 
-  const secretsReady = Option.match(secrets.unavailable(), {
-    onNone: () => Effect.void,
-    onSome: reason => Effect.fail(new NoSecretStorage({ reason })),
-  })
+  // Read at each use: safeStorage answers only once the app is ready on Windows and Linux, and the
+  // state is made before it is.
+  const secretsReady = Effect.suspend(() =>
+    Option.match(secrets.unavailable(), {
+      onNone: () => Effect.void,
+      onSome: reason => Effect.fail(new NoSecretStorage({ reason })),
+    }),
+  )
 
   const engines = read.pipe(Effect.map(state => state.engines))
 
