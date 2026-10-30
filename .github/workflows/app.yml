@@ -17,17 +17,33 @@
 # NSIS) against the checksums electron-builder pins for them.
 #
 # A release commit pushed alone is left to the release workflow, as CI's checks are (ci.yml, §22.5).
+#
+# The release workflow (release.yml, §22.5) calls this one for the release's commit (`ref`) and with the
+# release's own engine (`engine`, an artifact of its run holding the engine archives, the signed ones for
+# macOS where they were, and their checksums.txt, with checksums.txt.sig where the release is signed),
+# which every target embeds in place of one built here; it publishes the app-<target> artifacts.
 name: App
 
 on:
   push:
   pull_request:
+  workflow_call:
+    inputs:
+      ref:
+        description: The commit to package
+        required: true
+        type: string
+      engine:
+        description: The artifact of the run holding the engine's release folder, which the app embeds
+        required: true
+        type: string
 
 permissions:
   contents: read
 
+# A release's call is its run's own.
 concurrency:
-  group: app-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  group: app-${{ inputs.engine && github.run_id || github.event.pull_request.number || github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -55,11 +71,12 @@ jobs:
             echo "alone=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # The Linux x64 engine distribution the Windows app embeds, built where its links can be made.
+  # The Linux x64 engine distribution the Windows app embeds, built where its links can be made; a
+  # release's call has the release's.
   engine-for-windows:
     name: engine for Windows
     needs: release-commit
-    if: needs.release-commit.outputs.alone != 'true'
+    if: needs.release-commit.outputs.alone != 'true' && !inputs.engine
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -90,7 +107,10 @@ jobs:
   package:
     name: app, ${{ matrix.target }}
     needs: [release-commit, engine-for-windows]
-    if: needs.release-commit.outputs.alone != 'true'
+    if: >-
+      ${{ !cancelled() && needs.release-commit.result == 'success' &&
+      needs.release-commit.outputs.alone != 'true' && (needs.engine-for-windows.result == 'success' ||
+      (inputs.engine && needs.engine-for-windows.result == 'skipped')) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -130,6 +150,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
@@ -161,16 +182,23 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Build the engine distribution
-        if: matrix.os != 'windows'
+        if: matrix.os != 'windows' && !inputs.engine
         env:
           ENGINE: ${{ matrix.engine }}
         run: mise exec -- pnpm --filter @fabrica/engine-app dist "$ENGINE"
 
       - name: Fetch the engine distribution
-        if: matrix.os == 'windows'
+        if: matrix.os == 'windows' && !inputs.engine
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: engine-linux-x64
+          path: apps/engine/out
+
+      - name: Fetch the release's engine
+        if: inputs.engine
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.engine }}
           path: apps/engine/out
 
       # Without a target's signing secrets, electron-builder is kept from signing with whatever identity

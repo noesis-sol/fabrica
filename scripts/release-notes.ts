@@ -34,10 +34,15 @@ export const CHANGES_FOLDER = 'changes'
 export const CHANGELOG = 'CHANGELOG.md'
 
 /**
- * The package.json files whose version is the release's: the repository's, and the engine's, which
- * `fabrica --version` prints and the distribution's archives are named after.
+ * The package.json files whose version is the release's: the repository's; the engine's, which
+ * `fabrica --version` prints and the distribution's archives are named after; and the app's, which its
+ * installers and update feeds carry and electron-updater compares with the release's.
  */
-export const VERSIONED_MANIFESTS = ['package.json', 'apps/engine/package.json']
+export const VERSIONED_MANIFESTS = [
+  'package.json',
+  'apps/engine/package.json',
+  'apps/desktop/package.json',
+]
 
 /** The changelog's opening, written where there is no CHANGELOG.md yet. */
 export const CHANGELOG_TITLE =

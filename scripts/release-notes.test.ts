@@ -318,6 +318,7 @@ layer(layerToolbox({ tools: ['node'] }))('the script', it => {
         'changes/fab-mgi.3.10.md': '- Tenth.\n',
         'package.json': manifest('fabrica'),
         'apps/engine/package.json': manifest('@fabrica/engine-app'),
+        'apps/desktop/package.json': manifest('@fabrica/desktop'),
         'packages/ui/package.json': manifest('@fabrica/ui'),
       })
       const gathered = yield* script(root, ['--gather', '0.3.0', '2026-11-04'])
@@ -335,6 +336,9 @@ layer(layerToolbox({ tools: ['node'] }))('the script', it => {
       ).toEqual([])
       expect(yield* read('package.json')).toContain('"version": "0.3.0"')
       expect(yield* read('apps/engine/package.json')).toContain(
+        '"version": "0.3.0"',
+      )
+      expect(yield* read('apps/desktop/package.json')).toContain(
         '"version": "0.3.0"',
       )
       expect(yield* read('packages/ui/package.json')).toContain(

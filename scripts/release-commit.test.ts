@@ -28,6 +28,7 @@ const repository = Effect.gen(function* () {
       'changes/fab-mgi.2.md': '- Two.\n',
       'package.json': manifest('0.0.0'),
       'apps/engine/package.json': manifest('0.0.0'),
+      'apps/desktop/package.json': manifest('0.0.0'),
       'src/a.ts': 'export const a = 1\n',
     },
     message: 'The project',
@@ -55,6 +56,7 @@ const releaseFiles = (version: string) => ({
   'CHANGELOG.md': `# Changelog\n\n## [${version}] - 2026-11-04\n\n- One.\n- Two.\n`,
   'package.json': manifest(version),
   'apps/engine/package.json': manifest(version),
+  'apps/desktop/package.json': manifest(version),
 })
 
 layer(layerToolbox({ tools: ['git', 'sh', 'sed', 'grep'] }))(
