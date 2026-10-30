@@ -64,7 +64,7 @@ With git 2.38 or later and [mise](https://mise.jdx.dev) installed (the list abov
 ```bash
 mise install                    # Node 26.13.0 and pnpm 12.16.1, as mise.toml pins them
 pnpm install --frozen-lockfile  # dependencies, exactly as pnpm-lock.yaml has them
-scripts/check-fast.sh           # type check (tsgo), lint (oxlint), format check (oxfmt), unit tests (Vitest)
+scripts/check-fast.sh           # type check (effect-tsgo), lint (oxlint), format check (oxfmt), unit tests (Vitest)
 scripts/check-full.sh           # the fast check, then every package's build, the app's included
 pnpm test                       # the unit tests alone
 pnpm build                      # every package's build

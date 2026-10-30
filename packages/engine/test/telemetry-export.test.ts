@@ -1,4 +1,13 @@
-import { Duration, Effect, Layer, Metric, Option, Ref, Stream } from 'effect'
+import {
+  Data,
+  Duration,
+  Effect,
+  Layer,
+  Metric,
+  Option,
+  Ref,
+  Stream,
+} from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 import { RpcTest } from 'effect/rpc'
 import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
@@ -71,6 +80,11 @@ const windowsHome = 'C:\\Users\\someone'
 const secret = 'hunter2'
 const content = [prompt, checkout, home, windowsHome, secret]
 
+/** A read the traced work fails with, its message carrying the content. */
+class ReadFailed extends Data.TaggedError('ReadFailed')<{
+  readonly message: string
+}> {}
+
 /** A posted payload: where it went, and its JSON. */
 interface Posted {
   readonly url: string
@@ -115,9 +129,9 @@ const work = Effect.gen(function* () {
     yield* Effect.logWarning(
       `Couldn't delete ${checkout}/.deleting, moved aside`,
     )
-    return yield* Effect.fail(
-      new Error(`couldn't read ${windowsHome}\\secret.txt: ${secret}`),
-    )
+    return yield* new ReadFailed({
+      message: `couldn't read ${windowsHome}\\secret.txt: ${secret}`,
+    })
   }).pipe(Effect.withSpan('Test.work'), Effect.ignore)
   yield* Metric.update(
     Metric.withAttributes(

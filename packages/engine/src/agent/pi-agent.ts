@@ -419,7 +419,7 @@ export const make = Effect.fn('PiAgent.make')(function* (
           answerData(PiSwitched, response),
         )
         if (switched.cancelled)
-          yield* refused(command)(
+          return yield* refused(command)(
             SendFailure.Refused({ error: 'the switch was cancelled' }),
           )
       }

@@ -17,7 +17,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "typecheck": "tsgo --noEmit -p tsconfig.json",
+    "typecheck": "effect-tsgo tsc --noEmit -p tsconfig.json",
     "typecheck:tsc": "tsc --noEmit -p tsconfig.json",
     "build": "vite build"
   },

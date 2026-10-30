@@ -66,7 +66,7 @@ The toolchain is pinned: Node 26.13.0 and pnpm 12.16.1 in `mise.toml` (and `pack
 ```bash
 mise install                    # Node and pnpm, as mise.toml pins them
 pnpm install --frozen-lockfile  # dependencies, exactly as pnpm-lock.yaml has them
-scripts/check-fast.sh           # type check (tsgo), lint (oxlint), format check (oxfmt), unit tests (Vitest)
+scripts/check-fast.sh           # type check (effect-tsgo), lint (oxlint), format check (oxfmt), unit tests (Vitest)
 scripts/check-full.sh           # the fast check, then every package's build, electron-vite's included
 pnpm check:own                  # your change's check: its packages' type checks, lint and format on the
                                 # changed files, the tests its import graph reaches; a pass kept by tree
@@ -76,7 +76,7 @@ Both check scripts run under mise's toolchain when mise is installed, run every 
 suite fails. One step at a time, from the root:
 
 ```bash
-pnpm typecheck        # tsgo --noEmit in every package (pnpm typecheck:tsc runs tsc instead)
+pnpm typecheck        # effect-tsgo tsc --noEmit in every package (pnpm typecheck:tsc runs tsc instead)
 pnpm lint             # oxlint, with @foldkit/oxlint-plugin
 pnpm format           # oxfmt, writing; pnpm format:check only checks
 pnpm test             # every package's tests (Vitest projects), failed ones rerun (scripts/test-rerun.ts)
@@ -107,14 +107,16 @@ back with the tool's result: a `PostToolUse` hook in `.claude/settings.json` for
 development-only Pi package `scripts/pi-checks` (loaded by `.pi/settings.json`) for Pi; both run
 `scripts/check-write.ts`. Fix what they report before going on.
 
-The Effect Language Service's diagnostics (a floating Effect, a missing `return yield*`, …) come from
-`@effect/tsgo`, TypeScript-Go with the Effect plugin that `tsconfig.base.json` configures; they show in
-editors and don't gate the checks (its `ignoreEffect*InTscExitCode` options; `tsgo` doesn't load the plugin).
-The modules the project uses although Effect marks them unstable (`effect/rpc`, `effect/sql`, `effect/cli`, …)
-are in its `allowedUnstableApis`. The first two leave `node_modules` as pnpm installed it:
+The type checks are `effect-tsgo tsc` (`@effect/tsgo`, TypeScript-Go with the Effect plugin that
+`tsconfig.base.json` configures), so the Effect Language Service's errors and warnings (a floating Effect, a
+missing `return yield*`, …) fail them as a type error does: every package's typecheck script, `pnpm check:own`
+and the check after every write. Its suggestions show in editors only (`includeSuggestionsInTsc` false).
+The packages' builds stay on `tsgo`, which doesn't load the plugin. The modules the project uses although
+Effect marks them unstable (`effect/rpc`, `effect/sql`, `effect/cli`, …) are in its `allowedUnstableApis`.
+The first two leave `node_modules` as pnpm installed it:
 
 ```bash
-pnpm exec effect-tsgo tsc --noEmit -p packages/engine/tsconfig.json  # a type check with Effect's diagnostics
+pnpm exec effect-tsgo tsc --noEmit -p packages/engine/tsconfig.json  # one package's type check, as pnpm typecheck runs it
 pnpm exec effect-tsgo tsc --lsp --stdio  # the language server, for an editor that takes a command (Neovim, Zed)
 pnpm exec effect-tsgo patch --typescript --no-oxlint  # for VS Code and Cursor, whose .vscode/settings.json
     # runs node_modules/typescript: this makes it Effect's, the original kept aside; again when pnpm reinstalls it

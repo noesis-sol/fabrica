@@ -101,7 +101,10 @@ export interface Diagnostic {
   readonly text: string
 }
 
-/** tsgo's diagnostics in its --pretty false output: `file(line,col): error …`, any lines after it indented. */
+/**
+ * effect-tsgo tsc's diagnostics in its --pretty false output: `file(line,col): error …`, any lines after it
+ * indented. Effect's own (`effect(missingReturnYieldStar)`, …) come the same way, as errors or warnings.
+ */
 export const typeDiagnostics = (output: string): ReadonlyArray<Diagnostic> => {
   const diagnostics: Array<{ file: Option.Option<string>; lines: string[] }> =
     []
@@ -203,7 +206,7 @@ export const checkWrite = (input: {
   readonly files: ReadonlyArray<string>
   readonly packages: ReadonlyArray<TypedPackage>
   readonly run: Run
-  /** Where a tool of the repository's is: tsgo, oxlint. */
+  /** Where a tool of the repository's is: effect-tsgo, oxlint. */
   readonly bin: (tool: string) => string
 }): Promise<ReadonlyArray<Checked>> => {
   const { root, packages, run, bin } = input
@@ -226,8 +229,8 @@ export const checkWrite = (input: {
     ...tsconfigs.map(tsconfig =>
       check(
         `type check (${tsconfig})`,
-        bin('tsgo'),
-        ['--noEmit', '--pretty', 'false', '-p', tsconfig],
+        bin('effect-tsgo'),
+        ['tsc', '--noEmit', '--pretty', 'false', '-p', tsconfig],
         typeDiagnostics,
       ),
     ),

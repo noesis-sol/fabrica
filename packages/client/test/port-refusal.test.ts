@@ -1,4 +1,4 @@
-import { Effect, Option, Ref, Schedule } from 'effect'
+import { Data, Effect, Option, Ref, Schedule } from 'effect'
 import { Socket } from 'effect/socket'
 
 import { describe, expect, it } from '@effect/vitest'
@@ -35,6 +35,9 @@ const ports = Effect.acquireRelease(
 const refusal = 'the host key of u@server-1 has changed'
 
 /** The page's first connection over a relay whose handler ends with `ending`: what its read fails with. */
+/** The relay's link to the engine, lost. */
+class LinkLost extends Data.TaggedError('LinkLost') {}
+
 const firstRead = (ending: Effect.Effect<void, Error>) =>
   Effect.gen(function* () {
     const { page, relay } = yield* ports
@@ -61,7 +64,7 @@ describe('a refused connection', () => {
   it.effect('is only a refusal where the relay says so', () =>
     Effect.gen(function* () {
       const closed = yield* firstRead(Effect.void)
-      const failed = yield* firstRead(Effect.fail(new Error('lost the link')))
+      const failed = yield* firstRead(Effect.fail(new LinkLost()))
       expect(connectionRefused(closed)).toEqual(Option.none())
       expect(connectionRefused(failed)).toEqual(Option.none())
     }).pipe(Effect.scoped),

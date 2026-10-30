@@ -136,11 +136,9 @@ export const openRegular = Effect.fn('SafeFiles.openRegular')(function* (
   flags: number,
   mode = 0o644,
 ) {
-  const handle = yield* Effect.tryPromise({
-    try: () =>
-      open(full, flags | constants.O_NOFOLLOW | constants.O_NONBLOCK, mode),
-    catch: cause => cause,
-  }).pipe(Effect.catch(cause => refusalOrFailure(full, cause)))
+  const handle = yield* Effect.tryPromise(() =>
+    open(full, flags | constants.O_NOFOLLOW | constants.O_NONBLOCK, mode),
+  ).pipe(Effect.catch(error => refusalOrFailure(full, error.cause)))
   const stats = yield* attempt(full, 'fstat', () => handle.stat()).pipe(
     Effect.tapError(() => closeQuietly(handle)),
   )

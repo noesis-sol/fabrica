@@ -31,13 +31,16 @@ const join = Effect.fn('ConnectionRelay.join')(function* (
   engine: EngineSocket,
   refusal: Refusal,
 ) {
-  yield* Effect.gen(function* () {
+  return yield* Effect.gen(function* () {
     const socket = yield* engine
     const fromEngine = yield* socket.reader
     const toEngine = yield* socket.writer
     const fromPage = yield* page.reader
     const toPage = yield* page.writer
-    yield* Effect.raceFirst(copy(fromEngine, toPage), copy(fromPage, toEngine))
+    return yield* Effect.raceFirst(
+      copy(fromEngine, toPage),
+      copy(fromPage, toEngine),
+    )
   }).pipe(
     Effect.scoped,
     Effect.catchTag('SocketError', error =>

@@ -10,7 +10,7 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
-    "typecheck": "tsgo --noEmit -p tsconfig.node.json && tsgo --noEmit -p tsconfig.connection.json && tsgo --noEmit -p tsconfig.web.json",
+    "typecheck": "effect-tsgo tsc --noEmit -p tsconfig.node.json && effect-tsgo tsc --noEmit -p tsconfig.connection.json && effect-tsgo tsc --noEmit -p tsconfig.web.json",
     "typecheck:tsc": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.connection.json && tsc --noEmit -p tsconfig.web.json",
     "build": "electron-vite build",
     "package": "electron-vite build && electron-builder --config electron-builder.yml --publish never",

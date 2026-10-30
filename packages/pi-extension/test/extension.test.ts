@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, Schema } from 'effect'
+import { Data, Effect, Layer, Option, Schema } from 'effect'
 import { Headers } from 'effect/http'
 import { RpcSerialization, RpcServer } from 'effect/rpc'
 import { SocketServer } from 'effect/socket'
@@ -227,10 +227,8 @@ const serve = Effect.fn(function* (folder: string, handlers: Answers) {
     disableFatalDefects: true,
   }).pipe(
     Effect.provide(
-      Layer.mergeAll(
-        ControlRpcs.toLayer(ControlRpcs.of(handlers)),
-        checkToken,
-      ).pipe(
+      ControlRpcs.toLayer(ControlRpcs.of(handlers)).pipe(
+        Layer.provideMerge(checkToken),
         Layer.provideMerge(
           RpcServer.layerProtocolSocketServer.pipe(
             Layer.provide(RpcSerialization.layerNdjson),
@@ -277,11 +275,19 @@ const loaded = Effect.fn(function* (
   return { ...fake, calls, folder }
 })
 
+/** A registered tool's failure, as Pi shows it. */
+class ToolFailed extends Data.TaggedError('ToolFailed')<{
+  readonly message: string
+}> {}
+
 /** Calls a registered tool as Pi would, with `params` past Pi's own check. */
 const execute = (tool: PiTool, params: unknown) =>
   Effect.tryPromise({
     try: () => tool.execute('call-1', params, undefined),
-    catch: error => (error instanceof Error ? error : new Error(String(error))),
+    catch: error =>
+      new ToolFailed({
+        message: error instanceof Error ? error.message : String(error),
+      }),
   })
 
 /** Pi about to settle a turn that ended as `outcome`. */

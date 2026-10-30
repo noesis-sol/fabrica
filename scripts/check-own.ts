@@ -6,8 +6,8 @@ import { Data, Option } from 'effect'
 // commits, what isn't committed yet and the untracked files git doesn't ignore. Each step prints
 // SUITE: <name> as it starts, every step runs, and the last line is the verdict:
 //   typecheck: each package a changed TypeScript or JSON file is in, and the packages that depend
-//              on it (pnpm's --filter ...<package>), deleted files included; tsgo on scripts/ when
-//              a file there changed
+//              on it (pnpm's --filter ...<package>), deleted files included; effect-tsgo tsc on
+//              scripts/ when a file there changed
 //   lint:      oxlint on the changed files
 //   format:    oxfmt --check on the changed files
 //   test:      Vitest on the test files the change touches (testsFor): those that changed, and those
@@ -651,7 +651,13 @@ const main = (): number => {
           ])
         const scripts =
           !checks.scripts ||
-          tool(['tsgo', '--noEmit', '-p', 'scripts/tsconfig.json'])
+          tool([
+            'effect-tsgo',
+            'tsc',
+            '--noEmit',
+            '-p',
+            'scripts/tsconfig.json',
+          ])
         return packages && scripts
       })
       step('lint', () =>

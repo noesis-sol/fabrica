@@ -90,8 +90,12 @@ const onHost = <A, E>(
     yield* TestClock.setTime(start)
     const host = yield* makeHost
     return yield* body(host).pipe(
-      Effect.provide(layerWake.pipe(Layer.provide(causes))),
-      Effect.provide(DateTime.layerCurrentZoneOffset(2 * 60 * 60 * 1000)),
+      Effect.provide(
+        Layer.mergeAll(
+          layerWake.pipe(Layer.provide(causes)),
+          DateTime.layerCurrentZoneOffset(2 * 60 * 60 * 1000),
+        ),
+      ),
       Effect.provideService(Clock.Clock, host.clock),
     )
   })

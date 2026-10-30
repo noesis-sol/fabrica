@@ -429,7 +429,7 @@ describe('the port’s protocol', () => {
               } else {
                 yield* write.write(encoder.encode(`fresh ${count}`))
               }
-              yield* Effect.never
+              return yield* Effect.never
             }).pipe(Effect.scoped),
           )
           .pipe(Effect.forkScoped)

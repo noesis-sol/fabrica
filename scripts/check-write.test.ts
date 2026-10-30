@@ -32,7 +32,7 @@ import {
 import { type ToolResultEvent, afterWrite, piWritten } from './pi-checks/index'
 
 // The checks after every agent write (spec §23): which files and type checks a write reaches, how
-// tsgo's and oxlint's output is read and narrowed to the written files, the report, the Claude Code
+// effect-tsgo's and oxlint's output is read and narrowed to the written files, the report, the Claude Code
 // hook's input, the Pi package's tool_result handler, and the real tools on a repository of a test's.
 
 const root = '/repo'
@@ -43,7 +43,7 @@ const packages = [
     JSON.stringify({
       scripts: {
         typecheck:
-          'pnpm --recursive run typecheck && tsgo --noEmit -p scripts/tsconfig.json',
+          'pnpm --recursive run typecheck && effect-tsgo tsc --noEmit -p scripts/tsconfig.json',
       },
     }),
   ),
@@ -52,14 +52,14 @@ const packages = [
     JSON.stringify({
       scripts: {
         typecheck:
-          'tsgo --noEmit -p tsconfig.node.json && tsgo --noEmit -p tsconfig.web.json',
+          'effect-tsgo tsc --noEmit -p tsconfig.node.json && effect-tsgo tsc --noEmit -p tsconfig.web.json',
       },
     }),
   ),
   typedPackage(
     'packages/contracts',
     JSON.stringify({
-      scripts: { typecheck: 'tsgo --noEmit -p tsconfig.json' },
+      scripts: { typecheck: 'effect-tsgo tsc --noEmit -p tsconfig.json' },
     }),
   ),
   typedPackage('packages/bare', JSON.stringify({ name: 'bare' })),
@@ -101,7 +101,7 @@ describe('which files and type checks a write reaches', () => {
     expect(
       tsconfigsOf(
         'apps/desktop',
-        'tsgo --noEmit -p tsconfig.node.json && tsgo --noEmit --project=tsconfig.web.json',
+        'effect-tsgo tsc --noEmit -p tsconfig.node.json && effect-tsgo tsc --noEmit --project=tsconfig.web.json',
       ),
     ).toEqual([
       'apps/desktop/tsconfig.node.json',
@@ -142,7 +142,7 @@ describe('which files and type checks a write reaches', () => {
 })
 
 describe("reading the checks' output", () => {
-  it("reads tsgo's diagnostics, their indented lines and those about no file", () => {
+  it("reads effect-tsgo's diagnostics, their indented lines and those about no file", () => {
     const output = [
       "a.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.",
       "b.ts(3,1): error TS2345: Argument of type '{ a: string; }' is not assignable.",
@@ -228,12 +228,12 @@ describe("reading the checks' output", () => {
     expect(unread('')).toEqual(Step.Found({ problems: ['exited with 1'] }))
     expect(
       stepOf({
-        ran: Ran.Failed({ reason: 'tsgo: spawn ENOENT' }),
+        ran: Ran.Failed({ reason: 'effect-tsgo: spawn ENOENT' }),
         root,
         files: ['a.ts'],
         diagnostics: typeDiagnostics,
       }),
-    ).toEqual(Step.NotRun({ reason: 'tsgo: spawn ENOENT' }))
+    ).toEqual(Step.NotRun({ reason: 'effect-tsgo: spawn ENOENT' }))
   })
 })
 
@@ -263,7 +263,8 @@ describe('the checks after a write', () => {
         ])
         expect(checks.every(({ step }) => Step.$is('Passed')(step))).toBe(true)
         expect(asked).toContainEqual([
-          '/bin/tsgo',
+          '/bin/effect-tsgo',
+          'tsc',
           '--noEmit',
           '--pretty',
           'false',
@@ -414,7 +415,7 @@ describe("the Pi package's tool_result handler", () => {
   )
 })
 
-// The real tsgo and oxlint, the repository's own, on a repository of the test's: a package whose
+// The real effect-tsgo and oxlint, the repository's own, on a repository of the test's: a package whose
 // typecheck script names its tsconfig, and an oxlint config of its own.
 layer(layerToolbox({ tools: ['node'] }))('the real checks', it => {
   it.effect(
@@ -431,7 +432,7 @@ layer(layerToolbox({ tools: ['node'] }))('the real checks', it => {
         yield* write(
           'packages/a/package.json',
           JSON.stringify({
-            scripts: { typecheck: 'tsgo --noEmit -p tsconfig.json' },
+            scripts: { typecheck: 'effect-tsgo tsc --noEmit -p tsconfig.json' },
           }),
         )
         yield* write(

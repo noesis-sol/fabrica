@@ -225,7 +225,7 @@ Also decided in the first technology spec, and kept: Electron; TypeScript, stric
 **Toolchain**
 
 - pnpm workspaces. electron-vite builds the app's main, preload, connection process and renderer (with `@foldkit/vite-plugin`) \[VERIFY utility-process entry support\]. The engine is bundled separately (a Node bundle plus Pi, §22).
-- Type checking with `tsgo` (TypeScript's native port), which gates the build and runs after every agent's file write; `tsc` kept runnable for any check `tsgo` doesn't do yet; the Effect Language Service in editors through `@effect/tsgo`, TypeScript-Go with the Effect plugin (the tsserver plugin `@effect/language-service` doesn't load in `tsgo`), its diagnostics shown but not gating the checks (H40).
+- Type checking with `tsgo` (TypeScript's native port), which gates the build and runs after every agent's file write; `tsc` kept runnable for any check `tsgo` doesn't do yet; the Effect Language Service in editors through `@effect/tsgo`, TypeScript-Go with the Effect plugin (the tsserver plugin `@effect/language-service` doesn't load in `tsgo`), the type checks run through it (`effect-tsgo tsc`), so its errors and warnings gate them as type errors do, its suggestions shown in editors only (H40).
 - oxlint with `@foldkit/oxlint-plugin`, and oxfmt.
 
 **Layout**

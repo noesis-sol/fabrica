@@ -4,7 +4,11 @@ import { RpcSchema } from 'effect/rpc'
 import { describe, expect, it } from '@effect/vitest'
 
 import { ProjectId, RunId, TicketId } from '../ids'
-import { AttentionRequest, applyAttentionPatch } from './attention'
+import {
+  AttentionClosed,
+  AttentionRequest,
+  applyAttentionPatch,
+} from './attention'
 import { InsightsQuery, InsightsTable } from './insights'
 import { FabricaRpcs, protocolGroups, protocolJsonSchema } from './protocol'
 import {
@@ -1356,7 +1360,7 @@ describe('patches', () => {
     const next = applyAttentionPatch(requests, {
       upsert: [],
       remove: [
-        {
+        AttentionClosed.make({
           ref: {
             _tag: 'review',
             project: ProjectId.make(project),
@@ -1364,7 +1368,7 @@ describe('patches', () => {
           },
           by: Option.none(),
           at: DateTime.makeUnsafe(at),
-        },
+        }),
       ],
     })
     expect(next.map(({ _tag }) => _tag)).toEqual([

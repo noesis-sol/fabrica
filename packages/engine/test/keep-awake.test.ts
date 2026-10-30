@@ -342,8 +342,9 @@ describe('reading the battery', () => {
         return yield* (yield* Battery).read
       })
       const power = yield* read.pipe(
-        Effect.provide(batteryFor('darwin')),
-        Effect.provide(stubRunner({ stub })),
+        Effect.provide(
+          batteryFor('darwin').pipe(Layer.provideMerge(stubRunner({ stub }))),
+        ),
       )
       expect(power).toEqual(
         Option.some(Power.Battery({ level: 64, discharging: true })),
@@ -353,8 +354,9 @@ describe('reading the battery', () => {
       ])
       expect(
         yield* read.pipe(
-          Effect.provide(batteryFor('win32')),
-          Effect.provide(stubRunner({ stub })),
+          Effect.provide(
+            batteryFor('win32').pipe(Layer.provideMerge(stubRunner({ stub }))),
+          ),
         ),
       ).toEqual(Option.some(Power.NoBattery()))
     }),
@@ -371,7 +373,11 @@ describe('watching the battery', () => {
         Effect.sync(() => {
           told.push(notice)
         }),
-      ).pipe(Effect.provide(pmsetBattery), Effect.provide(stubRunner({ stub })))
+      ).pipe(
+        Effect.provide(
+          pmsetBattery.pipe(Layer.provideMerge(stubRunner({ stub }))),
+        ),
+      )
       return { stub, told, first }
     })
 
@@ -587,8 +593,9 @@ describe('the battery in the run log', () => {
         ])
         yield* recordBattery.pipe(
           Effect.provideService(RunLog, runLog),
-          Effect.provide(pmsetBattery),
-          Effect.provide(stubRunner({ stub })),
+          Effect.provide(
+            pmsetBattery.pipe(Layer.provideMerge(stubRunner({ stub }))),
+          ),
         )
         yield* minute
         const records = events

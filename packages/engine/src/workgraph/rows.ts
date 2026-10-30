@@ -83,20 +83,20 @@ const decodeRow =
   <Row extends { readonly [key: string]: unknown }>(
     row: Row,
     toEncoded: (row: Row) => unknown,
-  ): Effect.Effect<S['Type'], StoreFailed> =>
-    Effect.try({
-      try: () => toEncoded(row),
-      catch: cause => cause,
-    }).pipe(
-      Effect.flatMap(Schema.decodeUnknownEffect(schema)),
-      Effect.mapError(
-        cause =>
-          new StoreFailed({
-            operation: `reading ${table}`,
-            reason: `a row (${JSON.stringify(row)}) doesn't decode: ${String(cause)}`,
-          }),
+  ): Effect.Effect<S['Type'], StoreFailed> => {
+    const failed = (cause: unknown) =>
+      new StoreFailed({
+        operation: `reading ${table}`,
+        reason: `a row (${JSON.stringify(row)}) doesn't decode: ${String(cause)}`,
+      })
+    return Effect.try({ try: () => toEncoded(row), catch: failed }).pipe(
+      Effect.flatMap(encoded =>
+        Schema.decodeUnknownEffect(schema)(encoded).pipe(
+          Effect.mapError(failed),
+        ),
       ),
     )
+  }
 
 const decodeTicketRow = decodeRow(Ticket, 'tickets')
 
