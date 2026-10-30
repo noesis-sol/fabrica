@@ -32,6 +32,7 @@ import {
   SshDestination,
   TlsEndpoint,
   UbuntuInstall,
+  type WslDistro,
   WslSearch,
   consentFor,
   defaultEngineName,
@@ -902,16 +903,38 @@ const startPairing = (
 })
 
 /**
- * Whether `message` means the engine this app connects to may take it now: this machine's engine, or
- * the one in WSL2 the Windows app reaches, installed or updated, so a connection it refused is tried
- * again.
+ * The WSL2 distribution whose engine main reaches once `message` comes, as the app's own connection
+ * (§7.6): one Add engine installed or updated there, or found up to date.
+ */
+export const reachedInWslAfter = (message: Message): Option.Option<WslDistro> =>
+  Match.value(message).pipe(
+    Match.tag('CompletedEngineInstall', ({ host, answer }) =>
+      EngineHost.guards.Wsl(host) && InstallAnswer.guards.Installed(answer)
+        ? Option.some(host.distro)
+        : Option.none(),
+    ),
+    Match.tag('CompletedEngineCheck', ({ host, answer }) =>
+      EngineHost.guards.Wsl(host) &&
+      CheckAnswer.guards.Checked(answer) &&
+      InstallPlan.guards.Current(answer.check.plan)
+        ? Option.some(host.distro)
+        : Option.none(),
+    ),
+    Match.orElse(() => Option.none()),
+  )
+
+/**
+ * Whether `message` means the engine this app connects to may take it now: this machine's engine
+ * installed or updated, or the one in WSL2 the Windows app reaches then, so a connection it refused is
+ * tried again.
  */
 export const reconnectsAfter = (message: Message): boolean =>
+  Option.isSome(reachedInWslAfter(message)) ||
   Match.value(message).pipe(
     Match.tag(
       'CompletedEngineInstall',
       ({ host, answer }) =>
-        !EngineHost.guards.Ssh(host) && InstallAnswer.guards.Installed(answer),
+        EngineHost.guards.Local(host) && InstallAnswer.guards.Installed(answer),
     ),
     Match.orElse(() => false),
   )

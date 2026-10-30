@@ -81,6 +81,7 @@ import {
   windowOptions,
 } from './window'
 import {
+  checkedDistro,
   installUbuntu,
   installedDistro,
   launchDistro,
@@ -171,15 +172,6 @@ const installSource = () =>
     release: app.isPackaged ? Option.some(version) : Option.none(),
   })
 
-const checkEngine = (host: EngineHost): Promise<CheckAnswer> =>
-  Effect.runPromise(
-    installSource().pipe(
-      Effect.flatMap(source =>
-        checkEngineOn({ host, source, env: definedOf(process.env) }),
-      ),
-    ),
-  )
-
 /** wsl.exe as the app runs it: the user's environment, `wsl.exe` found on its PATH. */
 const wslRunner = { env: definedOf(process.env) }
 
@@ -209,6 +201,22 @@ const reachKnownWslEngine = appState.engines.pipe(
     Effect.logWarning(`the known engines: ${error.reason}`),
   ),
 )
+
+/** Checks the engine on a host; one found up to date in WSL2 is the engine the app reaches then. */
+const checkEngine = (host: EngineHost): Promise<CheckAnswer> =>
+  Effect.runPromise(
+    installSource().pipe(
+      Effect.flatMap(source =>
+        checkEngineOn({ host, source, env: definedOf(process.env) }),
+      ),
+      Effect.tap(answer =>
+        Option.match(checkedDistro({ host, answer }), {
+          onNone: () => Effect.void,
+          onSome: reachWsl,
+        }),
+      ),
+    ),
+  )
 
 const findWsl = (): Promise<WslSearch> =>
   Effect.runPromise(findDistribution(wslRunner))

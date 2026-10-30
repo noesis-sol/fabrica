@@ -88,3 +88,6 @@ export const defaultEngineName = (destination: SshDestination): string =>
     .replace(/^ssh:\/\//u, '')
     .replace(/^[^@]*@/u, '')
     .replace(/:\d+$/u, '')
+
+/** The name the app keeps the engine in the WSL2 distribution `distro` under: `WSL Ubuntu`. */
+export const wslEngineName = (distro: WslDistro): EngineName => `WSL ${distro}`

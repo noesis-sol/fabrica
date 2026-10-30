@@ -2,8 +2,10 @@ import { Data, Effect, Option } from 'effect'
 import { spawn } from 'node:child_process'
 
 import {
+  CheckAnswer,
   EngineHost,
   InstallAnswer,
+  InstallPlan,
   UbuntuInstall,
   type WslDistro,
   WslSearch,
@@ -28,7 +30,8 @@ import { EngineAddress, type KnownEngine } from './state'
 // `wsl.exe -d <distro> -- fabrica bridge` in the connection process, while a detached wsl.exe holds the
 // distribution for as long as the engine answers, since WSL shuts down a distribution no Windows
 // process holds (fab-mgi.16). The app reaches it where this machine runs no engine of its own: at
-// launch, the first known engine in WSL2, and once Add engine has installed one, that one.
+// launch, the first known engine in WSL2, and once Add engine has installed one, or found one up to
+// date, that one, which the page keeps among the known engines at its first hello.
 
 /** How `wsl.exe --install` ended: its exit code, or the reason it didn't run. */
 type Ended = Data.TaggedEnum<{
@@ -133,5 +136,19 @@ export const installedDistro = ({
   readonly answer: InstallAnswer
 }): Option.Option<WslDistro> =>
   EngineHost.guards.Wsl(host) && InstallAnswer.guards.Installed(answer)
+    ? Option.some(host.distro)
+    : Option.none()
+
+/** The distribution whose engine the app reaches once Add engine's check has found it up to date there. */
+export const checkedDistro = ({
+  host,
+  answer,
+}: {
+  readonly host: EngineHost
+  readonly answer: CheckAnswer
+}): Option.Option<WslDistro> =>
+  EngineHost.guards.Wsl(host) &&
+  CheckAnswer.guards.Checked(answer) &&
+  InstallPlan.guards.Current(answer.check.plan)
     ? Option.some(host.distro)
     : Option.none()

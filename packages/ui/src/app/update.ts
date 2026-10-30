@@ -757,12 +757,13 @@ export const update = (model: Model, message: Message): Return =>
     GotHistoryMessage: ({ message }) => foldHistory(model, message),
     GotEnginesMessage: ({ message }) => {
       const remote = Engines.remoteAfter(model.screens.engines, message)
+      const wsl = Engines.reachedInWslAfter(message)
       const folded = stepEngines(model, engines =>
         Engines.update(engines, message, model.remotes.engines),
       )
-      // The app's engine installed or updated: a connection it refused, or one stopped at a refusal
-      // (the WSL2 distribution had no fabrica), is tried again.
-      const local =
+      // The app's engine installed or updated, or found up to date in WSL2: a connection it refused, or
+      // one stopped at a refusal (the WSL2 distribution had no fabrica), is tried again.
+      const reconnected =
         Engines.reconnectsAfter(message) &&
         (Connection.guards.Refused(folded.model.connection) ||
           Connection.guards.Stopped(folded.model.connection))
@@ -771,6 +772,14 @@ export const update = (model: Model, message: Message): Return =>
               connection: () => Connection.Connecting(),
             })
           : folded.model
+      // The engine main reaches in WSL2 then is kept at the app's connection's next hello.
+      const local = Option.match(wsl, {
+        onNone: () => reconnected,
+        onSome: distro =>
+          modifyFields(reconnected, {
+            remotes: remotes => RemoteEngines.reachedInWsl(remotes, distro),
+          }),
+      })
       // An engine installed on another host, or paired over TLS, joins the known engines; one tried again
       // is connected to.
       return {
@@ -806,8 +815,12 @@ export const update = (model: Model, message: Message): Return =>
     ConnectedToEngine: ({ engine, release, protocol }) => {
       // The notices ssh gave as it connected are done with.
       const notices = SshPrompts.notices(model.sshPrompts)
+      const hello = Connection.Up({ engine, release, protocol })
+      // The engine in WSL2 Add engine had main reach is kept, for main to reach at the next start.
+      const inWsl = RemoteEngines.connectedInWsl(model.remotes, hello)
       const connected = modifyFields(model, {
-        connection: () => Connection.Up({ engine, release, protocol }),
+        connection: () => hello,
+        remotes: () => inWsl.model,
         sshPrompts: prompts => notices.reduce(SshPrompts.drop, prompts),
       })
       // The screen shown asks again what it shows of the engine just reached.
@@ -823,6 +836,10 @@ export const update = (model: Model, message: Message): Return =>
               secret: Redacted.make(''),
             }),
           ),
+          ...Option.match(inWsl.keep, {
+            onNone: () => [],
+            onSome: kept => [RemoteEngines.KeepEngine({ engine: kept })],
+          }),
         ],
       }
     },

@@ -22,6 +22,8 @@ import {
   KnownEnginesAnswer,
   Link,
   type SshDestination,
+  WslDistro,
+  wslEngineName,
 } from '@fabrica/client'
 import { EngineId, ProtocolVersion } from '@fabrica/contracts'
 
@@ -44,6 +46,9 @@ import { Message } from './message'
 // so another engine's attempts, or its joining, leave its connection be.
 // One refused (its protocol too old or too new) or stopped (ssh refused its host) waits for the user:
 // an update over SSH, or trying again. Its project rows join the sidebar's under its name.
+// The engine in WSL2 is the app's own connection's (§7.6): main reaches the one Add engine installed or
+// found up to date there, every page given a new port to it, and the app's connection's next hello
+// keeps it, so main reaches it again at the next start.
 
 /** A known engine on another host, as the app connects to it. */
 export const RemoteEngine = Schema.Struct({
@@ -64,10 +69,16 @@ export const Model = Schema.Struct({
   engines: Schema.Array(RemoteEngine),
   /** What reading the known engines, or keeping one, last said where it failed. */
   problem: Schema.Option(Schema.String),
+  /** The WSL2 distribution whose engine Add engine installed or found up to date, until its hello is kept. */
+  wsl: Schema.Option(WslDistro),
 })
 export type Model = typeof Model.Type
 
-export const init = (): Model => ({ engines: [], problem: Option.none() })
+export const init = (): Model => ({
+  engines: [],
+  problem: Option.none(),
+  wsl: Option.none(),
+})
 
 /** The engine named `name`, if the app knows it. */
 export const named = (
@@ -123,6 +134,7 @@ export const loaded = (
   model: Model,
   engines: ReadonlyArray<KnownEngine>,
 ): Model => ({
+  ...model,
   problem: Option.none(),
   engines: [
     ...model.engines,
@@ -233,6 +245,31 @@ export const connected = (
     keep,
   }
 }
+
+/** The engine in `distro` reached by the app's own connection, Add engine having installed or found it there. */
+export const reachedInWsl = (model: Model, distro: WslDistro): Model => ({
+  ...model,
+  wsl: Option.some(distro),
+})
+
+/**
+ * The app's own connection up, its hello saying `engine` and `protocol`: the engine in WSL2 Add engine
+ * reached, to keep under its distribution's name, where one waits for its hello.
+ */
+export const connectedInWsl = (
+  model: Model,
+  hello: Extract<Connection, { readonly _tag: 'Up' }>,
+): { readonly model: Model; readonly keep: Option.Option<KnownEngine> } => ({
+  model: { ...model, wsl: Option.none() },
+  keep: Option.map(model.wsl, distro =>
+    KnownEngine.make({
+      name: wslEngineName(distro),
+      address: EngineAddress.cases.Wsl.make({ distro }),
+      engine: hello.engine,
+      protocol: hello.protocol,
+    }),
+  ),
+})
 
 /** What each engine's connection depends on: its address and the user's attempts. */
 export const Attempts = Schema.Array(
