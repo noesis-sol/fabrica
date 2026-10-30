@@ -1,42 +1,42 @@
+import { Layer } from 'effect'
 import { RpcSerialization } from 'effect/rpc'
 
-// How the client reads the engine's NDJSON frames (spec §8). Effect's NDJSON parser searches all it
-// holds for a newline at each read it is given, so a frame that comes in many reads costs time in its
-// size squared: macOS reads a local socket 8 KiB at a time, which made a 16 MiB frame 2 s of work.
+// How Fabrica reads NDJSON frames: the client's and the engine's (spec §8), and the control channel's
+// between the engine and its agents (spec §12.2). Effect's NDJSON parser searches all it holds for a
+// newline at each read it is given, so a frame that comes in many reads costs time in its size
+// squared: macOS reads a local socket 8 KiB at a time, which made a 16 MiB frame 2 s of work.
 // `wholeFrames` holds a transport's reads back until one brings a newline, or what it holds passes the
 // frame limit, then gives the parser them all in one read, which it searches once.
 
-/** The longest frame the client reads, Effect's default: a longer one is a defect. */
+/** The longest frame read, Effect's default: a longer one is a defect. */
 export const maxFrame = 16 * 1024 * 1024
 
 /** Whether a read holds the end of a frame. */
 const endsFrame = (data: Uint8Array | string) =>
   typeof data === 'string' ? data.includes('\n') : data.includes(0x0a)
 
-/** Reads held back, joined into one. */
+/** Reads held back, joined into one: text and bytes don't come mixed from one transport. */
 const joined = (
   reads: ReadonlyArray<Uint8Array | string>,
-): Uint8Array | string => {
-  const [first] = reads
-  if (reads.length === 1 && first !== undefined) {
-    return first
+): ReadonlyArray<Uint8Array | string> => {
+  if (reads.length === 1) {
+    return reads
   }
   if (reads.every(read => typeof read === 'string')) {
-    return reads.join('')
+    return [reads.join('')]
   }
-  const encoder = new TextEncoder()
-  const bytes = reads.map(read =>
-    typeof read === 'string' ? encoder.encode(read) : read,
-  )
+  if (!reads.every(read => typeof read !== 'string')) {
+    return reads
+  }
   const whole = new Uint8Array(
-    bytes.reduce((size, read) => size + read.length, 0),
+    reads.reduce((size, read) => size + read.length, 0),
   )
   let offset = 0
-  for (const read of bytes) {
+  for (const read of reads) {
     whole.set(read, offset)
     offset += read.length
   }
-  return whole
+  return [whole]
 }
 
 /**
@@ -62,17 +62,22 @@ export const wholeFrames = (
           if (!endsFrame(data) && size <= limit) {
             return []
           }
-          const whole = joined(held)
+          const reads = joined(held)
           held = []
           size = 0
-          return parser.decode(whole)
+          return reads.flatMap(read => parser.decode(read))
         },
       }
     },
   })
 
-/** The client's NDJSON serialization: Effect's, its parser given whole frames. */
+/** Fabrica's NDJSON serialization: Effect's, its parser given whole frames. */
 export const ndjson = wholeFrames(
   RpcSerialization.makeNdjson({ maxBufferSize: maxFrame }),
   maxFrame,
+)
+
+/** `ndjson` as a layer, in place of Effect's `RpcSerialization.layerNdjson`. */
+export const layerNdjson = Layer.succeed(RpcSerialization.RpcSerialization)(
+  ndjson,
 )

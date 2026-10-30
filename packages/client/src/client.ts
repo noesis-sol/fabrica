@@ -21,10 +21,10 @@ import {
   type ProtocolVersion,
   type Resume,
   type VersionMismatch,
+  ndjson,
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { ndjson } from './frames'
 import { interruptingOnProtocolErrors } from './protocol-errors'
 import { Reconnect, type StreamItem, isDefect, resumable } from './resume'
 

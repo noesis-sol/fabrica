@@ -1,10 +1,10 @@
 import { Effect, Layer, Option } from 'effect'
-import { RpcSerialization, RpcServer } from 'effect/rpc'
+import { RpcServer } from 'effect/rpc'
 import { SocketServer } from 'effect/socket'
 import { chmod, lstat, unlink } from 'node:fs/promises'
 
 import { NodeSocketServer } from '@effect/platform-node'
-import { FabricaRpcs } from '@fabrica/contracts'
+import { FabricaRpcs, layerNdjson } from '@fabrica/contracts'
 
 import { attentionHandlers } from './attention'
 import { backlogHandlers } from './backlog'
@@ -18,12 +18,12 @@ import { talksHandlers } from './talks'
 import { tokensHandlers } from './tokens'
 import { workersHandlers } from './workers'
 
-// The RPC server (spec §8.1, §8.2, §20.2): the protocol served on the engine's local socket, as NDJSON,
-// with one handler layer per group, each in its own file. The socket is made mode 0600 before the
-// server takes its first connection, in a folder only the engine's user can enter. Where the engine
-// listens over TLS too (§9.3), the listener's connections reach the same server, beside the local
-// socket's. A request's defect (a group not served yet, a fault) ends that request, never its
-// client's connection.
+// The RPC server (spec §8.1, §8.2, §20.2): the protocol served on the engine's local socket, as NDJSON
+// read in whole frames, with one handler layer per group, each in its own file. The socket is made
+// mode 0600 before the server takes its first connection, in a folder only the engine's user can
+// enter. Where the engine listens over TLS too (§9.3), the listener's connections reach the same
+// server, beside the local socket's. A request's defect (a group not served yet, a fault) ends that
+// request, never its client's connection.
 
 /** Every group's handlers. */
 export const protocolHandlers = Layer.mergeAll(
@@ -102,10 +102,7 @@ export const localRpcServer = (
     Layer.provide(protocolHandlers),
     Layer.provide(
       RpcServer.layerProtocolSocketServer.pipe(
-        Layer.provide([
-          engineSocketServer(path, tls),
-          RpcSerialization.layerNdjson,
-        ]),
+        Layer.provide([engineSocketServer(path, tls), layerNdjson]),
       ),
     ),
   )

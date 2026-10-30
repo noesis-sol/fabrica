@@ -1,10 +1,5 @@
 import { Context, Data, Effect, Layer, Option } from 'effect'
-import {
-  RpcClient,
-  type RpcClientError,
-  type RpcGroup,
-  RpcSerialization,
-} from 'effect/rpc'
+import { RpcClient, type RpcClientError, type RpcGroup } from 'effect/rpc'
 import type { Socket } from 'effect/socket'
 
 import * as NodeSocket from '@effect/platform-node-shared/NodeSocket'
@@ -13,6 +8,7 @@ import {
   ControlSocketVariable,
   ControlTokenVariable,
   controlTokenClient,
+  layerNdjson,
 } from '@fabrica/contracts'
 
 import type { ExtensionEnvironment } from './environment'
@@ -49,7 +45,7 @@ export const layerSocket = ({
       Layer.mergeAll(
         RpcClient.layerProtocolSocket().pipe(
           Layer.provide(NodeSocket.layerNet({ path: socket })),
-          Layer.provide(RpcSerialization.layerNdjson),
+          Layer.provide(layerNdjson),
         ),
         controlTokenClient(token),
       ),

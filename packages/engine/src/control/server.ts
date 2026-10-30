@@ -11,7 +11,7 @@ import {
   Stream,
 } from 'effect'
 import { Headers } from 'effect/http'
-import { RpcSerialization, RpcServer } from 'effect/rpc'
+import { RpcServer } from 'effect/rpc'
 import { SocketServer } from 'effect/socket'
 import { chmod, lstat, mkdir, rm } from 'node:fs/promises'
 import * as NodePath from 'node:path'
@@ -27,6 +27,7 @@ import {
   type ProjectId,
   type SessionId,
   type TicketId,
+  layerNdjson,
 } from '@fabrica/contracts'
 
 import { Checks } from '../checks'
@@ -188,7 +189,7 @@ export const make = Effect.gen(function* () {
         Layer.mergeAll(handlers, checkToken).pipe(
           Layer.provideMerge(
             RpcServer.layerProtocolSocketServer.pipe(
-              Layer.provide(RpcSerialization.layerNdjson),
+              Layer.provide(layerNdjson),
               Layer.provide(Layer.succeed(SocketServer.SocketServer)(server)),
             ),
           ),

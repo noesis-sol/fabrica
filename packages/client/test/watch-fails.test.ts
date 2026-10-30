@@ -24,6 +24,7 @@ import {
   EngineStatus,
   StreamEpoch,
   type VersionMismatch,
+  maxFrame,
   protocolVersion,
 } from '@fabrica/contracts'
 import { tempFolder } from '@fabrica/testkit'
@@ -37,7 +38,6 @@ import {
   layerMemory,
   make,
 } from '../src'
-import { maxFrame } from '../src/frames'
 import { layerUnixSocket } from '../src/node'
 
 // A watched stream fails where no reconnect follows the error it got (fab-mgi.25), rather than wait

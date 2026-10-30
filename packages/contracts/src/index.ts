@@ -1,5 +1,6 @@
 export * from './control'
 export * from './events'
+export * from './frames'
 export * from './host'
 export * from './ids'
 export * from './json-schema'

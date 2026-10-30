@@ -1,10 +1,11 @@
+import { Effect, Stream } from 'effect'
 import { RpcSerialization } from 'effect/rpc'
 
 import { describe, expect, it } from '@effect/vitest'
 
-import { maxFrame, ndjson, wholeFrames } from '../src/frames'
+import { layerNdjson, maxFrame, ndjson, wholeFrames } from './frames'
 
-// The client's NDJSON frames read in one pass (fab-mgi.99): its parser is given a transport's reads
+// NDJSON frames read in one pass (fab-mgi.99, fab-mgi.102): the parser is given a transport's reads
 // only once one ends a frame, or they pass the frame limit, so a frame that comes in many reads is
 // searched for its end once rather than at every read.
 
@@ -28,9 +29,17 @@ const recording = (limit: number) => {
   return { given, parser: wholeFrames(serialization, limit).makeUnsafe() }
 }
 
+/** `text`'s UTF-8 bytes (contracts' code has no host types, `TextEncoder`'s among them). */
+const bytesOf = (text: string) =>
+  Uint8Array.from(
+    Effect.runSync(
+      Stream.make(text).pipe(Stream.encodeText, Stream.runCollect),
+    ).flatMap(chunk => [...chunk]),
+  )
+
 /** `text`'s bytes, cut every `size`. */
 const cut = (text: string, size: number) => {
-  const bytes = new TextEncoder().encode(text)
+  const bytes = bytesOf(text)
   const reads: Array<Uint8Array> = []
   for (let offset = 0; offset < bytes.length; offset += size) {
     reads.push(bytes.subarray(offset, offset + size))
@@ -53,7 +62,7 @@ describe('whole frames', () => {
     const decoded = reads.flatMap(read => parser.decode(read))
     expect(decoded).toStrictEqual([{ _tag: 'Pong', padding: 'x'.repeat(100) }])
     expect(given).toHaveLength(1)
-    expect(given[0]).toStrictEqual(new TextEncoder().encode(frame))
+    expect(given[0]).toStrictEqual(bytesOf(frame))
   })
 
   it('reads frames cut anywhere as Effect’s parser does', () => {
@@ -68,6 +77,15 @@ describe('whole frames', () => {
     const parser = ndjson.makeUnsafe()
     const reads = text.match(/.{1,5}/gsu) ?? []
     expect(reads.flatMap(read => parser.decode(read))).toStrictEqual(frames)
+  })
+
+  it('reads frames that come as text and bytes mixed', () => {
+    const parser = ndjson.makeUnsafe()
+    const reads = ['{"_tag":', bytesOf('"Pong"}\n{"_t'), 'ag":"Pong"}\n']
+    expect(reads.flatMap(read => parser.decode(read))).toStrictEqual([
+      { _tag: 'Pong' },
+      { _tag: 'Pong' },
+    ])
   })
 
   it('fails on an overlong frame at the read that passes the limit', () => {
@@ -85,4 +103,11 @@ describe('whole frames', () => {
     )
     expect(given).toHaveLength(1)
   })
+
+  it.effect('serves the whole-frames serialization as a layer', () =>
+    Effect.gen(function* () {
+      const serialization = yield* RpcSerialization.RpcSerialization
+      expect(serialization).toBe(ndjson)
+    }).pipe(Effect.provide(layerNdjson)),
+  )
 })
