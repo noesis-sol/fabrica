@@ -1,6 +1,7 @@
 # Releases a version (spec §22.5), run from the Actions tab (workflow_dispatch) on main with the version:
 # beside its own check, on Linux x64 only, it builds the engine distribution for every engine target
-# (pnpm --filter @fabrica/engine-app dist all), signs and notarises the macOS archives' binaries, and
+# (pnpm --filter @fabrica/engine-app dist all), checks each archive against the size budget
+# (scripts/check-dist-size.ts), signs and notarises the macOS archives' binaries, and
 # writes the engine's checksums.txt over the archives, signed. It runs each archive's fabrica --version on
 # its own system, and packages the app on its five targets (app.yml, §22.2), each embedding the release's
 # own engine and smoke-tested there. Then it writes the release's checksums.txt over the archives and the
@@ -243,6 +244,11 @@ jobs:
 
       - name: Build
         run: mise exec -- pnpm --filter @fabrica/engine-app dist all
+
+      # Each archive against the engine distribution's size budget (§22.5): one over it fails the release,
+      # with the sizes.
+      - name: Check the sizes
+        run: mise exec -- node scripts/check-dist-size.ts apps/engine/out/fabrica-*.tar.gz
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
