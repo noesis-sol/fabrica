@@ -40,8 +40,8 @@ import { type RunSnapshot, inProgress } from './state'
 // overlapping a ticket in progress (running, merging or waiting to merge), or one dispatched before
 // it in the same look, is held back; every ready ticket waits while a `solo` ticket runs or waits
 // first in line, and a solo ticket starts only with nothing else in progress. A ticket past its work
-// holds on the files its branch changed, not on what its `files` or text named, and holds no slot:
-// while `concurrent` such tickets wait to merge, nothing more is dispatched (orchestra-z8lr).
+// holds on the files its branch changed, not on what its `files` or text named; the slots it takes,
+// none for up to `concurrent` such, are counted in `free` (`slotsTakenBy`, orchestra-z8lr).
 
 /** The label of a ticket that runs alone. */
 export const soloLabel = 'solo'
@@ -120,20 +120,16 @@ interface Beside {
 
 /**
  * Gates the ready tickets, most urgent first, against the tickets the run has in progress: at most
- * `free` taken, none while `concurrent` tickets are past their work. Pure: what it reads is given.
+ * `free` taken. Pure: what it reads is given.
  */
 export const gate = (input: {
   readonly ready: ReadonlyArray<ReadyTicket>
   readonly running: ReadonlyArray<RunTicket>
   readonly free: number
-  readonly concurrent: number
   readonly mentions: Mentions
   readonly apart: ApartFiles
 }): Gated => {
-  const pastWork = input.running.filter(
-    ({ phase }) => factsOf(phase).pastWork,
-  ).length
-  let room = pastWork >= input.concurrent ? 0 : Math.max(0, input.free)
+  let room = Math.max(0, input.free)
   const take: Array<Taken> = []
   const held: Array<HeldBack> = []
   const beside: Array<Beside> = input.running.flatMap(running =>
@@ -252,7 +248,6 @@ const gateReady = (
     readonly checkout: string
     readonly home: WorktreeHome
     readonly base: string
-    readonly concurrent: number
     readonly atBase: Effect.Effect<AtBase>
   },
 ): Effect.Effect<Gated, StoreFailed> =>
@@ -402,7 +397,6 @@ const gateReady = (
       ready,
       running,
       free: input.free,
-      concurrent: reads.concurrent,
       mentions,
       apart: at.apart,
     })
@@ -414,7 +408,6 @@ export const makeFootprintsGate = Effect.fn('FootprintsGate.make')(
     readonly checkout: string
     readonly home: WorktreeHome
     readonly base: string
-    readonly concurrent: number
     /** The check commands: `check_own`, `check_fast` and `check_full`. */
     readonly checks: ReadonlyArray<CommandSetting>
     readonly sharedFiles: ReadonlyArray<string>
@@ -475,7 +468,6 @@ export const makeFootprintsGate = Effect.fn('FootprintsGate.make')(
           checkout: input.checkout,
           home: input.home,
           base: input.base,
-          concurrent: input.concurrent,
           atBase,
         }),
     } satisfies FootprintsGate

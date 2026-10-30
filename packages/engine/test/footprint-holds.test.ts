@@ -119,13 +119,11 @@ const gated = (input: {
   readonly ready: ReadonlyArray<ReadyTicket>
   readonly running?: ReadonlyArray<RunTicket>
   readonly free?: number
-  readonly concurrent?: number
 }): Gated =>
   gate({
     ready: input.ready,
     running: input.running ?? [],
     free: input.free ?? 4,
-    concurrent: input.concurrent ?? 4,
     mentions: noMentions,
     apart,
   })
@@ -300,26 +298,18 @@ describe('the footprints gate', () => {
     ])
   })
 
-  it('takes no slot for a ticket past its work, but no more than concurrent such at once', () => {
-    const past = [
-      inRun(1, waitingToMerge, ['src/x.ts']),
-      inRun(4, merging, ['src/x.ts']),
-    ]
-    const one = gated({
-      ready: [ready(2, ['src/y.ts'])],
-      running: past.slice(0, 1),
+  it('takes the free slots beside tickets past their work', () => {
+    // concurrent 2: fa-1 and fa-4 wait to merge, holding no slot, so both slots are free.
+    const result = gated({
+      ready: [ready(2, ['src/y.ts']), ready(3, ['src/z.ts'])],
+      running: [
+        inRun(1, waitingToMerge, ['src/x.ts']),
+        inRun(4, merging, ['src/x.ts']),
+      ],
       free: 2,
-      concurrent: 2,
     })
-    expect(takenIds(one)).toEqual([id(2)])
-    const two = gated({
-      ready: [ready(2, ['src/y.ts'])],
-      running: past,
-      free: 2,
-      concurrent: 2,
-    })
-    expect(takenIds(two)).toEqual([])
-    expect(two.held).toEqual([])
+    expect(takenIds(result)).toEqual([id(2), id(3)])
+    expect(result.held).toEqual([])
   })
 
   it('takes no more than the free slots, holding by overlap all the same', () => {

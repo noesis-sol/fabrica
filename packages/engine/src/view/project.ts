@@ -21,6 +21,7 @@ import {
   WorkerRow,
   attentionKey,
   factsOf,
+  slotsTakenBy,
 } from '@fabrica/contracts'
 
 import { noTokens } from '../cost'
@@ -265,9 +266,10 @@ export const projectView = (
           steered: worker.steered,
         }),
     )
-  const live = inputs.tickets.filter(
-    ({ phase }) => factsOf(phase).takesSlot,
-  ).length
+  const live = slotsTakenBy(
+    inputs.tickets.map(({ phase }) => phase),
+    inputs.slots,
+  )
   return {
     header: kept(part('header'), inputs.header),
     totals: kept(

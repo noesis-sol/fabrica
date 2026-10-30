@@ -176,9 +176,9 @@ export type TicketOutcome = typeof TicketOutcome.Type
 /** What is so of a ticket in a phase. */
 export interface PhaseFacts {
   readonly counts: CountsAs
-  /** Its worker, or its verifier, takes one of the run's slots. */
+  /** Its worker, or its verifier, takes one of the run's slots; a hand-back's worker doesn't (§13.4). */
   readonly takesSlot: boolean
-  /** Its work is done and not merged: it holds on its branch's files, at most `concurrent` such (§13.4). */
+  /** Its work is done and not merged: it holds on its branch's files, and no slot while at most `concurrent` such (§13.4). */
   readonly pastWork: boolean
   /** Its segment on the phase bar, while it is in progress. */
   readonly bar: Option.Option<BarSegment>
@@ -257,7 +257,7 @@ export const phaseFacts: { readonly [T in PhaseTag]: PhaseFacts } = {
   },
   resolving: {
     counts: 'working',
-    takesSlot: true,
+    takesSlot: false,
     pastWork: true,
     bar: Option.some('merging'),
     handBack: true,
@@ -266,7 +266,7 @@ export const phaseFacts: { readonly [T in PhaseTag]: PhaseFacts } = {
   },
   fixing: {
     counts: 'working',
-    takesSlot: true,
+    takesSlot: false,
     pastWork: true,
     bar: Option.some('merging'),
     handBack: true,
@@ -322,6 +322,25 @@ export const phaseFacts: { readonly [T in PhaseTag]: PhaseFacts } = {
 
 /** What `phase` counts as, and the rest of its facts. */
 export const factsOf = (phase: Phase): PhaseFacts => phaseFacts[phase._tag]
+
+/**
+ * The run's slots tickets in `phases` take (§13.4, H56): one for each worker or verifier at work, and
+ * none for up to `concurrent` tickets past their work, hand-backs among them; each beyond takes one
+ * (orchestra-z8lr). The scheduler and the live workers count through it alike.
+ */
+export const slotsTakenBy = (
+  phases: Iterable<Phase>,
+  concurrent: number,
+): number => {
+  let working = 0
+  let pastWork = 0
+  for (const phase of phases) {
+    const facts = factsOf(phase)
+    if (facts.takesSlot) working += 1
+    if (facts.pastWork) pastWork += 1
+  }
+  return working + Math.max(0, pastWork - concurrent)
+}
 
 /** Seconds, never negative (§13.12): durations are measured on a monotonic clock (§7.7). */
 export const Seconds = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))

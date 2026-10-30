@@ -230,6 +230,7 @@ const outOfHand = (snapshot: RunSnapshot, ticket: TicketId): boolean => {
     taken === undefined ||
     !(
       factsOf(taken.phase).takesSlot ||
+      factsOf(taken.phase).handBack ||
       taken.phase._tag === 'waiting_to_merge' ||
       taken.phase._tag === 'merging' ||
       taken.phase._tag === 'merged' ||
@@ -401,7 +402,9 @@ const runStarted = Effect.fn('Run.started')(function* (
   // on its clock, in time awake (§7.7), stopped while they hold.
   const holds = yield* makeHolds({
     log,
-    running: Effect.map(state.current, slotsTaken),
+    running: Effect.map(state.current, snapshot =>
+      slotsTaken(snapshot, project.concurrent),
+    ),
   })
   const wake = yield* Wake
   const clock = heldClock(holds, duration =>
@@ -530,7 +533,6 @@ const runStarted = Effect.fn('Run.started')(function* (
     checkout: config.checkout,
     home: config.home,
     base: started.base,
-    concurrent: project.concurrent,
     checks: [project.check_own, project.check_fast, project.check_full],
     sharedFiles: project.shared_files,
   })
@@ -789,7 +791,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     Effect.gen(function* () {
       const taken = (yield* state.current).tickets.get(ticket)
       if (taken === undefined) return
-      if (factsOf(taken.phase).takesSlot) {
+      if (factsOf(taken.phase).takesSlot || factsOf(taken.phase).handBack) {
         yield* Ref.update(toReopen, kept => new Set([...kept, ticket]))
         return
       }
@@ -1734,7 +1736,7 @@ const runStarted = Effect.fn('Run.started')(function* (
         ready: candidates,
         snapshot: before,
         free: MayTake.$is('Yes')(may)
-          ? project.concurrent - slotsTaken(before)
+          ? project.concurrent - slotsTaken(before, project.concurrent)
           : 0,
       })
       yield* keepHeld(candidates, gated)

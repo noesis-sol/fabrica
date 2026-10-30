@@ -6,6 +6,7 @@ import {
   type TicketId,
   type TicketOutcome,
   factsOf,
+  slotsTakenBy,
 } from '@fabrica/contracts'
 
 import { type Spend, spendFields } from '../cost'
@@ -42,10 +43,12 @@ export interface RunSnapshot {
   readonly ending: boolean
 }
 
-/** The tickets whose worker, or verifier, takes one of the run's slots. */
-export const slotsTaken = (snapshot: RunSnapshot): number =>
-  [...snapshot.tickets.values()].filter(state => factsOf(state.phase).takesSlot)
-    .length
+/** The run's slots its tickets take, `concurrent` of them past their work for none (§13.4). */
+export const slotsTaken = (snapshot: RunSnapshot, concurrent: number): number =>
+  slotsTakenBy(
+    Array.from(snapshot.tickets.values(), state => state.phase),
+    concurrent,
+  )
 
 /** Whether a ticket in `phase` is in progress: its part in the run can't end there (working, merging, …). */
 const inProgressIn = (phase: Phase): boolean =>

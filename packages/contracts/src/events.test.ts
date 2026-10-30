@@ -620,6 +620,6 @@ describe('the phase table', () => {
     const slots = PhaseTagSchema.literals.filter(
       tag => phaseFacts[tag].takesSlot,
     )
-    expect(slots).toEqual(['working', 'verifying', 'resolving', 'fixing'])
+    expect(slots).toEqual(['working', 'verifying'])
   })
 })
