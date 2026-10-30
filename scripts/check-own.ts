@@ -43,6 +43,8 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs'
 import { join, posix } from 'node:path'
@@ -448,7 +450,13 @@ export const workingTree = (
       'index',
     ])
     if (Option.isSome(own) && existsSync(own.value)) {
+      // The copy keeps the index's times, as the engine's worktreeTree does (fab-mgi.39): git takes an
+      // entry whose file changed in the second the index was written as racily clean, and checks its
+      // content, by the index file's mtime; a copy newer than such an edit would have a same-size one
+      // taken as unchanged, and name the tree without it (fab-adb).
+      const times = statSync(own.value)
       copyFileSync(own.value, index)
+      utimesSync(index, times.atime, times.mtime)
     } else if (Option.isNone(git(runner, ['read-tree', 'HEAD'], env))) {
       return Option.none()
     }
