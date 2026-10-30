@@ -283,7 +283,13 @@ const appears = (file: string): Effect.Effect<void> =>
 const merged = (ticket: TicketId, commit: CommitHash) =>
   MergeOutcome.Merged({ ticket, commit, unchecked: false })
 
-describe('the files a merge wrote', () => {
+/**
+ * How long a test here has: each merges through dozens of git commands and check scripts, and took 17 s
+ * of the default 15 on a machine at a load of 150 (fab-adb).
+ */
+const gitTime = 30_000
+
+describe('the files a merge wrote', { timeout: gitTime }, () => {
   it.live(
     'are removed as a failed check sets the ticket aside, so it merges when it comes back',
     () =>
