@@ -20,6 +20,7 @@ import { type ByteSink, makeLineStream } from '../src/files'
 import {
   type Command,
   CommandOutcome,
+  Deadlines,
   ExitStatus,
   ProcessRunner,
   type Running,
@@ -138,6 +139,9 @@ const scratch = Effect.acquireRelease(
 /** A minute of the test's clock, and the fibers it wakes run. */
 const minute = Effect.andThen(TestClock.adjust('1 minute'), Effect.yieldNow)
 
+/** Deadlines that have passed already: an inhibitor that hasn't exited by its start holds. */
+const settled = Layer.succeed(Deadlines, { sleep: () => Effect.void })
+
 const mac = { platform: 'darwin', pid: enginePid } as const
 const linux = { platform: 'linux', pid: enginePid } as const
 
@@ -150,7 +154,10 @@ describe('keeping the host awake', () => {
         keepAwake: true,
         overnight: false,
         host: mac,
-      }).pipe(Scope.provide(scope), Effect.provide(stubRunner({ stub })))
+      }).pipe(
+        Scope.provide(scope),
+        Effect.provide([stubRunner({ stub }), settled]),
+      )
       expect(kept).toEqual(
         KeptAwake.Holding({ command: '/usr/bin/caffeinate', pid: 5000 }),
       )
@@ -168,26 +175,28 @@ describe('keeping the host awake', () => {
     }),
   )
 
-  it.effect('holds an idle lock on Linux that ends with the engine', () =>
-    Effect.gen(function* () {
-      const stub = newStub()
-      const kept = yield* Effect.scoped(
-        keepAwake({ keepAwake: true, overnight: false, host: linux }),
-      ).pipe(Effect.provide(stubRunner({ stub })))
-      expect(KeptAwake.$is('Holding')(kept)).toBe(true)
-      expect(stub.started.map(command => command.command)).toEqual([
-        'systemd-inhibit',
-      ])
-      const args = stub.started[0]?.args ?? []
-      expect(args).toContain('--what=idle')
-      expect(args.slice(-4)).toEqual([
-        'tail',
-        `--pid=${enginePid}`,
-        '-f',
-        '/dev/null',
-      ])
-      expect(stub.ended).toEqual([5000])
-    }),
+  it.effect(
+    'holds idle and sleep locks on Linux that end with the engine',
+    () =>
+      Effect.gen(function* () {
+        const stub = newStub()
+        const kept = yield* Effect.scoped(
+          keepAwake({ keepAwake: true, overnight: false, host: linux }),
+        ).pipe(Effect.provide([stubRunner({ stub }), settled]))
+        expect(KeptAwake.$is('Holding')(kept)).toBe(true)
+        expect(stub.started.map(command => command.command)).toEqual([
+          'systemd-inhibit',
+        ])
+        const args = stub.started[0]?.args ?? []
+        expect(args).toContain('--what=idle:sleep')
+        expect(args.slice(-4)).toEqual([
+          'tail',
+          `--pid=${enginePid}`,
+          '-f',
+          '/dev/null',
+        ])
+        expect(stub.ended).toEqual([5000])
+      }),
   )
 
   it.effect('starts nothing where keep_awake is false', () =>
@@ -195,7 +204,7 @@ describe('keeping the host awake', () => {
       const stub = newStub()
       const kept = yield* Effect.scoped(
         keepAwake({ keepAwake: false, overnight: false, host: mac }),
-      ).pipe(Effect.provide(stubRunner({ stub })))
+      ).pipe(Effect.provide([stubRunner({ stub }), settled]))
       expect(kept).toEqual(KeptAwake.NotAsked())
       expect(stub.started).toEqual([])
     }),
@@ -206,7 +215,7 @@ describe('keeping the host awake', () => {
       const stub = newStub()
       const kept = yield* Effect.scoped(
         keepAwake({ keepAwake: false, overnight: true, host: mac }),
-      ).pipe(Effect.provide(stubRunner({ stub })))
+      ).pipe(Effect.provide([stubRunner({ stub }), settled]))
       expect(KeptAwake.$is('Holding')(kept)).toBe(true)
       expect(stub.started).toHaveLength(1)
       expect(stub.ended).toEqual([5000])
@@ -222,14 +231,14 @@ describe('keeping the host awake', () => {
           overnight: false,
           host: { platform: 'freebsd', pid: enginePid },
         }),
-      ).pipe(Effect.provide(stubRunner({ stub })))
+      ).pipe(Effect.provide([stubRunner({ stub }), settled]))
       expect(elsewhere).toEqual(KeptAwake.NothingToPrevent())
       expect(stub.started).toEqual([])
       expect(inhibitorFor({ platform: 'win32', pid: 1 })).toEqual(Option.none())
       const noSystemd = yield* Effect.scoped(
         keepAwake({ keepAwake: true, overnight: false, host: linux }),
       ).pipe(
-        Effect.provide(
+        Effect.provide([
           stubRunner({
             stub,
             startFails: StartFailure.NotOnPath({
@@ -237,7 +246,8 @@ describe('keeping the host awake', () => {
               path: '/usr/bin:/bin',
             }),
           }),
-        ),
+          settled,
+        ]),
       )
       expect(noSystemd).toEqual(KeptAwake.NothingToPrevent())
     }),
@@ -248,7 +258,7 @@ describe('keeping the host awake', () => {
       const kept = yield* Effect.scoped(
         keepAwake({ keepAwake: true, overnight: false, host: mac }),
       ).pipe(
-        Effect.provide(
+        Effect.provide([
           stubRunner({
             stub: newStub(),
             startFails: StartFailure.SpawnFailed({
@@ -256,7 +266,8 @@ describe('keeping the host awake', () => {
               message: 'EACCES',
             }),
           }),
-        ),
+          settled,
+        ]),
       )
       expect(kept).toEqual(
         KeptAwake.Failed({ command: '/usr/bin/caffeinate', reason: 'EACCES' }),

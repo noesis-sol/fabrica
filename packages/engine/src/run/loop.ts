@@ -82,7 +82,7 @@ import {
   warningLine,
   wroteLine,
 } from '../runlog'
-import { KeptAwake, Wake, keepAwake } from '../time'
+import { KeptAwake, Wake, inhibitorExit, keepAwake } from '../time'
 import { type RunViewSources, makeRunViewSources } from '../view'
 import { WorkGraph } from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
@@ -478,14 +478,23 @@ const runStarted = Effect.fn('Run.started')(function* (
     overnight: overnightMode(config.options.mode),
     host: config.keepAwakeHost,
   })
-  if (KeptAwake.$is('Failed')(kept))
+  const notKept = KeptAwake.$match(kept, {
+    Holding: () => Option.none<string>(),
+    NotAsked: () => Option.none<string>(),
+    NothingToPrevent: () => Option.none<string>(),
+    Failed: ({ command, reason }) =>
+      Option.some(`${command} didn't start (${reason})`),
+    Ended: ({ command, status }) =>
+      Option.some(`${command} exited at once (${inhibitorExit(status)})`),
+  })
+  if (Option.isSome(notKept))
     yield* record(log, {
       kind: 'warn',
       detail: 'KEEP_AWAKE_FAILED',
       text: warningLine({
         tag: 'KEEP_AWAKE_FAILED',
         about: 'run',
-        text: `${kept.command} didn't start (${kept.reason}); the host may idle-sleep`,
+        text: `${notKept.value}; the host may idle-sleep`,
       }),
     })
   yield* recordBattery

@@ -1,6 +1,7 @@
-import { Data, Effect, Option } from 'effect'
+import { Data, Duration, Effect, Option } from 'effect'
 
 import {
+  Deadlines,
   ExitStatus,
   ProcessRunner,
   type StartCommand,
@@ -16,8 +17,12 @@ import {
 //
 // The inhibitor is a command held in the run's scope, ended with its tree as the scope closes, and
 // watching the engine's own process too, so an engine that dies without closing its scope doesn't
-// leave its host awake: `caffeinate -i -w <pid>` on macOS, `systemd-inhibit` holding an idle lock
-// for `tail --pid=<pid>` on Linux. Where there is no inhibitor, there is no sleep to prevent.
+// leave its host awake: `caffeinate -i -w <pid>` on macOS, `systemd-inhibit` holding idle and sleep
+// locks for `tail --pid=<pid>` on Linux. The sleep lock is the one that counts there: an idle lock
+// stops only logind's own IdleAction, off by default, while a desktop's power manager (GNOME's
+// gsd-power) suspends an idle laptop through logind's Suspend, which only a sleep lock refuses, as
+// tutti found. Where there is no inhibitor, there is no sleep to prevent. An inhibitor that exits
+// within its first second (no logind to ask, a lock refused) holds nothing, and the run says so.
 
 /** The facts about its host keeping awake works from, each read once where the engine starts. */
 export interface KeepAwakeHost {
@@ -42,6 +47,8 @@ export type KeptAwake = Data.TaggedEnum<{
   NothingToPrevent: {}
   /** The inhibitor didn't start: the host may idle-sleep. */
   Failed: { readonly command: string; readonly reason: string }
+  /** The inhibitor started but exited at once, holding nothing: the host may idle-sleep. */
+  Ended: { readonly command: string; readonly status: ExitStatus }
 }>
 export const KeptAwake = Data.taggedEnum<KeptAwake>()
 
@@ -62,7 +69,7 @@ export const inhibitorFor = (
     return Option.some({
       command: 'systemd-inhibit',
       args: [
-        '--what=idle',
+        '--what=idle:sleep',
         '--who=fabrica',
         '--why=A Fabrica run is going',
         '--mode=block',
@@ -78,6 +85,16 @@ export const inhibitorFor = (
   return Option.none()
 }
 
+/** How long an inhibitor that starts has to exit before it is taken to hold. */
+export const inhibitorSettles = Duration.seconds(1)
+
+/** How an inhibitor's exit reads in what the run says of it. */
+export const inhibitorExit = (status: ExitStatus): string =>
+  ExitStatus.$match(status, {
+    Code: ({ code }) => `exit ${code}`,
+    Signal: ({ signal }) => signal,
+  })
+
 /** Whether a run keeps its host awake: an overnight run always, any other unless `keep_awake` is false. */
 export const keepsAwake = (options: {
   readonly keepAwake: boolean
@@ -86,7 +103,8 @@ export const keepsAwake = (options: {
 
 /**
  * Keeps `host` from idle sleep until the scope closes, where the run asks it: the scope's end ends
- * the inhibitor's tree. An inhibitor that ends on its own is logged; the run goes on.
+ * the inhibitor's tree. An inhibitor that exits within `inhibitorSettles` of its start holds nothing
+ * (`Ended`); one that ends on its own later is logged; the run goes on.
  */
 export const keepAwake = Effect.fn('KeepAwake.hold')(function* (options: {
   /** The engine's `keep_awake`. */
@@ -99,21 +117,35 @@ export const keepAwake = Effect.fn('KeepAwake.hold')(function* (options: {
   if (Option.isNone(inhibitor)) return KeptAwake.NothingToPrevent()
   const command = inhibitor.value
   const runner = yield* ProcessRunner
+  const deadlines = yield* Deadlines
   return yield* runner.start(command).pipe(
-    Effect.tap(running =>
-      Effect.forkScoped(
-        Effect.flatMap(running.exit, status =>
-          Effect.logWarning(
-            `${command.command} ended by itself (${ExitStatus.$match(status, {
-              Code: ({ code }) => `exit ${code}`,
-              Signal: ({ signal }) => signal,
-            })}); the host may idle-sleep`,
+    Effect.flatMap(
+      Effect.fnUntraced(function* (running) {
+        const exited = yield* Effect.raceFirst(
+          Effect.map(running.exit, Option.some),
+          Effect.as(
+            deadlines.sleep(inhibitorSettles),
+            Option.none<ExitStatus>(),
           ),
-        ),
-      ),
-    ),
-    Effect.map(running =>
-      KeptAwake.Holding({ command: command.command, pid: running.pid }),
+        )
+        if (Option.isSome(exited)) {
+          return KeptAwake.Ended({
+            command: command.command,
+            status: exited.value,
+          })
+        }
+        yield* Effect.forkScoped(
+          Effect.flatMap(running.exit, status =>
+            Effect.logWarning(
+              `${command.command} ended by itself (${inhibitorExit(status)}); the host may idle-sleep`,
+            ),
+          ),
+        )
+        return KeptAwake.Holding({
+          command: command.command,
+          pid: running.pid,
+        })
+      }),
     ),
     Effect.catchTag('StartFailed', ({ reason }) =>
       Effect.succeed(

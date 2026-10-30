@@ -122,7 +122,7 @@ describe('keeping the host awake during a run', () => {
           [
             'systemd-inhibit',
             [
-              '--what=idle',
+              '--what=idle:sleep',
               '--who=fabrica',
               '--why=A Fabrica run is going',
               '--mode=block',
