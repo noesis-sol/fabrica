@@ -128,6 +128,9 @@ const connected: Model = [
   ).model,
 })
 
+/** The build-box's projects on the Engines screen. */
+const boxProjects = () => role('region', { name: `Projects on ${box}` })
+
 const engineSettings = (written: object): EngineSettings =>
   Schema.decodeUnknownSync(EngineSettings)(written)
 
@@ -285,8 +288,6 @@ describe('the Engines screen', () => {
     },
   })
 
-  const boxProjects = role('region', { name: `Projects on ${box}` })
-
   test('the known engine’s card shows its status, and its projects are listed under its name, trusted on it', () => {
     scene(
       { update, view },
@@ -297,11 +298,11 @@ describe('the Engines screen', () => {
           text(/build-box\.lan · linux x64/u),
         ),
       ).toExist(),
-      expectScene(within(boxProjects, text('site'))).toExist(),
+      expectScene(within(boxProjects(), text('site'))).toExist(),
       expectScene(
         within(role('region', { name: 'Projects on local' }), text('site')),
       ).toBeAbsent(),
-      click(within(boxProjects, role('button', { name: 'Trust site' }))),
+      click(within(boxProjects(), role('button', { name: 'Trust site' }))),
       SceneCommand.expectExact(
         Engines.SetProjectTrust({ project: siteOnBox, trusted: true }),
       ),
@@ -312,7 +313,7 @@ describe('the Engines screen', () => {
           reason: 'the engine stopped',
         }),
       ),
-      expectScene(within(boxProjects, role('alert'))).toHaveText(
+      expectScene(within(boxProjects(), role('alert'))).toHaveText(
         "Couldn't change the trust in p-site: the engine stopped",
       ),
     )
@@ -329,9 +330,9 @@ describe('the Engines screen', () => {
     scene(
       { update, view },
       givenScene(onScreen({ [localEngineName]: [], [box]: [] })),
-      click(within(boxProjects, role('button', { name: '+ Add project' }))),
+      click(within(boxProjects(), role('button', { name: '+ Add project' }))),
       expectScene(
-        within(boxProjects, role('form', { name: 'Add project' })),
+        within(boxProjects(), role('form', { name: 'Add project' })),
       ).toExist(),
       click(role('button', { name: 'Browse…' })),
       SceneCommand.expectExact(
@@ -477,6 +478,61 @@ describe('the Engines screen', () => {
         ...onScreen({ [localEngineName]: [] }),
         remotes: RemoteEngines.init(),
       }),
+      expectScene(role('group', { name: 'Set on' })).toBeAbsent(),
+    )
+  })
+})
+
+describe('a known engine lost while a form is on it', () => {
+  /** The Engines screen with the build-box no longer reached, its forms as `engines` has them. */
+  const lostWith = (engines: Engines.Model): Model => ({
+    ...update(
+      connected,
+      Message.FailedToConnectRemote({ name: box, reason: 'it went away' }),
+    ).model,
+    screen: Screen.Engines(),
+    screens: { ...connected.screens, engines },
+  })
+
+  test('the Add project flow on it stays shown under its name, to be cancelled', () => {
+    scene(
+      { update, view },
+      givenScene(lostWith(Engines.openAddProject(Engines.init(), box))),
+      expectScene(
+        within(boxProjects(), role('form', { name: 'Add project' })),
+      ).toExist(),
+      click(role('button', { name: 'Cancel' })),
+      expectScene(role('form', { name: 'Add project' })).toBeAbsent(),
+      expectScene(boxProjects()).toBeAbsent(),
+      expectScene(
+        within(
+          role('region', { name: 'Projects on local' }),
+          role('button', { name: '+ Add project' }),
+        ),
+      ).toExist(),
+    )
+  })
+
+  test('the credential form set on it still offers it, and this machine’s engine to move to', () => {
+    const onBox = Engines.update(
+      Engines.init(),
+      Engines.Message.ChoseCredentialEngine({ engine: box }),
+    ).model
+    scene(
+      { update, view },
+      givenScene(lostWith(onBox)),
+      expectScene(
+        within(
+          role('group', { name: 'Set on' }),
+          role('button', { name: box }),
+        ),
+      ).toHaveAttr('aria-pressed', 'true'),
+      click(
+        within(
+          role('group', { name: 'Set on' }),
+          role('button', { name: localEngineName }),
+        ),
+      ),
       expectScene(role('group', { name: 'Set on' })).toBeAbsent(),
     )
   })

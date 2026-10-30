@@ -3424,14 +3424,25 @@ const credentialsList = (
         ),
       )
 
-/** The choice of the engine the credential is set on, where the screen shows more than one. */
+/** `engines`, and `engine` after them where they don't name it. */
+const withEngine = (
+  engines: ReadonlyArray<string>,
+  engine: string,
+): ReadonlyArray<string> =>
+  engines.includes(engine) ? engines : [...engines, engine]
+
+/**
+ * The choice of the engine the credential is set on, among the engines shown and the form's own, which
+ * stays offered once it is no longer connected, so the form can be moved off it.
+ */
 const credentialEngineChoice = (
   form: CredentialForm,
-  engines: ReadonlyArray<string>,
+  shown: ReadonlyArray<string>,
   saving: boolean,
   h: HtmlBuilder<Message>,
-): Html =>
-  engines.length < 2
+): Html => {
+  const engines = withEngine(shown, form.engine)
+  return engines.length < 2
     ? h.empty
     : h.div(
         [
@@ -3458,6 +3469,7 @@ const credentialEngineChoice = (
           ),
         ],
       )
+}
 
 const credentialFormView = (
   model: Model,
@@ -3672,7 +3684,15 @@ export const view = defineView<Model, Message, ViewInputs>(
             setupView(model, inputs.platform, h),
           ],
         ),
-        ...engines.map(engine => projectsView(model, inputs, engine, h)),
+        // An Add project flow open on an engine no longer connected is shown under it, to be cancelled.
+        ...withEngine(
+          engines,
+          AddFlow.match(model.addProject, {
+            Closed: () => localEngineName,
+            Editing: ({ form }) => form.engine,
+            Adding: ({ form }) => form.engine,
+          }),
+        ).map(engine => projectsView(model, inputs, engine, h)),
         credentialsView(model, engines, h),
       ],
     )
