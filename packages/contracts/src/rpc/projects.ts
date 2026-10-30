@@ -99,7 +99,10 @@ export class UsageWindow extends Schema.Class<UsageWindow>('UsageWindow')({
 }) {}
 
 /** The usage stream's items: the windows' latest figures, then each window as it moves, whole. */
-export const UsageWindowItem = streamItem(Schema.Array(UsageWindow), UsageWindow)
+export const UsageWindowItem = streamItem(
+  Schema.Array(UsageWindow),
+  UsageWindow,
+)
 export type UsageWindowItem = typeof UsageWindowItem.Type
 
 /** What `init` wrote, in order. */
