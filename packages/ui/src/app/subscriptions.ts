@@ -33,7 +33,7 @@ import {
   withSession,
 } from './connection'
 import { perFrame } from './frame'
-import { AppHost } from './host'
+import { AppHost, type AppHostShape } from './host'
 import type { Pressed } from './keys'
 import { Message } from './message'
 import type { Model } from './model'
@@ -281,47 +281,47 @@ export const noAppToReachEngines =
   'only the desktop app reaches engines on other hosts'
 
 /**
- * Each known engine on another host's connection, attempt after attempt, with its project rows; the
- * ports come from the app around the renderer.
+ * A known engine on another host's connection, attempt after attempt, with its project rows; its ports
+ * come from the app around the renderer.
  */
-export const remoteMessages = (
-  engines: RemoteEngines.Attempts,
-  {
+export const remoteConnection =
+  ({
+    host,
     release,
     nextFrame,
   }: {
+    readonly host: AppHostShape
     readonly release: ReleaseVersion
     readonly nextFrame: Effect.Effect<void>
-  },
-): Stream.Stream<Message, never, AppHost> =>
-  Stream.unwrap(
-    Effect.map(AppHost, host =>
-      Stream.mergeAll(
-        engines.map(({ name, address }) =>
-          Option.match(host.enginePort, {
-            onNone: () =>
-              Stream.make(
-                Message.StoppedConnectingRemote({
-                  name,
-                  reason: noAppToReachEngines,
-                }),
-              ),
-            onSome: port =>
-              RemoteEngines.remoteEngineMessages({
-                name,
-                port: port(address),
-                client: { name: clientName, kind: 'app', release },
-                streams: session => projectMessages(session, name, nextFrame),
-              }),
+  }) =>
+  ({ name, address }: RemoteEngines.Attempt): Stream.Stream<Message> =>
+    Option.match(host.enginePort, {
+      onNone: () =>
+        Stream.make(
+          Message.StoppedConnectingRemote({
+            name,
+            reason: noAppToReachEngines,
           }),
         ),
-        { concurrency: 'unbounded' },
-      ),
-    ),
-  )
+      onSome: port =>
+        RemoteEngines.remoteEngineMessages({
+          name,
+          port: port(address),
+          client: { name: clientName, kind: 'app', release },
+          streams: session => projectMessages(session, name, nextFrame),
+        }),
+    })
 
-/** The services the subscriptions use: the engine connection, the notifier, ssh's prompts, and the app around the renderer. */
-type Services = EngineConnectionService | Notifier | SshPromptHost | AppHost
+/**
+ * The services the subscriptions use: the engine connection, the notifier, ssh's prompts, the app around
+ * the renderer, and the known engines' connections.
+ */
+type Services =
+  | EngineConnectionService
+  | Notifier
+  | SshPromptHost
+  | AppHost
+  | RemoteEngines.RemoteConnections
 
 export const makeSubscriptions = ({
   nextFrame,
@@ -430,6 +430,7 @@ export const makeSubscriptions = ({
             : Stream.empty,
       },
     ),
+    // Each known engine on another host keeps its connection while the others change (remote-engines.ts).
     remotes: entry(
       { engines: RemoteEngines.Attempts, release: ReleaseVersion },
       {
@@ -438,10 +439,25 @@ export const makeSubscriptions = ({
           release: model.release,
         }),
         dependenciesToStream: ({ engines, release }) =>
-          engines.length === 0
-            ? Stream.empty
-            : remoteMessages(engines, { release, nextFrame }),
+          Stream.fromEffectDrain(
+            Effect.gen(function* () {
+              const host = yield* AppHost
+              const connections = yield* RemoteEngines.RemoteConnections
+              yield* connections.hold(
+                engines,
+                remoteConnection({ host, release, nextFrame }),
+              )
+            }),
+          ),
       },
+    ),
+    remoteMessages: Subscription.persistentEntry(
+      Stream.unwrap(
+        Effect.map(
+          RemoteEngines.RemoteConnections,
+          connections => connections.messages,
+        ),
+      ),
     ),
     clock: entry(
       { live: Schema.Boolean },

@@ -15,7 +15,7 @@ import { AppHost, type AppHostShape } from './host'
 import { Message } from './message'
 import { Flags, Model, initialModel } from './model'
 import { type NotifierShape, layerNotifier } from './notifier'
-import { LoadKnownEngines } from './remote-engines'
+import { LoadKnownEngines, layerRemoteConnections } from './remote-engines'
 import { type SshPromptHostShape, layerSshPromptHost } from './ssh-prompts'
 import {
   type SubscriptionEnvironment,
@@ -99,6 +99,7 @@ export const program = (environment: Environment) => ({
     Layer.succeed(AppHost, environment.host),
     layerThemeHost(environment.themeHost),
     layerSshPromptHost(environment.sshPrompts),
+    layerRemoteConnections,
   ),
   managedResources: makeManagedResources(environment),
 })

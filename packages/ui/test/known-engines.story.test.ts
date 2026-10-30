@@ -666,3 +666,58 @@ describe('a known engine’s connection', () => {
       }).pipe(Effect.scoped),
   )
 })
+
+describe('the known engines’ connections', () => {
+  it.live(
+    'are each held on their own: one added, tried again or gone leaves the others’ up',
+    () =>
+      Effect.gen(function* () {
+        const connections = yield* RemoteEngines.makeRemoteConnections
+        const started: Array<string> = []
+        const stopped: Array<string> = []
+        const connect = (engine: RemoteEngines.Attempt) =>
+          Stream.concat(
+            Stream.make(
+              Message.LostRemote({ name: `${engine.name}#${engine.attempt}` }),
+            ),
+            Stream.never,
+          ).pipe(
+            Stream.onStart(
+              Effect.sync(() =>
+                started.push(`${engine.name}#${engine.attempt}`),
+              ),
+            ),
+            Stream.ensuring(
+              Effect.sync(() =>
+                stopped.push(`${engine.name}#${engine.attempt}`),
+              ),
+            ),
+          )
+        const attempt = (
+          name: string,
+          tries: number,
+        ): RemoteEngines.Attempt => ({
+          name,
+          address: EngineAddress.cases.Ssh.make({ destination: `me@${name}` }),
+          attempt: tries,
+        })
+        // Each connection's first Message, once it has started.
+        const next = connections.messages.pipe(
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.map(taken =>
+            taken.map(message => message._tag === 'LostRemote' && message.name),
+          ),
+        )
+        yield* connections.hold([attempt('a', 1)], connect)
+        expect(yield* next).toEqual(['a#1'])
+        yield* connections.hold([attempt('a', 1), attempt('b', 1)], connect)
+        expect(yield* next).toEqual(['b#1'])
+        yield* connections.hold([attempt('a', 1), attempt('b', 2)], connect)
+        expect(yield* next).toEqual(['b#2'])
+        yield* connections.hold([attempt('b', 2)], connect)
+        expect(started).toEqual(['a#1', 'b#1', 'b#2'])
+        expect(stopped).toEqual(['b#1', 'a#1'])
+      }).pipe(Effect.scoped),
+  )
+})

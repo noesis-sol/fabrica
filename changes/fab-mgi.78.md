@@ -5,7 +5,8 @@
   as it starts (`fabrica:known-engines`, `fabrica:keep-engine`).
 - Each known engine on another host is reached through its own connection: the page asks main for a port to it
   at each attempt (`fabrica:connect-engine`), which main relays to the engine's SSH or WSL2 bridge through the
-  connection process; an attempt that fails is tried again after a pause without touching the others'. Its
+  connection process; each engine's connection runs on its own, so one failing and tried again after a
+  pause, one added, or one the user tries again or updates leaves the others' connections up. Its
   projects join the sidebar's under its name, and the Engines screen has a card for it with its connection's
   state, Try again where ssh refused its host, and, where it refused the app's version, its update over SSH the
   way this machine's is offered, the connection tried again once it is updated.

@@ -1,4 +1,16 @@
-import { Effect, Option, Predicate, Ref, Schema, Stream } from 'effect'
+import {
+  Context,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Predicate,
+  Queue,
+  Ref,
+  Schema,
+  Semaphore,
+  Stream,
+} from 'effect'
 import { Command } from 'foldkit'
 
 import {
@@ -28,7 +40,8 @@ import { Message } from './message'
 // app's state keeps them (a name, how to reach it, the engine's ID and protocol version), and an engine
 // Add engine installed, or found up to date, joins them, kept once its first hello comes. Each is
 // connected to over a port of its own, asked of main at each attempt; an attempt that fails is tried
-// again after a pause, inside the engine's stream, so another engine's attempts leave its connection be.
+// again after a pause, inside the engine's stream, and each engine's stream runs in a fiber of its own,
+// so another engine's attempts, or its joining, leave its connection be.
 // One refused (its protocol too old or too new) or stopped (ssh refused its host) waits for the user:
 // an update over SSH, or trying again. Its project rows join the sidebar's under its name.
 
@@ -365,3 +378,85 @@ export const remoteEngineMessages = (
       ),
     ),
   )
+
+// The connections held: each engine's stream runs in a fiber of its own, started and stopped one by one
+// as the known engines change, so adding one, trying one again or updating one leaves the others'
+// connections up. Their Messages come out of one queue, which a subscription reads.
+
+/** An engine's connection, as the held connections key it: its name, address and the user's attempt. */
+export type Attempt = Attempts[number]
+
+/** Whether `a` and `b` are the same connection: the same engine, address and attempt. */
+const sameAttempt = (a: Attempt, b: Attempt): boolean =>
+  a.name === b.name &&
+  a.attempt === b.attempt &&
+  EngineAddress.match(a.address, {
+    Local: () => EngineAddress.guards.Local(b.address),
+    Ssh: ({ destination }) =>
+      EngineAddress.guards.Ssh(b.address) &&
+      b.address.destination === destination,
+    Wsl: ({ distro }) =>
+      EngineAddress.guards.Wsl(b.address) && b.address.distro === distro,
+    Tls: ({ address }) =>
+      EngineAddress.guards.Tls(b.address) && b.address.address === address,
+  })
+
+export interface RemoteConnectionsShape {
+  /** Every held connection's Messages. */
+  readonly messages: Stream.Stream<Message>
+  /**
+   * Holds a connection for each of `engines`, made by `connect`: one already held for the same engine,
+   * address and attempt is kept as it runs; the others are started, and those no longer wanted stopped.
+   */
+  readonly hold: (
+    engines: Attempts,
+    connect: (engine: Attempt) => Stream.Stream<Message>,
+  ) => Effect.Effect<void>
+}
+
+export class RemoteConnections extends Context.Service<
+  RemoteConnections,
+  RemoteConnectionsShape
+>()('@fabrica/ui/RemoteConnections') {}
+
+/** The held connections, their fibers stopped with the scope. */
+export const makeRemoteConnections = Effect.gen(function* () {
+  const scope = yield* Effect.scope
+  const queue = yield* Queue.unbounded<Message>()
+  const lock = yield* Semaphore.make(1)
+  const held = new Map<
+    EngineName,
+    { readonly engine: Attempt; readonly fiber: Fiber.Fiber<void> }
+  >()
+
+  const hold: RemoteConnectionsShape['hold'] = (engines, connect) =>
+    lock
+      .withPermits(1)(
+        Effect.gen(function* () {
+          for (const [name, running] of held) {
+            const wanted = engines.find(engine => engine.name === name)
+            if (wanted === undefined || !sameAttempt(wanted, running.engine)) {
+              held.delete(name)
+              yield* Fiber.interrupt(running.fiber)
+            }
+          }
+          for (const engine of engines) {
+            if (!held.has(engine.name)) {
+              const fiber = yield* connect(engine).pipe(
+                Stream.runForEach(message => Queue.offer(queue, message)),
+                Effect.forkIn(scope),
+              )
+              held.set(engine.name, { engine, fiber })
+            }
+          }
+        }),
+      )
+      .pipe(Effect.uninterruptible)
+
+  return RemoteConnections.of({ messages: Stream.fromQueue(queue), hold })
+})
+
+export const layerRemoteConnections = Layer.effect(
+  RemoteConnections,
+  makeRemoteConnections,
+)
