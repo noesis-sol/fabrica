@@ -43,6 +43,8 @@ export type DesktopNotification = typeof DesktopNotification.Type
 
 /** A run whose events are read for what to tell. */
 export const RunWatch = Schema.Struct({
+  /** The name of the engine it runs on, as the sidebar's rows say it. */
+  engine: Schema.String,
   project: ProjectId,
   run: RunId,
   /** How many of its events have been read: none until its first snapshot, which tells nothing. */
@@ -56,14 +58,22 @@ export const RunWatch = Schema.Struct({
 })
 export type RunWatch = typeof RunWatch.Type
 
+/** An engine's open attention requests, from its stream's first snapshot, which tells nothing. */
+export const EngineOpen = Schema.Struct({
+  engine: Schema.String,
+  /** The keys of the engine's open attention requests. */
+  keys: Schema.Array(Schema.String),
+})
+export type EngineOpen = typeof EngineOpen.Type
+
 export const Model = Schema.Struct({
-  /** The keys of the open attention requests: none until the first snapshot, which tells nothing. */
-  open: Schema.Option(Schema.Array(Schema.String)),
+  /** Each engine's open attention requests: an engine is missing until its first snapshot. */
+  open: Schema.Array(EngineOpen),
   runs: Schema.Array(RunWatch),
 })
 export type Model = typeof Model.Type
 
-export const init = (): Model => ({ open: Option.none(), runs: [] })
+export const init = (): Model => ({ open: [], runs: [] })
 
 /** A model and the notifications to show. */
 export interface Told {
@@ -92,18 +102,28 @@ const notification = ({
   target,
 })
 
-/** A project's runs, while they go: running, or waiting on the maintainer. */
+/** A run, with the name of the engine it runs on. */
+export interface EngineRun {
+  readonly engine: string
+  readonly project: ProjectId
+  readonly run: RunId
+}
+
+/** The projects' runs, each on its engine, while they go: running, or waiting on the maintainer. */
 export const liveRuns = (
-  statuses: ReadonlyArray<ProjectStatus>,
-): ReadonlyArray<{ readonly project: ProjectId; readonly run: RunId }> =>
-  statuses.flatMap(({ project, run }) =>
-    run._tag === 'idle' ? [] : [{ project, run: run.run }],
+  statuses: ReadonlyArray<{
+    readonly engine: string
+    readonly status: ProjectStatus
+  }>,
+): ReadonlyArray<EngineRun> =>
+  statuses.flatMap(({ engine, status: { project, run } }) =>
+    run._tag === 'idle' ? [] : [{ engine, project, run: run.run }],
   )
 
 const sameRun =
-  (a: { readonly project: ProjectId; readonly run: RunId }) =>
-  (b: { readonly project: ProjectId; readonly run: RunId }): boolean =>
-    a.project === b.project && a.run === b.run
+  (a: EngineRun) =>
+  (b: EngineRun): boolean =>
+    a.engine === b.engine && a.project === b.project && a.run === b.run
 
 /**
  * The runs `live` (from the projects' statuses) joined to those watched: a new one is watched from its
@@ -111,7 +131,7 @@ const sameRun =
  */
 export const receivedRuns = (
   model: Model,
-  live: ReadonlyArray<{ readonly project: ProjectId; readonly run: RunId }>,
+  live: ReadonlyArray<EngineRun>,
 ): Model => {
   const added = live.filter(run => !model.runs.some(sameRun(run)))
   const kept = model.runs.filter(
@@ -123,7 +143,8 @@ export const receivedRuns = (
         ...model,
         runs: [
           ...kept,
-          ...added.map(({ project, run }) => ({
+          ...added.map(({ engine, project, run }) => ({
+            engine,
             project,
             run,
             read: Option.none(),
@@ -136,16 +157,15 @@ export const receivedRuns = (
 }
 
 /** The runs whose events are read: those watched whose events haven't ended. */
-export const watchedRuns = (
-  model: Model,
-): ReadonlyArray<{ readonly project: ProjectId; readonly run: RunId }> =>
+export const watchedRuns = (model: Model): ReadonlyArray<EngineRun> =>
   model.runs
     .filter(watch => !watch.ended)
-    .map(({ project, run }) => ({ project, run }))
+    .map(({ engine, project, run }) => ({ engine, project, run }))
 
-/** Whether the run of `project` answers `question` at once, so it is told nothing (§15.2). */
+/** Whether the run of `question`'s project on `engine` answers it at once, so it is told nothing (§15.2). */
 const answeredAtOnce = (
   model: Model,
+  engine: string,
   question: Extract<AttentionRequest, { readonly _tag: 'question' }>,
 ): boolean =>
   Option.isSome(question.choices) &&
@@ -153,6 +173,7 @@ const answeredAtOnce = (
   !question.maintainerOnly &&
   model.runs.some(
     watch =>
+      watch.engine === engine &&
       watch.project === question.project &&
       !watch.ended &&
       watch.autoAnswersAtOnce,
@@ -161,12 +182,13 @@ const answeredAtOnce = (
 /** What a request that has just arrived tells: a question or a permission request; nothing else. */
 const requestNotification = (
   model: Model,
+  engine: string,
   request: AttentionRequest,
   name: ProjectName,
 ): Option.Option<DesktopNotification> =>
   Match.valueTags(request, {
     question: question =>
-      answeredAtOnce(model, question)
+      answeredAtOnce(model, engine, question)
         ? Option.none()
         : Option.some(
             notification({
@@ -211,9 +233,37 @@ export type AttentionItem =
       }
     }
 
-/** `items` of the attention stream of every project, read for the requests that have just arrived. */
+/** The keys of `engine`'s open attention requests: none until its first snapshot. */
+const openOn = (
+  model: Model,
+  engine: string,
+): Option.Option<ReadonlyArray<string>> =>
+  Option.map(
+    Array.findFirst(model.open, entry => entry.engine === engine),
+    entry => entry.keys,
+  )
+
+/** `model` with `engine`'s open attention requests now `keys`; the other engines' kept. */
+const withOpen = (
+  model: Model,
+  engine: string,
+  keys: ReadonlyArray<string>,
+): Model => ({
+  ...model,
+  open: Option.isSome(openOn(model, engine))
+    ? model.open.map(entry =>
+        entry.engine === engine ? { engine, keys } : entry,
+      )
+    : [...model.open, { engine, keys }],
+})
+
+/**
+ * `items` of the attention stream of every project on the engine named `engine`, read for the requests
+ * that have just arrived there.
+ */
 export const receivedAttention = (
   model: Model,
+  engine: string,
   items: ReadonlyArray<AttentionItem>,
   name: ProjectName,
 ): Told =>
@@ -221,7 +271,7 @@ export const receivedAttention = (
     items,
     { model, notifications: [] },
     (told, item) => {
-      const open = told.model.open
+      const open = openOn(told.model, engine)
       const arrived = (requests: ReadonlyArray<AttentionRequest>) =>
         Option.match(open, {
           onNone: () => [],
@@ -254,19 +304,16 @@ export const receivedAttention = (
                 },
               }),
             ]
-      const next: Model = {
-        ...told.model,
-        open:
-          Option.isNone(open) && item._tag === 'patch'
-            ? open
-            : Option.some(nextOpen),
-      }
+      const next: Model =
+        Option.isNone(open) && item._tag === 'patch'
+          ? told.model
+          : withOpen(told.model, engine, nextOpen)
       return {
         model: next,
         notifications: [
           ...told.notifications,
           ...requests.flatMap(request =>
-            Option.toArray(requestNotification(next, request, name)),
+            Option.toArray(requestNotification(next, engine, request, name)),
           ),
         ],
       }
@@ -380,17 +427,14 @@ export interface RunEventsItem {
 export const receivedRunEvents = (
   model: Model,
   {
+    engine,
     project,
     run,
     items,
-  }: {
-    readonly project: ProjectId
-    readonly run: RunId
-    readonly items: ReadonlyArray<RunEventsItem>
-  },
+  }: EngineRun & { readonly items: ReadonlyArray<RunEventsItem> },
   name: ProjectName,
 ): Told => {
-  const at = model.runs.findIndex(sameRun({ project, run }))
+  const at = model.runs.findIndex(sameRun({ engine, project, run }))
   const watch = model.runs[at]
   if (watch === undefined) {
     return { model, notifications: [] }
@@ -434,10 +478,7 @@ export const receivedRunEvents = (
 }
 
 /** The events of `run` ended: it is no longer read, and dropped once its project shows it no more. */
-export const endedRunEvents = (
-  model: Model,
-  run: { readonly project: ProjectId; readonly run: RunId },
-): Model => ({
+export const endedRunEvents = (model: Model, run: EngineRun): Model => ({
   ...model,
   runs: model.runs.map(watch =>
     sameRun(run)(watch) ? { ...watch, ended: true } : watch,

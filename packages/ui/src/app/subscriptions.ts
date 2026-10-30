@@ -24,14 +24,22 @@ import * as Sidebar from '../console/sidebar'
 import * as TalkPanel from '../console/talk-panel'
 import * as Talks from '../screens/talks'
 import {
-  type EngineConnectionService,
   type EngineSession,
   clientName,
   isLive,
   localEngineName,
-  withClient,
-  withSession,
 } from './connection'
+import {
+  type EngineServices,
+  EngineSessions,
+  type EngineSessionsShape,
+  ProjectRoute,
+  engineOf,
+  routes,
+  scopeEngine,
+  withEngineClient,
+  withEngineSession,
+} from './engine-route'
 import { perFrame } from './frame'
 import { AppHost, type AppHostShape } from './host'
 import type { Pressed } from './keys'
@@ -45,13 +53,15 @@ import { SshPromptHost } from './ssh-prompts'
 import { watchOf } from './streams'
 
 // The streams the app listens to (spec §18.1, §18.5): the keys, the engine ports that replace the
-// connection's, the client's link, and the engine's streams, each subscribed only while a part that draws it is shown: the run view and attention for
-// the console's scope, History's events (under All projects, every project's run going), the backlog while its screen is open, the host's load while connected. Each
-// stream's items go on once per animation frame, so a burst of patches costs one update. The scope's
-// run talk is opened as the scope changes, and every talk the app holds has its transcript watched.
-// For the app's notifications (§18.5), every project's attention requests and the events of each run
-// going, while connected, and the clicks on the notifications shown; and what ssh asks as the app
-// connects (§9.1).
+// connection's, the client's link, and the engine's streams, each subscribed only while a part that
+// draws it is shown: the run view and attention for the console's scope, History's events (under All
+// projects, every project's run going), the backlog while its screen is open, the host's load while
+// connected. Each project's streams go through the engine whose sidebar row holds it, while that
+// engine is connected (engine-route.ts), and the load is the scoped project's engine's. Each stream's
+// items go on once per animation frame, so a burst of patches costs one update. The scope's run talk is
+// opened as the scope changes, and every talk the app holds has its transcript watched. For the app's
+// notifications (§18.5), every connected engine's attention requests and the events of each run going,
+// and the clicks on the notifications shown; and what ssh asks as the app connects (§9.1).
 
 /** What the subscriptions need from their host, injected so tests drive them. */
 export interface SubscriptionEnvironment {
@@ -168,45 +178,62 @@ export const backlogMessages = (
     Stream.catch(() => Stream.empty),
   )
 
-/** The engine host's load. */
+/** The host's load of the engine named `engine`. */
 export const loadMessages = (
   client: EngineClientShape,
+  engine: string,
   nextFrame: Effect.Effect<void>,
 ): Stream.Stream<Message> =>
   watchOf<HostLoad, HostLoad>(client)(resume =>
     client.rpc['engine.watchLoad']({ resume }),
   ).pipe(
     perFrame(nextFrame),
-    Stream.map(items => Message.ReceivedLoad({ items })),
+    Stream.map(items => Message.ReceivedLoad({ engine, items })),
     Stream.catch(() => Stream.empty),
   )
 
-/** Every project's open attention requests, read for those to notify. */
+/** Every project's open attention requests on the engine named `engine`, read for those to notify. */
 export const attentionToNotifyMessages = (
   client: EngineClientShape,
+  engine: string,
   nextFrame: Effect.Effect<void>,
 ): Stream.Stream<Message> =>
   watchOf<ReadonlyArray<AttentionRequest>, typeof AttentionPatch.Type>(client)(
     resume => client.rpc['attention.watch']({ project: Option.none(), resume }),
   ).pipe(
     perFrame(nextFrame),
-    Stream.map(items => Message.ReceivedAttentionToNotify({ items })),
+    Stream.map(items => Message.ReceivedAttentionToNotify({ engine, items })),
     Stream.catch(() => Stream.empty),
   )
 
-/** A run's events, read for those to notify; their end, or a failure to read them, as a Message. */
+/**
+ * A run's events on the engine named `engine`, read for those to notify; their end, or a failure to
+ * read them, as a Message.
+ */
 export const runEventMessages = (
   client: EngineClientShape,
-  { project, run }: { readonly project: ProjectId; readonly run: RunId },
+  {
+    engine,
+    project,
+    run,
+  }: {
+    readonly engine: string
+    readonly project: ProjectId
+    readonly run: RunId
+  },
   nextFrame: Effect.Effect<void>,
 ): Stream.Stream<Message> =>
   watchOf<ReadonlyArray<RunEvent>, ReadonlyArray<RunEvent>>(client)(resume =>
     client.rpc['run.watchEvents']({ project, run: Option.some(run), resume }),
   ).pipe(
     perFrame(nextFrame),
-    Stream.map(items => Message.ReceivedRunEvents({ project, run, items })),
+    Stream.map(items =>
+      Message.ReceivedRunEvents({ engine, project, run, items }),
+    ),
     Stream.catch(() => Stream.empty),
-    Stream.concat(Stream.make(Message.EndedRunEvents({ project, run }))),
+    Stream.concat(
+      Stream.make(Message.EndedRunEvents({ engine, project, run })),
+    ),
   )
 
 /** A talk's transcript, a frame's entries at a time; its end, when the engine no longer has the talk. */
@@ -224,12 +251,20 @@ export const transcriptMessages = (
     Stream.concat(Stream.make(Message.EndedTranscript({ talk }))),
   )
 
-/** The talks the app holds, the console's and the Talks screen's, each once. */
-const heldTalks = (model: Model): ReadonlyArray<TalkId> =>
-  Array.dedupe([
-    ...TalkPanel.heldTalks(model.console.talkPanel),
-    ...Talks.heldTalks(model.screens.talks),
-  ])
+/** The talks the app holds, the console's and the Talks screen's, each once, with its project's engine, while it is connected. */
+const heldTalks = (
+  model: Model,
+): ReadonlyArray<{ readonly engine: string; readonly talk: TalkId }> =>
+  Array.dedupeWith(
+    [
+      ...TalkPanel.heldTalks(model.console.talkPanel),
+      ...Talks.heldTalks(model.screens.talks),
+    ].map(({ project, talk }) => ({
+      engine: engineOf(model.console.sidebar, project),
+      talk,
+    })),
+    (first, second) => first.talk === second.talk,
+  ).filter(({ engine }) => RemoteEngines.isEngineLive(model, engine))
 
 /** The engine's projects and their runs' states, for the sidebar's rows, under `name`, the app's name for it. */
 export const projectMessages = (
@@ -257,40 +292,60 @@ const viewedRun = (model: Model, project: ProjectId): Option.Option<RunId> =>
     Option.map(model.runView, view => view.header.run),
   )
 
+/** A run, with the name of the engine it runs on. */
+const EngineRun = Schema.Struct({
+  engine: Schema.String,
+  project: ProjectId,
+  run: RunId,
+})
+
+/** Of `runs`, those on an engine connected now. */
+const onLiveEngines = <Run extends { readonly engine: string }>(
+  model: Model,
+  runs: ReadonlyArray<Run>,
+): ReadonlyArray<Run> =>
+  runs.filter(({ engine }) => RemoteEngines.isEngineLive(model, engine))
+
 /**
  * The runs whose events History shows (§18.3): the scoped project's viewed run, or under All projects
- * every run going that the local engine's rows show.
+ * every run going that the sidebar's rows show, each on its engine.
  */
-const historyRuns = (
-  model: Model,
-): ReadonlyArray<{ readonly project: ProjectId; readonly run: RunId }> =>
-  Option.match(model.scope, {
-    onSome: () =>
-      Option.match(model.runView, {
-        onNone: () => [],
-        onSome: view => [
-          { project: view.header.project, run: view.header.run },
-        ],
-      }),
-    onNone: () =>
-      liveRuns(Sidebar.localRows(model.console.sidebar).map(row => row.status)),
-  })
+const historyRuns = (model: Model): ReadonlyArray<typeof EngineRun.Type> =>
+  onLiveEngines(
+    model,
+    Option.match(model.scope, {
+      onSome: () =>
+        Option.match(model.runView, {
+          onNone: () => [],
+          onSome: view => [
+            {
+              engine: engineOf(model.console.sidebar, view.header.project),
+              project: view.header.project,
+              run: view.header.run,
+            },
+          ],
+        }),
+      onNone: () => liveRuns(Sidebar.engineStatuses(model.console.sidebar)),
+    }),
+  )
 
 /** What the app says where no app is around the renderer to reach its known engines. */
 export const noAppToReachEngines =
   'only the desktop app reaches engines on other hosts'
 
 /**
- * A known engine on another host's connection, attempt after attempt, with its project rows; its ports
- * come from the app around the renderer.
+ * A known engine on another host's connection, attempt after attempt, with its project rows, its
+ * session held by its name while it is connected; its ports come from the app around the renderer.
  */
 export const remoteConnection =
   ({
     host,
+    sessions,
     release,
     nextFrame,
   }: {
     readonly host: AppHostShape
+    readonly sessions: EngineSessionsShape
     readonly release: ReleaseVersion
     readonly nextFrame: Effect.Effect<void>
   }) =>
@@ -309,15 +364,16 @@ export const remoteConnection =
           port: port(address),
           client: { name: clientName, kind: 'app', release },
           streams: session => projectMessages(session, name, nextFrame),
+          keep: session => sessions.keep(name, session),
         }),
     })
 
 /**
- * The services the subscriptions use: the engine connection, the notifier, ssh's prompts, the app around
- * the renderer, and the known engines' connections.
+ * The services the subscriptions use: the engines' connections and sessions, the notifier, ssh's
+ * prompts, the app around the renderer, and the known engines' connections.
  */
 type Services =
-  | EngineConnectionService
+  | EngineServices
   | Notifier
   | SshPromptHost
   | AppHost
@@ -341,80 +397,112 @@ export const makeSubscriptions = ({
       {
         modelToDependencies: model => ({ live: isLive(model.connection) }),
         dependenciesToStream: ({ live }) =>
-          live ? withClient(linkMessages) : Stream.empty,
+          live ? withEngineClient(localEngineName, linkMessages) : Stream.empty,
+      },
+    ),
+    // Each project's streams go through the engine whose sidebar row holds it (engine-route.ts).
+    routes: entry(
+      { routes: Schema.Array(ProjectRoute) },
+      {
+        modelToDependencies: model => ({
+          routes: routes(model.console.sidebar),
+        }),
+        dependenciesToStream: ({ routes }) =>
+          Stream.fromEffectDrain(
+            Effect.flatMap(EngineSessions, sessions => sessions.route(routes)),
+          ),
       },
     ),
     runView: entry(
       {
+        engine: Schema.String,
         project: Schema.Option(ProjectId),
         run: Schema.Option(RunId),
         watch: Schema.Int,
       },
       {
         modelToDependencies: model => {
-          const project = isLive(model.connection) ? model.scope : Option.none()
+          const engine = scopeEngine(model.console.sidebar, model.scope)
+          const project = RemoteEngines.isEngineLive(model, engine)
+            ? model.scope
+            : Option.none()
           return {
+            engine,
             project,
             run: Option.flatMap(project, scoped => viewedRun(model, scoped)),
             watch: model.runWatch,
           }
         },
-        dependenciesToStream: ({ project }) =>
+        dependenciesToStream: ({ engine, project }) =>
           Option.match(project, {
             onNone: () => Stream.empty,
             onSome: project =>
-              withClient(client => runViewMessages(client, project, nextFrame)),
+              withEngineClient(engine, client =>
+                runViewMessages(client, project, nextFrame),
+              ),
           }),
       },
     ),
     events: entry(
+      { runs: Schema.Array(EngineRun) },
       {
-        runs: Schema.Array(Schema.Struct({ project: ProjectId, run: RunId })),
-      },
-      {
-        modelToDependencies: model => ({
-          runs: isLive(model.connection) ? historyRuns(model) : [],
-        }),
+        modelToDependencies: model => ({ runs: historyRuns(model) }),
         dependenciesToStream: ({ runs }) =>
-          runs.length === 0
-            ? Stream.empty
-            : withClient(client =>
-                Stream.mergeAll(
-                  runs.map(run => eventMessages(client, run, nextFrame)),
-                  { concurrency: 'unbounded' },
-                ),
+          Stream.mergeAll(
+            runs.map(run =>
+              withEngineClient(run.engine, client =>
+                eventMessages(client, run, nextFrame),
               ),
+            ),
+            { concurrency: 'unbounded' },
+          ),
       },
     ),
+    // Under All projects, this machine's engine's requests, until every engine's are joined.
     attention: entry(
-      { live: Schema.Boolean, project: Schema.Option(ProjectId) },
       {
-        modelToDependencies: model => ({
-          live: isLive(model.connection),
-          project: model.scope,
-        }),
-        dependenciesToStream: ({ live, project }) =>
+        engine: Schema.String,
+        live: Schema.Boolean,
+        project: Schema.Option(ProjectId),
+      },
+      {
+        modelToDependencies: model => {
+          const engine = scopeEngine(model.console.sidebar, model.scope)
+          return {
+            engine,
+            live: RemoteEngines.isEngineLive(model, engine),
+            project: model.scope,
+          }
+        },
+        dependenciesToStream: ({ engine, live, project }) =>
           live
-            ? withClient(client =>
+            ? withEngineClient(engine, client =>
                 attentionMessages(client, project, nextFrame),
               )
             : Stream.empty,
       },
     ),
     backlog: entry(
-      { project: Schema.Option(ProjectId) },
+      { engine: Schema.String, project: Schema.Option(ProjectId) },
       {
-        modelToDependencies: model => ({
-          project:
-            isLive(model.connection) && Screen.guards.Backlog(model.screen)
-              ? model.scope
-              : Option.none(),
-        }),
-        dependenciesToStream: ({ project }) =>
+        modelToDependencies: model => {
+          const engine = scopeEngine(model.console.sidebar, model.scope)
+          return {
+            engine,
+            project:
+              RemoteEngines.isEngineLive(model, engine) &&
+              Screen.guards.Backlog(model.screen)
+                ? model.scope
+                : Option.none(),
+          }
+        },
+        dependenciesToStream: ({ engine, project }) =>
           Option.match(project, {
             onNone: () => Stream.empty,
             onSome: project =>
-              withClient(client => backlogMessages(client, project, nextFrame)),
+              withEngineClient(engine, client =>
+                backlogMessages(client, project, nextFrame),
+              ),
           }),
       },
     ),
@@ -424,7 +512,7 @@ export const makeSubscriptions = ({
         modelToDependencies: model => ({ live: isLive(model.connection) }),
         dependenciesToStream: ({ live }) =>
           live
-            ? withSession(session =>
+            ? withEngineSession(localEngineName, session =>
                 projectMessages(session, localEngineName, nextFrame),
               )
             : Stream.empty,
@@ -442,10 +530,11 @@ export const makeSubscriptions = ({
           Stream.fromEffectDrain(
             Effect.gen(function* () {
               const host = yield* AppHost
+              const sessions = yield* EngineSessions
               const connections = yield* RemoteEngines.RemoteConnections
               yield* connections.hold(
                 engines,
-                remoteConnection({ host, release, nextFrame }),
+                remoteConnection({ host, sessions, release, nextFrame }),
               )
             }),
           ),
@@ -462,58 +551,77 @@ export const makeSubscriptions = ({
     clock: entry(
       { live: Schema.Boolean },
       {
-        modelToDependencies: model => ({ live: isLive(model.connection) }),
+        modelToDependencies: model => ({
+          live: RemoteEngines.liveEngines(model).length > 0,
+        }),
         dependenciesToStream: ({ live }) =>
           live
             ? Stream.map(ticks, now => Message.Ticked({ now }))
             : Stream.empty,
       },
     ),
+    // The stats row's load: the scoped project's engine's host's.
     load: entry(
-      { live: Schema.Boolean },
+      { engine: Schema.String, live: Schema.Boolean },
       {
-        modelToDependencies: model => ({ live: isLive(model.connection) }),
-        dependenciesToStream: ({ live }) =>
+        modelToDependencies: model => {
+          const engine = scopeEngine(model.console.sidebar, model.scope)
+          return { engine, live: RemoteEngines.isEngineLive(model, engine) }
+        },
+        dependenciesToStream: ({ engine, live }) =>
           live
-            ? withClient(client => loadMessages(client, nextFrame))
+            ? withEngineClient(engine, client =>
+                loadMessages(client, engine, nextFrame),
+              )
             : Stream.empty,
       },
     ),
     attentionToNotify: entry(
-      { live: Schema.Boolean },
+      { engines: Schema.Array(Schema.String) },
       {
-        modelToDependencies: model => ({ live: isLive(model.connection) }),
-        dependenciesToStream: ({ live }) =>
-          live
-            ? withClient(client => attentionToNotifyMessages(client, nextFrame))
-            : Stream.empty,
+        modelToDependencies: model => ({
+          engines: RemoteEngines.liveEngines(model),
+        }),
+        dependenciesToStream: ({ engines }) =>
+          Stream.mergeAll(
+            engines.map(engine =>
+              withEngineClient(engine, client =>
+                attentionToNotifyMessages(client, engine, nextFrame),
+              ),
+            ),
+            { concurrency: 'unbounded' },
+          ),
       },
     ),
     runEvents: entry(
-      {
-        runs: Schema.Array(Schema.Struct({ project: ProjectId, run: RunId })),
-      },
+      { runs: Schema.Array(EngineRun) },
       {
         modelToDependencies: model => ({
-          runs: isLive(model.connection) ? watchedRuns(model.notify) : [],
+          runs: onLiveEngines(model, watchedRuns(model.notify)),
         }),
         dependenciesToStream: ({ runs }) =>
-          runs.length === 0
-            ? Stream.empty
-            : withClient(client =>
-                Stream.mergeAll(
-                  runs.map(run => runEventMessages(client, run, nextFrame)),
-                  { concurrency: 'unbounded' },
-                ),
+          Stream.mergeAll(
+            runs.map(run =>
+              withEngineClient(run.engine, client =>
+                runEventMessages(client, run, nextFrame),
               ),
+            ),
+            { concurrency: 'unbounded' },
+          ),
       },
     ),
     runTalk: entry(
-      { project: Schema.Option(ProjectId) },
+      { engine: Schema.String, project: Schema.Option(ProjectId) },
       {
-        modelToDependencies: model => ({
-          project: isLive(model.connection) ? model.scope : Option.none(),
-        }),
+        modelToDependencies: model => {
+          const engine = scopeEngine(model.console.sidebar, model.scope)
+          return {
+            engine,
+            project: RemoteEngines.isEngineLive(model, engine)
+              ? model.scope
+              : Option.none(),
+          }
+        },
         dependenciesToStream: ({ project }) =>
           Option.match(project, {
             onNone: () => Stream.empty,
@@ -527,22 +635,22 @@ export const makeSubscriptions = ({
       },
     ),
     transcripts: entry(
-      { talks: Schema.Array(TalkId) },
       {
-        modelToDependencies: model => ({
-          talks: isLive(model.connection) ? heldTalks(model) : [],
-        }),
+        talks: Schema.Array(
+          Schema.Struct({ engine: Schema.String, talk: TalkId }),
+        ),
+      },
+      {
+        modelToDependencies: model => ({ talks: heldTalks(model) }),
         dependenciesToStream: ({ talks }) =>
-          talks.length === 0
-            ? Stream.empty
-            : withClient(client =>
-                Stream.mergeAll(
-                  talks.map(talk =>
-                    transcriptMessages(client, talk, nextFrame),
-                  ),
-                  { concurrency: 'unbounded' },
-                ),
+          Stream.mergeAll(
+            talks.map(({ engine, talk }) =>
+              withEngineClient(engine, client =>
+                transcriptMessages(client, talk, nextFrame),
               ),
+            ),
+            { concurrency: 'unbounded' },
+          ),
       },
     ),
     sshPrompts: Subscription.persistentEntry(

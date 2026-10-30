@@ -154,7 +154,8 @@ export const Message = defineMessageUnion({
   ReceivedEvents: { project: ProjectId, items: itemsOf(EventsItem) },
   ReceivedAttention: { items: itemsOf(AttentionItem) },
   ReceivedBacklog: { project: ProjectId, items: itemsOf(BacklogItem) },
-  ReceivedLoad: { items: itemsOf(LoadItem) },
+  /** The host's load of the engine named `engine`, the scoped project's. */
+  ReceivedLoad: { engine: Schema.String, items: itemsOf(LoadItem) },
   /** An engine's project rows, for the sidebar; `name` is the engine's, as the app knows it. */
   ReceivedProjects: {
     engine: EngineId,
@@ -179,16 +180,20 @@ export const Message = defineMessageUnion({
   /** A talk's transcript ended: the engine no longer has the talk. */
   EndedTranscript: { talk: TalkId },
 
-  /** Every project's attention requests, read for those to notify (§18.5). */
-  ReceivedAttentionToNotify: { items: itemsOf(AttentionItem) },
-  /** A run's events, read for those to notify. */
+  /** Every project's attention requests on the engine named `engine`, read for those to notify (§18.5). */
+  ReceivedAttentionToNotify: {
+    engine: Schema.String,
+    items: itemsOf(AttentionItem),
+  },
+  /** A run's events on the engine named `engine`, read for those to notify. */
   ReceivedRunEvents: {
+    engine: Schema.String,
     project: ProjectId,
     run: RunId,
     items: itemsOf(EventsItem),
   },
   /** A run's events ended: the run is over, or can't be read. */
-  EndedRunEvents: { project: ProjectId, run: RunId },
+  EndedRunEvents: { engine: Schema.String, project: ProjectId, run: RunId },
   CompletedShowNotification: {},
   /** A notification was clicked: the console focuses its target. */
   ClickedNotification: { target: NotificationTarget },

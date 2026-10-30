@@ -17,7 +17,7 @@ import {
 } from '@fabrica/contracts'
 
 import { sayDuration, sayMoment } from '../app/clock'
-import { type EngineConnectionService, requestEngine } from '../app/connection'
+import { type EngineServices, requestScope } from '../app/engine-route'
 import { sayTokens, tokenTotal } from '../console/stats'
 
 // The Insights screen (spec §18.4, §21): the engine's telemetry for the scope, a project's or every
@@ -191,7 +191,7 @@ export const LoadSummary = Command.define('LoadSummary', {
   args: { project: Schema.Option(ProjectId) },
   messages: [Message.SucceededLoadSummary, Message.FailedLoadSummary],
   execute: ({ project }) =>
-    requestEngine(client =>
+    requestScope(project, client =>
       client.rpc['insights.summary']({ project, since }),
     ).pipe(
       Effect.map(summary => Message.SucceededLoadSummary({ project, summary })),
@@ -201,11 +201,17 @@ export const LoadSummary = Command.define('LoadSummary', {
     ),
 })
 
+/** The project `query` asks about, or none for every project's: its engine answers it. */
+const queryScope = (query: InsightsQuery): Option.Option<ProjectId> =>
+  query._tag === 'ticket_time' ? Option.some(query.project) : query.project
+
 export const RunQuery = Command.define('RunQuery', {
   args: { panel: Panel, query: InsightsQuery },
   messages: [Message.SucceededQuery, Message.FailedQuery],
   execute: ({ panel, query }) =>
-    requestEngine(client => client.rpc['insights.query']({ query })).pipe(
+    requestScope(queryScope(query), client =>
+      client.rpc['insights.query']({ query }),
+    ).pipe(
       Effect.map(table => Message.SucceededQuery({ panel, query, table })),
       Effect.catch(reason =>
         Effect.succeed(Message.FailedQuery({ panel, query, reason })),
@@ -213,8 +219,8 @@ export const RunQuery = Command.define('RunQuery', {
     ),
 })
 
-/** What the screen's Commands need: the engine connection. */
-export type Requires = EngineConnectionService
+/** What the screen's Commands need: the engines' connections. */
+export type Requires = EngineServices
 
 type Return = Update.Return<Model, Message, Requires>
 

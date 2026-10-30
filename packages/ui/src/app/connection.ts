@@ -1,12 +1,9 @@
 import {
-  Cause,
   Data,
   Duration,
   Effect,
   Option,
-  Predicate,
   Schema,
-  Stream,
 } from 'effect'
 import { RpcClientError } from 'effect/rpc'
 import { Socket } from 'effect/socket'
@@ -135,29 +132,9 @@ export type EngineConnectionService = ManagedResource.ServiceOf<
   typeof EngineConnection
 >
 
-/** The engine session, or nothing while the resource isn't held. */
-export const withSession = <A, E, R>(
-  use: (session: EngineSession) => Stream.Stream<A, E, R>,
-): Stream.Stream<A, E, R | EngineConnectionService> =>
-  Stream.unwrap(
-    EngineConnection.get.pipe(
-      Effect.map(use),
-      Effect.catchTag('ResourceNotAvailable', () =>
-        Effect.succeed(Stream.empty),
-      ),
-    ),
-  )
-
-/** The client, or nothing while the resource isn't held. */
-export const withClient = <A, E, R>(
-  use: (client: EngineClientShape) => Stream.Stream<A, E, R>,
-): Stream.Stream<A, E, R | EngineConnectionService> =>
-  withSession(({ client }) => use(client))
-
 /**
- * The name of the engine the connection reaches, as the sidebar says it: the connection process
- * relays to the local engine's socket until the SSH, WSL2 and TLS engines join it, named as the app's
- * known engines name them (§9.1).
+ * The name of the engine the connection reaches, this machine's, as the sidebar says it; the known
+ * engines on other hosts are reached through connections of their own, under their names (§9.1).
  */
 export const localEngineName = 'local'
 
@@ -211,34 +188,6 @@ export const attemptFailure = (error: unknown): AttemptFailure =>
 
 /** What a request says while no engine is connected. */
 export const notConnected = 'the engine is not connected'
-
-/**
- * A request to the engine through the held client: its answer, or its failure in words, the engine's
- * refusal, a request it doesn't serve yet, and no connection included (§8.1).
- */
-export const requestEngine = <A, E, R>(
-  use: (client: EngineClientShape) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, string, R | EngineConnectionService> =>
-  EngineConnection.get.pipe(
-    Effect.flatMap(({ client }) => use(client)),
-    Effect.catchCause(cause =>
-      Effect.fail(
-        Cause.hasInterruptsOnly(cause)
-          ? 'the request was interrupted'
-          : failureText(
-              Option.getOrElse(
-                Option.map(Cause.findErrorOption(cause), error =>
-                  Predicate.isTagged(error, 'ResourceNotAvailable')
-                    ? notConnected
-                    : error,
-                ),
-                () => Cause.squash(cause),
-              ),
-              'the engine gave no reason',
-            ),
-      ),
-    ),
-  )
 
 /** The requirements the resource is held under: the attempt, so a new attempt acquires afresh, and the release. */
 export const ConnectionRequirements = Schema.Option(

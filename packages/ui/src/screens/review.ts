@@ -17,7 +17,7 @@ import {
   TicketId,
 } from '@fabrica/contracts'
 
-import { type EngineConnectionService, requestEngine } from '../app/connection'
+import { type EngineServices, requestProject } from '../app/engine-route'
 import { sidesOf } from '../mounts/diff'
 import { showDiff } from '../mounts/monaco'
 
@@ -93,7 +93,7 @@ export const LoadDiff = Command.define('LoadDiff', {
   args: { subject: Subject },
   messages: [Message.SucceededLoadDiff, Message.FailedLoadDiff],
   execute: ({ subject }) =>
-    requestEngine(client =>
+    requestProject(subject.project, client =>
       Subject.match<Effect.Effect<Diff, unknown>>(subject, {
         Ticket: ({ project, ticket }) =>
           client.rpc['diff.ticket']({ project, ticket }).pipe(
@@ -118,7 +118,7 @@ export const LoadReport = Command.define('LoadReport', {
   args: { project: ProjectId },
   messages: [Message.SucceededLoadReport, Message.FailedLoadReport],
   execute: ({ project }) =>
-    requestEngine(client =>
+    requestProject(project, client =>
       client.rpc['report.get']({ project, run: Option.none() }).pipe(
         Effect.catchTags({
           NoRun: () => Effect.fail('The project has had no run yet.'),
@@ -138,7 +138,7 @@ export const LoadLog = Command.define('LoadLog', {
   args: { project: ProjectId },
   messages: [Message.SucceededLoadLog, Message.FailedLoadLog],
   execute: ({ project }) =>
-    requestEngine(client =>
+    requestProject(project, client =>
       client.rpc['log.tail']({ project, lines: logLines }),
     ).pipe(
       Effect.map(({ lines }) => Message.SucceededLoadLog({ project, lines })),
@@ -166,8 +166,8 @@ export const ShowDiff = Mount.define('ShowDiff', {
     ),
 })
 
-/** What the screen's Commands need: the engine connection. */
-export type Requires = EngineConnectionService
+/** What the screen's Commands need: the engines' connections. */
+export type Requires = EngineServices
 
 type Return = Update.Return<Model, Message, Requires>
 

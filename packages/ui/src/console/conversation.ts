@@ -16,7 +16,7 @@ import {
   type TranscriptItem,
 } from '@fabrica/contracts'
 
-import { requestEngine } from '../app/connection'
+import { openTalkOn, requestTalk } from '../app/engine-route'
 import { sayTokens, tokenTotal } from './stats'
 
 // A talk as the app holds it (spec §15.4, §18.3, §18.4; Appendix A.2): the talk the engine opened, its
@@ -160,9 +160,9 @@ export const modeTitle: Record<TalkMode, string> = {
 
 // The requests.
 
-/** Opens a talk on `project` in `context`, with the project's model (§15.4). */
+/** Opens a talk on `project` in `context`, with the project's model (§15.4), on the project's engine. */
 export const openTalk = (project: ProjectId, context: TalkContext) =>
-  requestEngine(client =>
+  openTalkOn(project, client =>
     client.rpc['talk.open']({ project, context, model: Option.none() }),
   )
 
@@ -172,13 +172,13 @@ const decodeText = Schema.decodeUnknownOption(Text)
 export const sendable = (draft: string): Option.Option<string> =>
   decodeText(draft.trim())
 
-/** Sends the maintainer's `text` to the talk. */
+/** Sends the maintainer's `text` to the talk, on the engine it was opened on. */
 export const sendToTalk = (talk: TalkId, text: string) =>
-  requestEngine(client => client.rpc['talk.send']({ talk, text }))
+  requestTalk(talk, client => client.rpc['talk.send']({ talk, text }))
 
 /** Closes the talk; one the engine no longer has is closed already. */
 export const closeTalk = (talk: TalkId) =>
-  requestEngine(client => client.rpc['talk.close']({ talk })).pipe(
+  requestTalk(talk, client => client.rpc['talk.close']({ talk })).pipe(
     Effect.catch(() => Effect.void),
   )
 

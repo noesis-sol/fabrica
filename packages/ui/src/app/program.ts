@@ -11,6 +11,7 @@ import {
   connect,
   connectionRequirements,
 } from './connection'
+import { layerEngineSessions } from './engine-route'
 import { AppHost, type AppHostShape } from './host'
 import { Message } from './message'
 import { Flags, Model, initialModel } from './model'
@@ -26,8 +27,8 @@ import { update } from './update'
 import { view } from './view'
 
 // The program the entries run (spec §18.1): the Model, its update and view, the engine connection as
-// a ManagedResource, the subscriptions, the notifier, ssh's prompts and the app around the renderer as
-// resources,
+// a ManagedResource, the subscriptions, the notifier, ssh's prompts, the app around the renderer, the
+// known engines' connections and their sessions as resources,
 // given what they need of their host, injected so tests run them against a test engine and their own
 // frames and keys.
 
@@ -100,6 +101,7 @@ export const program = (environment: Environment) => ({
     layerThemeHost(environment.themeHost),
     layerSshPromptHost(environment.sshPrompts),
     layerRemoteConnections,
+    layerEngineSessions,
   ),
   managedResources: makeManagedResources(environment),
 })

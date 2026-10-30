@@ -8,7 +8,7 @@ import {
   Schema,
 } from 'effect'
 import type { RpcClientError } from 'effect/rpc'
-import { Command, type ManagedResource, type Update } from 'foldkit'
+import { Command, type Update } from 'foldkit'
 import type { Html, HtmlBuilder } from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
 import { defineTaggedUnion } from 'foldkit/schema'
@@ -40,9 +40,10 @@ import {
 
 import { sayElapsed } from '../app/clock'
 import {
-  EngineConnection,
-  type EngineConnectionService,
-} from '../app/connection'
+  type EngineNotConnected,
+  type EngineServices,
+  sessionFor,
+} from '../app/engine-route'
 import { type Chip, chipView } from './sidebar'
 
 // The console's Needs your attention column (spec §15.1, §18.3, H62, H92; Appendix A.2): what waits on
@@ -158,7 +159,7 @@ export const OutMessage = defineMessageUnion({
 })
 export type OutMessage = typeof OutMessage.Type
 
-/** What an answer can fail with: the engine's refusals, the connection not held, or lost. */
+/** What an answer can fail with: the engine's refusals, its engine not connected, or the connection lost. */
 export type AnswerError =
   | AlreadyAnswered
   | AttentionNotFound
@@ -166,7 +167,7 @@ export type AnswerError =
   | ProjectNotFound
   | TicketNotFound
   | Refused
-  | ManagedResource.ResourceNotAvailable
+  | EngineNotConnected
   | RpcClientError.RpcClientError
 
 /** Why an answer didn't go through, in words. */
@@ -178,7 +179,7 @@ export const failureWords = (error: AnswerError): string =>
     ProjectNotFound: () => "the engine doesn't know the project",
     TicketNotFound: () => "the engine doesn't know the ticket",
     Refused: ({ reason }) => reason,
-    ResourceNotAvailable: () => 'not connected to the engine',
+    EngineNotConnected: () => 'not connected to the engine',
     RpcClientError: clientErrorWords,
   })
 
@@ -195,7 +196,7 @@ export const Answer = Command.define('Answer', {
   args: { key: Schema.String, answer: AttentionAnswer },
   messages: [Message.SucceededAnswer, Message.FailedAnswer],
   execute: ({ key, answer }) =>
-    EngineConnection.get.pipe(
+    sessionFor(answer.project).pipe(
       Effect.flatMap(({ client }) =>
         client.rpc['attention.answer']({ answer }),
       ),
@@ -213,7 +214,7 @@ export const CloseTask = Command.define('CloseTask', {
   args: { key: Schema.String, project: ProjectId, ticket: TicketId },
   messages: [Message.SucceededAnswer, Message.FailedAnswer],
   execute: ({ key, project, ticket }) =>
-    EngineConnection.get.pipe(
+    sessionFor(project).pipe(
       Effect.flatMap(({ client }) =>
         client.rpc['tickets.close']({
           project,
@@ -297,11 +298,11 @@ type Return = Update.ReturnWithOutMessage<
   Model,
   Message,
   OutMessage,
-  EngineConnectionService
+  EngineServices
 >
 
 /** A return with no OutMessage. */
-type Kept = Update.Return<Model, Message, EngineConnectionService>
+type Kept = Update.Return<Model, Message, EngineServices>
 
 /** The guard started afresh for `request`'s options, drawn now. */
 const drawing = (model: Model, request: AttentionRequest): Kept => {

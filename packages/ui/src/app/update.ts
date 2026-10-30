@@ -27,12 +27,8 @@ import * as Settings from '../screens/settings'
 import * as Talks from '../screens/talks'
 import { themeTitle, themes } from '../theme/theme'
 import { dayOf, sameDay } from './clock'
-import {
-  Connection,
-  type EngineConnectionService,
-  isLive,
-  retryAfter,
-} from './connection'
+import { Connection, isLive, retryAfter } from './connection'
+import { type EngineServices, scopeEngine } from './engine-route'
 import { commandFor, commandsFor, keyLabel, paletteCommands } from './keys'
 import { Message } from './message'
 import { type Model, Overlay } from './model'
@@ -85,7 +81,7 @@ type Return = Update.Return<
   | Settings.Requires
   | Insights.Requires
   | Review.Requires
-  | EngineConnectionService
+  | EngineServices
   | Notifier
   | ThemeHost
   | SshPrompts.SshPromptHost
@@ -183,11 +179,7 @@ const stepTalkPanel = (
   model: Model,
   step: (
     talkPanel: TalkPanel.Model,
-  ) => Update.Return<
-    TalkPanel.Model,
-    TalkPanel.Message,
-    EngineConnectionService
-  >,
+  ) => Update.Return<TalkPanel.Model, TalkPanel.Message, EngineServices>,
 ): Return => {
   const stepped = step(model.console.talkPanel)
   return {
@@ -208,7 +200,7 @@ const stepTalks = (
   model: Model,
   step: (
     talks: Talks.Model,
-  ) => Update.Return<Talks.Model, Talks.Message, EngineConnectionService>,
+  ) => Update.Return<Talks.Model, Talks.Message, EngineServices>,
 ): Return => {
   const stepped = step(model.screens.talks)
   return {
@@ -719,6 +711,12 @@ export const update = (model: Model, message: Message): Return =>
           focusedRequest: () => Option.none(),
           backlog: () => Option.none(),
           usage: () => Option.none(),
+          // The load is the scoped project's engine's host's: another engine's is read afresh.
+          load: load =>
+            scopeEngine(model.console.sidebar, project) ===
+            scopeEngine(model.console.sidebar, model.scope)
+              ? load
+              : Option.none(),
         }),
         Option.none(),
       )
@@ -1066,8 +1064,11 @@ export const update = (model: Model, message: Message): Return =>
       })
       return tellBacklog(received, project, received.backlog)
     },
-    ReceivedLoad: ({ items }) => ({
-      model: modifyFields(model, { load: load => applyLoad(load, items) }),
+    ReceivedLoad: ({ engine, items }) => ({
+      model:
+        engine === scopeEngine(model.console.sidebar, model.scope)
+          ? modifyFields(model, { load: load => applyLoad(load, items) })
+          : model,
     }),
     ReceivedProjects: ({ engine, name, items }) => {
       const sidebar = Sidebar.receivedProjects(model.console.sidebar, {
@@ -1081,31 +1082,35 @@ export const update = (model: Model, message: Message): Return =>
           notify: notify =>
             Notify.receivedRuns(
               notify,
-              Notify.liveRuns(
-                Sidebar.localRows(sidebar).map(row => row.status),
-              ),
+              Notify.liveRuns(Sidebar.engineStatuses(sidebar)),
             ),
         }),
       }
     },
 
-    ReceivedAttentionToNotify: ({ items }) =>
+    ReceivedAttentionToNotify: ({ engine, items }) =>
       tell(
         model,
-        Notify.receivedAttention(model.notify, items, projectName(model)),
+        Notify.receivedAttention(
+          model.notify,
+          engine,
+          items,
+          projectName(model),
+        ),
       ),
-    ReceivedRunEvents: ({ project, run, items }) =>
+    ReceivedRunEvents: ({ engine, project, run, items }) =>
       tell(
         model,
         Notify.receivedRunEvents(
           model.notify,
-          { project, run, items },
+          { engine, project, run, items },
           projectName(model),
         ),
       ),
-    EndedRunEvents: ({ project, run }) => ({
+    EndedRunEvents: ({ engine, project, run }) => ({
       model: modifyFields(model, {
-        notify: notify => Notify.endedRunEvents(notify, { project, run }),
+        notify: notify =>
+          Notify.endedRunEvents(notify, { engine, project, run }),
       }),
     }),
     Ticked: ({ now }) => ({

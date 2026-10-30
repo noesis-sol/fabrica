@@ -31,7 +31,7 @@ import {
 import * as VirtualList from '@foldkit/ui/virtualList'
 
 import { sayMoment } from '../app/clock'
-import { type EngineConnectionService, requestEngine } from '../app/connection'
+import { type EngineServices, requestProject } from '../app/engine-route'
 import type { Role } from '../console/history'
 import {
   Graph,
@@ -141,7 +141,7 @@ export const LoadFacts = Command.define('LoadFacts', {
   args: { ask: Ask },
   messages: [Message.SucceededLoadFacts, Message.FailedLoadFacts],
   execute: ({ ask: { project, open } }) =>
-    requestEngine(client =>
+    requestProject(project, client =>
       Effect.gen(function* () {
         const [ready, edges] = yield* Effect.all(
           [
@@ -209,7 +209,7 @@ export const DrawGraph = Mount.defineStream('DrawGraph', {
 })
 
 /** What the screen's Commands need: the engine connection. */
-export type Requires = EngineConnectionService
+export type Requires = EngineServices
 
 type Return = Update.Return<Model, Message, Requires>
 

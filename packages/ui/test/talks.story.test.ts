@@ -29,7 +29,7 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { Screen } from '../src/app/screen'
@@ -333,7 +333,7 @@ describe('the run talk', () => {
     })
     expect(transcripts.modelToDependencies(connected).talks).toEqual([])
     expect(transcripts.modelToDependencies(scopedToAuth).talks).toEqual([
-      runTalk,
+      { engine: localEngineName, talk: runTalk },
     ])
     expect(
       transcripts.modelToDependencies({
@@ -627,7 +627,7 @@ describe('the Talks screen', () => {
       ),
       model(shown => {
         expect(Talks.heldTalks(shown.screens.talks)).toEqual([
-          TalkId.make('t-refine-1'),
+          { project: auth, talk: TalkId.make('t-refine-1') },
         ])
       }),
     )

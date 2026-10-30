@@ -568,6 +568,7 @@ const connection = (port: MessagePort): RemoteEngines.RemoteConnection => ({
   port: Effect.succeed(port),
   client: { name: clientName, kind: 'app', release: '0.2.0' },
   streams: session => projectMessages(session, 'build-box', Effect.void),
+  keep: () => Effect.void,
 })
 
 describe('a known engine’s connection', () => {

@@ -1,6 +1,6 @@
 import { Array, type DateTime, Effect, Match, Option, Schema } from 'effect'
 import type { RpcClientError } from 'effect/rpc'
-import { Command, type ManagedResource, type Update } from 'foldkit'
+import { Command, type Update } from 'foldkit'
 import type { Html, HtmlBuilder } from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
 import { defineTaggedUnion } from 'foldkit/schema'
@@ -34,9 +34,10 @@ import {
 
 import { sayElapsed, sayMoment, secondsSince } from '../app/clock'
 import {
-  EngineConnection,
-  type EngineConnectionService,
-} from '../app/connection'
+  type EngineNotConnected,
+  type EngineServices,
+  sessionFor,
+} from '../app/engine-route'
 import { waitingWords } from './waiting'
 
 // The console's stats row (spec §18.3, H80, H81; Appendix A.2), for the scoped project's run: live
@@ -287,13 +288,13 @@ export const startFlags: RunFlags = {
   preflight: Option.none(),
 }
 
-/** What a run request can fail with: the engine's refusals, the connection not held, or lost. */
+/** What a run request can fail with: the engine's refusals, its engine not connected, or the connection lost. */
 export type RunRequestError =
   | ProjectNotFound
   | RunGoing
   | RunRefused
   | NoRun
-  | ManagedResource.ResourceNotAvailable
+  | EngineNotConnected
   | RpcClientError.RpcClientError
 
 /** Why the engine refused a request, in words. */
@@ -303,12 +304,12 @@ export const refusalWords = (error: RunRequestError): string =>
     RunGoing: () => 'the project has a run going already',
     NoRun: () => 'the project has no run going',
     ProjectNotFound: () => "the engine doesn't know the project",
-    ResourceNotAvailable: () => 'not connected to the engine',
+    EngineNotConnected: () => 'not connected to the engine',
     RpcClientError: clientErrorWords,
   })
 
 const startRun = (project: ProjectId, mode: RunMode, flags: RunFlags) =>
-  EngineConnection.get.pipe(
+  sessionFor(project).pipe(
     Effect.flatMap(({ client }) =>
       client.rpc['run.start']({ project, mode, flags }),
     ),
@@ -335,7 +336,7 @@ export const CheckPreflight = Command.define('CheckPreflight', {
   args: { project: ProjectId },
   messages: [Message.SucceededPreflight, Message.FailedPreflight],
   execute: ({ project }) =>
-    EngineConnection.get.pipe(
+    sessionFor(project).pipe(
       Effect.flatMap(({ client }) =>
         client.rpc['run.preflight']({
           project,
@@ -387,7 +388,7 @@ export const AskRun = Command.define('AskRun', {
   },
   messages: [Message.SucceededRunRequest, Message.FailedRunRequest],
   execute: ({ project, action }) =>
-    EngineConnection.get.pipe(
+    sessionFor(project).pipe(
       Effect.flatMap(({ client }) =>
         action === 'drain'
           ? client.rpc['run.drain']({ project })
@@ -408,7 +409,7 @@ type Return = Update.ReturnWithOutMessage<
   Model,
   Message,
   OutMessage,
-  EngineConnectionService
+  EngineServices
 >
 
 const decodeTicket = Schema.decodeUnknownOption(TicketId)

@@ -24,7 +24,7 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { ShowNotification } from '../src/app/notifier'
@@ -102,11 +102,13 @@ const watching = (startEvent: RunEvent): Model => {
   const steps = [
     receivedProjects(running),
     Message.ReceivedRunEvents({
+      engine: localEngineName,
       project,
       run,
       items: [{ _tag: 'snapshot', epoch, seq: 0, value: [startEvent] }],
     }),
     Message.ReceivedAttentionToNotify({
+      engine: localEngineName,
       items: [{ _tag: 'snapshot', epoch, seq: 0, value: [] }],
     }),
   ]
@@ -241,6 +243,7 @@ describe('requests that notify', () => {
       given(update(connected, receivedProjects(running)).model),
       message(
         Message.ReceivedAttentionToNotify({
+          engine: localEngineName,
           items: [
             {
               _tag: 'snapshot',
@@ -260,7 +263,10 @@ describe('requests that notify', () => {
       update,
       given(plainRun),
       message(
-        Message.ReceivedAttentionToNotify({ items: arrived(question()) }),
+        Message.ReceivedAttentionToNotify({
+          engine: localEngineName,
+          items: arrived(question()),
+        }),
       ),
       Command.expectExact(ShowNotification({ notification: questionTold })),
       Command.resolve(ShowNotification, Message.CompletedShowNotification()),
@@ -272,7 +278,10 @@ describe('requests that notify', () => {
       update,
       given(plainRun),
       message(
-        Message.ReceivedAttentionToNotify({ items: arrived(permission) }),
+        Message.ReceivedAttentionToNotify({
+          engine: localEngineName,
+          items: arrived(permission),
+        }),
       ),
       Command.expectExact(
         ShowNotification({
@@ -294,7 +303,10 @@ describe('requests that notify', () => {
       update,
       given(plainRun),
       message(
-        Message.ReceivedAttentionToNotify({ items: arrived(task, review) }),
+        Message.ReceivedAttentionToNotify({
+          engine: localEngineName,
+          items: arrived(task, review),
+        }),
       ),
       Command.expectNone(),
     )
@@ -303,17 +315,24 @@ describe('requests that notify', () => {
   test('a request is told once: changed, or still open in a later snapshot, it tells nothing again', () => {
     const toldOnce = update(
       plainRun,
-      Message.ReceivedAttentionToNotify({ items: arrived(question()) }),
+      Message.ReceivedAttentionToNotify({
+        engine: localEngineName,
+        items: arrived(question()),
+      }),
     ).model
     story(
       update,
       given(toldOnce),
       message(
-        Message.ReceivedAttentionToNotify({ items: arrived(question()) }),
+        Message.ReceivedAttentionToNotify({
+          engine: localEngineName,
+          items: arrived(question()),
+        }),
       ),
       Command.expectNone(),
       message(
         Message.ReceivedAttentionToNotify({
+          engine: localEngineName,
           items: [
             {
               _tag: 'snapshot',
@@ -342,13 +361,17 @@ describe('requests that notify', () => {
   test('a request answered and asked again tells again', () => {
     const toldOnce = update(
       plainRun,
-      Message.ReceivedAttentionToNotify({ items: arrived(question()) }),
+      Message.ReceivedAttentionToNotify({
+        engine: localEngineName,
+        items: arrived(question()),
+      }),
     ).model
     story(
       update,
       given(toldOnce),
       message(
         Message.ReceivedAttentionToNotify({
+          engine: localEngineName,
           items: [
             {
               _tag: 'patch',
@@ -369,7 +392,10 @@ describe('requests that notify', () => {
       ),
       Command.expectNone(),
       message(
-        Message.ReceivedAttentionToNotify({ items: arrived(question()) }),
+        Message.ReceivedAttentionToNotify({
+          engine: localEngineName,
+          items: arrived(question()),
+        }),
       ),
       Command.expectExact(ShowNotification({ notification: questionTold })),
       Command.resolve(ShowNotification, Message.CompletedShowNotification()),
@@ -385,7 +411,10 @@ describe('questions --auto-answer answers at once', () => {
       update,
       given(atOnce),
       message(
-        Message.ReceivedAttentionToNotify({ items: arrived(question()) }),
+        Message.ReceivedAttentionToNotify({
+          engine: localEngineName,
+          items: arrived(question()),
+        }),
       ),
       Command.expectNone(),
     )
@@ -400,7 +429,12 @@ describe('questions --auto-answer answers at once', () => {
       story(
         update,
         given(atOnce),
-        message(Message.ReceivedAttentionToNotify({ items: arrived(left) })),
+        message(
+          Message.ReceivedAttentionToNotify({
+            engine: localEngineName,
+            items: arrived(left),
+          }),
+        ),
         Command.expectExact(ShowNotification({ notification: questionTold })),
         Command.resolve(ShowNotification, Message.CompletedShowNotification()),
       )
@@ -412,7 +446,10 @@ describe('questions --auto-answer answers at once', () => {
       update,
       given(watching(start(600_000))),
       message(
-        Message.ReceivedAttentionToNotify({ items: arrived(question()) }),
+        Message.ReceivedAttentionToNotify({
+          engine: localEngineName,
+          items: arrived(question()),
+        }),
       ),
       Command.expectExact(ShowNotification({ notification: questionTold })),
       Command.resolve(ShowNotification, Message.CompletedShowNotification()),
@@ -425,6 +462,7 @@ describe('questions --auto-answer answers at once', () => {
       given(atOnce),
       message(
         Message.ReceivedAttentionToNotify({
+          engine: localEngineName,
           items: arrived({ ...question(), project: other }),
         }),
       ),
@@ -451,7 +489,12 @@ describe('run events that notify', () => {
   const told = (...value: ReadonlyArray<RunEvent>) =>
     update(
       plainRun,
-      Message.ReceivedRunEvents({ project, run, items: events(...value) }),
+      Message.ReceivedRunEvents({
+        engine: localEngineName,
+        project,
+        run,
+        items: events(...value),
+      }),
     )
 
   test('the run’s end tells how it ended', () => {
@@ -460,6 +503,7 @@ describe('run events that notify', () => {
       given(plainRun),
       message(
         Message.ReceivedRunEvents({
+          engine: localEngineName,
           project,
           run,
           items: events(
@@ -553,6 +597,7 @@ describe('run events that notify', () => {
     const first = update(
       update(connected, receivedProjects(running)).model,
       Message.ReceivedRunEvents({
+        engine: localEngineName,
         project,
         run,
         items: [
@@ -569,6 +614,7 @@ describe('run events that notify', () => {
     const again = update(
       first.model,
       Message.ReceivedRunEvents({
+        engine: localEngineName,
         project,
         run,
         items: [
@@ -618,8 +664,13 @@ describe('run events that notify', () => {
 describe('the runs whose events are read', () => {
   test('a run going is read from the projects’ statuses; its events ending stop the reading', () => {
     const shown = update(connected, receivedProjects(running)).model
-    expect(watchedRuns(shown.notify)).toEqual([{ project, run }])
-    const ended = update(shown, Message.EndedRunEvents({ project, run })).model
+    expect(watchedRuns(shown.notify)).toEqual([
+      { engine: localEngineName, project, run },
+    ])
+    const ended = update(
+      shown,
+      Message.EndedRunEvents({ engine: localEngineName, project, run }),
+    ).model
     expect(watchedRuns(ended.notify)).toEqual([])
     // Still shown as running, it isn't read again; once idle, it is forgotten.
     const stillRunning = update(ended, receivedProjects(running)).model
@@ -631,7 +682,9 @@ describe('the runs whose events are read', () => {
 
   test('the same runs keep the model as it is', () => {
     const shown = update(connected, receivedProjects(running)).model
-    expect(receivedRuns(shown.notify, [{ project, run }])).toBe(shown.notify)
+    expect(
+      receivedRuns(shown.notify, [{ engine: localEngineName, project, run }]),
+    ).toBe(shown.notify)
   })
 
   test('events of a run not read are ignored', () => {
@@ -640,6 +693,7 @@ describe('the runs whose events are read', () => {
       given(connected),
       message(
         Message.ReceivedRunEvents({
+          engine: localEngineName,
           project,
           run,
           items: events(RunEvent.cases.end.make({ time, run, code: 0 })),

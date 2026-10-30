@@ -18,7 +18,7 @@ import {
   type TranscriptItem,
 } from '@fabrica/contracts'
 
-import { type EngineConnectionService, requestEngine } from '../app/connection'
+import { type EngineServices, requestProject } from '../app/engine-route'
 import * as Conversation from './conversation'
 import * as Sidebar from './sidebar'
 
@@ -155,7 +155,7 @@ export const LoadQuestionsSetting = Command.define('LoadQuestionsSetting', {
   args: { project: ProjectId },
   messages: [Message.LoadedQuestionsSetting],
   execute: ({ project }) =>
-    requestEngine(client =>
+    requestProject(project, client =>
       client.rpc['projects.settings.get']({ project }),
     ).pipe(
       Effect.map(settings => settings.questions),
@@ -181,7 +181,7 @@ export const CloseTalk = Command.define('CloseTalk', {
     Conversation.closeTalk(talk).pipe(Effect.as(Message.CompletedCloseTalk())),
 })
 
-type Return = Update.Return<Model, Message, EngineConnectionService>
+type Return = Update.Return<Model, Message, EngineServices>
 
 /** What the panel's update reads of the console: the scope, and the projects by name. */
 export interface Context {
@@ -231,14 +231,20 @@ export const answerTalk = (
     ? Option.some(model.answer.conversation)
     : Option.none()
 
-/** The talks the panel holds, whose transcripts are watched. */
-export const heldTalks = (model: Model): ReadonlyArray<TalkId> =>
+/** The talks the panel holds, whose transcripts are watched, each with its project. */
+export const heldTalks = (
+  model: Model,
+): ReadonlyArray<{ readonly project: ProjectId; readonly talk: TalkId }> =>
   [runTalk(model), answerTalk(model)].flatMap(talk =>
     Option.match(talk, {
       onNone: () => [],
-      onSome: ({ talk, ended }) => (ended ? [] : [talk]),
+      onSome: ({ project, talk, ended }) => (ended ? [] : [{ project, talk }]),
     }),
   )
+
+/** Whether the panel holds `talk`, its transcript watched. */
+const holds = (model: Model, talk: TalkId): boolean =>
+  heldTalks(model).some(held => held.talk === talk)
 
 /** The projects with open questions, in the order their oldest was asked. */
 const questionProjects = (model: Model): ReadonlyArray<ProjectId> =>
@@ -422,7 +428,7 @@ export const receivedTranscript = (
   talk: TalkId,
   items: Array.NonEmptyReadonlyArray<TranscriptItem>,
 ): Model =>
-  !heldTalks(model).includes(talk)
+  !holds(model, talk)
     ? model
     : modifyFields(model, {
         run: run =>
@@ -447,7 +453,7 @@ export const receivedTranscript = (
 
 /** A talk's transcript ended: the engine no longer has it. An ended answer talk gives the panel back. */
 export const endedTranscript = (model: Model, talk: TalkId): Model =>
-  !heldTalks(model).includes(talk)
+  !holds(model, talk)
     ? model
     : modifyFields(model, {
         run: run =>

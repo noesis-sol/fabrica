@@ -15,7 +15,7 @@ import {
   type TranscriptItem,
 } from '@fabrica/contracts'
 
-import type { EngineConnectionService } from '../app/connection'
+import type { EngineServices } from '../app/engine-route'
 import * as Conversation from '../console/conversation'
 
 // The Talks screen (spec §15.4, §15.5, §18.4): the refine and feature talks, full height, started on
@@ -119,11 +119,15 @@ export const CloseTalk = Command.define('CloseTalk', {
     Conversation.closeTalk(talk).pipe(Effect.as(Message.CompletedCloseTalk())),
 })
 
-type Return = Update.Return<Model, Message, EngineConnectionService>
+type Return = Update.Return<Model, Message, EngineServices>
 
-/** The talks this screen holds, whose transcripts are watched. */
-export const heldTalks = (model: Model): ReadonlyArray<TalkId> =>
-  model.talks.filter(talk => !talk.ended).map(({ talk }) => talk)
+/** The talks this screen holds, whose transcripts are watched, each with its project. */
+export const heldTalks = (
+  model: Model,
+): ReadonlyArray<{ readonly project: ProjectId; readonly talk: TalkId }> =>
+  model.talks
+    .filter(talk => !talk.ended)
+    .map(({ project, talk }) => ({ project, talk }))
 
 /** The screen opened on one of the console's talks: "Talk it through" shows the answer talk here. */
 export const showConsoleTalk = (model: Model, which: 'run' | 'answer'): Model =>

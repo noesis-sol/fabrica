@@ -60,12 +60,12 @@ import {
   Text,
 } from '@fabrica/contracts'
 
+import { Connection, localEngineName } from '../app/connection'
 import {
-  Connection,
-  type EngineConnectionService,
-  localEngineName,
+  type EngineServices,
   requestEngine,
-} from '../app/connection'
+  requestProject,
+} from '../app/engine-route'
 import { AppHost, ServiceInstall } from '../app/host'
 import type * as RemoteEngines from '../app/remote-engines'
 import { type EngineProjects, runLabel } from '../console/sidebar'
@@ -383,11 +383,14 @@ export const Message = defineMessageUnion({
 })
 export type Message = typeof Message.Type
 
-// Commands: each a request to the engine, its failure in words.
+// Commands: each a request to the engine, its failure in words: a project's to the engine whose sidebar
+// row holds it, the rest to this machine's, whose card, folders and credentials the screen shows.
 
 export const LoadEngineStatus = Command.define('LoadEngineStatus', {
   messages: [Message.SucceededLoadStatus, Message.FailedLoadStatus],
-  execute: requestEngine(client => client.rpc['engine.status']()).pipe(
+  execute: requestEngine(localEngineName, client =>
+    client.rpc['engine.status'](),
+  ).pipe(
     Effect.map(status => Message.SucceededLoadStatus({ status })),
     Effect.catch(reason =>
       Effect.succeed(Message.FailedLoadStatus({ reason })),
@@ -397,7 +400,9 @@ export const LoadEngineStatus = Command.define('LoadEngineStatus', {
 
 export const LoadCredentials = Command.define('LoadCredentials', {
   messages: [Message.SucceededLoadCredentials, Message.FailedLoadCredentials],
-  execute: requestEngine(client => client.rpc['credentials.list']()).pipe(
+  execute: requestEngine(localEngineName, client =>
+    client.rpc['credentials.list'](),
+  ).pipe(
     Effect.map(credentials =>
       Message.SucceededLoadCredentials({ credentials }),
     ),
@@ -411,7 +416,9 @@ export const AddProject = Command.define('AddProject', {
   args: { source: ProjectSource, name: Schema.Option(Text) },
   messages: [Message.SucceededAddProject, Message.FailedAddProject],
   execute: ({ source, name }) =>
-    requestEngine(client => client.rpc['projects.add']({ source, name })).pipe(
+    requestEngine(localEngineName, client =>
+      client.rpc['projects.add']({ source, name }),
+    ).pipe(
       Effect.map(project => Message.SucceededAddProject({ project })),
       Effect.catch(reason =>
         Effect.succeed(Message.FailedAddProject({ reason })),
@@ -424,7 +431,9 @@ export const LoadFolders = Command.define('LoadFolders', {
   args: { path: Schema.Option(Text) },
   messages: [Message.SucceededFolders, Message.FailedFolders],
   execute: ({ path }) =>
-    requestEngine(client => client.rpc['projects.folders']({ path })).pipe(
+    requestEngine(localEngineName, client =>
+      client.rpc['projects.folders']({ path }),
+    ).pipe(
       Effect.map(listing => Message.SucceededFolders({ path, listing })),
       Effect.catch(reason =>
         Effect.succeed(Message.FailedFolders({ path, reason })),
@@ -436,7 +445,7 @@ export const SetUpProject = Command.define('SetUpProject', {
   args: { project: ProjectId },
   messages: [Message.SucceededSetUp, Message.FailedSetUp],
   execute: ({ project }) =>
-    requestEngine(client =>
+    requestProject(project, client =>
       client.rpc['projects.init']({ project }).pipe(
         Effect.map(({ written }) =>
           Message.SucceededSetUp({ project, written }),
@@ -457,7 +466,7 @@ export const SetProjectTrust = Command.define('SetProjectTrust', {
   args: { project: ProjectId, trusted: Schema.Boolean },
   messages: [Message.SucceededTrust, Message.FailedTrust],
   execute: ({ project, trusted }) =>
-    requestEngine(client =>
+    requestProject(project, client =>
       client.rpc['projects.trust']({ project, trusted }),
     ).pipe(
       Effect.as(Message.SucceededTrust({ project })),
@@ -475,7 +484,7 @@ export const SetCredential = Command.define('SetCredential', {
   },
   messages: [Message.SucceededSetCredential, Message.FailedSetCredential],
   execute: ({ name, value, provider }) =>
-    requestEngine(client =>
+    requestEngine(localEngineName, client =>
       client.rpc['credentials.set']({ name, value, provider }),
     ).pipe(
       Effect.as(Message.SucceededSetCredential({ name })),
@@ -489,7 +498,9 @@ export const RemoveCredential = Command.define('RemoveCredential', {
   args: { name: CredentialName },
   messages: [Message.SucceededRemoveCredential, Message.FailedRemoveCredential],
   execute: ({ name }) =>
-    requestEngine(client => client.rpc['credentials.remove']({ name })).pipe(
+    requestEngine(localEngineName, client =>
+      client.rpc['credentials.remove']({ name }),
+    ).pipe(
       Effect.as(Message.SucceededRemoveCredential({ name })),
       Effect.catch(reason =>
         Effect.succeed(Message.FailedRemoveCredential({ name, reason })),
@@ -618,7 +629,7 @@ export const PairEngine = Command.define('PairEngine', {
 })
 
 /** What the screen's Commands need: the engine connection, and the app around the renderer. */
-export type Requires = EngineConnectionService | AppHost
+export type Requires = EngineServices | AppHost
 
 type Return = Update.Return<Model, Message, Requires>
 

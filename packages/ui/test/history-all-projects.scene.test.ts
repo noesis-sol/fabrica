@@ -27,7 +27,7 @@ import {
 } from '@fabrica/contracts'
 import * as VirtualList from '@foldkit/ui/virtualList'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import type { EventsItem } from '../src/app/streams'
@@ -350,8 +350,8 @@ describe("History's events watch", () => {
       ),
     )
     expect(watched(model)).toEqual([
-      { project: alpha, run: alphaRun },
-      { project: gamma, run: betaRun },
+      { engine: localEngineName, project: alpha, run: alphaRun },
+      { engine: localEngineName, project: gamma, run: betaRun },
     ])
   })
 
@@ -381,7 +381,9 @@ describe("History's events watch", () => {
       scope: Option.some(alpha),
       runView: Option.some(viewOf(alpha, alphaRun)),
     }
-    expect(watched(scoped)).toEqual([{ project: alpha, run: alphaRun }])
+    expect(watched(scoped)).toEqual([
+      { engine: localEngineName, project: alpha, run: alphaRun },
+    ])
     expect(watched({ ...scoped, runView: Option.none() })).toEqual([])
   })
 

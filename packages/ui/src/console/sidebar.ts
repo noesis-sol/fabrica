@@ -11,7 +11,6 @@ import {
   applyKeyedPatch,
 } from '@fabrica/contracts'
 
-import { localEngineName } from '../app/connection'
 import { applyItems } from '../app/streams'
 
 // The console's sidebar: projects and their runs (spec §18.3, H43; Appendix A.2). Header "Projects"
@@ -116,12 +115,11 @@ export const rows = (model: Model): ReadonlyArray<Row> =>
     )
     .map((row, at) => ({ ...row, index: at + 1 }))
 
-/**
- * The rows of the engine the app's own connection reaches, this machine's: the runs History and the
- * notifications watch through it, until a project's streams go through its own engine's connection.
- */
-export const localRows = (model: Model): ReadonlyArray<Row> =>
-  rows(model).filter(row => row.engine.name === localEngineName)
+/** Every row's status with the name of its engine: the runs History and the notifications watch, each through its engine. */
+export const engineStatuses = (
+  model: Model,
+): ReadonlyArray<{ readonly engine: string; readonly status: ProjectStatus }> =>
+  rows(model).map(row => ({ engine: row.engine.name, status: row.status }))
 
 /** The chip of `project`, as its row has it: cards in the All projects scope carry it (§18.3). */
 export const projectChip = (
@@ -141,6 +139,16 @@ export const projectName = (
   Option.map(
     Array.findFirst(rows(model), row => row.status.project === project),
     row => row.status.name,
+  )
+
+/** The name of the engine whose row holds `project`; none while no row shows it. */
+export const engineName = (
+  model: Model,
+  project: ProjectId,
+): Option.Option<string> =>
+  Option.map(
+    Array.findFirst(rows(model), row => row.status.project === project),
+    row => row.engine.name,
   )
 
 /** A run's state in a word, and the role colour beside it: none while idle. */

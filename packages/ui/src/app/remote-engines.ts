@@ -8,6 +8,7 @@ import {
   Queue,
   Ref,
   Schema,
+  type Scope,
   Semaphore,
   Stream,
 } from 'effect'
@@ -33,6 +34,8 @@ import {
   type EngineSession,
   attemptFailure,
   connect,
+  isLive,
+  localEngineName,
   retryAfter,
 } from './connection'
 import { AppHost } from './host'
@@ -45,7 +48,9 @@ import { Message } from './message'
 // again after a pause, inside the engine's stream, and each engine's stream runs in a fiber of its own,
 // so another engine's attempts, or its joining, leave its connection be.
 // One refused (its protocol too old or too new) or stopped (ssh refused its host) waits for the user:
-// an update over SSH, or trying again. Its project rows join the sidebar's under its name.
+// an update over SSH, or trying again. Its project rows join the sidebar's under its name, and while it
+// is connected its session is held by its name, so each request and stream for one of its projects goes
+// through it (engine-route.ts).
 // The engine in WSL2 is the app's own connection's (§7.6): main reaches the one Add engine installed or
 // found up to date there, every page given a new port to it, and the app's connection's next hello
 // keeps it, so main reaches it again at the next start.
@@ -86,6 +91,29 @@ export const named = (
   name: EngineName,
 ): Option.Option<RemoteEngine> =>
   Option.fromUndefinedOr(model.engines.find(engine => engine.name === name))
+
+/** Whether the engine named `engine` is connected: this machine's through the app's connection, another's through its own. */
+export const isEngineLive = (
+  model: {
+    readonly connection: Connection
+    readonly remotes: Model
+  },
+  engine: string,
+): boolean =>
+  engine === localEngineName
+    ? isLive(model.connection)
+    : Option.exists(named(model.remotes, engine), remote =>
+        isLive(remote.connection),
+      )
+
+/** The names of the engines connected now: this machine's, then the known engines', in their order. */
+export const liveEngines = (model: {
+  readonly connection: Connection
+  readonly remotes: Model
+}): ReadonlyArray<string> =>
+  [localEngineName, ...model.remotes.engines.map(remote => remote.name)].filter(
+    engine => isEngineLive(model, engine),
+  )
 
 /** The known engine reached at `destination` over SSH, if any. */
 export const atDestination = (
@@ -360,17 +388,26 @@ export interface RemoteConnection {
   readonly client: ClientOptions
   /** The engine's own streams while it is connected: its project rows, for the sidebar. */
   readonly streams: (session: EngineSession) => Stream.Stream<Message>
+  /** Holds the attempt's session as the engine's until the scope, the attempt's, closes (engine-route.ts). */
+  readonly keep: (
+    session: EngineSession,
+  ) => Effect.Effect<void, never, Scope.Scope>
 }
 
-/** One attempt: the client over a new port, its link's changes and its streams, until its link ends. */
+/**
+ * One attempt: the client over a new port, its session held as the engine's, its link's changes and its
+ * streams, until its link ends.
+ */
 const attemptMessages = ({
   name,
   port,
   client,
   streams,
+  keep,
 }: RemoteConnection): Stream.Stream<Message> =>
   Stream.unwrap(
     connect({ enginePort: port, client }).pipe(
+      Effect.tap(keep),
       Effect.map(session =>
         Stream.merge(
           session.client.links.pipe(

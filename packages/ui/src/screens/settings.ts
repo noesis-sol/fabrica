@@ -7,11 +7,12 @@ import { modifyFields } from 'foldkit/struct'
 
 import { EngineSettings, ProjectId, ProjectSettings } from '@fabrica/contracts'
 
+import { localEngineName } from '../app/connection'
 import {
-  type EngineConnectionService,
-  localEngineName,
+  type EngineServices,
   requestEngine,
-} from '../app/connection'
+  requestProject,
+} from '../app/engine-route'
 import { type Theme, defaultTheme, themeTitle, themes } from '../theme/theme'
 
 // The Settings screen (spec §18.4, §13.13, §18.2): the project's, the engine's and the app's settings,
@@ -79,7 +80,7 @@ export const LoadProjectSettings = Command.define('LoadProjectSettings', {
     Message.FailedLoadProjectSettings,
   ],
   execute: ({ project }) =>
-    requestEngine(client =>
+    requestProject(project, client =>
       client.rpc['projects.settings.get']({ project }),
     ).pipe(
       Effect.map(settings =>
@@ -96,7 +97,9 @@ export const LoadEngineSettings = Command.define('LoadEngineSettings', {
     Message.SucceededLoadEngineSettings,
     Message.FailedLoadEngineSettings,
   ],
-  execute: requestEngine(client => client.rpc['engine.settings']()).pipe(
+  execute: requestEngine(localEngineName, client =>
+    client.rpc['engine.settings'](),
+  ).pipe(
     Effect.map(settings => Message.SucceededLoadEngineSettings({ settings })),
     Effect.catch(reason =>
       Effect.succeed(Message.FailedLoadEngineSettings({ reason })),
@@ -104,8 +107,8 @@ export const LoadEngineSettings = Command.define('LoadEngineSettings', {
   ),
 })
 
-/** What the screen's Commands need: the engine connection. */
-export type Requires = EngineConnectionService
+/** What the screen's Commands need: the engines' connections. */
+export type Requires = EngineServices
 
 type Return = Update.Return<Model, Message, Requires>
 
