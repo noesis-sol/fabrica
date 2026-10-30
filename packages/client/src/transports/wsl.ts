@@ -16,6 +16,7 @@ import {
   type BridgeCommand,
   type BridgeEnd,
   bridgeBackOff,
+  bridgeScript,
   bridgeSocket,
 } from './bridge'
 
@@ -23,7 +24,8 @@ import {
 // found in `wsl.exe --list --verbose` (the default one where it is WSL2, else the first WSL2 one that
 // isn't a tool's own, as Docker Desktop's is), or `wsl.exe --install -d Ubuntu` offered where there is
 // none; the bridge, `wsl.exe -d <distro> -- fabrica bridge`, whose stdin and stdout carry the protocol
-// as ssh's do (`bridge.ts`); and what keeps the distribution running. WSL shuts a distribution down
+// as ssh's do (`bridge.ts`), run as `bridgeScript` so that it finds `~/.local/bin/fabrica` too, which the
+// PATH wsl.exe gives a command lacks on Ubuntu (fab-mgi.85); and what keeps the distribution running. WSL shuts a distribution down
 // once no Windows process has it open, whatever runs inside it, systemd units included, so the app
 // leaves a detached `wsl.exe` holding it for as long as its engine answers (fab-mgi.16): it asks the
 // engine its status every half minute and ends once none answers, letting WSL idle out. The install's
@@ -221,7 +223,7 @@ export const checkoutWarning = Effect.fn('Wsl.checkoutWarning')(function* ({
 
 export interface WslOptions extends WslRunner {
   readonly distro: WslDistro
-  /** The command run in the distribution: `fabrica bridge` unless given. */
+  /** The command run in the distribution, without a shell: `sh -c bridgeScript` unless given. */
   readonly remote?: ReadonlyArray<string>
 }
 
@@ -229,7 +231,7 @@ export interface WslOptions extends WslRunner {
 export type WslFailure = Data.TaggedEnum<{
   /** WSL has no distribution of that name. */
   DistroMissing: { readonly detail: string }
-  /** The distribution has no `fabrica` on its PATH. */
+  /** The distribution has no `fabrica`, on its PATH or at `~/.local/bin/fabrica`. */
   BridgeMissing: { readonly detail: string }
   /** The distribution stopped, or the bridge failed: it is tried again. */
   Lost: { readonly detail: string }
@@ -252,7 +254,7 @@ export class WslFailed extends Data.TaggedError('WslFailed')<{
       DistroMissing: () =>
         `WSL has no distribution named ${at}: install it, or choose another`,
       BridgeMissing: () =>
-        `the WSL distribution ${at} has no fabrica on its PATH: install the engine there`,
+        `the WSL distribution ${at} has no fabrica, on its PATH or in ~/.local/bin: install the engine there`,
       Lost: ({ detail }) => `the connection to WSL ${at} failed: ${detail}`,
     })
   }
@@ -319,14 +321,17 @@ export const wslEnded = (end: BridgeEnd): Option.Option<WslFailure> => {
   )
 }
 
-/** wsl.exe's arguments for the bridge: `-d <distro> -- fabrica bridge`, run by the distribution's shell. */
+/**
+ * wsl.exe's arguments for the bridge: `-d <distro> --exec sh -c <bridgeScript>`. `--exec` hands the
+ * script to sh as one argument, where the distribution's shell would take wsl.exe's command line apart.
+ */
 export const wslBridgeArguments = (
   options: Pick<WslOptions, 'distro' | 'remote'>,
 ): ReadonlyArray<string> => [
   '-d',
   options.distro,
-  '--',
-  ...(options.remote ?? ['fabrica', 'bridge']),
+  '--exec',
+  ...(options.remote ?? ['sh', '-c', bridgeScript]),
 ]
 
 /** A socket through wsl.exe to the engine in `options.distro`: each connection runs wsl.exe anew. */

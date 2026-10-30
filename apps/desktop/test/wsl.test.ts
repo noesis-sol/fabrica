@@ -4,7 +4,7 @@ import * as NodePath from 'node:path'
 
 import { describe, expect, it, layer } from '@effect/vitest'
 import { UbuntuInstall } from '@fabrica/client'
-import { holdScript, wslFailed } from '@fabrica/client/node'
+import { bridgeScript, holdScript, wslFailed } from '@fabrica/client/node'
 import { Toolbox, layerToolbox, shStub, tempFolder } from '@fabrica/testkit'
 
 import { ConnectionTarget } from '../src/connection/target'
@@ -14,7 +14,8 @@ import { installUbuntu, reachWslEngine } from '../src/main/wsl'
 // Main's WSL2 host and the connection process's WSL2 target (spec §7.6, H31) against a stub `wsl.exe`
 // that records each run's arguments: `--install -d Ubuntu` ends with its folder's `install-code`, and
 // leaves Ubuntu listed where its `installs` file says so; `--list --verbose` prints the list; the
-// keep-alive's `--exec` ends at once; and the bridge finds no fabrica in the distribution.
+// keep-alive (the `--exec` with arguments after its script) ends at once; and the bridge finds no fabrica
+// in the distribution.
 
 const toolbox = layerToolbox({
   tools: ['sh', 'cat', 'cp'],
@@ -28,7 +29,7 @@ const toolbox = layerToolbox({
         '  [ "$(cat "$dir/installs")" != yes ] || cp "$dir/installed" "$dir/list"',
         '  exit "$(cat "$dir/install-code")" ;;',
         '--list) cat "$dir/list"; exit 0 ;;',
-        '-d) [ "$3" != --exec ] || exit 0',
+        '-d) [ "$#" -le 6 ] || exit 0',
         "  echo '/bin/bash: line 1: fabrica: command not found' >&2",
         '  exit 127 ;;',
         'esac',
@@ -138,7 +139,9 @@ describe('the WSL2 host in main', () => {
           expect(
             Option.map(wslFailed(failed), ({ failure }) => failure._tag),
           ).toEqual(Option.some('BridgeMissing'))
-          expect((yield* runs).at(-1)).toBe('-d Ubuntu -- fabrica bridge')
+          expect((yield* runs).at(-1)).toBe(
+            `-d Ubuntu --exec sh -c ${bridgeScript}`,
+          )
         }).pipe(Effect.scoped),
     )
   })

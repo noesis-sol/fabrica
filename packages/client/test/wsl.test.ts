@@ -41,6 +41,7 @@ import {
 } from '../src/install'
 import {
   type WslFailure,
+  bridgeScript,
   checkoutWarning,
   chooseDistribution,
   decodeWslText,
@@ -592,7 +593,7 @@ const failureOf = (
 
 layer(layerDistro, { excludeTestServices: true })('the WSL bridge', it => {
   it.effect(
-    'runs wsl.exe -d <distro> -- fabrica bridge, and reaches the engine',
+    'runs fabrica bridge through wsl.exe -d <distro> --exec sh, and reaches the engine',
     () =>
       Effect.gen(function* () {
         const socket = NodePath.join(
@@ -604,7 +605,10 @@ layer(layerDistro, { excludeTestServices: true })('the WSL bridge', it => {
         const client = yield* clientIn({ env, distro: 'Ubuntu' })
         expect(Link.$is('Up')(yield* client.link)).toBe(true)
         expect(yield* runs).toEqual([
-          { utf8: '1', args: ['-d', 'Ubuntu', '--', 'fabrica', 'bridge'] },
+          {
+            utf8: '1',
+            args: ['-d', 'Ubuntu', '--exec', 'sh', '-c', bridgeScript],
+          },
         ])
       }),
   )

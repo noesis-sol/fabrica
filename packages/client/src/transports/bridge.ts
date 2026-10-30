@@ -6,9 +6,21 @@ import { PassThrough, Readable, Writable } from 'node:stream'
 import { reconnectBackOff } from '../port'
 
 // A bridge (spec §8.2): a child process whose stdin and stdout carry the protocol, the shape the SSH
-// and WSL2 bridges take (`ssh <destination> fabrica bridge`, `wsl.exe -d <distro> -- fabrica bridge`).
-// Each connection runs the command anew, and the child is stopped as its connection closes; a child
+// and WSL2 bridges take (`ssh <destination> fabrica bridge`, `wsl.exe -d <distro> -- fabrica bridge`),
+// each running `fabrica bridge` through `bridgeScript` on its host. Each connection runs the command anew, and the child is stopped as its connection closes; a child
 // that exits ends its connection, failing it with the cause its command's `ended` reads from its exit.
+
+/**
+ * What a bridge runs on its host, by sh: `fabrica bridge`, or the engine's link `~/.local/bin/fabrica`
+ * (spec §9.2) where fabrica isn't on the PATH, as on a host whose profile adds `~/.local/bin` but which
+ * neither a non-interactive ssh command nor `wsl.exe` reads (Ubuntu's `~/.profile`, Debian's). With
+ * neither there, it exits 127, as a shell does for a command it can't find, which both bridges read as
+ * their `BridgeMissing`. It holds neither a single quote nor a backslash, so it can be single-quoted.
+ */
+export const bridgeScript =
+  'if command -v fabrica >/dev/null 2>&1; then exec fabrica bridge; fi; ' +
+  'if [ -x "$HOME/.local/bin/fabrica" ]; then exec "$HOME/.local/bin/fabrica" bridge; fi; ' +
+  'echo fabrica: not found >&2; exit 127'
 
 /** How a bridge ended: its exit code or the signal that stopped it, and the end of its stderr. */
 export interface BridgeEnd {

@@ -302,7 +302,7 @@ The engine samples its host's load every few seconds for the console's system st
 
 - It looks for a WSL2 distribution, offering to install Ubuntu (`wsl --install -d Ubuntu`) when there is none.
 - It installs the Linux x64 engine distribution it embeds inside that distribution, with the steps it runs over SSH (§9.2) run through `wsl.exe -d <distro> --` instead.
-- It connects with `wsl.exe -d <distro> -- fabrica bridge` (§8.2), which starts the engine when it isn't running.
+- It connects with `fabrica bridge` in the distribution (§8.2), which starts the engine when it isn't running, run through `wsl.exe -d <distro> --exec sh -c …` so that it falls back to `~/.local/bin/fabrica` where the PATH wsl.exe gives a command lacks it, as over SSH.
 - Projects live in the distribution's Linux file system, where git is fast and POSIX semantics hold; the app warns about a checkout under `/mnt/c`.
 - WSL2's own lifetime applies: the distribution shuts down some time after its last process ends, so the engine runs as a systemd user unit inside it where the distribution has systemd enabled \[VERIFY WSL's systemd support and idle shutdown with a running service\].
 
@@ -343,7 +343,7 @@ The engine samples its host's load every few seconds for the console's system st
 |---|---|
 | Same machine | Unix domain socket `<data>/engine.sock` (or `$XDG_RUNTIME_DIR/fabrica/engine.sock`), mode 0600, through Effect's `Socket` (`RpcClient.makeProtocolSocket`) |
 | Remote, default (H30) | **The SSH stdio bridge.** The client runs the system's `ssh <destination> fabrica bridge` (OpenSSH; the user's config, keys and agent), falling back to `~/.local/bin/fabrica` (§9.2) where the host's PATH for a non-interactive ssh command lacks it. On the host, `fabrica bridge` connects to the engine's local socket (starting the engine when it isn't running) and copies bytes both ways, so the RPC runs over ssh's stdin and stdout. No port opens on either machine and nothing is forwarded; it works the same with Windows' OpenSSH client. SSH keepalives (`ServerAliveInterval`) detect a dead link; the client reconnects and resumes its streams (§8.3) |
-| WSL2 (H31) | The same bridge, run as `wsl.exe -d <distro> -- fabrica bridge` |
+| WSL2 (H31) | The same bridge, run as `wsl.exe -d <distro> -- fabrica bridge`, with the same fallback to `~/.local/bin/fabrica` (run through `--exec sh -c`, so that wsl.exe hands the fallback to sh as it is) |
 | Remote, option | WebSocket over TLS on a configured address (`RpcServer.makeProtocolWebsocket`), authenticated with a pairing token (§9.3) |
 
 In the app, the connection process (a `utilityProcess`) owns every transport (it runs `ssh` and `wsl.exe` as its children) and relays frames to the renderer over a `MessageChannelMain` port that main brokers once; main then leaves the data path \[VERIFY M0: Effect RPC over a child process's stdio and over a MessagePort relay\]. The CLI uses the same client package directly.

@@ -22,6 +22,7 @@ import {
   type BridgeCommand,
   type BridgeEnd,
   bridgeBackOff,
+  bridgeScript,
   bridgeSocket,
 } from './bridge'
 
@@ -99,17 +100,13 @@ export interface SshOptions {
 }
 
 /**
- * The command ssh runs on the host unless `remote` is given: `fabrica bridge`, or the engine's link
- * `~/.local/bin/fabrica` (spec §9.2) where fabrica isn't on the PATH, as on a host whose profile adds
- * `~/.local/bin` but which a non-interactive ssh command doesn't read (Ubuntu's `~/.profile`). One POSIX
- * script run by `sh`, single-quoted with neither a quote nor a backslash inside, so that every login shell
- * ssh hands it to (sh, bash, zsh, fish, csh) passes it on as it is. With neither there, it exits 127, as a
- * shell does for a command it can't find, which `sshEnded` reads as `BridgeMissing`.
+ * The command ssh runs on the host unless `remote` is given: `bridgeScript`, run by `sh`, single-quoted
+ * so that every login shell ssh hands it to (sh, bash, zsh, fish, csh) passes it on as it is.
  */
 export const bridgeRemote: ReadonlyArray<string> = [
   'sh',
   '-c',
-  `'if command -v fabrica >/dev/null 2>&1; then exec fabrica bridge; fi; if [ -x "$HOME/.local/bin/fabrica" ]; then exec "$HOME/.local/bin/fabrica" bridge; fi; echo fabrica: not found >&2; exit 127'`,
+  `'${bridgeScript}'`,
 ]
 
 /** Why ssh ended a connection, from its exit and stderr. Every one but `Lost` is a refusal. */
