@@ -414,6 +414,5 @@ export const threeWayArb = baseArb.chain(base =>
     base: fc.constant(base),
     ours: editArb(base),
     theirs: editArb(base),
-    holder: optionArb(engineArb),
   }),
 )

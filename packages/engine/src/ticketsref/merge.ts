@@ -1,11 +1,6 @@
 import { Data, DateTime, Option, Schema } from 'effect'
 
-import {
-  type EngineId,
-  Ticket,
-  type TicketId,
-  type TicketStatus,
-} from '@fabrica/contracts'
+import { Ticket, type TicketId, type TicketStatus } from '@fabrica/contracts'
 
 import { CodePoints, sortedUnique } from './code-points'
 import {
@@ -22,15 +17,15 @@ import {
   notesById,
   ticketFileText,
 } from './codec'
-import { Hlc, HlcOrder, later } from './hlc'
+import { type Hlc, HlcOrder, later } from './hlc'
 
 // The tickets ref's merge (spec §11.4, §11.7): the engine merges the ref itself, three-way, each
 // ticket's file against the merge base. A ticket changed on one side only takes that side; notes are
 // unioned by ID; labels and edges merge as sets, adds and removes reconciled against the base; a
 // plain field both sides changed goes to the later clock, ties by engine ID; `status` both sides
 // changed goes by precedence (closed, in progress, deferred, open), a reopen after a close winning by
-// its clock; a claim made under a lease since expired loses to the lease holder's; a deletion against
-// an edit loses to the edit. Every field both sides changed to different values, and every deletion
+// its clock (the assignee is a plain field: the run lease doesn't decide it); a deletion against an
+// edit loses to the edit. Every field both sides changed to different values, and every deletion
 // lost, is a conflict the caller records (a `merge_conflict` event). Pure, and symmetric: swapping the
 // sides swaps the conflicts' sides and nothing else.
 
@@ -145,26 +140,6 @@ const statusWinner = ({ base, ours, theirs }: MergeInput): Side => {
     : 'theirs'
 }
 
-/**
- * The side whose `assignee` wins for the run lease (spec §11.5), where both changed it: with a lease
- * held, a change another engine wrote (a claim or a release made under a lease since expired), or a
- * claim naming another engine, loses to the other side. None when the lease doesn't decide it.
- */
-const leaseWinner = (
-  { ours, theirs }: MergeInput,
-  holder: Option.Option<EngineId>,
-  sides: Record<Side, FieldView>,
-): Option.Option<{ readonly side: Side; readonly holder: EngineId }> =>
-  Option.flatMap(holder, engine => {
-    const stale = (file: TicketFile, view: FieldView): boolean =>
-      view.clock.engine !== engine ||
-      Option.exists(file.ticket.assignee, claim => claim.engine !== engine)
-    const oursStale = stale(ours, sides.ours)
-    return oursStale === stale(theirs, sides.theirs)
-      ? Option.none()
-      : Option.some({ side: oursStale ? 'theirs' : 'ours', holder: engine })
-  })
-
 /** A set three ways: kept where both sides have it, or where one side added it since the base. */
 const mergeSet = <A extends string>(
   base: Option.Option<ReadonlyArray<A>>,
@@ -210,18 +185,12 @@ export type MergedTicket = {
   readonly conflicts: ReadonlyArray<MergeConflict>
 }
 
-/**
- * Two sides' files of one ticket merged against the base's, if the base had the ticket. `holder` is
- * the engine holding the run lease after the merge, whose claims win.
- */
+/** Two sides' files of one ticket merged against the base's, if the base had the ticket. */
 export const mergeTicketFile = ({
   base,
   ours,
   theirs,
-  holder,
-}: MergeInput & {
-  readonly holder: Option.Option<EngineId>
-}): MergedTicket => {
+}: MergeInput): MergedTicket => {
   const input = { base, ours, theirs }
   const files = { ours, theirs }
   const views = { ours: fieldViews(ours), theirs: fieldViews(theirs) }
@@ -254,43 +223,14 @@ export const mergeTicketFile = ({
       field,
       field === 'status'
         ? () => statusWinner(input)
-        : field === 'assignee'
-          ? sides =>
-              Option.match(leaseWinner(input, holder, sides), {
-                onNone: () => byClock(sides.ours, sides.theirs),
-                onSome: ({ side }) => side,
-              })
-          : sides => byClock(sides.ours, sides.theirs),
+        : sides => byClock(sides.ours, sides.theirs),
     ),
-  )
-  // The lease holder's assignee, kept over another engine's later change, is kept at a clock just
-  // past both that names the holder, so the next merge still sees the holder wrote it.
-  const assignee = Option.match(
-    decided.assignee.conflict
-      ? leaseWinner(input, holder, {
-          ours: views.ours.assignee,
-          theirs: views.theirs.assignee,
-        })
-      : Option.none(),
-    {
-      onNone: () => decided.assignee,
-      onSome: ({ side, holder }) => ({
-        ...decided.assignee,
-        side,
-        clock: new Hlc({
-          wall: decided.assignee.clock.wall,
-          counter: decided.assignee.clock.counter + 1,
-          engine: holder,
-        }),
-      }),
-    },
   )
   // A ticket's resolution and close reason go with the status they were set with.
   const status = decided.status
   const withStatus = status.conflict
     ? {
         ...decided,
-        assignee,
         resolution: followOutcome(
           decided.resolution,
           status.side,
@@ -304,7 +244,7 @@ export const mergeTicketFile = ({
           'closeReason',
         ),
       }
-    : { ...decided, assignee }
+    : decided
   // A question's type and its question go together: where they merged apart into a ticket the
   // schema refuses, both come from the side whose type was kept.
   const typeSide = withStatus.type.side
@@ -450,12 +390,10 @@ export const mergeEntry = ({
   base,
   ours: oursSeen,
   theirs: theirsSeen,
-  holder,
 }: {
   readonly base: Option.Option<Entry>
   readonly ours: Option.Option<Entry>
   readonly theirs: Option.Option<Entry>
-  readonly holder: Option.Option<EngineId>
 }): MergedEntry => {
   const baseLive = Option.filter(base, entry => entry._tag === 'Live')
   const ours = Option.orElse(oursSeen, () => baseLive)
@@ -484,7 +422,6 @@ export const mergeEntry = ({
             ),
             ours: o.file,
             theirs: t.file,
-            holder,
           })
           return {
             entry: Option.some(Entry.Live({ file: merged.file })),
@@ -627,7 +564,7 @@ export type MergedSnapshot = {
   readonly conflicts: ReadonlyArray<TicketConflict>
 }
 
-/** Two sides of the ref merged against their merge base: the lease first, whose holder's claims win, then each ticket. */
+/** Two sides of the ref merged against their merge base: the lease, then each ticket. */
 export const mergeSnapshots = ({
   base,
   ours,
@@ -642,7 +579,6 @@ export const mergeSnapshots = ({
     ours: ours.lease,
     theirs: theirs.lease,
   })
-  const holder = Option.map(lease, lease => lease.engine)
   const ids = sortedUnique([
     ...base.entries.keys(),
     ...ours.entries.keys(),
@@ -655,7 +591,6 @@ export const mergeSnapshots = ({
       base: Option.fromNullishOr(base.entries.get(id)),
       ours: Option.fromNullishOr(ours.entries.get(id)),
       theirs: Option.fromNullishOr(theirs.entries.get(id)),
-      holder,
     })
     if (Option.isSome(merged.entry)) entries.set(id, merged.entry.value)
     for (const conflict of merged.conflicts)

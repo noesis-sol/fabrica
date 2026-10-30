@@ -38,7 +38,6 @@ import {
 import {
   baseArb,
   editArb,
-  engineArb,
   hlcArb,
   subject,
   threeWayArb,
@@ -47,8 +46,8 @@ import {
 // The tickets ref's three-way merge (spec §11.4, §11.7), property-tested (§24): symmetric, merging
 // with the base changes nothing, no note is lost, the merged clocks never run behind either side's;
 // and each rule by example: one side's change, plain fields by clock and engine ID, status by
-// precedence and a reopen by its clock, a claim under an expired lease losing, labels and edges as
-// sets, a deletion against an edit losing with a conflict, the run lease.
+// precedence and a reopen by its clock, labels and edges as sets, a deletion against an edit losing
+// with a conflict, the run lease.
 
 const text = ticketFileText
 
@@ -66,14 +65,13 @@ const swapped = (conflict: MergeConflict): MergeConflict =>
 describe('the merge of a ticket file (properties)', () => {
   it('is symmetric: swapping the sides swaps the conflicts and nothing else', () => {
     fc.assert(
-      fc.property(threeWayArb, ({ base, ours, theirs, holder }) => {
+      fc.property(threeWayArb, ({ base, ours, theirs }) => {
         for (const withBase of [Option.some(base), Option.none()]) {
-          const one = mergeTicketFile({ base: withBase, ours, theirs, holder })
+          const one = mergeTicketFile({ base: withBase, ours, theirs })
           const other = mergeTicketFile({
             base: withBase,
             ours: theirs,
             theirs: ours,
-            holder,
           })
           expect(text(one.file)).toBe(text(other.file))
           expect(one.conflicts).toEqual(other.conflicts.map(swapped))
@@ -84,12 +82,11 @@ describe('the merge of a ticket file (properties)', () => {
 
   it('changes nothing when one side is the base', () => {
     fc.assert(
-      fc.property(threeWayArb, ({ base, ours, holder }) => {
+      fc.property(threeWayArb, ({ base, ours }) => {
         const mine = mergeTicketFile({
           base: Option.some(base),
           ours,
           theirs: base,
-          holder,
         })
         expect(text(mine.file)).toBe(text(ours))
         expect(mine.conflicts).toEqual([])
@@ -97,7 +94,6 @@ describe('the merge of a ticket file (properties)', () => {
           base: Option.some(base),
           ours: base,
           theirs: ours,
-          holder,
         })
         expect(text(fetched.file)).toBe(text(ours))
         expect(fetched.conflicts).toEqual([])
@@ -107,12 +103,11 @@ describe('the merge of a ticket file (properties)', () => {
 
   it('is idempotent: a side merged with itself is itself', () => {
     fc.assert(
-      fc.property(threeWayArb, ({ base, ours, holder }) => {
+      fc.property(threeWayArb, ({ base, ours }) => {
         const merged = mergeTicketFile({
           base: Option.some(base),
           ours,
           theirs: ours,
-          holder,
         })
         expect(text(merged.file)).toBe(text(ours))
         expect(merged.conflicts).toEqual([])
@@ -122,12 +117,11 @@ describe('the merge of a ticket file (properties)', () => {
 
   it('loses no note, and keeps every clock at the later of the two sides', () => {
     fc.assert(
-      fc.property(threeWayArb, ({ base, ours, theirs, holder }) => {
+      fc.property(threeWayArb, ({ base, ours, theirs }) => {
         const { file } = mergeTicketFile({
           base: Option.some(base),
           ours,
           theirs,
-          holder,
         })
         const kept = new Set(file.notes.map(note => note.id))
         for (const note of [...ours.notes, ...theirs.notes])
@@ -146,12 +140,11 @@ describe('the merge of a ticket file (properties)', () => {
 
   it('keeps a field one side changed, and records a conflict only where both changed it', () => {
     fc.assert(
-      fc.property(threeWayArb, ({ base, ours, theirs, holder }) => {
+      fc.property(threeWayArb, ({ base, ours, theirs }) => {
         const { file, conflicts } = mergeTicketFile({
           base: Option.some(base),
           ours,
           theirs,
-          holder,
         })
         const followers = new Set<ClockedField>([
           'resolution',
@@ -184,12 +177,11 @@ describe('the merge of a ticket file (properties)', () => {
 
   it('makes a file that encodes and decodes back to itself', () => {
     fc.assert(
-      fc.property(threeWayArb, ({ base, ours, theirs, holder }) => {
+      fc.property(threeWayArb, ({ base, ours, theirs }) => {
         const { file } = mergeTicketFile({
           base: Option.some(base),
           ours,
           theirs,
-          holder,
         })
         const decoded = Effect.runSync(
           decodeTicketFile(Effect.runSync(encodeTicketFile(file))),
@@ -274,11 +266,8 @@ const edited = (
     },
   })
 
-const merge = (
-  ours: TicketFile,
-  theirs: TicketFile,
-  holder: Option.Option<EngineId> = Option.none(),
-) => mergeTicketFile({ base: Option.some(baseFile), ours, theirs, holder })
+const merge = (ours: TicketFile, theirs: TicketFile) =>
+  mergeTicketFile({ base: Option.some(baseFile), ours, theirs })
 
 describe('the merge of a ticket file (examples)', () => {
   it('takes a change made on one side only, whatever its clock', () => {
@@ -350,7 +339,6 @@ describe('the merge of a ticket file (examples)', () => {
       base: Option.some(inProgress),
       ours: edited(inProgress, hlc(900, fa), { status: 'open' }),
       theirs: edited(inProgress, hlc(200, fb), { status: 'deferred' }),
-      holder: Option.none(),
     })
     expect(released.file.ticket.status).toBe('deferred')
   })
@@ -392,7 +380,6 @@ describe('the merge of a ticket file (examples)', () => {
       base: Option.some(inProgress),
       ours: reopenedAt(600),
       theirs: closedThere,
-      holder: Option.none(),
     })
     expect(later.file.ticket.status).toBe('open')
     expect(later.file.clocks.reopened).toEqual(Option.some(hlc(600, fa)))
@@ -400,125 +387,8 @@ describe('the merge of a ticket file (examples)', () => {
       base: Option.some(inProgress),
       ours: reopenedAt(400),
       theirs: closedThere,
-      holder: Option.none(),
     })
     expect(earlier.file.ticket.status).toBe('closed')
-  })
-
-  it("gives a claim made under an expired lease to the lease holder's claim", () => {
-    const claim = (engine: EngineId, session: string) =>
-      Option.some(new Assignee({ engine, session: SessionId.make(session) }))
-    const stale = edited(baseFile, hlc(900, fa), { assignee: claim(fa, 's-1') })
-    const holders = edited(baseFile, hlc(200, fb), {
-      assignee: claim(fb, 's-2'),
-    })
-    expect(merge(stale, holders, Option.some(fb)).file.ticket.assignee).toEqual(
-      claim(fb, 's-2'),
-    )
-    expect(merge(holders, stale, Option.some(fb)).file.ticket.assignee).toEqual(
-      claim(fb, 's-2'),
-    )
-    // With no lease held, the later clock.
-    expect(merge(stale, holders).file.ticket.assignee).toEqual(claim(fa, 's-1'))
-    // The holder's release, at the earlier clock, beats a claim under an expired lease too.
-    const claimed = edited(baseFile, hlc(100, fb), {
-      assignee: claim(fb, 's-2'),
-    })
-    for (const [ours, theirs] of [
-      [
-        edited(claimed, hlc(1500, fb), { assignee: Option.none() }),
-        edited(claimed, hlc(2000, fa), { assignee: claim(fa, 's-1') }),
-      ],
-      [
-        edited(claimed, hlc(2000, fa), { assignee: claim(fa, 's-1') }),
-        edited(claimed, hlc(1500, fb), { assignee: Option.none() }),
-      ],
-    ] as const) {
-      const released = mergeTicketFile({
-        base: Option.some(claimed),
-        ours,
-        theirs,
-        holder: Option.some(fb),
-      })
-      expect(released.file.ticket.assignee).toEqual(Option.none())
-    }
-    // And a release written under an expired lease loses to the holder's claim.
-    const claimedByA = edited(baseFile, hlc(100, fa), {
-      status: 'in_progress',
-      assignee: claim(fa, 's-1'),
-    })
-    for (const [ours, theirs] of [
-      [
-        edited(claimedByA, hlc(1000, fb), { assignee: claim(fb, 's-2') }),
-        edited(claimedByA, hlc(2000, fa), { assignee: Option.none() }),
-      ],
-      [
-        edited(claimedByA, hlc(2000, fa), { assignee: Option.none() }),
-        edited(claimedByA, hlc(1000, fb), { assignee: claim(fb, 's-2') }),
-      ],
-    ] as const) {
-      const reclaimed = mergeTicketFile({
-        base: Option.some(claimedByA),
-        ours,
-        theirs,
-        holder: Option.some(fb),
-      })
-      expect(reclaimed.file.ticket.assignee).toEqual(claim(fb, 's-2'))
-    }
-  })
-
-  it("keeps the lease holder's assignee through the next merge, against the other engine's later claim", () => {
-    const claim = (engine: EngineId, session: string) =>
-      Option.some(new Assignee({ engine, session: SessionId.make(session) }))
-    const holder = Option.some(fb)
-    const twice = (
-      claimedAt: TicketFile,
-      holders: TicketFile,
-      stales: TicketFile,
-      expected: Option.Option<Assignee>,
-    ) => {
-      const first = mergeTicketFile({
-        base: Option.some(claimedAt),
-        ours: holders,
-        theirs: stales,
-        holder,
-      })
-      expect(first.file.ticket.assignee).toEqual(expected)
-      expect(first.file.clocks.assignee.engine).toBe(fb)
-      // fe-a claims again on its own side, before it has fetched the merge.
-      const again = edited(stales, hlc(2500, fa), {
-        assignee: claim(fa, 's-3'),
-      })
-      for (const [ours, theirs] of [
-        [first.file, again],
-        [again, first.file],
-      ] as const)
-        expect(
-          mergeTicketFile({ base: Option.some(stales), ours, theirs, holder })
-            .file.ticket.assignee,
-        ).toEqual(expected)
-    }
-    // The holder's claim, against a release written under an expired lease.
-    const claimedByA = edited(baseFile, hlc(100, fa), {
-      status: 'in_progress',
-      assignee: claim(fa, 's-1'),
-    })
-    twice(
-      claimedByA,
-      edited(claimedByA, hlc(1000, fb), { assignee: claim(fb, 's-2') }),
-      edited(claimedByA, hlc(2000, fa), { assignee: Option.none() }),
-      claim(fb, 's-2'),
-    )
-    // The holder's release, against a claim made under an expired lease.
-    const claimedByB = edited(baseFile, hlc(100, fb), {
-      assignee: claim(fb, 's-2'),
-    })
-    twice(
-      claimedByB,
-      edited(claimedByB, hlc(1500, fb), { assignee: Option.none() }),
-      edited(claimedByB, hlc(2000, fa), { assignee: claim(fa, 's-1') }),
-      Option.none(),
-    )
   })
 
   it('merges labels and edges as sets against the base', () => {
@@ -548,7 +418,6 @@ describe('the merge of a ticket file (examples)', () => {
       base: Option.none(),
       ours,
       theirs,
-      holder: Option.none(),
     })
     expect(twoWay.file.labels).toEqual([
       label('a'),
@@ -594,14 +463,13 @@ describe('the merge of a ticket file (examples)', () => {
     fc.assert(
       fc.property(
         baseArb.chain(base =>
-          fc.tuple(fc.constant(base), editArb(base), editArb(base), engineArb),
+          fc.tuple(fc.constant(base), editArb(base), editArb(base)),
         ),
-        ([base, ours, theirs, holder]) => {
+        ([base, ours, theirs]) => {
           const { file } = mergeTicketFile({
             base: Option.some(base),
             ours,
             theirs,
-            holder: Option.some(holder),
           })
           expect(file.ticket.type === 'question').toBe(
             Option.isSome(file.ticket.question),
@@ -623,7 +491,7 @@ describe('the merge of a ticket entry', () => {
     base: Option.Option<Entry>,
     ours: Option.Option<Entry>,
     theirs: Option.Option<Entry>,
-  ) => mergeEntry({ base, ours, theirs, holder: Option.none() })
+  ) => mergeEntry({ base, ours, theirs })
 
   it('keeps an edit against a deletion, with a conflict', () => {
     const edit = edited(baseFile, hlc(200, fb), { title: 'Edited' })
@@ -794,7 +662,7 @@ describe('the run lease merged', () => {
 })
 
 describe('the ref merged', () => {
-  it("merges the lease first, and gives its holder's claims the win", () => {
+  it('merges the lease and each ticket, the assignee by its later clock', () => {
     const claim = (engine: EngineId) =>
       Option.some(new Assignee({ engine, session: SessionId.make('s-1') }))
     const other = id('fa-b2')
@@ -838,7 +706,7 @@ describe('the ref merged', () => {
     expect(merged.lease).toEqual(Option.some(held))
     const entry = merged.entries.get(subject)
     expect(entry?._tag === 'Live' && entry.file.ticket.assignee).toEqual(
-      claim(fb),
+      claim(fa),
     )
     expect(merged.entries.get(other)).toEqual(Entry.Live({ file: otherFile }))
     expect(
