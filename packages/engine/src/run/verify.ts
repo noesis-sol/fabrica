@@ -25,7 +25,7 @@ import { Git, type Worktree } from '../git'
 import { ModelProxy } from '../proxy'
 import { WorkGraph } from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
-import { type WorkerContext, modelOf, standingOf } from './worker'
+import { type WorkerContext, modelOf, runVariables, standingOf } from './worker'
 
 // The verifier after `finish` (spec §13.6, H19, H89): a separate Pi session in the ticket's worktree,
 // read-only (Pi's read, grep, find, ls and bash, and its one tool of the extension's, `verdict`),
@@ -381,6 +381,7 @@ const verifyRound = Effect.fn('Verifier.round')(function* (input: {
     resume: Option.none(),
     env: {
       ...channel.environment,
+      ...runVariables(started),
       [AgentRoleVariable]: 'verifier',
       ...Option.match(passedAt, {
         onNone: () => ({}),

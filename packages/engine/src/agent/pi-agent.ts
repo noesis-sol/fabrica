@@ -76,7 +76,7 @@ export interface AgentStart {
   readonly tools: Option.Option<ReadonlyArray<string>>
   /** A session file to resume with `switch_session`; none starts a new session. */
   readonly resume: Option.Option<string>
-  /** Variables beyond the allowlisted ones: the control socket's path and token. */
+  /** Variables beyond the allowlisted ones: the control socket's path and token, the gate's permissions. */
   readonly env: Readonly<Record<string, string>>
   /** The user trusts the project, so Pi may load its own settings and packages (§12.1, §20.2). */
   readonly projectTrusted: boolean

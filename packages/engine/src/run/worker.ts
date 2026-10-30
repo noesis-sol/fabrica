@@ -16,6 +16,7 @@ import {
   type MergeStanding,
   ModelName,
   ModelOverride,
+  PermissionsVariable,
   type RunId,
   type SessionId,
   type SetAsideReason,
@@ -168,6 +169,13 @@ export const standingOf = (
         ? 'waiting'
         : 'not_queued',
   )
+
+/** The variables every agent of the run gets beyond its channel's: the project's `permissions`, the level its gate enforces (§12.6). */
+export const runVariables = (
+  started: Started,
+): Readonly<Record<string, string>> => ({
+  [PermissionsVariable]: started.settings.project.permissions,
+})
 
 /** The spec's sections the ticket cites, read from its worktree as Base has them; none it can't read. */
 const citedSpec = (ticket: Ticket, worktree: Worktree) =>
@@ -504,7 +512,7 @@ export const runWorker = Effect.fn('Run.worker')(function* (
     model,
     tools: Option.none(),
     resume,
-    env: channel.environment,
+    env: { ...channel.environment, ...runVariables(started) },
     projectTrusted: config.projectTrusted,
     nice: config.nice,
   })
