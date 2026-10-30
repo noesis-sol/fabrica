@@ -32,11 +32,11 @@ import {
 } from '@fabrica/contracts'
 
 import { Connection, connect, localEngineName } from '../src/app/connection'
+import { projectMessages } from '../src/app/features/sidebar/sidebar'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { clientName } from '../src/app/program'
 import { Screen } from '../src/app/screen'
-import { projectMessages } from '../src/app/subscriptions'
 import { update } from '../src/app/update'
 import { view } from '../src/app/view'
 import { chipOf, projectChip, rows } from '../src/console/sidebar'

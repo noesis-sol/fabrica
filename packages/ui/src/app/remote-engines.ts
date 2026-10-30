@@ -38,6 +38,7 @@ import {
   localEngineName,
   retryAfter,
 } from './connection'
+import type { EngineProject } from './engine-project'
 import { AppHost } from './host'
 import { Message } from './message'
 
@@ -114,6 +115,21 @@ export const liveEngines = (model: {
   [localEngineName, ...model.remotes.engines.map(remote => remote.name)].filter(
     engine => isEngineLive(model, engine),
   )
+
+/** The scoped project, while its engine is connected: none under All projects or while it isn't. */
+export const liveScope = (model: {
+  readonly scope: Option.Option<EngineProject>
+  readonly connection: Connection
+  readonly remotes: Model
+}): Option.Option<EngineProject> =>
+  Option.filter(model.scope, ({ engine }) => isEngineLive(model, engine))
+
+/** Of `runs`, those on an engine connected now. */
+export const onLiveEngines = <Run extends { readonly engine: string }>(
+  model: { readonly connection: Connection; readonly remotes: Model },
+  runs: ReadonlyArray<Run>,
+): ReadonlyArray<Run> =>
+  runs.filter(({ engine }) => isEngineLive(model, engine))
 
 /** The known engine reached at `destination` over SSH, if any. */
 export const atDestination = (

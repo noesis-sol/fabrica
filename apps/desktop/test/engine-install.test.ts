@@ -18,7 +18,8 @@ import {
   engineSource,
   installEngineOn,
 } from '../src/main/engine-install'
-import { type MainActions, registerIpc } from '../src/main/ipc'
+import { addEngineChannels } from '../src/main/features/add-engine'
+import { makeIpcRegistrar } from '../src/main/ipc'
 import { type PreloadIpc, channels, makeApi } from '../src/preload/api'
 
 // Add engine and the update offer at connect, through the preload and main (spec §9.2, §20.1): the
@@ -113,41 +114,27 @@ describe('main’s engine install', () => {
     >()
     const asked: Array<unknown> = []
     const unused = () => Promise.reject(new Error('not this test’s'))
-    const actions: MainActions = {
-      minimize: () => undefined,
-      toggleMaximize: () => undefined,
-      close: () => undefined,
-      setTheme: () => undefined,
-      notify: () => undefined,
-      pickFolder: unused,
-      version: '1.0.0',
-      updateStatus: () => ({ _tag: 'Unavailable' }),
-      installLoginService: unused,
-      answerSshPrompt: () => undefined,
-      knownEngines: unused,
-      keepEngine: unused,
-      connectEngine: () => undefined,
-      readFingerprint: unused,
-      pairEngine: unused,
-      checkEngine: host => {
-        asked.push(host)
-        return Promise.resolve(checked)
+    addEngineChannels(
+      makeIpcRegistrar({
+        ipc: {
+          on: () => undefined,
+          handle: (channel, handler) => handlers.set(channel, handler),
+        },
+        trusted: url => url === app,
+      }),
+      {
+        checkEngine: host => {
+          asked.push(host)
+          return Promise.resolve(checked)
+        },
+        installEngine: request => {
+          asked.push(request)
+          return Promise.resolve(installed)
+        },
+        findWsl: unused,
+        installUbuntu: unused,
       },
-      installEngine: request => {
-        asked.push(request)
-        return Promise.resolve(installed)
-      },
-      findWsl: unused,
-      installUbuntu: unused,
-    }
-    registerIpc({
-      ipc: {
-        on: () => undefined,
-        handle: (channel, handler) => handlers.set(channel, handler),
-      },
-      trusted: url => url === app,
-      actions,
-    })
+    )
     const invoke = (
       channel: string,
       sender: string | undefined,

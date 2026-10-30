@@ -38,11 +38,12 @@ import {
 
 import { Connection, localEngineName } from '../src/app/connection'
 import type { EngineProject } from '../src/app/engine-project'
+import { modelCommands } from '../src/app/features/keys/keys'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { Screen } from '../src/app/screen'
 import type { AttentionItem } from '../src/app/streams'
-import { modelCommands, update } from '../src/app/update'
+import { update } from '../src/app/update'
 import { view } from '../src/app/view'
 import * as Attention from '../src/console/attention'
 import * as TalkPanel from '../src/console/talk-panel'

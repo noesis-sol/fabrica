@@ -21,7 +21,8 @@ import {
   installEngineOn,
   loginServiceOn,
 } from '../src/main/engine-install'
-import { type MainActions, registerIpc } from '../src/main/ipc'
+import { addEngineChannels } from '../src/main/features/add-engine'
+import { makeIpcRegistrar } from '../src/main/ipc'
 import {
   type BrokeredPage,
   type ConnectionProcess,
@@ -103,44 +104,30 @@ describe('main’s WSL2 search and Ubuntu install', () => {
     >()
     const asked: Array<string> = []
     const unused = () => Promise.reject(new Error('not this test’s'))
-    const actions: MainActions = {
-      minimize: () => undefined,
-      toggleMaximize: () => undefined,
-      close: () => undefined,
-      setTheme: () => undefined,
-      notify: () => undefined,
-      pickFolder: unused,
-      version: '1.0.0',
-      updateStatus: () => ({ _tag: 'Unavailable' }),
-      installLoginService: unused,
-      checkEngine: host => {
-        asked.push(`check ${host._tag}`)
-        return Promise.resolve({ _tag: 'Failed', reason: 'not this test’s' })
+    addEngineChannels(
+      makeIpcRegistrar({
+        ipc: {
+          on: () => undefined,
+          handle: (channel, handler) => handlers.set(channel, handler),
+        },
+        trusted: url => url === app,
+      }),
+      {
+        checkEngine: host => {
+          asked.push(`check ${host._tag}`)
+          return Promise.resolve({ _tag: 'Failed', reason: 'not this test’s' })
+        },
+        installEngine: unused,
+        findWsl: () => {
+          asked.push('find')
+          return Promise.resolve(found)
+        },
+        installUbuntu: () => {
+          asked.push('install Ubuntu')
+          return Promise.resolve(ready)
+        },
       },
-      installEngine: unused,
-      findWsl: () => {
-        asked.push('find')
-        return Promise.resolve(found)
-      },
-      installUbuntu: () => {
-        asked.push('install Ubuntu')
-        return Promise.resolve(ready)
-      },
-      answerSshPrompt: () => undefined,
-      knownEngines: unused,
-      keepEngine: unused,
-      connectEngine: () => undefined,
-      readFingerprint: unused,
-      pairEngine: unused,
-    }
-    registerIpc({
-      ipc: {
-        on: () => undefined,
-        handle: (channel, handler) => handlers.set(channel, handler),
-      },
-      trusted: url => url === app,
-      actions,
-    })
+    )
     const invoke = (
       channel: string,
       sender: string | undefined,

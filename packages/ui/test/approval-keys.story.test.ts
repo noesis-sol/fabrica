@@ -24,16 +24,13 @@ import {
 
 import { Connection, localEngineName } from '../src/app/connection'
 import type { EngineProject } from '../src/app/engine-project'
+import { keyHelpCommands, modelCommands } from '../src/app/features/keys/keys'
+import { paletteEntries } from '../src/app/features/palette/palette'
 import { chordLabel, keyHelp } from '../src/app/keys'
 import { Message } from '../src/app/message'
 import { type Model, Overlay, initialModel } from '../src/app/model'
 import type { AttentionItem } from '../src/app/streams'
-import {
-  keyHelpCommands,
-  modelCommands,
-  paletteEntries,
-  update,
-} from '../src/app/update'
+import { update } from '../src/app/update'
 import { view } from '../src/app/view'
 import * as Attention from '../src/console/attention'
 

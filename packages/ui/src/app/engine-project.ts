@@ -4,6 +4,7 @@ import {
   AttentionRef,
   type AttentionRequest,
   ProjectId,
+  RunId,
   attentionKey,
 } from '@fabrica/contracts'
 
@@ -19,6 +20,14 @@ export const EngineProject = Schema.Struct({
   project: ProjectId,
 })
 export type EngineProject = typeof EngineProject.Type
+
+/** A run, with the name of the engine it runs on. */
+export const EngineRun = Schema.Struct({
+  engine: Schema.String,
+  project: ProjectId,
+  run: RunId,
+})
+export type EngineRun = typeof EngineRun.Type
 
 /** Whether two projects are the same: one ID on one engine. */
 export const sameProject = Schema.toEquivalence(EngineProject)

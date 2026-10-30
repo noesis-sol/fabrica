@@ -213,6 +213,11 @@ Code rules (spec §6):
 Working beside other agents (spec §23, from building tutti):
 
 - **New tests go in a new test file named after the feature**, not at the end of an existing one.
+- **A feature registers in files of its own**: a UI feature's Messages in
+  `packages/ui/src/app/features/<name>/message.ts`, its update branches, view and subscriptions in
+  `features/<name>/<name>.ts` (`app/feature.ts`); a desktop feature's IPC channels and actions in
+  `apps/desktop/src/main/features/<name>.ts`. The central files (`app/message.ts`, `update.ts`, `view.ts`,
+  `subscriptions.ts`, `main/index.ts`) only list features, a line each, sorted by name (spec §6).
 - **Changelog entries are one file per ticket**, `changes/<ticket>.md`; never edit another ticket's.
 - A ticket's text names a file only where the ticket will change it, since footprints read every path a
   ticket names; a description opens with the detail, not a restatement of its title.

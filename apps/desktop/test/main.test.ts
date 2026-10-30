@@ -4,10 +4,13 @@ import { MessageChannel } from 'node:worker_threads'
 import { describe, expect, it } from 'vitest'
 
 import { FuseV1Options } from '@electron/fuses'
-import { ServiceInstall } from '@fabrica/ui/host'
 
 import { appFuses, packedElectron } from '../build/fuses'
-import { type MainActions, type MainIpc, registerIpc } from '../src/main/ipc'
+import { appVersionChannels } from '../src/main/features/app-version'
+import { folderPickChannels } from '../src/main/features/folder-pick'
+import { themeChannels } from '../src/main/features/theme'
+import { windowControlsChannels } from '../src/main/features/window-controls'
+import { type MainIpc, makeIpcRegistrar } from '../src/main/ipc'
 import {
   AppPage,
   NavigationDecision,
@@ -330,48 +333,32 @@ const fakeMainIpc = () => {
   }
 }
 
-const recordingActions = () => {
+/** The window controls, the theme, the folder pick and the version on `ipc`, each act recorded. */
+const registerRecording = (ipc: MainIpc, trusted: (url: string) => boolean) => {
   const done: Array<string> = []
-  const actions: MainActions = {
+  const on = makeIpcRegistrar({ ipc, trusted })
+  windowControlsChannels(on, {
     minimize: () => done.push('minimize'),
     toggleMaximize: () => done.push('toggleMaximize'),
     close: () => done.push('close'),
-    setTheme: theme => done.push(`setTheme ${theme}`),
-    notify: ({ title }) => done.push(`notify ${title}`),
+  })
+  themeChannels(on, { setTheme: theme => done.push(`setTheme ${theme}`) })
+  folderPickChannels(on, {
     pickFolder: () =>
       Promise.resolve(FolderPick.cases.Picked.make({ path: '/repo' })),
+  })
+  appVersionChannels(on, {
     version: '1.0.0',
     updateStatus: () => UpdateStatus.cases.Unavailable.make({}),
-    installLoginService: () =>
-      Promise.resolve(ServiceInstall.cases.Installed.make({})),
-    checkEngine: () =>
-      Promise.reject(new Error('the engine install’s tests answer it')),
-    installEngine: () =>
-      Promise.reject(new Error('the engine install’s tests answer it')),
-    findWsl: () =>
-      Promise.reject(new Error('the WSL2 engine’s tests answer it')),
-    installUbuntu: () =>
-      Promise.reject(new Error('the WSL2 engine’s tests answer it')),
-    answerSshPrompt: ({ id }) => done.push(`answerSshPrompt ${id}`),
-    knownEngines: () =>
-      Promise.reject(new Error('the known engines’ tests answer it')),
-    keepEngine: () =>
-      Promise.reject(new Error('the known engines’ tests answer it')),
-    connectEngine: ({ request }) => done.push(`connectEngine ${request}`),
-    readFingerprint: () =>
-      Promise.reject(new Error('the TLS pairing’s tests answer it')),
-    pairEngine: () =>
-      Promise.reject(new Error('the TLS pairing’s tests answer it')),
-  }
-  return { done, actions }
+  })
+  return done
 }
 
 describe('main’s end of the API', () => {
   const app = 'file:///app/index.html'
   const setUp = () => {
     const fake = fakeMainIpc()
-    const { done, actions } = recordingActions()
-    registerIpc({ ipc: fake.ipc, trusted: url => url === app, actions })
+    const done = registerRecording(fake.ipc, url => url === app)
     return { ...fake, done }
   }
 

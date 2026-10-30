@@ -18,7 +18,8 @@ import {
 } from '@fabrica/ui/port'
 
 import { ConnectionTarget } from '../src/connection/target'
-import { type MainActions, registerIpc } from '../src/main/ipc'
+import { engineListChannels } from '../src/main/features/engine-list'
+import { makeIpcRegistrar } from '../src/main/ipc'
 import { keepEngineIn, knownEnginesOf } from '../src/main/known-engines'
 import {
   type ConnectionProcess,
@@ -155,41 +156,25 @@ describe('main’s known engines', () => {
       (sender: string | undefined, values: ReadonlyArray<unknown>) => void
     >()
     const done: Array<unknown> = []
-    const unused = () => Promise.reject(new Error('not this test’s'))
-    const actions: MainActions = {
-      minimize: () => undefined,
-      toggleMaximize: () => undefined,
-      close: () => undefined,
-      setTheme: () => undefined,
-      notify: () => undefined,
-      pickFolder: unused,
-      version: '1.0.0',
-      updateStatus: () => ({ _tag: 'Unavailable' }),
-      installLoginService: unused,
-      checkEngine: unused,
-      installEngine: unused,
-      findWsl: unused,
-      installUbuntu: unused,
-      answerSshPrompt: () => undefined,
-      knownEngines: () => Promise.resolve(read),
-      keepEngine: engine => {
-        done.push(engine)
-        return Promise.resolve(kept)
+    engineListChannels(
+      makeIpcRegistrar({
+        ipc: {
+          on: (channel, listener) => listeners.set(channel, listener),
+          handle: (channel, handler) => handlers.set(channel, handler),
+        },
+        trusted: url => url === app,
+      }),
+      {
+        knownEngines: () => Promise.resolve(read),
+        keepEngine: engine => {
+          done.push(engine)
+          return Promise.resolve(kept)
+        },
+        connectEngine: asked => {
+          done.push(asked)
+        },
       },
-      connectEngine: asked => {
-        done.push(asked)
-      },
-      readFingerprint: unused,
-      pairEngine: unused,
-    }
-    registerIpc({
-      ipc: {
-        on: (channel, listener) => listeners.set(channel, listener),
-        handle: (channel, handler) => handlers.set(channel, handler),
-      },
-      trusted: url => url === app,
-      actions,
-    })
+    )
     const invoke = (
       channel: string,
       sender: string | undefined,

@@ -35,7 +35,8 @@ import {
 import { relay } from '../src/connection/relay'
 import { ConnectionTarget, encodeTarget } from '../src/connection/target'
 import { engineSocket, refusalOf } from '../src/connection/transports'
-import { type MainActions, registerIpc } from '../src/main/ipc'
+import { tlsPairingChannels } from '../src/main/features/tls-pairing'
+import { makeIpcRegistrar } from '../src/main/ipc'
 import { makeFingerprintDesk, makePairings } from '../src/main/pairing'
 import { type SecretBox, makeAppState } from '../src/main/state'
 import { type PreloadIpc, channels, makeApi } from '../src/preload/api'
@@ -487,44 +488,27 @@ describe('pairing through the preload and main', () => {
       ) => Promise<unknown>
     >()
     const done: Array<unknown> = []
-    const unused = () => Promise.reject(new Error('not this test’s'))
-    const actions: MainActions = {
-      minimize: () => undefined,
-      toggleMaximize: () => undefined,
-      close: () => undefined,
-      setTheme: () => undefined,
-      notify: () => undefined,
-      pickFolder: unused,
-      version: '1.0.0',
-      updateStatus: () => ({ _tag: 'Unavailable' }),
-      installLoginService: unused,
-      checkEngine: unused,
-      installEngine: unused,
-      findWsl: unused,
-      installUbuntu: unused,
-      answerSshPrompt: () => undefined,
-      knownEngines: unused,
-      keepEngine: unused,
-      connectEngine: () => undefined,
-      readFingerprint: asked => {
-        done.push(asked)
-        return Promise.resolve(
-          FingerprintAnswer.cases.Presented.make({ fingerprint: presented }),
-        )
+    tlsPairingChannels(
+      makeIpcRegistrar({
+        ipc: {
+          on: () => undefined,
+          handle: (channel, handler) => handlers.set(channel, handler),
+        },
+        trusted: url => url === app,
+      }),
+      {
+        readFingerprint: asked => {
+          done.push(asked)
+          return Promise.resolve(
+            FingerprintAnswer.cases.Presented.make({ fingerprint: presented }),
+          )
+        },
+        pairEngine: asked => {
+          done.push(asked.name, Redacted.value(asked.token))
+          return Promise.resolve(PairAnswer.cases.Paired.make({}))
+        },
       },
-      pairEngine: asked => {
-        done.push(asked.name, Redacted.value(asked.token))
-        return Promise.resolve(PairAnswer.cases.Paired.make({}))
-      },
-    }
-    registerIpc({
-      ipc: {
-        on: () => undefined,
-        handle: (channel, handler) => handlers.set(channel, handler),
-      },
-      trusted: url => url === app,
-      actions,
-    })
+    )
     const ipc: PreloadIpc = {
       send: () => undefined,
       invoke: (channel, ...values) =>

@@ -33,6 +33,8 @@ import {
 
 import { Connection, connect, localEngineName } from '../src/app/connection'
 import type { EngineProject } from '../src/app/engine-project'
+import { WaitToReconnect } from '../src/app/features/connection/connection'
+import { runViewMessages } from '../src/app/features/run-view/run-view'
 import { perFrame } from '../src/app/frame'
 import {
   type KeyCommand,
@@ -41,14 +43,14 @@ import {
   keyHelp,
   openPalette,
 } from '../src/app/keys'
+import { layout } from '../src/app/layout'
 import { Message } from '../src/app/message'
 import { type Flags, type Model, Overlay, initialModel } from '../src/app/model'
 import { clientName } from '../src/app/program'
 import { Screen } from '../src/app/screen'
 import { RunViewItem } from '../src/app/streams'
-import { runViewMessages } from '../src/app/subscriptions'
-import { WaitToReconnect, update } from '../src/app/update'
-import { layout, view } from '../src/app/view'
+import { update } from '../src/app/update'
+import { view } from '../src/app/view'
 import * as Insights from '../src/screens/insights'
 import * as Settings from '../src/screens/settings'
 import * as Worker from '../src/screens/worker'

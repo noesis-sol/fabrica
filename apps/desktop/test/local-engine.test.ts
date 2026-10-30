@@ -8,7 +8,8 @@ import { ReleaseVersion } from '@fabrica/contracts'
 import { Toolbox, layerToolbox, shStub, tempFolder } from '@fabrica/testkit'
 import { ServiceInstall, appHostOf } from '@fabrica/ui/host'
 
-import { type MainActions, registerIpc } from '../src/main/ipc'
+import { loginServiceChannels } from '../src/main/features/login-service'
+import { makeIpcRegistrar } from '../src/main/ipc'
 import {
   bundledEngine,
   ensureLocalEngine,
@@ -234,7 +235,7 @@ layer(layerToolbox({ tools: ['node'] }), { excludeTestServices: true })(
 describe("the user's choice of the login service", () => {
   const app = 'file:///app/index.html'
 
-  /** Main's end, as `registerIpc` sets it up, answering `installLoginService` with `answer`. */
+  /** Main's end, as the login service's feature sets it up, answering `installLoginService` with `answer`. */
   const mainAnswering = (answer: () => Promise<ServiceInstall>) => {
     const handlers = new Map<
       string,
@@ -243,36 +244,16 @@ describe("the user's choice of the login service", () => {
         values: ReadonlyArray<unknown>,
       ) => Promise<unknown>
     >()
-    const unused = () => Promise.reject(new Error('not this test’s'))
-    const actions: MainActions = {
-      minimize: () => undefined,
-      toggleMaximize: () => undefined,
-      close: () => undefined,
-      setTheme: () => undefined,
-      notify: () => undefined,
-      pickFolder: unused,
-      version: '1.0.0',
-      updateStatus: () => ({ _tag: 'Unavailable' }),
-      installLoginService: answer,
-      checkEngine: unused,
-      installEngine: unused,
-      findWsl: unused,
-      installUbuntu: unused,
-      answerSshPrompt: () => undefined,
-      knownEngines: unused,
-      keepEngine: unused,
-      connectEngine: () => undefined,
-      readFingerprint: unused,
-      pairEngine: unused,
-    }
-    registerIpc({
-      ipc: {
-        on: () => undefined,
-        handle: (channel, handler) => handlers.set(channel, handler),
-      },
-      trusted: url => url === app,
-      actions,
-    })
+    loginServiceChannels(
+      makeIpcRegistrar({
+        ipc: {
+          on: () => undefined,
+          handle: (channel, handler) => handlers.set(channel, handler),
+        },
+        trusted: url => url === app,
+      }),
+      { installLoginService: answer },
+    )
     return (sender: string, channel: string, values: ReadonlyArray<unknown>) =>
       handlers.get(channel)?.(sender, values) ??
       Promise.reject(new Error(`no handler for ${channel}`))

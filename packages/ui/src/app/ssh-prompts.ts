@@ -21,7 +21,8 @@ import {
 } from '@fabrica/client'
 
 import { dialog } from './dialog'
-import { Message, SshReply } from './message'
+import { SshReply } from './features/ssh-prompts/message'
+import { Message } from './message'
 
 // What ssh asks as the app connects (spec §9.1), shown over the app: an unknown host's key with its
 // fingerprint, to accept or refuse; a passphrase or a password, typed into a password field; a yes or

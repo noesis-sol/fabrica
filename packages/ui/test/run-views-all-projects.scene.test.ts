@@ -36,11 +36,12 @@ import {
 
 import { Connection, localEngineName } from '../src/app/connection'
 import { type EngineProject, projectKey } from '../src/app/engine-project'
+import { WaitToRewatchRunView } from '../src/app/features/run-view/run-view'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { Screen } from '../src/app/screen'
 import { makeSubscriptions } from '../src/app/subscriptions'
-import { WaitToRewatchRunView, update } from '../src/app/update'
+import { update } from '../src/app/update'
 import { view } from '../src/app/view'
 import * as Worker from '../src/screens/worker'
 

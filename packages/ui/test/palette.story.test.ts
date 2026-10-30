@@ -35,6 +35,8 @@ import {
 } from '@fabrica/contracts'
 
 import { Connection, localEngineName } from '../src/app/connection'
+import { runOffers } from '../src/app/features/keys/keys'
+import { paletteEntries } from '../src/app/features/palette/palette'
 import {
   chordLabel,
   commandsFor,
@@ -45,7 +47,7 @@ import { Message } from '../src/app/message'
 import { type Model, Overlay, initialModel } from '../src/app/model'
 import { Screen } from '../src/app/screen'
 import { ShowTheme } from '../src/app/theme-host'
-import { paletteEntries, runOffers, update } from '../src/app/update'
+import { update } from '../src/app/update'
 import { view } from '../src/app/view'
 import * as Insights from '../src/screens/insights'
 import * as Palette from '../src/screens/palette'

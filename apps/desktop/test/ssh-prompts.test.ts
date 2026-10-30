@@ -4,7 +4,8 @@ import { describe, expect, it } from '@effect/vitest'
 import { SshPromptAnswer, SshPromptEvent } from '@fabrica/client'
 
 import { askpassArguments, askpassNodeOf } from '../src/connection/askpass'
-import { type MainIpc, registerIpc } from '../src/main/ipc'
+import { sshAnswersChannels } from '../src/main/features/ssh-answers'
+import { type MainIpc, makeIpcRegistrar } from '../src/main/ipc'
 import { askpassNode, makePromptDesk } from '../src/main/ssh-prompts'
 import { type PreloadIpc, channels, makeApi } from '../src/preload/api'
 
@@ -129,32 +130,9 @@ describe('the prompts across the preload', () => {
       handle: () => undefined,
     }
     const answers: Array<SshPromptAnswer> = []
-    const unused = () => Promise.reject(new Error('not this test’s'))
     const app = 'file:///app/index.html'
-    registerIpc({
-      ipc,
-      trusted: url => url === app,
-      actions: {
-        minimize: () => undefined,
-        toggleMaximize: () => undefined,
-        close: () => undefined,
-        setTheme: () => undefined,
-        notify: () => undefined,
-        pickFolder: unused,
-        version: '1.0.0',
-        updateStatus: () => ({ _tag: 'Unavailable' }),
-        installLoginService: unused,
-        checkEngine: unused,
-        installEngine: unused,
-        findWsl: unused,
-        installUbuntu: unused,
-        answerSshPrompt: answer => answers.push(answer),
-        knownEngines: unused,
-        keepEngine: unused,
-        connectEngine: () => undefined,
-        readFingerprint: unused,
-        pairEngine: unused,
-      },
+    sshAnswersChannels(makeIpcRegistrar({ ipc, trusted: url => url === app }), {
+      answerSshPrompt: answer => answers.push(answer),
     })
     const send = (sender: string | undefined, value: unknown) =>
       listeners.get(channels.answerSshPrompt)?.(sender, [value])

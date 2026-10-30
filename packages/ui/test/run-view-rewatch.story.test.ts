@@ -17,10 +17,11 @@ import {
 
 import { Connection, localEngineName } from '../src/app/connection'
 import type { EngineProject } from '../src/app/engine-project'
+import { WaitToRewatchRunView } from '../src/app/features/run-view/run-view'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { makeSubscriptions } from '../src/app/subscriptions'
-import { WaitToRewatchRunView, update } from '../src/app/update'
+import { update } from '../src/app/update'
 
 // A run view watch that ends NoRun while the scoped project's row shows a run going is tried again
 // after a pause: the row can show a run before the engine has its view, and with the watch's key

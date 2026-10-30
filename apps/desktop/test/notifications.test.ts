@@ -8,19 +8,14 @@ import {
   NotificationTarget,
 } from '@fabrica/ui/notify'
 
-import { type MainActions, type MainIpc, registerIpc } from '../src/main/ipc'
+import { notifyChannels } from '../src/main/features/notify'
+import { type MainIpc, makeIpcRegistrar } from '../src/main/ipc'
 import {
   type NotificationClass,
   type NotifiedPage,
   makeNotifications,
 } from '../src/main/notifications'
-import {
-  FolderPick,
-  type PreloadIpc,
-  UpdateStatus,
-  channels,
-  makeApi,
-} from '../src/preload/api'
+import { type PreloadIpc, channels, makeApi } from '../src/preload/api'
 
 // The app's system notifications (spec §18.5): the preload's validated `notify` and its clicks, main
 // decoding them again, showing them while the window doesn't have focus, and a click bringing the
@@ -253,37 +248,9 @@ describe('main’s end of notify', () => {
       handle: () => undefined,
     }
     const notified: Array<DesktopNotification> = []
-    const actions: MainActions = {
-      minimize: () => undefined,
-      toggleMaximize: () => undefined,
-      close: () => undefined,
-      setTheme: () => undefined,
+    notifyChannels(makeIpcRegistrar({ ipc, trusted: url => url === app }), {
       notify: notification => notified.push(notification),
-      pickFolder: () => Promise.resolve(FolderPick.cases.Cancelled.make({})),
-      version: '1.0.0',
-      updateStatus: () => UpdateStatus.cases.Unavailable.make({}),
-      installLoginService: () =>
-        Promise.resolve({ _tag: 'Failed', reason: 'not this test’s' }),
-      checkEngine: () =>
-        Promise.resolve({ _tag: 'Failed', reason: 'not this test’s' }),
-      installEngine: () =>
-        Promise.resolve({ _tag: 'Failed', reason: 'not this test’s' }),
-      findWsl: () =>
-        Promise.resolve({ _tag: 'Unavailable', reason: 'not this test’s' }),
-      installUbuntu: () =>
-        Promise.resolve({ _tag: 'Unfinished', reason: 'not this test’s' }),
-      answerSshPrompt: () => undefined,
-      knownEngines: () =>
-        Promise.resolve({ _tag: 'Failed', reason: 'not this test’s' }),
-      keepEngine: () =>
-        Promise.resolve({ _tag: 'Failed', reason: 'not this test’s' }),
-      connectEngine: () => undefined,
-      readFingerprint: () =>
-        Promise.resolve({ _tag: 'Failed', reason: 'not this test’s' }),
-      pairEngine: () =>
-        Promise.resolve({ _tag: 'Failed', reason: 'not this test’s' }),
-    }
-    registerIpc({ ipc, trusted: url => url === app, actions })
+    })
     const send = (sender: string | undefined, ...values: Array<unknown>) =>
       listeners.get(channels.notify)?.(sender, values)
     return { send, notified }

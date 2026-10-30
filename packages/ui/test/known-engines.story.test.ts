@@ -48,12 +48,12 @@ import {
 } from '@fabrica/contracts'
 
 import { Connection, clientName } from '../src/app/connection'
+import { projectMessages } from '../src/app/features/sidebar/sidebar'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { init } from '../src/app/program'
 import * as RemoteEngines from '../src/app/remote-engines'
 import { Screen } from '../src/app/screen'
-import { projectMessages } from '../src/app/subscriptions'
 import { update } from '../src/app/update'
 import { view } from '../src/app/view'
 import { rows } from '../src/console/sidebar'
