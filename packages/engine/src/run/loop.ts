@@ -2,6 +2,7 @@ import {
   Cause,
   Data,
   Deferred,
+  Duration,
   Effect,
   Exit,
   FiberSet,
@@ -36,6 +37,7 @@ import { Git, Worktrees, ticketBranch } from '../git'
 import {
   type MergeQueueShape,
   MergeSetup,
+  type MergeSetupShape,
   MergeUpdate,
   make as makeMergeQueue,
 } from '../merge'
@@ -50,6 +52,7 @@ import {
   shortCommit,
   warningLine,
 } from '../runlog'
+import { type RunViewSources, makeRunViewSources } from '../view'
 import { WorkGraph } from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
 import {
@@ -215,18 +218,41 @@ const heldIn = (gated: Gated) => {
 /** The words of a merge's step on its phase record. */
 const stepCause = (step: MergeStep): string => `merge: ${step}`
 
+/** How long a run's transcripts wait to cross where its view isn't given: `stream_flush`'s default. */
+const defaultFlush = Duration.millis(50)
+
 /**
  * Runs the project's run to its end, its records written through the RunLog; `control` stops or
- * drains it from outside, and hears its start checks' answer.
+ * drains it from outside, and hears its start checks' answer; `view` is what the run writes its view
+ * from (§8.3), a run of its own where none is given.
  */
 export const runProject = Effect.fn('Run.project')(function* (
   config: RunConfig,
   given?: RunControl,
+  view?: RunViewSources,
+) {
+  if (view === undefined) {
+    const scope = yield* Scope.make()
+    const sources = yield* makeRunViewSources({ flush: defaultFlush, scope })
+    return yield* runViewed(config, given, sources.sources).pipe(
+      Effect.ensuring(Scope.close(scope, Exit.void)),
+    )
+  }
+  return yield* runViewed(config, given, view)
+})
+
+/** `runProject`, its view's sources given. */
+const runViewed = Effect.fn('Run.viewed')(function* (
+  config: RunConfig,
+  given: RunControl | undefined,
+  view: RunViewSources,
 ) {
   const log = yield* RunLog
   const run = log.run
   const control = given ?? (yield* makeRunControl)
-  const checked = yield* runStartChecks({ config, run, log })
+  const checked = yield* view.steps.during('start_checks')(
+    runStartChecks({ config, run, log }),
+  )
   yield* Deferred.succeed(control.checked, checked)
   if (StartChecked.$is('Problems')(checked)) {
     // Every problem together, then the stop: exit 2 (§13.1).
@@ -249,7 +275,9 @@ export const runProject = Effect.fn('Run.project')(function* (
     yield* record(log, { kind: 'end', code })
     return { kind: 'SETUP', code } satisfies RunEnd
   }
-  return yield* Effect.scoped(runStarted(config, checked.started, control))
+  return yield* Effect.scoped(
+    runStarted(config, checked.started, control, view),
+  )
 })
 
 /** The run once its start checks passed: until it ends, within its scope. */
@@ -257,6 +285,7 @@ const runStarted = Effect.fn('Run.started')(function* (
   config: RunConfig,
   started: Started,
   control: RunControl,
+  view: RunViewSources,
 ) {
   const log = yield* RunLog
   const graph = yield* WorkGraph
@@ -269,15 +298,17 @@ const runStarted = Effect.fn('Run.started')(function* (
 
   // Getting ready (H80): each of the start's steps said as it ends. The carry-over first, before
   // anything writes the run's state (§13.10): a stop during it cuts it short.
-  const carried = yield* carryOver({
-    checkout: config.checkout,
-    home: config.home,
-    base: started.base,
-    engine: config.engine,
-    actor,
-    log,
-    stopping: Effect.map(control.state, now => now === 'stopping'),
-  })
+  const carried = yield* view.steps.during('carry_over')(
+    carryOver({
+      checkout: config.checkout,
+      home: config.home,
+      base: started.base,
+      engine: config.engine,
+      actor,
+      log,
+      stopping: Effect.map(control.state, now => now === 'stopping'),
+    }),
+  )
   const sessions = carried.sessions
   const carriedWords = [
     ...(carried.toResume.length === 0
@@ -295,13 +326,17 @@ const runStarted = Effect.fn('Run.started')(function* (
     text: `start: the carry-over: ${carriedWords.length === 0 ? 'nothing to resume' : carriedWords.join(', ')}${carried.cutShort ? '; cut short by a stop, the rest kept for the next start' : ''}`,
   })
 
-  // The project's setup, in a dispatch's worktree and in a merge's (§13.8).
-  const setup = makeProjectSetup(yield* Checks, log, {
+  // The project's setup, in a dispatch's worktree and in a merge's (§13.8), a step of the view's.
+  const projectSetup = makeProjectSetup(yield* Checks, log, {
     command: project.setup,
     checkout: config.checkout,
     timeLimit: project.check_timeout,
     cores: config.cores,
   })
+  const setup: MergeSetupShape = {
+    run: input =>
+      view.steps.during('setup', input.ticket)(projectSetup.run(input)),
+  }
   // The tickets whose merge's setup failed: a merge puts them back in line, not in the queue.
   const failedAtMerge = yield* Ref.make<ReadonlySet<TicketId>>(new Set())
 
@@ -352,6 +387,7 @@ const runStarted = Effect.fn('Run.started')(function* (
   })
 
   const state = yield* makeRunState(log)
+  yield* view.attach({ state, line: merges.line, slots: project.concurrent })
   // The carried tickets that had finished go back in line to merge, taking no slot (§13.7).
   yield* Effect.forEach(
     carried.toMerge,
@@ -407,6 +443,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     setup,
     sessions,
     actor,
+    desk: view.workers,
   }
 
   const stop = (
@@ -1321,13 +1358,17 @@ const runStarted = Effect.fn('Run.started')(function* (
   const look = (reasons: ReadonlyArray<WakeReason>) =>
     Effect.gen(function* () {
       yield* Effect.forEach(reasons, drainSaid, { discard: true })
+      const starting = reasons.some(reason => WakeReason.$is('Started')(reason))
       if (readsReady(reasons)) {
         yield* handMerged
         if (reasons.some(reason => WakeReason.$is('TicketsChanged')(reason)))
           yield* undeferred
-        ready = yield* readReady(yield* state.current)
+        const reading = readReady(yield* state.current)
+        ready = yield* starting
+          ? view.steps.during('backlog')(reading)
+          : reading
       }
-      if (reasons.some(reason => WakeReason.$is('Started')(reason)))
+      if (starting)
         yield* record(log, {
           kind: 'info',
           text: `start: the backlog: ${ready.length === 1 ? '1 ticket' : `${ready.length} tickets`} ready`,
@@ -1365,6 +1406,13 @@ const runStarted = Effect.fn('Run.started')(function* (
             : 0,
       })
       yield* keepHeld(candidates, gated)
+      const solo = new Set([
+        ...gated.take
+          .filter(taken => taken.solo)
+          .map(({ ticket }) => ticket.id),
+        ...Option.toArray(Option.map(gated.solo, ({ ticket }) => ticket)),
+      ])
+      yield* view.seen(candidates, ticket => solo.has(ticket.id))
       const dispatched = new Set<TicketId>()
       for (const taken of gated.take) {
         const n = yield* state.dispatch({

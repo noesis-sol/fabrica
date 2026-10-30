@@ -14,6 +14,7 @@ import {
   Assignee,
   type CommitHash,
   type MergeStanding,
+  ModelName,
   ModelOverride,
   type RunId,
   type SessionId,
@@ -33,6 +34,7 @@ import {
 } from '../merge'
 import { ModelProxy } from '../proxy'
 import type { RunLog } from '../runlog'
+import type { WorkerDesk } from '../view'
 import { WorkGraph } from '../workgraph'
 import {
   type CarrySessionsShape,
@@ -126,7 +128,13 @@ export interface WorkerContext {
   /** The run's saved sessions, for the carry-over (§13.10). */
   readonly sessions: CarrySessionsShape
   readonly actor: Actor
+  /** The run's workers as the maintainer reaches them: a worker's turns go through it (§18.4). */
+  readonly desk: WorkerDesk
 }
+
+/** What a released worker is told, where it hasn't settled its ticket (§18.4). */
+export const releasedPrompt =
+  'The maintainer has released you: carry on with your ticket, and settle it with an outcome tool (finish, defer, wait_for or ask_question).'
 
 /** A model as a ticket's `model` writes it, `anthropic/claude-…`, as the agent's choice. */
 const choiceOf = (written: ModelOverride) => {
@@ -437,6 +445,15 @@ export const runWorker = Effect.fn('Run.worker')(function* (
     onNone: () => first,
     onSome: text => (Option.isSome(resume) ? text : `${first}\n\n${text}`),
   })
+  const modelText = Option.match(model, {
+    onNone: () => 'none',
+    onSome: ({ provider, modelId }) => `${provider}/${modelId}`,
+  })
+  yield* context.desk.enter({
+    ticket,
+    session,
+    model: Schema.is(ModelName)(modelText) ? modelText : 'none',
+  })
   const channel = yield* control.open({
     project: config.project,
     ticket,
@@ -458,10 +475,7 @@ export const runWorker = Effect.fn('Run.worker')(function* (
     run: context.run,
     ticket: Option.some(ticket),
     session: Option.some(session),
-    model: Option.match(model, {
-      onNone: () => 'none',
-      onSome: ({ provider, modelId }) => `${provider}/${modelId}`,
-    }),
+    model: modelText,
   })
 
   // The session's outcomes, read from before the agent starts: its checks to the event stream, and
@@ -526,7 +540,14 @@ export const runWorker = Effect.fn('Run.worker')(function* (
           ),
       }),
   })
-  yield* agent.prompt(prompt)
+  // The engine's prompt, the maintainer's turns before it and after it while they steer the worker.
+  yield* context.desk.converse({
+    ticket,
+    agent,
+    prompt,
+    released: releasedPrompt,
+    settled: Deferred.isDone(ended),
+  })
   // The outcome is published before its tool answers, and the turn settles after: it is here.
   const outcome = yield* Deferred.poll(ended)
   if (Option.isNone(outcome)) return WorkerEnd.Unfinished()

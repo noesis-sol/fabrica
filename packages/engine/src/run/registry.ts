@@ -3,6 +3,7 @@ import {
   DateTime,
   Deferred,
   Effect,
+  Exit,
   Layer,
   Option,
   Ref,
@@ -33,6 +34,10 @@ import {
   RunRefused,
   RunStatus,
   StreamEpoch,
+  type TicketId,
+  type TranscriptItem,
+  WorkerNotFound,
+  decodeEngineSettings,
   planResume,
 } from '@fabrica/contracts'
 
@@ -48,6 +53,7 @@ import { Engine } from '../engine/service'
 import { Projects } from '../projects/service'
 import { RunLog, layerRunLog, readEvents } from '../runlog'
 import { localNow } from '../time'
+import { type RunViewHandle, type RunViewItem, makeRunView } from '../view'
 import { WorkGraph } from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
 import { type RunConfig, RunMode } from './config'
@@ -80,6 +86,14 @@ interface Going {
   readonly epoch: StreamEpoch
   /** The project's checkout. */
   readonly checkout: string
+  /** Its view (§8.3), and its workers as the maintainer reaches them. */
+  readonly view: RunViewHandle
+}
+
+/** A worker of a project's run, as the Workers group names it. */
+interface WorkerAt {
+  readonly project: ProjectId
+  readonly ticket: TicketId
 }
 
 export interface RunsShape {
@@ -110,6 +124,27 @@ export interface RunsShape {
     readonly run: Option.Option<RunId>
     readonly resume: Option.Option<Resume>
   }) => Stream.Stream<RunEventsItem, ProjectNotFound | NoRun | RunNotFound>
+  /** The view of the project's run (§8.3): a snapshot or the patches after `resume`, then each patch; ends with the run. */
+  readonly watchView: (input: {
+    readonly project: ProjectId
+    readonly resume: Option.Option<Resume>
+  }) => Stream.Stream<RunViewItem, ProjectNotFound | NoRun>
+  /** Steers the worker with the maintainer's message; held while its ticket merges (H59). */
+  readonly message: (
+    input: WorkerAt & { readonly text: string },
+  ) => Effect.Effect<void, ProjectNotFound | WorkerNotFound>
+  /** Aborts the worker's running turn, and steers it. */
+  readonly interrupt: (
+    input: WorkerAt,
+  ) => Effect.Effect<void, ProjectNotFound | WorkerNotFound>
+  /** Hands a steered worker back to the engine. */
+  readonly release: (
+    input: WorkerAt,
+  ) => Effect.Effect<void, ProjectNotFound | WorkerNotFound>
+  /** The worker's transcript, sent only to a client that asks for it (§8.3). */
+  readonly watchTranscript: (
+    input: WorkerAt & { readonly resume: Option.Option<Resume> },
+  ) => Stream.Stream<TranscriptItem, ProjectNotFound | WorkerNotFound>
 }
 
 export class Runs extends Context.Service<Runs, RunsShape>()(
@@ -273,6 +308,34 @@ export const make = Effect.gen(function* () {
         })
         const done = yield* Deferred.make<void>()
         const epoch = yield* drawEpoch
+        const header: Going['header'] = {
+          run,
+          project,
+          engine: engine.id,
+          mode: input.mode,
+          startedAt,
+          offline: flags.offline,
+          autoAnswer:
+            'auto_answer' in flags.settings &&
+            flags.settings['auto_answer'] !== 'false',
+        }
+        // The run's view lives as long as the run: written every `view_interval`, its transcripts
+        // crossing every `stream_flush` (§8.3), the engine's settings as the run starts.
+        const intervals = yield* decodeEngineSettings(engineSettings).pipe(
+          Effect.catch(() => decodeEngineSettings({})),
+          Effect.orDie,
+        )
+        const viewScope = yield* Scope.fork(runsScope)
+        const view = yield* makeRunView({
+          header: Effect.map(
+            control.state,
+            state => new RunHeader({ ...header, state }),
+          ),
+          interval: intervals.view_interval,
+          flush: intervals.stream_flush,
+          graph,
+          scope: viewScope,
+        }).pipe(Effect.provideContext(services))
         const config: RunConfig = {
           project,
           engine: engine.id,
@@ -314,6 +377,7 @@ export const make = Effect.gen(function* () {
 
         const finished = Effect.gen(function* () {
           yield* SubscriptionRef.update(feed, now => ({ ...now, ended: true }))
+          yield* Scope.close(viewScope, Exit.void)
           yield* Ref.update(going, map => {
             const next = new Map(map)
             if (next.get(project)?.header.run === run) next.delete(project)
@@ -338,7 +402,7 @@ export const make = Effect.gen(function* () {
           yield* Deferred.succeed(done, undefined)
         })
 
-        yield* runProject(config, control).pipe(
+        yield* runProject(config, control, view.sources).pipe(
           Effect.provide(
             Layer.merge(
               keptLog,
@@ -359,21 +423,12 @@ export const make = Effect.gen(function* () {
         )
         yield* Ref.update(going, map =>
           new Map(map).set(project, {
-            header: {
-              run,
-              project,
-              engine: engine.id,
-              mode: input.mode,
-              startedAt,
-              offline: flags.offline,
-              autoAnswer:
-                'auto_answer' in flags.settings &&
-                flags.settings['auto_answer'] !== 'false',
-            },
+            header,
             control,
             feed,
             epoch,
             checkout: record.path,
+            view,
           }),
         )
         yield* Ref.update(ended, map => new Map(map).set(project, done))
@@ -475,6 +530,70 @@ export const make = Effect.gen(function* () {
       }),
     )
 
+  const watchView = (input: {
+    readonly project: ProjectId
+    readonly resume: Option.Option<Resume>
+  }): Stream.Stream<RunViewItem, ProjectNotFound | NoRun> =>
+    Stream.unwrap(
+      Effect.map(goingRun(input.project), run => run.view.watch(input.resume)),
+    )
+
+  /** The run's view's sources where the ticket's worker is in progress in the project's run. */
+  const workerOf = ({ project, ticket }: WorkerAt) =>
+    Effect.gen(function* () {
+      yield* projects.find(project)
+      const run = (yield* Ref.get(going)).get(project)
+      const sources = run?.view.sources
+      if (sources !== undefined && (yield* sources.inProgress(ticket)))
+        return sources
+      return yield* new WorkerNotFound({ project, ticket })
+    })
+
+  const found = (at: WorkerAt) => (exists: boolean) =>
+    exists ? Effect.void : Effect.fail(new WorkerNotFound({ ...at }))
+
+  const message = Effect.fn('Runs.message')(function* (
+    input: WorkerAt & { readonly text: string },
+  ) {
+    const at: WorkerAt = { project: input.project, ticket: input.ticket }
+    const sources = yield* workerOf(at)
+    const merging = yield* sources.inLine(input.ticket)
+    const delivered = yield* sources.workers.message({
+      ticket: input.ticket,
+      text: input.text,
+      merging,
+    })
+    yield* found(at)(Option.isSome(delivered))
+  })
+
+  const interrupt = Effect.fn('Runs.interrupt')(function* (at: WorkerAt) {
+    const sources = yield* workerOf(at)
+    yield* Effect.flatMap(sources.workers.interrupt(at.ticket), found(at))
+  })
+
+  const release = Effect.fn('Runs.release')(function* (at: WorkerAt) {
+    const sources = yield* workerOf(at)
+    yield* Effect.flatMap(sources.workers.release(at.ticket), found(at))
+  })
+
+  const watchTranscript = (
+    input: WorkerAt & { readonly resume: Option.Option<Resume> },
+  ): Stream.Stream<TranscriptItem, ProjectNotFound | WorkerNotFound> =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const at: WorkerAt = { project: input.project, ticket: input.ticket }
+        const sources = yield* workerOf(at)
+        const stream = yield* sources.workers.watchTranscript(
+          input.ticket,
+          input.resume,
+        )
+        return yield* Option.match(stream, {
+          onNone: () => Effect.fail(new WorkerNotFound({ ...at })),
+          onSome: Effect.succeed,
+        })
+      }),
+    )
+
   return Runs.of({
     start,
     stop: project => Effect.flatMap(goingRun(project), run => run.control.stop),
@@ -484,6 +603,11 @@ export const make = Effect.gen(function* () {
       Effect.flatMap(goingRun(project), run => run.control.undrain),
     status,
     watchEvents,
+    watchView,
+    message,
+    interrupt,
+    release,
+    watchTranscript,
   })
 })
 

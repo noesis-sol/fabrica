@@ -7,9 +7,8 @@ import { notImplemented } from './not-implemented'
 
 // The Runs group's handlers (spec §8.1, §13, §13.10, §13.12) on the Runs service, which this file
 // provides on the daemon's projects, its scopes and what its runs run on: starting a run in a mode with
-// its flags, stopping, draining and undraining it, its status, and its events stream. An overnight
-// run's pre-flight (§15.6) and the run view's stream (§8.3) answer `NotImplemented` until the tickets
-// that build them.
+// its flags, stopping, draining and undraining it, its status, its view's stream (§8.3) and its events
+// stream. An overnight run's pre-flight (§15.6) answers `NotImplemented` until the ticket that builds it.
 
 /** The Runs group's handlers. */
 export const runsHandlers = RunRpcs.toLayer(
@@ -22,7 +21,8 @@ export const runsHandlers = RunRpcs.toLayer(
       'run.undrain': ({ project }) => runs.undrain(project),
       'run.status': ({ project }) => runs.status(project),
       'run.preflight': notImplemented('run.preflight'),
-      'run.watchView': notImplemented('run.watchView'),
+      'run.watchView': ({ project, resume }) =>
+        runs.watchView({ project, resume }),
       'run.watchEvents': ({ project, run, resume }) =>
         runs.watchEvents({ project, run, resume }),
     }),

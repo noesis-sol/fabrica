@@ -25,9 +25,7 @@ import {
   ClientHello,
   EngineHost,
   FabricaRpcs,
-  ProjectId,
   ProtocolGroupName,
-  TicketId,
   protocolGroups,
   protocolVersion,
 } from '@fabrica/contracts'
@@ -42,7 +40,7 @@ import {
   runBridge,
   startEngine,
 } from '../src/engine'
-import { secretsHandlers, workersHandlers } from '../src/rpc'
+import { secretsHandlers } from '../src/rpc'
 
 // The engine daemon (spec §7.1, §7.2, §8.1, §8.2, §20.2): an engine started in a temporary data folder,
 // called over a real socket and through the bridge's stdio.
@@ -141,7 +139,7 @@ const modeOf = (path: string) =>
   Effect.promise(() => lstat(path)).pipe(Effect.map(info => info.mode & 0o777))
 
 /** Whether an exit is a defect named `NotImplemented`, as the protocol carries it. */
-/** The groups whose handlers answer `NotImplemented`: every one but those built (Engine, Tokens, Review, Projects, Backlog, Talks, Insights, Runs, Attention). */
+/** The groups whose handlers answer `NotImplemented`: every one but those built (Engine, Tokens, Review, Projects, Backlog, Talks, Insights, Runs, Attention, Workers). */
 type Unfilled = Exclude<
   ProtocolGroupName,
   | 'engine'
@@ -153,6 +151,7 @@ type Unfilled = Exclude<
   | 'insights'
   | 'runs'
   | 'attention'
+  | 'workers'
 >
 const unfilled = ProtocolGroupName.literals.filter(
   (group): group is Unfilled =>
@@ -164,7 +163,8 @@ const unfilled = ProtocolGroupName.literals.filter(
     group !== 'talks' &&
     group !== 'insights' &&
     group !== 'runs' &&
-    group !== 'attention',
+    group !== 'attention' &&
+    group !== 'workers',
 )
 
 /** Whether a handler's answer is an effect: the handlers built here need no service. */
@@ -427,11 +427,8 @@ describe('the groups not served yet', () => {
         const paths = yield* scratchPaths
         yield* start(paths)
         const client = yield* clientAt(paths.socket)
-        const project = ProjectId.make('app')
-        const ticket = TicketId.make('fa-a1b2')
         const calls: Record<Unfilled, Effect.Effect<unknown, unknown>> = {
           secrets: client['credentials.list'](),
-          workers: client['worker.release']({ project, ticket }),
         }
         for (const group of unfilled) {
           const exit = yield* Effect.exit(calls[group])
@@ -445,7 +442,6 @@ describe('the groups not served yet', () => {
     Effect.gen(function* () {
       const layers: Record<Unfilled, Layer.Layer<never>> = {
         secrets: secretsHandlers,
-        workers: workersHandlers,
       }
       for (const group of unfilled) {
         const handlers = yield* Layer.build(layers[group])

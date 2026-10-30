@@ -11,6 +11,6 @@ import type { WorkGraphShape } from './service'
 
 /** How many of the graph's tickets were merged or closed with no change today, in the current zone. */
 export const doneToday = (
-  graph: WorkGraphShape,
+  graph: Pick<WorkGraphShape, 'doneSince'>,
 ): Effect.Effect<number, StoreFailed, DateTime.CurrentTimeZone> =>
   Effect.flatMap(startOfToday, graph.doneSince)
