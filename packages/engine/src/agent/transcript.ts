@@ -24,19 +24,23 @@ const StreamedEvent = Schema.Struct({
   delta: Schema.optionalKey(Schema.String),
 })
 
-/** A tool call's input streamed, as far as the transcript reads it: the call is the message's part at `contentIndex`. */
+// Pi's RPC mode sends a model's streamed events without the message so far (its `toJsonEvent`): a
+// tool call's start names the call and its tool, and its input's deltas name only the message's part
+// they write, so the reader keeps the calls each message has begun.
+
+/** A tool call begun, as far as the transcript reads it: the message's part at `contentIndex`. */
+const ToolCallStart = Schema.Struct({
+  type: Schema.Literal('toolcall_start'),
+  contentIndex: Schema.Number,
+  id: Schema.String,
+  toolName: Schema.String,
+})
+
+/** More of a tool call's input, as far as the transcript reads it: the message's part at `contentIndex`. */
 const ToolCallDelta = Schema.Struct({
   type: Schema.Literal('toolcall_delta'),
   contentIndex: Schema.Number,
   delta: Schema.String,
-  partial: Schema.Struct({ content: Schema.Array(Schema.Unknown) }),
-})
-
-/** The tool call a message's part is, as far as the transcript reads it. */
-const PartialToolCall = Schema.Struct({
-  type: Schema.Literal('toolCall'),
-  id: Schema.String,
-  name: Schema.String,
 })
 
 /** A tool's result, as far as the transcript reads it: its text parts. */
@@ -50,8 +54,8 @@ const ToolResult = Schema.Struct({
 })
 
 const decodeStreamed = Schema.decodeUnknownOption(StreamedEvent)
+const decodeToolCallStart = Schema.decodeUnknownOption(ToolCallStart)
 const decodeToolCallDelta = Schema.decodeUnknownOption(ToolCallDelta)
-const decodePartialToolCall = Schema.decodeUnknownOption(PartialToolCall)
 const decodeToolResult = Schema.decodeUnknownOption(ToolResult)
 const decodeJson = Schema.decodeUnknownOption(Schema.Json)
 
@@ -65,14 +69,29 @@ const resultText = (result: unknown): string =>
         .join(''),
   })
 
-/** The `tool_input` a streamed event is: more of a tool call's input, where it names the call and its tool. */
-const toolInputOf = (streamed: unknown): Option.Option<TranscriptEntry> =>
+/** A tool call a message has begun: its ID and its tool. */
+interface Call {
+  readonly id: ToolCallId
+  readonly tool: string
+}
+
+/** The call a streamed event begins, at its part's index, where it names the call and its tool. */
+const callBegun = (streamed: unknown): Option.Option<readonly [number, Call]> =>
   Option.gen(function* () {
-    const { contentIndex, delta, partial } =
-      yield* decodeToolCallDelta(streamed)
-    const call = yield* decodePartialToolCall(partial.content[contentIndex])
-    const id = yield* ToolCallId.makeOption(call.id)
-    const tool = yield* Option.liftPredicate(call.name, Schema.is(Text))
+    const start = yield* decodeToolCallStart(streamed)
+    const id = yield* ToolCallId.makeOption(start.id)
+    const tool = yield* Option.liftPredicate(start.toolName, Schema.is(Text))
+    return [start.contentIndex, { id, tool }] as const
+  })
+
+/** The `tool_input` a streamed event is: more of the input of a call `calls` has begun. */
+const toolInputOf = (
+  streamed: unknown,
+  calls: ReadonlyMap<number, Call>,
+): Option.Option<TranscriptEntry> =>
+  Option.gen(function* () {
+    const { contentIndex, delta } = yield* decodeToolCallDelta(streamed)
+    const { id, tool } = yield* Option.fromUndefinedOr(calls.get(contentIndex))
     if (delta === '') return yield* Option.none()
     return TranscriptEntry.cases.tool_input.make({ id, tool, delta })
   })
@@ -98,6 +117,8 @@ interface ReaderState {
   readonly message: Option.Option<MessageId>
   /** What the turn has spent so far, where a response said. */
   readonly tokens: Option.Option<Tokens>
+  /** The tool calls the message has begun, by its part's index. */
+  readonly calls: ReadonlyMap<number, Call>
 }
 
 /** Reads an agent's events into transcript entries, one event at a time. */
@@ -115,9 +136,11 @@ export const drawMessageId = Effect.map(drawBase36(12), random =>
 /** A reader of one session's events. */
 export const makeTranscriptReader = Effect.fn('Transcript.makeReader')(
   function* () {
+    const noCalls: ReadonlyMap<number, Call> = new Map()
     const state = yield* Ref.make<ReaderState>({
       message: Option.none(),
       tokens: Option.none(),
+      calls: noCalls,
     })
     const none: ReadonlyArray<TranscriptEntry> = []
 
@@ -131,7 +154,11 @@ export const makeTranscriptReader = Effect.fn('Transcript.makeReader')(
           case 'message_start': {
             if (event.message.role !== 'assistant') return none
             const id = yield* drawMessageId
-            yield* Ref.set(state, { ...current, message: Option.some(id) })
+            yield* Ref.set(state, {
+              ...current,
+              message: Option.some(id),
+              calls: noCalls,
+            })
             return [
               TranscriptEntry.cases.message.make({
                 id,
@@ -142,7 +169,19 @@ export const makeTranscriptReader = Effect.fn('Transcript.makeReader')(
             ]
           }
           case 'message_update': {
-            const input = toolInputOf(event.assistantMessageEvent)
+            const begun = callBegun(event.assistantMessageEvent)
+            if (Option.isSome(begun)) {
+              const [index, call] = begun.value
+              yield* Ref.set(state, {
+                ...current,
+                calls: new Map(current.calls).set(index, call),
+              })
+              return none
+            }
+            const input = toolInputOf(
+              event.assistantMessageEvent,
+              current.calls,
+            )
             if (Option.isSome(input)) return [input.value]
             const streamed = decodeStreamed(event.assistantMessageEvent)
             if (Option.isNone(current.message) || Option.isNone(streamed))
@@ -161,6 +200,7 @@ export const makeTranscriptReader = Effect.fn('Transcript.makeReader')(
             const { usage } = event.message
             yield* Ref.set(state, {
               message: Option.none(),
+              calls: noCalls,
               tokens:
                 usage === undefined
                   ? current.tokens
@@ -201,6 +241,7 @@ export const makeTranscriptReader = Effect.fn('Transcript.makeReader')(
             yield* Ref.set(state, {
               message: Option.none(),
               tokens: Option.none(),
+              calls: noCalls,
             })
             return [
               TranscriptEntry.cases.turn_end.make({

@@ -38,54 +38,76 @@ import { makeWorkerDesk } from '../src/view'
 const ticket = TicketId.make('wk-a1')
 const interval = Duration.millis(50)
 
-/** Pi's streamed event of a tool call's input: `delta` more of the message's part at index 1. */
-const toolcallDelta = (delta: string, call: unknown) => ({
+/** Pi's streamed event of a model, as its RPC mode sends it: without the message so far. */
+const streamed = (assistantMessageEvent: unknown) => ({
   type: 'message_update' as const,
-  assistantMessageEvent: {
-    type: 'toolcall_delta',
-    contentIndex: 1,
-    delta,
-    partial: {
-      role: 'assistant',
-      content: [{ type: 'text', text: 'Running the tests' }, call],
-    },
-  },
+  assistantMessageEvent,
 })
 
-const bashCall = {
-  type: 'toolCall',
-  id: 'call-1',
-  name: 'bash',
-  arguments: { command: 'pnpm' },
+/** A tool call begun at the message's part 1, as Pi's RPC mode sends it: its ID and its tool. */
+const toolcallStart = (id: string, toolName: string) =>
+  streamed({ type: 'toolcall_start', contentIndex: 1, id, toolName })
+
+/** More of the input of the tool call at the message's part `index`. */
+const toolcallDelta = (delta: string, index = 1) =>
+  streamed({ type: 'toolcall_delta', contentIndex: index, delta })
+
+const messageStart = {
+  type: 'message_start' as const,
+  message: { role: 'assistant' },
 }
 
 describe("a tool call's streamed input", () => {
-  it.effect('is read as tool_input, naming the call and its tool', () =>
-    Effect.gen(function* () {
-      const reader = yield* makeTranscriptReader()
-      expect(
-        yield* reader.read(toolcallDelta('{"command":', bashCall)),
-      ).toEqual([
-        {
-          _tag: 'tool_input',
-          id: 'call-1',
-          tool: 'bash',
-          delta: '{"command":',
-        },
-      ])
-    }),
+  it.effect(
+    'is read as tool_input, naming the call and its tool its start named',
+    () =>
+      Effect.gen(function* () {
+        const reader = yield* makeTranscriptReader()
+        yield* reader.read(messageStart)
+        expect(yield* reader.read(toolcallStart('call-1', 'bash'))).toEqual([])
+        expect(yield* reader.read(toolcallDelta('{"command":'))).toEqual([
+          {
+            _tag: 'tool_input',
+            id: 'call-1',
+            tool: 'bash',
+            delta: '{"command":',
+          },
+        ])
+        expect(yield* reader.read(toolcallDelta('"pnpm"}'))).toEqual([
+          {
+            _tag: 'tool_input',
+            id: 'call-1',
+            tool: 'bash',
+            delta: '"pnpm"}',
+          },
+        ])
+      }),
   )
 
-  it.effect('is not read where the part is no tool call, or names none', () =>
+  it.effect(
+    'is not read for a call not begun, nor one its start named no ID or tool for',
+    () =>
+      Effect.gen(function* () {
+        const reader = yield* makeTranscriptReader()
+        yield* reader.read(messageStart)
+        expect(yield* reader.read(toolcallDelta('{"command":'))).toEqual([])
+        yield* reader.read(toolcallStart('', 'bash'))
+        expect(yield* reader.read(toolcallDelta('{"command":'))).toEqual([])
+        yield* reader.read(toolcallStart('call-1', ' '))
+        expect(yield* reader.read(toolcallDelta('{"command":'))).toEqual([])
+        yield* reader.read(toolcallStart('call-1', 'bash'))
+        expect(yield* reader.read(toolcallDelta(''))).toEqual([])
+        expect(yield* reader.read(toolcallDelta('{"path":', 2))).toEqual([])
+      }),
+  )
+
+  it.effect('is not read for a call of the message before', () =>
     Effect.gen(function* () {
       const reader = yield* makeTranscriptReader()
-      const unread = [
-        toolcallDelta('{"command":', { type: 'text', text: 'Running' }),
-        toolcallDelta('{"command":', { ...bashCall, id: '' }),
-        toolcallDelta('{"command":', { ...bashCall, name: ' ' }),
-        toolcallDelta('', bashCall),
-      ]
-      for (const event of unread) expect(yield* reader.read(event)).toEqual([])
+      yield* reader.read(messageStart)
+      yield* reader.read(toolcallStart('call-1', 'bash'))
+      yield* reader.read(messageStart)
+      expect(yield* reader.read(toolcallDelta('{"command":'))).toEqual([])
     }),
   )
 })

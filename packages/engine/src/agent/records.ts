@@ -69,7 +69,10 @@ export const PiEvent = Schema.Union([
   kind('turn_start', {}),
   kind('turn_end', {}),
   kind('message_start', { message: PiMessage }),
-  /** A message streamed: `assistantMessageEvent` is the model's event, a text or thinking delta among them. */
+  /**
+   * A message streamed: `assistantMessageEvent` is the model's event (a text, thinking or tool call's
+   * delta among them), without the message so far.
+   */
   kind('message_update', { assistantMessageEvent: optional(Schema.Unknown) }),
   kind('message_end', { message: PiMessage }),
   kind('tool_execution_start', {
