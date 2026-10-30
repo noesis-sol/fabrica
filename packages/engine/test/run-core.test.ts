@@ -77,6 +77,7 @@ import { SecretMissing, SecretName, Secrets } from '../src/secrets'
 import { layerWake, noBattery, noSleepCauses } from '../src/time'
 import { WorkGraph, makeWorkGraph, storeLayer } from '../src/workgraph'
 import { anthropicAnswer, anthropicBadKey } from './proxy-streams'
+import { noTelemetry } from './run-harness'
 
 // The run loop's core as whole runs (spec §13, §13.1, §13.2, §13.5, §13.9, H78): the live PiAgent over
 // a scripted Pi, real git in temp folders, the live control server, merge queue, checks and model
@@ -423,6 +424,7 @@ const services = (
     checkOwnPassesLayer,
     Layer.provide(layerWake, noSleepCauses),
     noBattery,
+    noTelemetry,
     attentionLayer,
     liveMergeWaits,
     agentLayer({

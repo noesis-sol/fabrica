@@ -70,6 +70,7 @@ import { SecretMissing, SecretName, Secrets } from '../src/secrets'
 import { layerWake, noBattery, noSleepCauses } from '../src/time'
 import { WorkGraph, makeWorkGraph, storeLayer } from '../src/workgraph'
 import { anthropicAnswer } from './proxy-streams'
+import { noTelemetry } from './run-harness'
 
 // The verifier after `finish` (spec §13.6, H19, H89) in whole runs: the live PiAgent over a scripted
 // Pi, real git in temp folders, the live control server, merge queue, checks and model proxy, on
@@ -427,6 +428,7 @@ const services = (fixture: Project, provider: string) => {
     checkOwnPassesLayer,
     Layer.provide(layerWake, noSleepCauses),
     noBattery,
+    noTelemetry,
     attentionLayer,
     liveMergeWaits,
     agentLayer({

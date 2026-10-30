@@ -8,6 +8,7 @@ import {
   factsOf,
 } from '@fabrica/contracts'
 
+import { type Spend, spendFields } from '../cost'
 import { type RunLog, toSeconds } from '../runlog'
 import { type Stopwatch, elapsed, startStopwatch } from '../time'
 import { record } from './records'
@@ -15,8 +16,9 @@ import { record } from './records'
 // The run's state (spec §13, State, H58): each ticket's phase and the run's dispatch count, with one
 // owner, changed only by atomic transitions applied to the current value. Each transition writes its
 // `phase` record (and, where the ticket's part in the run ends, its `ticket_end`) while it holds the
-// state, so the stream gives the phases in the order they were taken. What a phase counts as is
-// `phaseFacts`', read here and nowhere restated.
+// state, so the stream gives the phases in the order they were taken; a `ticket_end` carries what its
+// ticket spent in the run so far (§14.4). What a phase counts as is `phaseFacts`', read here and
+// nowhere restated.
 
 /** A ticket the run has taken up. */
 export interface TicketState {
@@ -117,9 +119,10 @@ export interface RunStateShape {
   readonly endLeft: Effect.Effect<void>
 }
 
-/** A run's state, empty, its records written through `log`. */
+/** A run's state, empty, its records written through `log`, a ticket's spend read from `spent`. */
 export const makeRunState = Effect.fn('RunState.make')(function* (
   log: RunLog['Service'],
+  spent: (ticket: TicketId) => Effect.Effect<Spend>,
 ) {
   const state = yield* SynchronizedRef.make<RunSnapshot>({
     tickets: new Map(),
@@ -128,18 +131,21 @@ export const makeRunState = Effect.fn('RunState.make')(function* (
   })
 
   const ticketEnd = (taken: TicketState, outcome: TicketOutcome) =>
-    Effect.flatMap(elapsed(taken.since), span =>
-      record(log, {
-        kind: 'ticket_end',
-        ticket: taken.ticket,
-        outcome,
-        phase: taken.phase._tag,
-        ...Option.match(whyOf(taken.phase), {
-          onNone: () => ({}),
-          onSome: why => ({ why }),
+    Effect.flatMap(
+      Effect.all([elapsed(taken.since), spent(taken.ticket)]),
+      ([span, spend]) =>
+        record(log, {
+          kind: 'ticket_end',
+          ticket: taken.ticket,
+          outcome,
+          phase: taken.phase._tag,
+          ...Option.match(whyOf(taken.phase), {
+            onNone: () => ({}),
+            onSome: why => ({ why }),
+          }),
+          seconds: toSeconds(span),
+          ...spendFields(spend),
         }),
-        seconds: toSeconds(span),
-      }),
     )
 
   /** Writes the move's records: its phase, and its `ticket_end` where its part ends there. */

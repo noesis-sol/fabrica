@@ -67,6 +67,7 @@ import {
 } from '../src/run'
 import { layerRunLog, readEvents } from '../src/runlog'
 import { SecretMissing, SecretName, Secrets } from '../src/secrets'
+import { Telemetry } from '../src/telemetry'
 import { layerWake, noBattery, noSleepCauses } from '../src/time'
 import { WorkGraph, makeWorkGraph, storeLayer } from '../src/workgraph'
 import { anthropicAnswer, anthropicBadKey } from './proxy-streams'
@@ -84,12 +85,14 @@ import { anthropicAnswer, anthropicBadKey } from './proxy-streams'
  * file named, runs `check_own`, finishes with its pass),
  * `defer`, `wait_for <ticket>` (then finishes once a note says it waited), `ask`, or `nothing` (settles
  * with no outcome); `hang` (commits its file, runs `check_own`, and works until it is stopped),
- * `wait <file>` (finishes once the file is there) or `commit_defer` (commits its file, then defers). A
+ * `wait <file>` (finishes once the file is there) or `commit_defer` (commits its file, then defers);
+ * `spend` and `spend_defer` call the model once through the model proxy, as `models.json` points its
+ * providers, and tell a round-trip of the ticket's model, then finish or defer. A
  * session resumed with `switch_session` (a carry-over, an answer, an undefer) finishes instead of
  * hanging, deferring or asking. It keeps what it was prompted with and every call in its session folder.
  */
 const STUB = `import { execFileSync } from 'node:child_process'
-import { appendFileSync, existsSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { connect } from 'node:net'
 import { join } from 'node:path'
 const args = process.argv.slice(2)
@@ -137,6 +140,18 @@ const call = (tag, payload) =>
     return exit.value
   })
 const git = (...words) => execFileSync('git', words, { encoding: 'utf8' }).trim()
+const spend = async model => {
+  const { providers } = JSON.parse(readFileSync(join(process.env.PI_CODING_AGENT_DIR, 'models.json'), 'utf8'))
+  const [provider, id] = model.split('/')
+  const response = await fetch(providers[provider].baseUrl + '/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': providers[provider].apiKey, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: id, max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
+  })
+  await response.text()
+  out({ type: 'turn_end' })
+  out({ type: 'message_end', message: { role: 'assistant', provider, model: id } })
+}
 const work = async () => {
   const view = await call('get_ticket', {})
   const ticket = view.ticket
@@ -148,6 +163,8 @@ const work = async () => {
     git('commit', '--quiet', '--message', ticket.title)
   }
   if (action === 'nothing') return
+  if (action === 'spend' || action === 'spend_defer') await spend(ticket.model ?? 'anthropic/claude-test')
+  if (action === 'spend_defer') return call('defer', { reason: 'it needs a decision first' })
   if (action === 'hang' && !resumed) {
     commitOwn()
     await call('check_own', {})
@@ -362,6 +379,11 @@ const liveMergeWaits = Layer.succeed(MergeWaits, {
   poll: TestClock.withLive(Effect.sleep('2 seconds')),
 })
 
+/** Telemetry that keeps no row: the rows a run's calls make are cost.test.ts's. */
+export const noTelemetry = Layer.succeed(Telemetry)(
+  Telemetry.of({ record: () => Effect.void, flush: Effect.void }),
+)
+
 const engine = EngineId.make('engine-1')
 const maintainer: Actor = { _tag: 'maintainer' }
 const run = RunId.make('run-1')
@@ -457,6 +479,7 @@ const services = (fixture: Project, provider: string) => {
     checkOwnPassesLayer,
     Layer.provide(layerWake, noSleepCauses),
     noBattery,
+    noTelemetry,
     attentionLayer,
     liveMergeWaits,
     agentLayer({

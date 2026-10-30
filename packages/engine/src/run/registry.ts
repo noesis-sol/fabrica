@@ -52,6 +52,7 @@ import { EngineScopes } from '../engine/scopes'
 import { Engine } from '../engine/service'
 import { Projects } from '../projects/service'
 import { RunLog, layerRunLog, readEvents } from '../runlog'
+import { Telemetry } from '../telemetry'
 import { localNow } from '../time'
 import { type RunViewHandle, type RunViewItem, makeRunView } from '../view'
 import { WorkGraph } from '../workgraph'
@@ -64,7 +65,7 @@ import { StartChecked } from './start-checks'
 
 // The engine's runs (spec §7.3, §8.1, §13.1, §13.10, §13.12): at most one run per project, started in
 // the engine's runs scope on what the engine's run hosting gives, with a control server on its project's
-// work graph (and its `check_own` passes), and stopped, drained or undrained
+// work graph (and its `check_own` passes) and the engine's telemetry, and stopped, drained or undrained
 // through its control. A start answers once the run's start checks have: with their problems, all
 // together, or with the run. Each run's records are kept as its log writes them, so its events stream
 // sends those written so far, then each as it is written, and ends with the run; an earlier run's are
@@ -223,13 +224,14 @@ const lastEnded = (
   )
 }
 
-/** The Runs service on the daemon's projects, engine, scopes, database and run hosting. */
+/** The Runs service on the daemon's projects, engine, scopes, database, telemetry and run hosting. */
 export const make = Effect.gen(function* () {
   const projects = yield* Projects
   const engine = yield* Engine
   const scopes = yield* EngineScopes
   const hosting = yield* RunHosting
   const attention = yield* AttentionRequests
+  const telemetry = yield* Telemetry
   const sql = yield* SqlClient.SqlClient
   const going = yield* Ref.make<ReadonlyMap<ProjectId, Going>>(new Map())
   const startLock = yield* Semaphore.make(1)
@@ -433,6 +435,7 @@ export const make = Effect.gen(function* () {
             ),
           ),
           Effect.provideService(WorkGraph, graph),
+          Effect.provideService(Telemetry, telemetry),
           Effect.provideContext(services),
           Effect.catchCause(cause =>
             Effect.logError(`the run ${run} of ${project} failed`, cause),

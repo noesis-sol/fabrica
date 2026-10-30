@@ -14,6 +14,7 @@ import type {
   layer as controlLayer,
 } from '../control'
 import type { RunLog } from '../runlog'
+import type { Telemetry } from '../telemetry'
 import type { KeepAwakeHost } from '../time'
 import type { WorkGraph } from '../workgraph'
 import type { runProject } from './loop'
@@ -23,12 +24,17 @@ import type { runProject } from './loop'
 // proxy, the checks, git and its worktrees, the battery, the zone its records are dated in), and the host's shares for its workers. The daemon is given them as it starts; where it isn't, it
 // refuses every run, saying why.
 
-/** The services a run runs on, which each run is given; its log, work graph, what is on it and its attention requests aside. */
+/** The services a run runs on, which each run is given; its log, work graph, what is on it, its attention requests and the engine's telemetry aside. */
 export type RunServices =
   | Exclude<
       | Effect.Services<ReturnType<typeof runProject>>
       | Layer.Services<typeof controlLayer>,
-      RunLog | WorkGraph | ControlServer | CheckOwnPasses | Attention
+      | RunLog
+      | WorkGraph
+      | ControlServer
+      | CheckOwnPasses
+      | Attention
+      | Telemetry
     >
   | DateTime.CurrentTimeZone
 

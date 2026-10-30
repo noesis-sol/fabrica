@@ -26,6 +26,7 @@ import {
 
 import { PiAgent } from '../agent'
 import { ControlRole, ControlServer, Outcome, type OwnCheck } from '../control'
+import type { CostAccount } from '../cost'
 import { readFileText } from '../files'
 import { Git, Prepared, type Worktree, Worktrees } from '../git'
 import {
@@ -59,6 +60,7 @@ import { record } from './records'
 import { setUpWorktree } from './setup'
 import type { Started } from './start-checks'
 import type { Attempt } from './supervisor'
+import { recordTurns } from './turns'
 
 // One dispatch of a ticket (spec §13.2, §12.1, §12.9): claimed, given a worktree from Base (created,
 // or reused and rebased), set up, and handed to a fresh worker, a Pi session of its own, with its
@@ -131,6 +133,8 @@ export interface WorkerContext {
   readonly actor: Actor
   /** The run's workers as the maintainer reaches them: a worker's turns go through it (§18.4). */
   readonly desk: WorkerDesk
+  /** The run's cost account, which each session's `turn` records take their spend from (§14.4). */
+  readonly cost: CostAccount
 }
 
 /** What a released worker is told, where it hasn't settled its ticket (§18.4). */
@@ -457,11 +461,8 @@ export const runWorker = Effect.fn('Run.worker')(function* (
     onNone: () => 'none',
     onSome: ({ provider, modelId }) => `${provider}/${modelId}`,
   })
-  yield* context.desk.enter({
-    ticket,
-    session,
-    model: Schema.is(ModelName)(modelText) ? modelText : 'none',
-  })
+  const modelName = Schema.is(ModelName)(modelText) ? modelText : 'none'
+  yield* context.desk.enter({ ticket, session, model: modelName })
   const channel = yield* control.open({
     project: config.project,
     ticket,
@@ -521,6 +522,14 @@ export const runWorker = Effect.fn('Run.worker')(function* (
     Stream.runForEach(watcher.heard),
     Effect.forkScoped,
   )
+  yield* recordTurns({
+    log: context.log,
+    cost: context.cost,
+    ticket: Option.some(ticket),
+    session,
+    model: modelName,
+    events: yield* agent.events,
+  })
   // Saved for the carry-over once the agent has started (H75): a session beginning now with what it
   // begins with, a hand-back's under the session it had.
   yield* Option.match(agent.session.file, {

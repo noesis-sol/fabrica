@@ -1,8 +1,17 @@
-import { Data, Deferred, Effect, Option, Redacted, Stream } from 'effect'
+import {
+  Data,
+  Deferred,
+  Effect,
+  Option,
+  Redacted,
+  Schema,
+  Stream,
+} from 'effect'
 
 import {
   AgentRoleVariable,
   type FileDiff,
+  ModelName,
   SessionId,
   type ModelChoice as SettingsModel,
   type Ticket,
@@ -25,6 +34,7 @@ import { Git, type Worktree } from '../git'
 import { ModelProxy } from '../proxy'
 import { WorkGraph } from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
+import { recordTurns } from './turns'
 import { type WorkerContext, modelOf, runVariables, standingOf } from './worker'
 
 // The verifier after `finish` (spec §13.6, H19, H89): a separate Pi session in the ticket's worktree,
@@ -332,14 +342,15 @@ const verifyRound = Effect.fn('Verifier.round')(function* (input: {
     },
     mergeStanding: standingOf(context.merges, ticket),
   })
+  const modelText = Option.match(model, {
+    onNone: () => 'none',
+    onSome: ({ provider, modelId }) => `${provider}/${modelId}`,
+  })
   const granted = yield* proxy.grant({
     run: context.run,
     ticket: Option.some(ticket),
     session: Option.some(session),
-    model: Option.match(model, {
-      onNone: () => 'none',
-      onSome: ({ provider, modelId }) => `${provider}/${modelId}`,
-    }),
+    model: modelText,
   })
 
   // The verdict, read from before the agent starts; a session that settled without one says so.
@@ -390,6 +401,14 @@ const verifyRound = Effect.fn('Verifier.round')(function* (input: {
     },
     projectTrusted: config.projectTrusted,
     nice: config.nice,
+  })
+  yield* recordTurns({
+    log: context.log,
+    cost: context.cost,
+    ticket: Option.some(ticket),
+    session,
+    model: Schema.is(ModelName)(modelText) ? modelText : 'none',
+    events: yield* agent.events,
   })
   yield* agent.prompt(
     verifierPrompt({

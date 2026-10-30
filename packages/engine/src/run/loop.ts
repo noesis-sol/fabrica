@@ -34,6 +34,12 @@ import {
 
 import { PiAgent } from '../agent'
 import { Checks } from '../checks'
+import {
+  type CostAccount,
+  countProxyCalls,
+  makeCostAccount,
+  spendFields,
+} from '../cost'
 import { footprintParts } from '../footprints'
 import { Git, Worktrees, isClean, ticketBranch } from '../git'
 import { QUICK_SETTLE, makeHolds, stopping } from '../holds'
@@ -363,7 +369,18 @@ const runStarted = Effect.fn('Run.started')(function* (
   // The tickets whose merge's setup failed: a merge puts them back in line, not in the queue.
   const failedAtMerge = yield* Ref.make<ReadonlySet<TicketId>>(new Set())
 
-  const state = yield* makeRunState(log)
+  // The run's cost account (§14.4): every call the model proxy counts to the run, from before any
+  // session is granted a token. Every route the proxy reaches is paid for with an API key.
+  const cost = yield* makeCostAccount({
+    project: config.project,
+    run,
+    billing: () => 'api_key',
+  })
+  yield* countProxyCalls(cost)
+  /** A record's fields for what `ticket` spent in the run so far. */
+  const spentBy = (ticket: TicketId) =>
+    Effect.map(cost.ticket(ticket), spendFields)
+  const state = yield* makeRunState(log, cost.ticket)
   // The holds, one state (§14, H58): the merge queue's hand-backs and the workers' quiet are counted
   // on its clock, stopped while they hold.
   const holds = yield* makeHolds({
@@ -539,6 +556,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     sessions,
     actor,
     desk: view.workers,
+    cost,
   }
 
   const stop = (
@@ -591,6 +609,7 @@ const runStarted = Effect.fn('Run.started')(function* (
           about: 'ticket',
           text: `${ticket} set aside: ${note}`,
         }),
+        ...(yield* spentBy(ticket)),
       })
     })
 
@@ -840,6 +859,7 @@ const runStarted = Effect.fn('Run.started')(function* (
                 about: 'ticket',
                 text: `${ticket} set aside: ${reason}`,
               }),
+              ...(yield* spentBy(ticket)),
             })
           }),
         WaitsFor: ({ ticket: other, needs }) =>
@@ -1202,6 +1222,7 @@ const runStarted = Effect.fn('Run.started')(function* (
                   subject: title,
                   base: started.base,
                 }),
+                ...(yield* spentBy(ticket)),
               })
               yield* closeEpics
               yield* setupsRetried(`${ticket} merged: its setup runs again`)
@@ -1222,6 +1243,7 @@ const runStarted = Effect.fn('Run.started')(function* (
                 title,
                 detail: 'no change to merge',
                 text: `  ${ticket} closed: no change to merge; worktree and branch removed`,
+                ...(yield* spentBy(ticket)),
               })
               yield* closeEpics
             }),
@@ -1249,6 +1271,7 @@ const runStarted = Effect.fn('Run.started')(function* (
                   about: 'ticket',
                   text: `${ticket} set aside: ${detail}`,
                 }),
+                ...(yield* spentBy(ticket)),
               })
             }),
           ),
@@ -1421,6 +1444,7 @@ const runStarted = Effect.fn('Run.started')(function* (
             commit: commit.value,
             detail: `${shortCommit(commit.value)} merged by hand into ${started.base}`,
             text: `  ${entry.ticket} merged by hand into ${started.base} as ${shortCommit(commit.value)}: closed, its worktree and branch removed`,
+            ...(yield* spentBy(entry.ticket)),
           })
         }),
       { discard: true },
@@ -1731,6 +1755,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     mergeScope,
     merges,
     log,
+    cost,
   })
 })
 
@@ -1738,7 +1763,7 @@ const runStarted = Effect.fn('Run.started')(function* (
  * The end, in order (§13.9): no further dispatch, every ticket's supervision stopped first, then
  * every worker interrupted at once (their sessions closing side by side, the end waiting for the
  * slowest), the merge queue stopped, the end's steps, the end line and what is left, each ticket's
- * `ticket_end`, and the `end` record with its exit code.
+ * `ticket_end`, and the `end` record with its exit code and what its workers spent.
  */
 const endRun = Effect.fn('Run.end')(function* (input: {
   readonly ending: Ending
@@ -1748,6 +1773,7 @@ const endRun = Effect.fn('Run.end')(function* (input: {
   readonly mergeScope: Scope.Closeable
   readonly merges: MergeQueueShape
   readonly log: RunLog['Service']
+  readonly cost: CostAccount
 }) {
   const { ending, state, log } = input
   yield* state.end
@@ -1808,6 +1834,7 @@ const endRun = Effect.fn('Run.end')(function* (input: {
   })
   yield* state.endLeft
   const code = exitCodeOf(kind)
-  yield* record(log, { kind: 'end', code })
+  const spent = yield* input.cost.run
+  yield* record(log, { kind: 'end', code, ...spendFields(spent.workers) })
   return { kind, code } satisfies RunEnd
 })
