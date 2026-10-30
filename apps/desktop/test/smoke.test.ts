@@ -1,17 +1,24 @@
-import { Effect, Layer, Option, Schedule, Schema } from 'effect'
-import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { Effect, Option, Schema } from 'effect'
 import * as NodePath from 'node:path'
-import { promisify } from 'node:util'
-import { type ElectronApplication, _electron } from 'playwright-core'
+import type { ElectronApplication } from 'playwright-core'
 import { inject } from 'vitest'
 
 import { describe, expect, it, layer } from '@effect/vitest'
-import { Toolbox, type Tools, layerToolbox } from '@fabrica/testkit'
+import { Toolbox } from '@fabrica/testkit'
 
 import { bundledLauncher } from '../src/main/local-engine'
 import { noUpdateCheck } from '../src/main/updates'
+import {
+  appEnv,
+  eventually,
+  homeFolder,
+  launch,
+  posix,
+  run,
+  stepTimeout,
+  stopEngine,
+  toolbox,
+} from './packaged-app'
 
 // The packaged app's smoke test (spec §22.3, §24): one artifact's app, driven through Playwright's
 // Electron support as a user would, the build under test as it ships, fuses and all (spike
@@ -28,96 +35,18 @@ import { noUpdateCheck } from '../src/main/updates'
 // answers to what it doesn't serve yet (fab-mgi.87), and running one ticket to its merge with a stub
 // model on the run loop and the model proxy (fab-mgi.88).
 //
-// The app runs in a home folder of the test's, with the data folders under it, so it reaches no
-// engine of the machine's and leaves nothing behind; on POSIX its PATH is a toolbox holding git, which the
-// engine runs. The
-// app's processes are waited for by polling: they aren't the test's children, so no event tells of
-// their exit.
+// The app runs in a home folder of the test's (packaged-app.ts). The app's processes are waited for by
+// polling: they aren't the test's children, so no event tells of their exit.
 
 declare module 'vitest' {
   export interface ProvidedContext {
     /** The packaged app's executable. */
     smokeApp: string
-    /** The host's variables the app can't start without (vitest.smoke.config.ts). */
-    smokeHost: Record<string, string>
   }
 }
 
 const app = inject('smokeApp')
 const host = inject('smokeHost')
-const posix = process.platform !== 'win32'
-
-/** How long the app has to show its console, reach its engine, or leave no process behind, each. */
-const stepTimeout = 60_000
-
-const run = promisify(execFile)
-
-/**
- * The test's home folder: short on POSIX, since the engine's socket is under it on macOS, and a socket's
- * path has a length limit (104 bytes), which the system's temp folder there leaves too little of.
- */
-const homeFolder = Effect.acquireRelease(
-  Effect.promise(async () =>
-    realpath(
-      await mkdtemp(NodePath.join(posix ? '/tmp' : tmpdir(), 'fabrica-smoke-')),
-    ),
-  ),
-  home =>
-    Effect.promise(() => rm(home, { recursive: true, force: true })).pipe(
-      Effect.ignore,
-    ),
-)
-
-/** The app's environment: the toolbox's on POSIX, the host's few variables, and the folders in `home`. */
-const appEnv = (
-  tools: Tools,
-  home: string,
-): Effect.Effect<Readonly<Record<string, string>>> =>
-  Effect.promise(async () => {
-    if (!posix) {
-      return {
-        ...host,
-        USERPROFILE: home,
-        APPDATA: NodePath.join(home, 'AppData', 'Roaming'),
-        LOCALAPPDATA: NodePath.join(home, 'AppData', 'Local'),
-        TEMP: home,
-        TMP: home,
-      }
-    }
-    const runtime = NodePath.join(home, 'run')
-    await mkdir(runtime, { mode: 0o700 })
-    return {
-      ...tools.env(),
-      ...host,
-      HOME: home,
-      XDG_CONFIG_HOME: NodePath.join(home, '.config'),
-      XDG_DATA_HOME: NodePath.join(home, '.local', 'share'),
-      XDG_CACHE_HOME: NodePath.join(home, '.cache'),
-      XDG_RUNTIME_DIR: runtime,
-    }
-  })
-
-/** The app launched, killed with the scope if the test didn't close it. */
-const launch = (env: Readonly<Record<string, string>>) =>
-  Effect.acquireRelease(
-    Effect.promise(async () => {
-      const electron = await _electron.launch({
-        executablePath: app,
-        args: [`--${noUpdateCheck}`],
-        env,
-        // The app's renderer is sandboxed (§20.1): Playwright leaves Linux's sandbox on only so.
-        chromiumSandbox: true,
-        timeout: stepTimeout,
-      })
-      return { electron, main: electron.process() }
-    }),
-    ({ main }) =>
-      Effect.sync(() => {
-        if (main.exitCode === null && main.signalCode === null) {
-          main.kill()
-        }
-      }),
-  )
 
 /** The app's processes as Electron counts them: main, the renderer, the GPU and utility processes. */
 const appProcesses = (electron: ElectronApplication) =>
@@ -144,19 +73,6 @@ const processesUnder = (folders: ReadonlyArray<string>) =>
       .filter(line => folders.some(folder => line.includes(folder)))
   })
 
-/** `check`'s value once it holds, checked every 100 ms; after a minute, its value then, for the test to fail on. */
-const eventually = <A>(
-  check: Effect.Effect<A>,
-  holds: (value: A) => boolean,
-): Effect.Effect<A> =>
-  check.pipe(
-    Effect.repeat({ schedule: Schedule.spaced('100 millis'), until: holds }),
-    Effect.timeoutOption(stepTimeout),
-    Effect.flatMap(
-      Option.match({ onSome: Effect.succeed, onNone: () => check }),
-    ),
-  )
-
 const EngineClients = Schema.fromJsonString(
   Schema.Struct({ clients: Schema.Number }),
 )
@@ -175,22 +91,6 @@ const engineClients = (
     ),
   )
 
-/** Stops the engine through the bundled `fabrica engine stop`, as its user would; one gone already is left. */
-const stopEngine = (
-  launcher: string,
-  env: Readonly<Record<string, string>>,
-): Effect.Effect<void> =>
-  Effect.promise(() =>
-    run(launcher, ['engine', 'stop'], { env }).then(
-      () => undefined,
-      () => undefined,
-    ),
-  )
-
-const toolbox: Layer.Layer<Toolbox, unknown> = posix
-  ? layerToolbox({ tools: ['git'] })
-  : Layer.succeed(Toolbox)({ bin: '', home: '', env: () => ({}) })
-
 describe('the packaged app', () => {
   it('names the app to test', () => {
     expect(app, 'FABRICA_SMOKE_APP names no app').not.toBe('')
@@ -203,8 +103,12 @@ describe('the packaged app', () => {
         Effect.gen(function* () {
           const tools = yield* Toolbox
           const home = yield* homeFolder
-          const env = yield* appEnv(tools, home)
-          const { electron } = yield* launch(env)
+          const env = yield* appEnv({ tools, home, host })
+          const { electron } = yield* launch({
+            executable: app,
+            args: [`--${noUpdateCheck}`],
+            env,
+          })
           const page = yield* Effect.promise(() => electron.firstWindow())
           yield* Effect.promise(() =>
             page

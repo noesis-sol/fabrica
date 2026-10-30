@@ -14,7 +14,8 @@
     "typecheck:tsc": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.connection.json && tsc --noEmit -p tsconfig.web.json",
     "build": "electron-vite build",
     "package": "electron-vite build && electron-builder --config electron-builder.yml --publish never",
-    "smoke": "vitest run --config vitest.smoke.config.ts"
+    "smoke": "vitest run --config vitest.smoke.config.ts",
+    "smoke:update": "vitest run --config vitest.update-smoke.config.ts"
   },
   "devDependencies": {
     "@effect/platform-node": "4.0.0",

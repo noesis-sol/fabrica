@@ -9,7 +9,9 @@
 # the two macOS runs' feeds merged into one by scripts/mac-feed.ts), signs it with the ed25519 release key
 # as checksums.txt.sig (orchestra's scheme, scripts/sign-checksums.ts), attests their build provenance
 # (actions/attest) and publishes the GitHub Release, tagging the commit v<version> as it does, with the
-# commit's scripts/install.sh among its assets. The app's updates (electron-updater) read its feeds there.
+# commit's scripts/install.sh among its assets. The app's updates (electron-updater) read its feeds there:
+# once it is published, the newest earlier release's Linux x64 AppImage is checked to update itself to it
+# (the `update` job).
 #
 # It tags only once main's check has passed on every engine target in CI (ci.yml's `full check, <target>`
 # jobs; H87): a job GitHub couldn't place, or that failed, is rerun there first, then this. A release
@@ -468,6 +470,8 @@ jobs:
       id-token: write # the attestations' signing certificate
       attestations: write
       artifact-metadata: write
+    outputs:
+      latest: ${{ steps.publish.outputs.latest }}
     env:
       COMMIT: ${{ needs.prepare.outputs.commit }}
     steps:
@@ -567,6 +571,7 @@ jobs:
       # commit's scripts/install.sh goes with the archives, so releases/latest/download/install.sh is the
       # script made with the latest release, not main's.
       - name: Publish
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -576,6 +581,7 @@ jobs:
           newest=$({ git tag -l 'v*'; echo "$tag"; } | { grep -v -e - || true; } | sort -V | tail -n 1)
           if [ "$tag" = "$newest" ] && [ "$prerelease" = false ]; then latest=true; else latest=false; fi
           echo "$tag at $COMMIT: pre-release $prerelease, latest $latest (newest release: ${newest:-none})"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
           set -- dist/fabrica-*.tar.gz dist/app/* dist/checksums.txt dist/checksums.txt.sig scripts/install.sh
           if gh release view "$tag" > /dev/null 2>&1; then
             gh release edit "$tag" --notes-file "$RUNNER_TEMP/notes.md" \
@@ -585,3 +591,102 @@ jobs:
             gh release create "$tag" --target "$COMMIT" --title "Fabrica $VERSION" \
               --notes-file "$RUNNER_TEMP/notes.md" --prerelease="$prerelease" --latest="$latest" "$@"
           fi
+
+  # The published app updating itself (§22.2): the newest earlier release's Linux x64 AppImage, which needs
+  # no signing, launched with its update checks on under Xvfb, finds this release in the feeds just
+  # published, downloads it and installs it as it quits; launched again it is this release
+  # (apps/desktop/test/update-smoke.test.ts). The app's updates read GitHub's latest release, so the job
+  # says why and tests nothing for a pre-release, a release that isn't the latest (an older version
+  # released again), or where no earlier release has the AppImage (scripts/earlier-app.ts), as before the
+  # second release that publishes the app. macOS's Squirrel.Mac needs the signed app, and the Windows
+  # installer's update a Windows runner: they are not tested here yet.
+  update:
+    name: update, linux-x64
+    needs: [prepare, publish]
+    if: always() && needs.publish.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      LATEST: ${{ needs.publish.outputs.latest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+        with:
+          version: 2026.10.22
+
+      # The earlier release's AppImage, checked against its release's checksums.txt.
+      - name: Find the earlier app
+        id: earlier
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$LATEST" != true ]; then
+            case "$VERSION" in
+            *-*) reason="$VERSION is a pre-release, never GitHub's latest, which the app's updates read" ;;
+            *) reason="v$VERSION isn't GitHub's latest release, which the app's updates read" ;;
+            esac
+            echo "::notice title=No update test::$reason"
+            echo "skip=$reason" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
+            --jq '.[] | {tag: .tag_name, draft, prerelease, assets: [.assets[].name]} | tojson' \
+            > "$RUNNER_TEMP/releases.jsonl"
+          mise exec -- node scripts/earlier-app.ts "$VERSION" "$RUNNER_TEMP/releases.jsonl" > "$RUNNER_TEMP/earlier"
+          cat "$RUNNER_TEMP/earlier" >> "$GITHUB_OUTPUT"
+          skip=$(sed -n 's/^skip=//p' "$RUNNER_TEMP/earlier")
+          if [ -n "$skip" ]; then
+            echo "::notice title=No update test::$skip"
+            exit 0
+          fi
+          tag=$(sed -n 's/^tag=//p' "$RUNNER_TEMP/earlier")
+          asset=$(sed -n 's/^asset=//p' "$RUNNER_TEMP/earlier")
+          echo "Updating $asset, of $tag, to v$VERSION"
+          mkdir "$RUNNER_TEMP/earlier-app"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/earlier-app" \
+            --pattern "$asset" --pattern checksums.txt
+          (cd "$RUNNER_TEMP/earlier-app" && grep -F "  $asset" checksums.txt | sha256sum -c -)
+          echo "app=$RUNNER_TEMP/earlier-app/$asset" >> "$GITHUB_OUTPUT"
+
+      # GitHub may take a moment to serve a release just published as its latest; the app checks once at
+      # launch.
+      - name: Wait for the feeds
+        if: steps.earlier.outputs.skip == ''
+        run: |
+          latest="https://github.com/$GITHUB_REPOSITORY/releases/latest"
+          feed="https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/latest-linux.yml"
+          for attempt in $(seq 1 30); do
+            tag=$(curl -fsSL -H 'Accept: application/json' "$latest" | jq -r '.tag_name // ""' || true)
+            if [ "$tag" = "v$VERSION" ] && curl -fsSL -o /dev/null "$feed"; then
+              echo "v$VERSION is GitHub's latest, its feed served"
+              exit 0
+            fi
+            echo "Attempt $attempt: GitHub's latest is ${tag:-unknown}"
+            sleep 10
+          done
+          echo "::error::GitHub doesn't serve v$VERSION as its latest release with latest-linux.yml"
+          exit 1
+
+      - name: Install dependencies
+        if: steps.earlier.outputs.skip == ''
+        run: mise exec -- pnpm install --frozen-lockfile
+
+      # FUSE 2 to mount the AppImage, and Chromium's sandbox let use unprivileged user namespaces, as
+      # app.yml's smoke test has them.
+      - name: Install the AppImage's needs
+        if: steps.earlier.outputs.skip == ''
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libfuse2t64
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Update the earlier app
+        if: steps.earlier.outputs.skip == ''
+        env:
+          FABRICA_UPDATE_APP: ${{ steps.earlier.outputs.app }}
+          FABRICA_UPDATE_VERSION: ${{ inputs.version }}
+        run: xvfb-run -a mise exec -- pnpm --filter @fabrica/desktop smoke:update

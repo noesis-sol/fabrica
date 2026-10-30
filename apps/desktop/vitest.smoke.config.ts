@@ -13,7 +13,8 @@ const hostVariables =
     ? ['PATH', 'PATHEXT', 'SystemRoot', 'SystemDrive', 'windir', 'ComSpec']
     : ['DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY']
 
-const smokeHost: Record<string, string> = {}
+/** The host's variables the app can't start without, which the update test's config provides too. */
+export const smokeHost: Record<string, string> = {}
 for (const name of hostVariables) {
   const value = process.env[name]
   if (value !== undefined && value !== '') {
