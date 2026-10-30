@@ -67,7 +67,7 @@ import {
 } from '../src/run'
 import { layerRunLog, readEvents } from '../src/runlog'
 import { SecretMissing, SecretName, Secrets } from '../src/secrets'
-import { layerWake, noSleepCauses } from '../src/time'
+import { layerWake, noBattery, noSleepCauses } from '../src/time'
 import { WorkGraph, makeWorkGraph, storeLayer } from '../src/workgraph'
 import { anthropicAnswer, anthropicBadKey } from './proxy-streams'
 
@@ -456,6 +456,7 @@ const services = (fixture: Project, provider: string) => {
     checksLayer,
     checkOwnPassesLayer,
     Layer.provide(layerWake, noSleepCauses),
+    noBattery,
     attentionLayer,
     liveMergeWaits,
     agentLayer({
@@ -503,6 +504,8 @@ export const configOf = (
   settings: { flags: {}, environment: {}, engineSettings: {} },
   cores: 1,
   nice: Option.none(),
+  // A host with no inhibitor: no sleep to prevent.
+  keepAwakeHost: { platform: 'aix', pid: 1 },
   projectTrusted: false,
 })
 

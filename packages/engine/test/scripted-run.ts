@@ -38,7 +38,7 @@ import {
 } from '../src/proxy'
 import { RunHosting, RunHostingShape } from '../src/run/hosting'
 import { SecretMissing, SecretName, Secrets } from '../src/secrets'
-import { layerWake, noSleepCauses } from '../src/time'
+import { layerWake, noBattery, noSleepCauses } from '../src/time'
 import { anthropicAnswer } from './proxy-streams'
 
 // A test engine's runs on a scripted agent (spec §13, §24): the run hosting a daemon is started with,
@@ -346,6 +346,7 @@ export const scriptedHosting = (
         Layer.mergeAll(
           checksLayer,
           Layer.provide(layerWake, noSleepCauses),
+          noBattery,
           Layer.succeed(MergeWaits, {
             beforeRetry: Effect.sleep('3 seconds'),
             poll: Effect.sleep('2 seconds'),
@@ -375,6 +376,8 @@ export const scriptedHosting = (
         sockets,
         cores: 1,
         nice: Option.none(),
+        // A host with no inhibitor: no sleep to prevent.
+        keepAwakeHost: { platform: 'aix', pid: 1 },
         environment: {},
       })
     }),

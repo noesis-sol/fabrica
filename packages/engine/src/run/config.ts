@@ -3,6 +3,7 @@ import { Data, type Option } from 'effect'
 import type { EngineId, ProjectId, TicketId } from '@fabrica/contracts'
 
 import type { WorktreeHome } from '../git'
+import type { KeepAwakeHost } from '../time'
 
 // What a run is asked to do and what it runs with (spec §13.1): its mode, its caps, and the project's
 // places and the engine's facts, given once where the run starts.
@@ -15,6 +16,12 @@ export type RunMode = Data.TaggedEnum<{
   Ticket: { readonly ticket: TicketId }
 }>
 export const RunMode = Data.taggedEnum<RunMode>()
+
+/** Whether a run in `mode` is an overnight run, which keeps its host awake whatever `keep_awake` says (§15.6). */
+export const overnightMode: (mode: RunMode) => boolean = RunMode.$match({
+  Tickets: () => false,
+  Ticket: () => false,
+})
 
 /** A run's flags. */
 export interface RunOptions {
@@ -53,6 +60,8 @@ export interface RunConfig {
   readonly cores: number
   /** `worker_nice`; none for the engine's own priority. */
   readonly nice: Option.Option<number>
+  /** The engine's host, which the run keeps from idle sleep (§7.7). */
+  readonly keepAwakeHost: KeepAwakeHost
   /** The user trusts the project, so its agents' Pi may load its own settings and packages (§12.1). */
   readonly projectTrusted: boolean
 }

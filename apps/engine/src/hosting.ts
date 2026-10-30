@@ -5,14 +5,18 @@ import * as NodePath from 'node:path'
 import { coresShare } from '@fabrica/contracts'
 import {
   Agent,
+  type Battery,
   Checks,
   Daemon,
   Git,
+  type KeepAwakeHost,
   Process,
   Proxy,
   Run,
   Secrets,
   type SleepCauses,
+  batteryFor,
+  hostKeepAwake,
   layerWake,
   sleepCausesFor,
 } from '@fabrica/engine'
@@ -23,9 +27,10 @@ import { DISTRIBUTION_LAYOUT } from './layout'
 // runs. The agents are Pi in RPC mode on the distribution's Node, with the first-party extension, or a
 // dev checkout's; they reach their models through the model proxy, which sends each provider's calls
 // on with the credential in the engine's secret store. Processes run on the host, their time limits
-// counted in time awake; the run's records are dated in the host's zone; each worker and check gets
-// its share of the cores under the machine budget, and the workers run at `worker_nice`. Both are read
-// from the engine's settings as it starts. Where the agents' parts are missing, or the secret store
+// counted in time awake; the host is kept from idle sleep while a run goes, and its battery watched;
+// the run's records are dated in the host's zone; each worker and check gets its share of the cores
+// under the machine budget, and the workers run at `worker_nice`. Both are read from the engine's
+// settings as it starts. Where the agents' parts are missing, or the secret store
 // or the model proxy can't open, the engine refuses every run, saying why.
 
 /** Where an agent's parts are. */
@@ -118,6 +123,10 @@ export interface HostingConfig {
   readonly runner: Layer.Layer<Process.ProcessRunner, never, Process.Deadlines>
   /** What the host logs of its sleeps, for time awake. */
   readonly sleepCauses: Layer.Layer<SleepCauses>
+  /** The host's battery, read by the process runner, which runs watch (§7.7). */
+  readonly battery: Layer.Layer<Battery, never, Process.ProcessRunner>
+  /** The engine's host, which its runs keep from idle sleep (§7.7). */
+  readonly keepAwakeHost: KeepAwakeHost
   /** The engine's secret store, its keyring CLIs and key commands run by the process runner. */
   readonly secrets: Layer.Layer<
     Secrets.Secrets,
@@ -132,7 +141,10 @@ export interface HostingConfig {
   readonly zone: Layer.Layer<DateTime.CurrentTimeZone>
 }
 
-/** The run hosting on this host: its processes, its sleep causes, its keyring, its zone and the known providers. */
+/**
+ * The run hosting on this host: its processes, its sleep causes, its battery, keeping it awake, its
+ * keyring, its zone and the known providers.
+ */
 export const onHost = (options: {
   readonly paths: Daemon.EnginePaths
   readonly cores: number
@@ -142,6 +154,8 @@ export const onHost = (options: {
   ...options,
   runner: Process.layerHost,
   sleepCauses: sleepCausesFor(process.platform),
+  battery: batteryFor(process.platform),
+  keepAwakeHost: hostKeepAwake(),
   // No passphrase is given yet: a host with no keyring has its runs refused, saying so.
   secrets: Secrets.layerHost({
     platform: process.platform,
@@ -198,6 +212,7 @@ export const runHosting = (
             reaperGrace: REAPER_GRACE,
           }),
           proxy,
+          config.battery,
           config.zone,
         ).pipe(
           Layer.provideMerge(runner),
@@ -211,6 +226,7 @@ export const runHosting = (
             sockets: NodePath.join(config.paths.socketFolder, 'c'),
             cores: coresShare(settings, config.cores),
             nice: Option.some(settings.worker_nice),
+            keepAwakeHost: config.keepAwakeHost,
             environment: config.environment,
           }),
         ),

@@ -20,6 +20,7 @@ import {
   Projects,
   Run,
   Secrets,
+  noBattery,
   noSleepCauses,
 } from '@fabrica/engine'
 import { layerHost } from '@fabrica/testkit'
@@ -72,6 +73,9 @@ const scriptedConfig = (
     environment: {},
     runner: Process.layer(runnerConfig(places)),
     sleepCauses: noSleepCauses,
+    battery: noBattery,
+    // A host with no inhibitor: no sleep to prevent.
+    keepAwakeHost: { platform: 'aix', pid: 1 },
     secrets: Layer.succeed(Secrets.Secrets)(testSecrets),
     routes: routesAt(provider.url),
     zone: DateTime.layerCurrentZoneOffset(0),

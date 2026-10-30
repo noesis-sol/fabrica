@@ -373,6 +373,7 @@ export const make = Effect.gen(function* () {
           },
           cores: hosting.cores,
           nice: hosting.nice,
+          keepAwakeHost: hosting.keepAwakeHost,
           projectTrusted: record.trusted,
         }
 

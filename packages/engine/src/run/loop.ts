@@ -48,10 +48,12 @@ import {
   dispatchingLine,
   footprintLine,
   mergedLine,
+  recordBattery,
   settledLine,
   shortCommit,
   warningLine,
 } from '../runlog'
+import { KeptAwake, keepAwake } from '../time'
 import { type RunViewSources, makeRunViewSources } from '../view'
 import { WorkGraph } from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
@@ -64,7 +66,7 @@ import {
   mergedOnBase,
   resumeWords,
 } from './carryover'
-import { type RunConfig, RunMode } from './config'
+import { type RunConfig, RunMode, overnightMode } from './config'
 import { type RunControl, makeRunControl } from './control'
 import { endSteps } from './end'
 import { type Gated, type Taken, makeFootprintsGate } from './footprints-gate'
@@ -385,6 +387,24 @@ const runStarted = Effect.fn('Run.started')(function* (
     }),
     permissions: project.permissions,
   })
+  // While the run goes, its host is kept from idle sleep and its battery watched, both ending with
+  // the run's scope (§7.7, §15.6).
+  const kept = yield* keepAwake({
+    keepAwake: started.settings.engine.keep_awake,
+    overnight: overnightMode(config.options.mode),
+    host: config.keepAwakeHost,
+  })
+  if (KeptAwake.$is('Failed')(kept))
+    yield* record(log, {
+      kind: 'warn',
+      detail: 'KEEP_AWAKE_FAILED',
+      text: warningLine({
+        tag: 'KEEP_AWAKE_FAILED',
+        about: 'run',
+        text: `${kept.command} didn't start (${kept.reason}); the host may idle-sleep`,
+      }),
+    })
+  yield* recordBattery
 
   const state = yield* makeRunState(log)
   yield* view.attach({ state, line: merges.line, slots: project.concurrent })
