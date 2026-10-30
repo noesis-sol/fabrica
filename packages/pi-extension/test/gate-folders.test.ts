@@ -81,6 +81,14 @@ describe('the folders a command may run in', () => {
     expect(outcome(findings)).toBe('asked')
   })
 
+  it('stops following folders past the many a chain of git -C braces makes', () => {
+    const findings = commandFindings(`git ${'-C {a,b} '.repeat(30)}status`, {
+      worktree,
+      home: Option.some('/home/agent'),
+    })
+    expect(outcome(findings)).toBe('asked')
+  })
+
   it('places a path outside from any brace alternative, whatever the others', () => {
     expect(
       outcome(

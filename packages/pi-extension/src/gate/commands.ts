@@ -1,4 +1,4 @@
-import { Data, Equivalence, Option } from 'effect'
+import { Data, Option } from 'effect'
 import { basename } from 'node:path'
 
 import {
@@ -242,20 +242,28 @@ const optionValue = (
  */
 type Folders = ReadonlyArray<Option.Option<string>>
 
-const sameFolder = Option.makeEquivalence(Equivalence.String)
-
-/** `folders` and `more`, each folder once. */
-const joined = (folders: Folders, more: Folders): Folders =>
-  more.reduce<Folders>(
-    (all, folder) =>
-      all.some(known => sameFolder(known, folder)) ? all : [...all, folder],
-    folders,
-  )
-
 const unknownFolder: Folders = [Option.none()]
 
 /** How many folders the gate follows; past them, it can't tell where commands run. */
 const maxFolders = 64
+
+/** A folder's key among others: its path, absolute, or a word no path is for the unknown one. */
+const folderKey = (folder: Option.Option<string>): string =>
+  Option.getOrElse(folder, () => 'unknown')
+
+/** `folders` and `more`, each folder once; the unknown folder alone past `maxFolders`. */
+const joined = (folders: Folders, more: Folders): Folders => {
+  const all = [...folders]
+  const seen = new Set(all.map(folderKey))
+  for (const folder of more) {
+    const key = folderKey(folder)
+    if (seen.has(key)) continue
+    if (all.length >= maxFolders) return unknownFolder
+    seen.add(key)
+    all.push(folder)
+  }
+  return all
+}
 
 /** A `cd` target bash looks up in `CDPATH`: relative, its first segment neither `.` nor `..`. */
 const searched = (target: string): boolean =>
@@ -325,23 +333,25 @@ class Policy {
   /** The folders `word` names from each of `cwd`: every brace alternative, a glob read as `..` where it can be. */
   folder(word: Word, cwd: Folders): Folders {
     if (word.dynamic) return unknownFolder
-    return joined(
+    return cwd.reduce<Folders>(
+      (landed, from) =>
+        joined(
+          landed,
+          Locations.$match(locations(word.pattern, this.paths(from)), {
+            Refused: ({ reason }) => {
+              this.refuse(reason)
+              return unknownFolder
+            },
+            Located: ({ places }) =>
+              places.map(place =>
+                Place.$match(place, {
+                  At: ({ path }) => Option.some(path),
+                  Unknown: () => Option.none<string>(),
+                }),
+              ),
+          }),
+        ),
       [],
-      cwd.flatMap(from =>
-        Locations.$match(locations(word.pattern, this.paths(from)), {
-          Refused: ({ reason }) => {
-            this.refuse(reason)
-            return unknownFolder
-          },
-          Located: ({ places }) =>
-            places.map(place =>
-              Place.$match(place, {
-                At: ({ path }) => Option.some(path),
-                Unknown: () => Option.none<string>(),
-              }),
-            ),
-        }),
-      ),
     )
   }
 
@@ -425,10 +435,8 @@ class Policy {
       this.refuse(`${name}: commands never run as another user`)
       return cwd
     }
-    if (name === 'cd' || name === 'pushd') {
-      const folders = joined(cwd, this.changeFolder(name, args, cwd))
-      return folders.length > maxFolders ? unknownFolder : folders
-    }
+    if (name === 'cd' || name === 'pushd')
+      return joined(cwd, this.changeFolder(name, args, cwd))
     if (name === 'popd') return joined(cwd, unknownFolder)
 
     const wrapped = this.wrapped(name, args)
