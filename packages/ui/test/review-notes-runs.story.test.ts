@@ -140,7 +140,7 @@ const ticketSubject = Review.Subject.Ticket({ project: scoped, ticket })
 const named = (
   commands: ReadonlyArray<{
     readonly name: string
-    readonly args: unknown
+    readonly args?: Record<string, unknown>
   }> = [],
 ) => commands.map(({ name, args }) => ({ name, args }))
 

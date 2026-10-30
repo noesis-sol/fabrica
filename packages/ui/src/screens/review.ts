@@ -8,7 +8,7 @@ import { modifyFields } from 'foldkit/struct'
 import { defineView } from 'foldkit/submodel'
 
 import {
-  type Actor,
+  Actor,
   Diff,
   type FileDiff,
   type Note,
@@ -561,20 +561,14 @@ const sayAt = (
   })
 
 /** Who wrote a note, in words. */
-const authorWords = (author: Actor): string => {
-  switch (author._tag) {
-    case 'maintainer':
-      return 'You'
-    case 'worker':
-      return 'Worker'
-    case 'talk':
-      return 'A talk'
-    case 'organ':
-      return author.organ.charAt(0).toUpperCase() + author.organ.slice(1)
-    case 'engine':
-      return 'Engine'
-  }
-}
+const authorWords = (author: Actor): string =>
+  Actor.match(author, {
+    maintainer: () => 'You',
+    worker: () => 'Worker',
+    talk: () => 'A talk',
+    organ: ({ organ }) => organ.charAt(0).toUpperCase() + organ.slice(1),
+    engine: () => 'Engine',
+  })
 
 /** A commit as the screen names it: its first 7 characters, as git abbreviates it. */
 const shortCommit = (commit: string): string => commit.slice(0, 7)
