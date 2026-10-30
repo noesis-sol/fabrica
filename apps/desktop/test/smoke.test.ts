@@ -6,9 +6,9 @@ import { inject } from 'vitest'
 import { describe, expect, it, layer } from '@effect/vitest'
 import { Toolbox } from '@fabrica/testkit'
 
-import { bundledLauncher } from '../src/main/local-engine'
 import { noUpdateCheck } from '../src/main/updates'
 import {
+  appEngine,
   appEnv,
   dataFolderArgs,
   eventually,
@@ -120,15 +120,16 @@ describe('the packaged app', () => {
           const resources = yield* Effect.promise(() =>
             electron.evaluate(() => process.resourcesPath),
           )
-          // The engine runs from the app's resources, so the app's folder holds every process of both.
+          // The engine runs from its copy under the home folder (§7.1), so the app's folder and the
+          // home folder hold every process of both.
           const appFolder = NodePath.dirname(resources)
 
           const engine = posix
-            ? Option.some(bundledLauncher(resources))
+            ? Option.some((yield* appEngine({ electron, home })).installed)
             : Option.none<string>()
           if (Option.isSome(engine)) {
             // Stopped whatever the test finds, so a failed run leaves no engine behind.
-            yield* Effect.addFinalizer(() => stopEngine(engine.value, env))
+            yield* Effect.addFinalizer(() => stopEngine([engine.value], env))
             // The app's connection, and the CLI's own asking.
             const clients = yield* eventually(
               engineClients(engine.value, env),
@@ -142,7 +143,7 @@ describe('the packaged app', () => {
           yield* Effect.promise(() => electron.close())
           // Closing the app leaves its engine running (§7.1): it is stopped as the user would stop it.
           if (Option.isSome(engine)) {
-            yield* stopEngine(engine.value, env)
+            yield* stopEngine([engine.value], env)
           }
           const left = yield* eventually(
             Effect.map(

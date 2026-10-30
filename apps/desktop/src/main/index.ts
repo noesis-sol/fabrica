@@ -55,7 +55,7 @@ import {
 import { keptTheme, makeThemeKeeper } from './keptTheme'
 import { knownEnginesOf } from './known-engines'
 import {
-  bundledLauncher,
+  bundledEngine,
   ensureLocalEngine,
   installLoginService,
 } from './local-engine'
@@ -114,17 +114,30 @@ Option.map(
 const connectionRestartPause = 1_000
 
 // The home folder as the engine the app starts and the CLI read it (node:os, which follows HOME), so all
-// three find one socket: Electron's own on macOS ignores HOME.
+// three find one socket, and one engine's copy: Electron's own on macOS ignores HOME.
+const home = homedir()
+
 const target = localTarget({
   platform: process.platform,
-  home: homedir(),
+  home,
   environment: process.env,
 })
 
-/** The engine distribution the app bundles: a packaged app's only; a development build starts none. */
+const version = Schema.decodeUnknownSync(ReleaseVersion)(app.getVersion())
+
+/**
+ * The engine distribution the app bundles, run from its copy under the home folder the engine reads: a
+ * packaged app's only; a development build starts none.
+ */
 const localEngine = {
-  launcher: app.isPackaged
-    ? Option.some(bundledLauncher(process.resourcesPath))
+  bundled: app.isPackaged
+    ? Option.some(
+        bundledEngine({
+          resources: process.resourcesPath,
+          version,
+          home,
+        }),
+      )
     : Option.none(),
   env: process.env,
 }
@@ -156,8 +169,6 @@ const installService = (): Promise<ServiceInstall> =>
       ),
     ),
   )
-
-const version = Schema.decodeUnknownSync(ReleaseVersion)(app.getVersion())
 
 /**
  * The engine Add engine installs: a packaged app's own version, from its signed release folder where it

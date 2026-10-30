@@ -305,9 +305,52 @@ const succeeded = (outcome: CommandOutcome): Result.Result<string, string> =>
     : Result.fail(outcomeText(outcome))
 
 /**
- * Unpacks the fetched archive inside `stage` and checks its launcher: a regular executable file whose
- * `--version`, run in its folder, prints the release's version on stdout. Returns the unpacked folder.
+ * Checks the launcher of the unpacked distribution in `folder`: a regular executable file whose
+ * `--version`, run in its folder, prints `version` on stdout. `shown` names the folder in a failure.
  */
+export const checkLauncher = Effect.fn('Update.checkLauncher')(function* ({
+  folder,
+  shown,
+  version,
+}: {
+  readonly folder: string
+  readonly shown: string
+  readonly version: ReleaseVersion
+}) {
+  const runner = yield* ProcessRunner
+  const launcher = NodePath.join(folder, LAUNCHER)
+  const stats = yield* Effect.tryPromise(() => lstat(launcher)).pipe(
+    Effect.option,
+  )
+  if (
+    Option.isNone(stats) ||
+    !stats.value.isFile() ||
+    (stats.value.mode & 0o100) === 0
+  )
+    return yield* Effect.fail(
+      UpdateFailure.NoLauncher({ path: NodePath.join(shown, LAUNCHER) }),
+    )
+  // Only its stdout is its version, so that a warning on stderr doesn't fail the update.
+  const ran = yield* runner.run({
+    command: launcher,
+    args: ['--version'],
+    cwd: folder,
+    timeLimit: VERSION_TIME,
+    outputLimit: 64 * 1024,
+  })
+  const said = yield* Effect.fromResult(
+    Result.mapError(succeeded(ran), why =>
+      UpdateFailure.WontRun({ message: why }),
+    ),
+  )
+  const want = versionLine(version)
+  if (said.replace(/\n+$/u, '') !== want)
+    return yield* Effect.fail(
+      UpdateFailure.WrongVersion({ said: said.trim(), want }),
+    )
+})
+
+/** Unpacks the fetched archive inside `stage` and checks its launcher. Returns the unpacked folder. */
 export const unpackRelease = Effect.fn('Update.unpackRelease')(function* ({
   fetched,
   stage,
@@ -333,38 +376,11 @@ export const unpackRelease = Effect.fn('Update.unpackRelease')(function* ({
     ),
   )
   const folder = NodePath.join(into, fetched.name)
-  const launcher = NodePath.join(folder, LAUNCHER)
-  const stats = yield* Effect.tryPromise(() => lstat(launcher)).pipe(
-    Effect.option,
-  )
-  if (
-    Option.isNone(stats) ||
-    !stats.value.isFile() ||
-    (stats.value.mode & 0o100) === 0
-  )
-    return yield* Effect.fail(
-      UpdateFailure.NoLauncher({
-        path: NodePath.join(fetched.name, LAUNCHER),
-      }),
-    )
-  // Only its stdout is its version, so that a warning on stderr doesn't fail the update.
-  const ran = yield* runner.run({
-    command: launcher,
-    args: ['--version'],
-    cwd: folder,
-    timeLimit: VERSION_TIME,
-    outputLimit: 64 * 1024,
+  yield* checkLauncher({
+    folder,
+    shown: fetched.name,
+    version: fetched.version,
   })
-  const said = yield* Effect.fromResult(
-    Result.mapError(succeeded(ran), why =>
-      UpdateFailure.WontRun({ message: why }),
-    ),
-  )
-  const want = versionLine(fetched.version)
-  if (said.replace(/\n+$/u, '') !== want)
-    return yield* Effect.fail(
-      UpdateFailure.WrongVersion({ said: said.trim(), want }),
-    )
   return folder
 })
 
@@ -399,6 +415,21 @@ export const placeRelease = Effect.fn('Update.placeRelease')(function* ({
     ),
   )
   const launcher = NodePath.join(target, LAUNCHER)
+  yield* linkLauncher({ places, launcher })
+  return launcher
+})
+
+/**
+ * Makes `fabrica`'s link to `launcher` beside the old one and renames it over it: the link names the
+ * old engine or the new one, never neither.
+ */
+export const linkLauncher = Effect.fn('Update.linkLauncher')(function* ({
+  places,
+  launcher,
+}: {
+  readonly places: InstallPlaces
+  readonly launcher: string
+}) {
   const linkFolder = NodePath.dirname(places.link)
   yield* placing(linkFolder, () => mkdir(linkFolder, { recursive: true }))
   const temporary = NodePath.join(
@@ -413,7 +444,6 @@ export const placeRelease = Effect.fn('Update.placeRelease')(function* ({
       ),
     ),
   )
-  return launcher
 })
 
 /** A folder of the engine's own beside its versions, for one install, removed with what it holds as the scope ends. */

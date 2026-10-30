@@ -7,10 +7,10 @@ import { inject } from 'vitest'
 import { describe, expect, it, layer } from '@effect/vitest'
 import { Toolbox } from '@fabrica/testkit'
 
-import { bundledLauncher } from '../src/main/local-engine'
 import { noUpdateCheck } from '../src/main/updates'
 import { type FabricaApi, UpdateStatus } from '../src/preload/api'
 import {
+  appEngine,
   appEnv,
   eventually,
   homeFolder,
@@ -114,11 +114,12 @@ const settled = (status: UpdateStatus): boolean =>
     Failed: () => true,
   })
 
-/** The app launched from `executable`, once it shows the console, and its bundled engine's launcher. */
+/** The app launched from `executable` in `home`, once it shows the console, and the launchers that stop its engine. */
 const launchApp = (options: {
   readonly executable: string
   readonly args: ReadonlyArray<string>
   readonly env: Readonly<Record<string, string>>
+  readonly home: string
 }) =>
   Effect.gen(function* () {
     const { electron } = yield* launch(options)
@@ -128,10 +129,9 @@ const launchApp = (options: {
         .locator('header[aria-label="Title bar"]')
         .waitFor({ timeout: stepTimeout })
     })
-    const resources = yield* Effect.promise(() =>
-      electron.evaluate(() => process.resourcesPath),
-    )
-    const engine = bundledLauncher(resources)
+    // The copy's launcher, or the bundle's where the app is a release from before the copy.
+    const launchers = yield* appEngine({ electron, home: options.home })
+    const engine = [launchers.installed, launchers.bundled]
     // Stopped whatever the test finds, so a failed run leaves no engine behind.
     yield* Effect.addFinalizer(() => stopEngine(engine, options.env))
     return { electron, engine }
@@ -332,7 +332,7 @@ describe('the published app', () => {
         })
         const mac = AppKind.$is('MacZip')(appKindOf)
 
-        const earlier = yield* launchApp({ executable, args: [], env })
+        const earlier = yield* launchApp({ executable, args: [], env, home })
         if (mac) {
           yield* followSquirrel(earlier.electron)
         }
@@ -366,6 +366,7 @@ describe('the published app', () => {
           executable: updated,
           args: [`--${noUpdateCheck}`],
           env,
+          home,
         })
         expect(yield* appVersion(later.electron)).toBe(version)
         yield* Effect.promise(() => later.electron.close())

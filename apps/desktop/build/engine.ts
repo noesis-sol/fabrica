@@ -12,7 +12,7 @@ import engineManifest from '../../engine/package.json' with { type: 'json' }
 // The engine distribution the packaged app embeds (spec §22.2), staged by electron-builder's beforePack
 // hook for each platform and architecture it packs, into `stage/engine`, which electron-builder.yml's
 // extraResources copy into the app's resources. The macOS and Linux apps get their own architecture's
-// distribution unpacked, as `engine/`, for the local engine (local-engine.ts); the Windows app gets the
+// distribution unpacked, as `engine/`, which the local engine runs a copy of (local-engine.ts); the Windows app gets the
 // Linux x64 release as a release folder has it, the archive, checksums.txt and, where it was signed,
 // checksums.txt.sig, as `engine-release/`, to install in WSL2 as an engine is installed on any host
 // (§7.6, §9.2).

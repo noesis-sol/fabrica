@@ -1,15 +1,16 @@
-import { Effect, Option } from 'effect'
+import { Effect, Option, Schema } from 'effect'
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import * as Net from 'node:net'
 import * as NodePath from 'node:path'
 
 import { describe, expect, layer, test } from '@effect/vitest'
+import { ReleaseVersion } from '@fabrica/contracts'
 import { Toolbox, layerToolbox, shStub, tempFolder } from '@fabrica/testkit'
 import { ServiceInstall, appHostOf } from '@fabrica/ui/host'
 
 import { type MainActions, registerIpc } from '../src/main/ipc'
 import {
-  bundledLauncher,
+  bundledEngine,
   ensureLocalEngine,
   installLoginService,
 } from '../src/main/local-engine'
@@ -17,10 +18,14 @@ import { type PreloadIpc, channels, makeApi } from '../src/preload/api'
 
 // The local engine (spec §7.1): the app starts the engine from the distribution it bundles when none
 // answers at the socket, and not when one does; and installs the login service through the bundled
-// `fabrica service install` when the user chooses. The bundled distribution is a fixture: its
-// launcher notes each run's arguments, and `serve` runs a fixture engine that takes connections on
-// the socket and notes its process, which the test then stops. Then the user's choice, from the page
-// through the preload to main and back.
+// `fabrica service install` when the user chooses; both from the bundled engine's copy, installed
+// under a home folder of the test's (local-engine-copy.test.ts tests the copy). The bundled
+// distribution is a fixture: its launcher says its version, notes each other run's arguments, and
+// `serve` runs a fixture engine that takes connections on the socket and notes its process, which the
+// test then stops. Then the user's choice, from the page through the preload to main and back.
+
+/** The bundled engine's version. */
+const version = Schema.decodeUnknownSync(ReleaseVersion)('1.2.3')
 
 /** The fixture engine: it takes connections on the socket it is given and closes them, noting its PID first. */
 const fixtureEngine = `
@@ -33,9 +38,13 @@ net.createServer(connection => connection.end()).listen(socket)
 setTimeout(() => process.exit(0), 60_000).unref()
 `
 
-/** The bundled distribution's launcher: it notes its arguments, then serves, or answers `service install`. */
+/**
+ * The bundled distribution's launcher: it says its version, or notes its arguments, then serves, or
+ * answers `service install`.
+ */
 const launcherScript = shStub(
   [
+    `[ "$1" = --version ] && { echo 'fabrica v${version}'; exit 0; }`,
     'echo "$*" >> "$FIXTURE_RUNS"',
     'case "$1" in',
     '  serve) exec node "$FIXTURE_ENGINE" "$FIXTURE_SOCKET" "$FIXTURE_PID" ;;',
@@ -60,7 +69,12 @@ const bundle = (vars: Readonly<Record<string, string>> = {}) =>
     // A short folder: a socket's path has a length limit (104 bytes on macOS).
     const root = yield* tempFolder('le')
     const resources = NodePath.join(root, 'resources')
-    const launcher = bundledLauncher(resources)
+    const bundled = bundledEngine({
+      resources,
+      version,
+      home: NodePath.join(root, 'home'),
+    })
+    const launcher = NodePath.join(bundled.folder, 'bin', 'fabrica')
     const engine = NodePath.join(root, 'engine.cjs')
     const socket = NodePath.join(root, 'engine.sock')
     const runs = NodePath.join(root, 'runs')
@@ -80,7 +94,7 @@ const bundle = (vars: Readonly<Record<string, string>> = {}) =>
       ),
     )
     return {
-      launcher,
+      bundled: Option.some(bundled),
       socket,
       runs,
       env: tools.env({
@@ -129,7 +143,7 @@ layer(layerToolbox({ tools: ['node'] }), { excludeTestServices: true })(
           expect(yield* answers(fixture.socket)).toBe(false)
           const reached = yield* ensureLocalEngine({
             socket: fixture.socket,
-            launcher: Option.some(fixture.launcher),
+            bundled: fixture.bundled,
             env: fixture.env,
           })
           expect(reached._tag).toBe('Started')
@@ -139,7 +153,7 @@ layer(layerToolbox({ tools: ['node'] }), { excludeTestServices: true })(
           // Once it runs, the next start of the app finds it and starts no other.
           const again = yield* ensureLocalEngine({
             socket: fixture.socket,
-            launcher: Option.some(fixture.launcher),
+            bundled: fixture.bundled,
             env: fixture.env,
           })
           expect(again._tag).toBe('Answered')
@@ -153,7 +167,7 @@ layer(layerToolbox({ tools: ['node'] }), { excludeTestServices: true })(
         yield* listening(fixture.socket)
         const reached = yield* ensureLocalEngine({
           socket: fixture.socket,
-          launcher: Option.some(fixture.launcher),
+          bundled: fixture.bundled,
           env: fixture.env,
         })
         expect(reached._tag).toBe('Answered')
@@ -168,7 +182,7 @@ layer(layerToolbox({ tools: ['node'] }), { excludeTestServices: true })(
           const fixture = yield* bundle()
           const failure = yield* ensureLocalEngine({
             socket: fixture.socket,
-            launcher: Option.none(),
+            bundled: Option.none(),
             env: fixture.env,
           }).pipe(Effect.flip)
           expect(failure._tag).toBe('NoBundledEngine')
@@ -176,7 +190,7 @@ layer(layerToolbox({ tools: ['node'] }), { excludeTestServices: true })(
           yield* listening(fixture.socket)
           const reached = yield* ensureLocalEngine({
             socket: fixture.socket,
-            launcher: Option.none(),
+            bundled: Option.none(),
             env: fixture.env,
           })
           expect(reached._tag).toBe('Answered')
@@ -189,7 +203,7 @@ layer(layerToolbox({ tools: ['node'] }), { excludeTestServices: true })(
         Effect.gen(function* () {
           const fixture = yield* bundle()
           yield* installLoginService({
-            launcher: Option.some(fixture.launcher),
+            bundled: fixture.bundled,
             env: fixture.env,
           })
           expect(yield* runsIn(fixture.runs)).toEqual(['service install'])
@@ -202,13 +216,13 @@ layer(layerToolbox({ tools: ['node'] }), { excludeTestServices: true })(
           FIXTURE_SERVICE_FAILS: 'systemd has no user instance here',
         })
         const failure = yield* installLoginService({
-          launcher: Option.some(fixture.launcher),
+          bundled: fixture.bundled,
           env: fixture.env,
         }).pipe(Effect.flip)
         expect(failure.reason).toBe('systemd has no user instance here')
 
         const unbundled = yield* installLoginService({
-          launcher: Option.none(),
+          bundled: Option.none(),
           env: fixture.env,
         }).pipe(Effect.flip)
         expect(unbundled.reason).toBe('this build bundles no engine to install')
@@ -216,14 +230,6 @@ layer(layerToolbox({ tools: ['node'] }), { excludeTestServices: true })(
     )
   },
 )
-
-describe('the bundled distribution', () => {
-  test('lies under the resources, as the distribution lays its launcher out', () => {
-    expect(
-      bundledLauncher('/Applications/Fabrica.app/Contents/Resources'),
-    ).toBe('/Applications/Fabrica.app/Contents/Resources/engine/bin/fabrica')
-  })
-})
 
 describe("the user's choice of the login service", () => {
   const app = 'file:///app/index.html'

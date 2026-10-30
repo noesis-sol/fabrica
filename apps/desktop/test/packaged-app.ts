@@ -1,14 +1,17 @@
-import { Duration, Effect, Layer, Option, Schedule } from 'effect'
+import { Duration, Effect, Layer, Option, Schedule, Schema } from 'effect'
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import * as NodePath from 'node:path'
 import { promisify } from 'node:util'
-import { _electron } from 'playwright-core'
+import { type ElectronApplication, _electron } from 'playwright-core'
 
+import { ReleaseVersion } from '@fabrica/contracts'
+import { LAUNCHER } from '@fabrica/engine/update'
 import { Toolbox, type Tools, layerToolbox } from '@fabrica/testkit'
 
 import { appId, userDataSwitch } from '../src/main/dataFolder'
+import { bundledEngine, installedLauncher } from '../src/main/local-engine'
 
 // What the packaged app's tests share (spec §22.3, §24): the smoke test (smoke.test.ts) and the update
 // test (update-smoke.test.ts) each launch a packaged app through Playwright's Electron support, in a home
@@ -137,17 +140,55 @@ export const eventually = <A>(
     ),
   )
 
-/** Stops the engine through the bundled `fabrica engine stop`, as its user would; one gone already is left. */
+/** The launchers of the local engine of an app: its copy's under `home`, and its bundle's. */
+export interface AppEngine {
+  /** The copy's, which the app runs its engine from (local-engine.ts). */
+  readonly installed: string
+  /** The bundle's, which a release from before the copy ran its engine from, in place. */
+  readonly bundled: string
+}
+
+/** The launchers of the local engine of the app `electron`, run in `home`. */
+export const appEngine = ({
+  electron,
+  home,
+}: {
+  readonly electron: ElectronApplication
+  readonly home: string
+}): Effect.Effect<AppEngine> =>
+  Effect.promise(async () => {
+    const [resources, version] = await Promise.all([
+      electron.evaluate(() => process.resourcesPath),
+      electron.evaluate(({ app }) => app.getVersion()),
+    ])
+    const engine = bundledEngine({
+      resources,
+      version: Schema.decodeUnknownSync(ReleaseVersion)(version),
+      home,
+    })
+    return {
+      installed: installedLauncher(engine),
+      bundled: NodePath.join(engine.folder, LAUNCHER),
+    }
+  })
+
+/**
+ * Stops the engine through `fabrica engine stop`, as its user would, run by the first of `launchers`
+ * that runs; one gone already is left.
+ */
 export const stopEngine = (
-  launcher: string,
+  launchers: ReadonlyArray<string>,
   env: Readonly<Record<string, string>>,
 ): Effect.Effect<void> =>
-  Effect.promise(() =>
-    run(launcher, ['engine', 'stop'], { env }).then(
-      () => undefined,
-      () => undefined,
-    ),
-  )
+  Effect.promise(async () => {
+    for (const launcher of launchers) {
+      const stopped = await run(launcher, ['engine', 'stop'], { env }).then(
+        () => true,
+        () => false,
+      )
+      if (stopped) return
+    }
+  })
 
 /** The toolbox the app's PATH is on POSIX; none on Windows, where there is no engine to keep from the host's. */
 export const toolbox: Layer.Layer<Toolbox, unknown> = posix
