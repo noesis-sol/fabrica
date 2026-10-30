@@ -18,7 +18,6 @@ import {
   PreflightCheck,
   PreflightChoices,
   type PreflightItem,
-  ProjectId,
   type ProjectNotFound,
   type RunFlags,
   type RunGoing,
@@ -33,6 +32,7 @@ import {
 } from '@fabrica/contracts'
 
 import { sayElapsed, sayMoment, secondsSince } from '../app/clock'
+import { EngineProject, sameProject } from '../app/engine-project'
 import {
   type EngineNotConnected,
   type EngineServices,
@@ -107,7 +107,7 @@ export type Request = typeof Request.Type
 
 /** A pre-flight gone through so far: the fixes chosen to make, and the refusals overridden. */
 const Choices = {
-  project: ProjectId,
+  project: EngineProject,
   preflight: Preflight,
   fix: Schema.Array(PreflightCheck),
   override: Schema.Array(PreflightCheck),
@@ -118,9 +118,9 @@ export const Checklist = defineTaggedUnion({
   /** None open. */
   None: {},
   /** The engine asked for the pre-flight. */
-  Checking: { project: ProjectId },
+  Checking: { project: EngineProject },
   /** The engine couldn't give it, with why. */
-  Failed: { project: ProjectId, reason: Schema.String },
+  Failed: { project: EngineProject, reason: Schema.String },
   /** Its refusals and warnings shown, each fix and override chosen. */
   Reviewing: Choices,
   /** Its questions being answered in the answer talk. */
@@ -143,21 +143,21 @@ export const init = (): Model => ({
 
 export const Message = defineMessageUnion({
   ClickedStartRun: {},
-  ChoseMode: { project: ProjectId, mode: StartMode },
+  ChoseMode: { project: EngineProject, mode: StartMode },
   TypedModeText: { text: Schema.String },
   ToggledRefine: {},
-  SubmittedMode: { project: ProjectId },
+  SubmittedMode: { project: EngineProject },
   CancelledControls: {},
-  ClickedDrain: { project: ProjectId },
-  ClickedUndrain: { project: ProjectId },
+  ClickedDrain: { project: EngineProject },
+  ClickedUndrain: { project: EngineProject },
   ClickedStop: {},
-  ConfirmedStop: { project: ProjectId },
-  SucceededStartRun: { project: ProjectId },
+  ConfirmedStop: { project: EngineProject },
+  SucceededStartRun: { project: EngineProject },
   SucceededRunRequest: {},
   FailedRunRequest: { action: RunAction, reason: Schema.String },
   DismissedRefusal: {},
-  SucceededPreflight: { project: ProjectId, preflight: Preflight },
-  FailedPreflight: { project: ProjectId, reason: Schema.String },
+  SucceededPreflight: { project: EngineProject, preflight: Preflight },
+  FailedPreflight: { project: EngineProject, reason: Schema.String },
   ToggledFix: { check: PreflightCheck },
   ToggledOverride: { check: PreflightCheck },
   ClickedCheckAgain: {},
@@ -173,15 +173,15 @@ export type Message = typeof Message.Type
  * talk opened on a pre-flight's questions.
  */
 export const OutMessage = defineMessageUnion({
-  StartedRun: { project: ProjectId },
-  AnsweringQuestions: { project: ProjectId },
+  StartedRun: { project: EngineProject },
+  AnsweringQuestions: { project: EngineProject },
 })
 export type OutMessage = typeof OutMessage.Type
 
 /** What the controls are given: the scope, the connection and the scoped project's run. */
 export interface ControlInputs {
   /** The project the sidebar chose: its run's controls are the row's. */
-  readonly project: Option.Option<ProjectId>
+  readonly project: Option.Option<EngineProject>
   /** Whether the engine's client is held, so requests can be sent. */
   readonly live: boolean
   /** The scoped project's run view, while it has a run. */
@@ -191,7 +191,7 @@ export interface ControlInputs {
 /** The project the controls act on: the scoped one, while the engine's client is held. */
 export const controlledProject = (
   inputs: ControlInputs,
-): Option.Option<ProjectId> => (inputs.live ? inputs.project : Option.none())
+): Option.Option<EngineProject> => (inputs.live ? inputs.project : Option.none())
 
 /** Whether the run's controls wait: a request unanswered, or the run stopping. */
 export const isBusy = (model: Model, state: RunState): boolean =>
@@ -203,16 +203,16 @@ export const isBusy = (model: Model, state: RunState): boolean =>
  */
 export const Offer = defineTaggedUnion({
   /** Start run, which opens its modes. */
-  Start: { project: ProjectId },
+  Start: { project: EngineProject },
   /** One of Start run's modes, chosen straight away. */
-  StartIn: { project: ProjectId, mode: StartMode },
+  StartIn: { project: EngineProject, mode: StartMode },
   /** Start run's modes or a mode's field closed. */
   CloseStart: {},
-  Drain: { project: ProjectId },
-  Undrain: { project: ProjectId },
+  Drain: { project: EngineProject },
+  Undrain: { project: EngineProject },
   /** Stop, which asks its confirmation first. */
   Stop: {},
-  ConfirmStop: { project: ProjectId },
+  ConfirmStop: { project: EngineProject },
   KeepRunning: {},
 })
 export type Offer = typeof Offer.Type
@@ -308,10 +308,10 @@ export const refusalWords = (error: RunRequestError): string =>
     RpcClientError: clientErrorWords,
   })
 
-const startRun = (project: ProjectId, mode: RunMode, flags: RunFlags) =>
+const startRun = (project: EngineProject, mode: RunMode, flags: RunFlags) =>
   sessionFor(project).pipe(
     Effect.flatMap(({ client }) =>
-      client.rpc['run.start']({ project, mode, flags }),
+      client.rpc['run.start']({ project: project.project, mode, flags }),
     ),
     Effect.as(Message.SucceededStartRun({ project })),
     Effect.catch(error =>
@@ -326,20 +326,20 @@ const startRun = (project: ProjectId, mode: RunMode, flags: RunFlags) =>
 
 /** Starts a run of `project` in `mode`. */
 export const StartRun = Command.define('StartRun', {
-  args: { project: ProjectId, mode: RunMode },
+  args: { project: EngineProject, mode: RunMode },
   messages: [Message.SucceededStartRun, Message.FailedRunRequest],
   execute: ({ project, mode }) => startRun(project, mode, startFlags),
 })
 
 /** Asks the engine for `project`'s overnight pre-flight (§15.6), with the flags the start will have. */
 export const CheckPreflight = Command.define('CheckPreflight', {
-  args: { project: ProjectId },
+  args: { project: EngineProject },
   messages: [Message.SucceededPreflight, Message.FailedPreflight],
   execute: ({ project }) =>
     sessionFor(project).pipe(
       Effect.flatMap(({ client }) =>
         client.rpc['run.preflight']({
-          project,
+          project: project.project,
           mode: RunMode.cases.overnight.make({}),
           flags: startFlags,
         }),
@@ -367,7 +367,7 @@ export const overnightFlags = (
 /** Starts `project`'s overnight run, its pre-flight's chosen fixes made and its refusals overridden. */
 export const StartOvernight = Command.define('StartOvernight', {
   args: {
-    project: ProjectId,
+    project: EngineProject,
     fix: Schema.Array(PreflightCheck),
     override: Schema.Array(PreflightCheck),
   },
@@ -383,7 +383,7 @@ export const StartOvernight = Command.define('StartOvernight', {
 /** Drains, undrains or stops `project`'s run. */
 export const AskRun = Command.define('AskRun', {
   args: {
-    project: ProjectId,
+    project: EngineProject,
     action: Schema.Literals(['drain', 'undrain', 'stop']),
   },
   messages: [Message.SucceededRunRequest, Message.FailedRunRequest],
@@ -391,10 +391,10 @@ export const AskRun = Command.define('AskRun', {
     sessionFor(project).pipe(
       Effect.flatMap(({ client }) =>
         action === 'drain'
-          ? client.rpc['run.drain']({ project })
+          ? client.rpc['run.drain']({ project: project.project })
           : action === 'undrain'
-            ? client.rpc['run.undrain']({ project })
-            : client.rpc['run.stop']({ project }),
+            ? client.rpc['run.undrain']({ project: project.project })
+            : client.rpc['run.stop']({ project: project.project }),
       ),
       Effect.as(Message.SucceededRunRequest()),
       Effect.catch(error =>
@@ -435,7 +435,7 @@ export const typedMode = (
         )
 }
 
-const starting = (model: Model, project: ProjectId, mode: RunMode): Return => ({
+const starting = (model: Model, project: EngineProject, mode: RunMode): Return => ({
   model: modifyFields(model, {
     controls: () => Controls.Closed(),
     request: () => Request.Pending({ action: 'start' }),
@@ -449,7 +449,7 @@ const starting = (model: Model, project: ProjectId, mode: RunMode): Return => ({
 type Gone = Extract<Checklist, { readonly _tag: 'Reviewing' | 'Answering' }>
 
 /** The checklist's project, while one is open. */
-const checklistProject = (checklist: Checklist): Option.Option<ProjectId> =>
+const checklistProject = (checklist: Checklist): Option.Option<EngineProject> =>
   Checklist.match(checklist, {
     None: () => Option.none(),
     Checking: ({ project }) => Option.some(project),
@@ -460,7 +460,7 @@ const checklistProject = (checklist: Checklist): Option.Option<ProjectId> =>
 
 /** A pre-flight first shown: every fix it offers chosen, no refusal overridden. */
 export const offered = (
-  project: ProjectId,
+  project: EngineProject,
   preflight: Preflight,
 ): Extract<Checklist, { readonly _tag: 'Reviewing' }> =>
   Checklist.Reviewing({
@@ -501,7 +501,7 @@ const reviewing = (
   }),
 })
 
-const checking = (model: Model, project: ProjectId): Return => ({
+const checking = (model: Model, project: EngineProject): Return => ({
   model: modifyFields(model, {
     controls: () => Controls.Closed(),
     checklist: () => Checklist.Checking({ project }),
@@ -526,7 +526,7 @@ const startingOvernight = (model: Model, gone: Gone): Return => ({
 
 const asking = (
   model: Model,
-  project: ProjectId,
+  project: EngineProject,
   action: 'drain' | 'undrain' | 'stop',
 ): Return => ({
   model: modifyFields(model, {
@@ -616,7 +616,8 @@ export const update = (model: Model, message: Message): Return =>
     SucceededPreflight: ({ project, preflight }) => ({
       model: modifyFields(model, {
         checklist: checklist =>
-          Checklist.guards.Checking(checklist) && checklist.project === project
+          Checklist.guards.Checking(checklist) &&
+          sameProject(checklist.project, project)
             ? offered(project, preflight)
             : checklist,
       }),
@@ -624,7 +625,8 @@ export const update = (model: Model, message: Message): Return =>
     FailedPreflight: ({ project, reason }) => ({
       model: modifyFields(model, {
         checklist: checklist =>
-          Checklist.guards.Checking(checklist) && checklist.project === project
+          Checklist.guards.Checking(checklist) &&
+          sameProject(checklist.project, project)
             ? Checklist.Failed({ project, reason })
             : checklist,
       }),
@@ -789,7 +791,8 @@ export const questionsLeft = (
       })),
     onSome: requests => {
       const open = requests.flatMap(request =>
-        request._tag === 'question' && request.project === gone.project
+        request._tag === 'question' &&
+        request.project === gone.project.project
           ? [request]
           : [],
       )
@@ -1150,7 +1153,7 @@ const ghostButton = `${ghostLook} px-12 py-6 text-sm`
 const rowPrimaryButton = `${primaryLook} px-8 py-4 text-xs`
 const rowGhostButton = `${ghostLook} px-8 py-4 text-xs`
 
-const modeMenu = (project: ProjectId, h: HtmlBuilder<Message>): Html =>
+const modeMenu = (project: EngineProject, h: HtmlBuilder<Message>): Html =>
   h.ul(
     [
       h.Role('menu'),
@@ -1182,7 +1185,7 @@ const modeMenu = (project: ProjectId, h: HtmlBuilder<Message>): Html =>
   )
 
 const typingForm = (
-  project: ProjectId,
+  project: EngineProject,
   typing: Extract<Controls, { readonly _tag: 'Typing' }>,
   h: HtmlBuilder<Message>,
 ): Html => {
@@ -1241,7 +1244,7 @@ const typingForm = (
 /** Start run, its modes or a mode's field: the project is idle. */
 const idleControls = (
   model: Model,
-  project: ProjectId,
+  project: EngineProject,
   h: HtmlBuilder<Message>,
 ): Html =>
   Controls.guards.Typing(model.controls)
@@ -1276,7 +1279,7 @@ const stateWords: Record<RunState, Option.Option<string>> = {
 /** Drain (or Undrain) and Stop: the project's run goes. */
 const runningControls = (
   model: Model,
-  project: ProjectId,
+  project: EngineProject,
   state: RunState,
   h: HtmlBuilder<Message>,
 ): ReadonlyArray<Html> => {

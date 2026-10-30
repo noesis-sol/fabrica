@@ -4,10 +4,11 @@ import { type Html, type HtmlBuilder, childAttributes } from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
 import { modifyFields } from 'foldkit/struct'
 
-import { type LocalTime, type ProjectId, RunEvent } from '@fabrica/contracts'
+import { type LocalTime, RunEvent } from '@fabrica/contracts'
 import * as VirtualList from '@foldkit/ui/virtualList'
 
 import { sameDay, sayMoment } from '../app/clock'
+import { type EngineProject, projectKey } from '../app/engine-project'
 
 // The console's History panel (spec §18.3; Appendix A.2, A.3): the scope's events from the event
 // stream (§13.12), newest first, each a time in the viewer's zone (with the day when it isn't today,
@@ -100,7 +101,8 @@ export interface Chip {
 
 /** One project's events, newest first, and the chip its rows carry: none in a project's own scope. */
 export interface ProjectEvents {
-  readonly project: ProjectId
+  /** The project, named with its engine. */
+  readonly project: EngineProject
   readonly events: ReadonlyArray<RunEvent>
   readonly chip: Option.Option<Chip>
 }
@@ -127,7 +129,7 @@ const projectRows = ({
     Array.map(events, (event, index) =>
       Option.map(historyLine(event), said => ({
         ...said,
-        key: `${project}:${event.run}:${events.length - 1 - index}`,
+        key: `${projectKey(project)}:${event.run}:${events.length - 1 - index}`,
         time: event.time,
         chip,
       })),

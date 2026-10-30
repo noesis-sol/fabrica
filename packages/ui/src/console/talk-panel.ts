@@ -9,7 +9,6 @@ import { defineView } from 'foldkit/submodel'
 import {
   type AttentionRequest,
   OpenedTalk,
-  ProjectId,
   type ProjectSettings,
   TalkContext,
   TalkId,
@@ -18,6 +17,11 @@ import {
   type TranscriptItem,
 } from '@fabrica/contracts'
 
+import {
+  EngineProject,
+  projectKey,
+  sameProject,
+} from '../app/engine-project'
 import { type EngineServices, requestProject } from '../app/engine-route'
 import * as Conversation from './conversation'
 import * as Sidebar from './sidebar'
@@ -31,7 +35,7 @@ import * as Sidebar from './sidebar'
 
 /** A question open in scope, from the attention requests. */
 export const OpenQuestion = Schema.Struct({
-  project: ProjectId,
+  project: EngineProject,
   ticket: TicketId,
 })
 export type OpenQuestion = typeof OpenQuestion.Type
@@ -42,7 +46,7 @@ export type QuestionsMode = ProjectSettings['questions']
 
 /** A project's `questions` setting: still being read, or read. */
 export const QuestionsSetting = Schema.Struct({
-  project: ProjectId,
+  project: EngineProject,
   mode: Schema.Option(QuestionsMode),
 })
 export type QuestionsSetting = typeof QuestionsSetting.Type
@@ -50,18 +54,18 @@ export type QuestionsSetting = typeof QuestionsSetting.Type
 /** The answer talk: none, being opened, open, or refused by the engine, for a project with questions. */
 export const Answer = defineTaggedUnion({
   None: {},
-  Opening: { project: ProjectId },
+  Opening: { project: EngineProject },
   Open: { conversation: Conversation.Conversation },
-  Failed: { project: ProjectId, reason: Schema.String },
+  Failed: { project: EngineProject, reason: Schema.String },
 })
 export type Answer = typeof Answer.Type
 
 /** The run talk: none, being opened on a project, open, or refused by the engine. */
 export const Run = defineTaggedUnion({
   None: {},
-  Opening: { project: ProjectId },
+  Opening: { project: EngineProject },
   Open: { conversation: Conversation.Conversation },
-  Failed: { project: ProjectId, reason: Schema.String },
+  Failed: { project: EngineProject, reason: Schema.String },
 })
 export type Run = typeof Run.Type
 
@@ -69,7 +73,7 @@ export type Run = typeof Run.Type
 export const Address = defineTaggedUnion({
   None: {},
   Asking: { text: Text },
-  Opening: { project: ProjectId, text: Text },
+  Opening: { project: EngineProject, text: Text },
 })
 export type Address = typeof Address.Type
 
@@ -95,16 +99,16 @@ export const init = (): Model => ({
 })
 
 export const Message = defineMessageUnion({
-  OpenedRunTalk: { project: ProjectId, opened: OpenedTalk },
-  FailedOpenRunTalk: { project: ProjectId, reason: Schema.String },
-  OpenedAnswerTalk: { project: ProjectId, opened: OpenedTalk },
-  FailedOpenAnswerTalk: { project: ProjectId, reason: Schema.String },
-  LoadedQuestionsSetting: { project: ProjectId, mode: QuestionsMode },
+  OpenedRunTalk: { project: EngineProject, opened: OpenedTalk },
+  FailedOpenRunTalk: { project: EngineProject, reason: Schema.String },
+  OpenedAnswerTalk: { project: EngineProject, opened: OpenedTalk },
+  FailedOpenAnswerTalk: { project: EngineProject, reason: Schema.String },
+  LoadedQuestionsSetting: { project: EngineProject, mode: QuestionsMode },
   CompletedCloseTalk: {},
   TypedDraft: { text: Schema.String },
   SubmittedDraft: {},
   /** Under All projects, the project the maintainer chose for the message. */
-  ChoseProject: { project: ProjectId },
+  ChoseProject: { project: EngineProject },
   CancelledAsking: {},
   /** The answer talk opened by the maintainer's action (`questions: key`). */
   ClickedAnswerTalk: {},
@@ -119,7 +123,7 @@ export type Message = typeof Message.Type
  * Opens the project's run talk, one per project (§15.4): opened again, it is the same talk. The scope's
  * is opened by the subscriptions as the scope changes; another project's by `OpenRunTalk`.
  */
-export const openRunTalk = (project: ProjectId) =>
+export const openRunTalk = (project: EngineProject) =>
   Conversation.openTalk(project, TalkContext.cases.run.make({})).pipe(
     Effect.map(opened => Message.OpenedRunTalk({ project, opened })),
     Effect.catch(reason =>
@@ -129,14 +133,14 @@ export const openRunTalk = (project: ProjectId) =>
 
 /** Opens the run talk of a project a message under All projects named. */
 export const OpenRunTalk = Command.define('OpenRunTalk', {
-  args: { project: ProjectId },
+  args: { project: EngineProject },
   messages: [Message.OpenedRunTalk, Message.FailedOpenRunTalk],
   execute: ({ project }) => openRunTalk(project),
 })
 
 /** Opens the answer talk on every open question of the project (§15.3): those arriving later queue into it. */
 export const OpenAnswerTalk = Command.define('OpenAnswerTalk', {
-  args: { project: ProjectId },
+  args: { project: EngineProject },
   messages: [Message.OpenedAnswerTalk, Message.FailedOpenAnswerTalk],
   execute: ({ project }) =>
     Conversation.openTalk(
@@ -152,11 +156,11 @@ export const OpenAnswerTalk = Command.define('OpenAnswerTalk', {
 
 /** Reads the project's `questions` setting; one the engine can't give is the default, `auto`. */
 export const LoadQuestionsSetting = Command.define('LoadQuestionsSetting', {
-  args: { project: ProjectId },
+  args: { project: EngineProject },
   messages: [Message.LoadedQuestionsSetting],
   execute: ({ project }) =>
     requestProject(project, client =>
-      client.rpc['projects.settings.get']({ project }),
+      client.rpc['projects.settings.get']({ project: project.project }),
     ).pipe(
       Effect.map(settings => settings.questions),
       Effect.orElseSucceed((): QuestionsMode => 'auto'),
@@ -185,12 +189,12 @@ type Return = Update.Return<Model, Message, EngineServices>
 
 /** What the panel's update reads of the console: the scope, and the projects by name. */
 export interface Context {
-  readonly scope: Option.Option<ProjectId>
+  readonly scope: Option.Option<EngineProject>
   readonly projects: ReadonlyArray<ProjectName>
 }
 
 export interface ProjectName {
-  readonly project: ProjectId
+  readonly project: EngineProject
   readonly name: string
 }
 
@@ -199,7 +203,7 @@ export const projectNames = (
   sidebar: Sidebar.Model,
 ): ReadonlyArray<ProjectName> =>
   Sidebar.rows(sidebar).map(row => ({
-    project: row.status.project,
+    project: Sidebar.rowProject(row),
     name: row.status.name,
   }))
 
@@ -234,7 +238,7 @@ export const answerTalk = (
 /** The talks the panel holds, whose transcripts are watched, each with its project. */
 export const heldTalks = (
   model: Model,
-): ReadonlyArray<{ readonly project: ProjectId; readonly talk: TalkId }> =>
+): ReadonlyArray<{ readonly project: EngineProject; readonly talk: TalkId }> =>
   [runTalk(model), answerTalk(model)].flatMap(talk =>
     Option.match(talk, {
       onNone: () => [],
@@ -247,17 +251,19 @@ const holds = (model: Model, talk: TalkId): boolean =>
   heldTalks(model).some(held => held.talk === talk)
 
 /** The projects with open questions, in the order their oldest was asked. */
-const questionProjects = (model: Model): ReadonlyArray<ProjectId> =>
+const questionProjects = (model: Model): ReadonlyArray<EngineProject> =>
   Array.dedupe(model.questions.map(question => question.project))
 
 const settingOf = (
   model: Model,
-  project: ProjectId,
+  project: EngineProject,
 ): Option.Option<QuestionsSetting> =>
-  Array.findFirst(model.settings, setting => setting.project === project)
+  Array.findFirst(model.settings, setting =>
+    sameProject(setting.project, project),
+  )
 
 /** The project the answer talk is for, while it is opening, open or refused. */
-const answerProject = (answer: Answer): Option.Option<ProjectId> =>
+const answerProject = (answer: Answer): Option.Option<EngineProject> =>
   Answer.match(answer, {
     None: () => Option.none(),
     Opening: ({ project }) => Option.some(project),
@@ -274,7 +280,7 @@ const dropAnswer = (model: Model): Return => ({
 })
 
 /** Opens the answer talk on `project`'s questions. */
-const openAnswer = (model: Model, project: ProjectId): Return => ({
+const openAnswer = (model: Model, project: EngineProject): Return => ({
   model: modifyFields(model, { answer: () => Answer.Opening({ project }) }),
   commands: [OpenAnswerTalk({ project })],
 })
@@ -298,7 +304,9 @@ const reconcile = (model: Model): Return => {
   const kept: Return = Option.match(answerProject(model.answer), {
     onNone: () => ({ model }),
     onSome: project =>
-      projects.includes(project) ? { model } : dropAnswer(model),
+      projects.some(listed => sameProject(listed, project))
+        ? { model }
+        : dropAnswer(model),
   })
   if (!Answer.guards.None(kept.model.answer)) {
     return kept
@@ -331,15 +339,16 @@ const reconcile = (model: Model): Return => {
   )
 }
 
-/** The open questions among the scope's attention requests, oldest first. */
+/** The open questions among the scope's attention requests on the engine named `engine`, oldest first. */
 export const openQuestions = (
+  engine: string,
   requests: ReadonlyArray<AttentionRequest>,
 ): ReadonlyArray<OpenQuestion> =>
   Array.sortWith(
     requests.flatMap(request => (request._tag === 'question' ? [request] : [])),
     request => request.openedAt,
     (first, second) => (first < second ? -1 : first > second ? 1 : 0),
-  ).map(({ project, ticket }) => ({ project, ticket }))
+  ).map(({ project, ticket }) => ({ project: { engine, project }, ticket }))
 
 /** The scope's open questions changed: the answer talk follows them. */
 export const receivedQuestions = (
@@ -348,13 +357,13 @@ export const receivedQuestions = (
 ): Return => reconcile(modifyFields(model, { questions: () => questions }))
 
 /** Opens the run talk on `project`, the panel showing nothing of another project's meanwhile. */
-const openRun = (model: Model, project: ProjectId): Return => ({
+const openRun = (model: Model, project: EngineProject): Return => ({
   model: modifyFields(model, { run: () => Run.Opening({ project }) }),
   commands: [OpenRunTalk({ project })],
 })
 
 /** The project the run talk is for, whatever its state. */
-const runProject = (run: Run): Option.Option<ProjectId> =>
+const runProject = (run: Run): Option.Option<EngineProject> =>
   Run.match(run, {
     None: () => Option.none(),
     Opening: ({ project }) => Option.some(project),
@@ -369,14 +378,16 @@ const runProject = (run: Run): Option.Option<ProjectId> =>
  */
 export const scoped = (
   model: Model,
-  scope: Option.Option<ProjectId>,
+  scope: Option.Option<EngineProject>,
 ): Return => {
   const cleared = modifyFields(model, {
     questions: questions =>
       Option.match(scope, {
         onNone: () => questions,
         onSome: project =>
-          questions.filter(question => question.project === project),
+          questions.filter(question =>
+            sameProject(question.project, project),
+          ),
       }),
     address: () => Address.None(),
     composer: composer =>
@@ -408,7 +419,7 @@ export const scoped = (
 /** The maintainer opened the answer talk (a key, a button, "Talk it through"): on `project`, or the first with questions. */
 export const requestedAnswerTalk = (
   model: Model,
-  project: Option.Option<ProjectId>,
+  project: Option.Option<EngineProject>,
 ): Return =>
   Option.match(
     Option.orElse(project, () => Array.head(questionProjects(model))),
@@ -485,11 +496,11 @@ const sending = (model: Model, talk: TalkId, text: string): Return => ({
 /** Sends `text` to `project`'s run talk, opening it first where it isn't the one open. */
 const sendToProject = (
   model: Model,
-  project: ProjectId,
+  project: EngineProject,
   text: string,
 ): Return =>
   Run.guards.Open(model.run) &&
-  model.run.conversation.project === project &&
+  sameProject(model.run.conversation.project, project) &&
   !model.run.conversation.ended
     ? sending(model, model.run.conversation.talk, text)
     : andThen(
@@ -516,9 +527,11 @@ export const names = (text: string, name: string): boolean =>
 export const namedProjects = (
   text: string,
   projects: ReadonlyArray<ProjectName>,
-): ReadonlyArray<ProjectId> =>
+): ReadonlyArray<EngineProject> =>
   projects
-    .filter(({ project, name }) => names(text, name) || names(text, project))
+    .filter(
+      ({ project, name }) => names(text, name) || names(text, project.project),
+    )
     .map(({ project }) => project)
 
 const submitted = (model: Model, context: Context): Return =>
@@ -569,7 +582,7 @@ export const update = (
           }),
       })
       return Address.guards.Opening(model.address) &&
-        model.address.project === project
+        sameProject(model.address.project, project)
         ? sending(open, opened.talk, model.address.text)
         : { model: open }
     },
@@ -584,7 +597,8 @@ export const update = (
           }
         : { model },
     OpenedAnswerTalk: ({ project, opened }) =>
-      Answer.guards.Opening(model.answer) && model.answer.project === project
+      Answer.guards.Opening(model.answer) &&
+      sameProject(model.answer.project, project)
         ? {
             model: modifyFields(model, {
               answer: () =>
@@ -597,7 +611,8 @@ export const update = (
           { model, commands: [CloseTalk({ talk: opened.talk })] },
     FailedOpenAnswerTalk: ({ project, reason }) => ({
       model:
-        Answer.guards.Opening(model.answer) && model.answer.project === project
+        Answer.guards.Opening(model.answer) &&
+      sameProject(model.answer.project, project)
           ? modifyFields(model, {
               answer: () => Answer.Failed({ project, reason }),
             })
@@ -608,7 +623,7 @@ export const update = (
         modifyFields(model, {
           settings: settings =>
             settings.map(setting =>
-              setting.project === project
+              sameProject(setting.project, project)
                 ? { project, mode: Option.some(mode) }
                 : setting,
             ),
@@ -647,28 +662,37 @@ export const update = (
 // The drawing.
 
 export interface ViewInputs {
-  readonly scope: Option.Option<ProjectId>
+  readonly scope: Option.Option<EngineProject>
   readonly live: boolean
   readonly projects: ReadonlyArray<ProjectName>
 }
 
 const projectNameOf = (
   projects: ReadonlyArray<ProjectName>,
-  project: ProjectId,
+  project: EngineProject,
 ): string =>
   Option.match(
-    Array.findFirst(projects, entry => entry.project === project),
-    { onNone: () => project, onSome: entry => entry.name },
+    Array.findFirst(projects, entry =>
+      sameProject(entry.project, project),
+    ),
+    { onNone: () => project.project, onSome: entry => entry.name },
   )
 
 const smallButton =
   'rounded-button border border-line px-6 text-xs text-fg hover:brightness-[1.08]'
 
-/** Under All projects, the projects to choose from for a message that named none, or more than one. */
+/**
+ * Under All projects, the projects to choose from for a message that named none, or more than one, each
+ * with its engine's name where the projects are on more than one engine.
+ */
 const askingWhich = (
   inputs: ViewInputs,
   h: HtmlBuilder<Message>,
-): ReadonlyArray<Html> => [
+): ReadonlyArray<Html> => {
+  const engines = Array.dedupe(
+    inputs.projects.map(({ project }) => project.engine),
+  ).length
+  return [
   h.div(
     [
       h.Role('group'),
@@ -679,13 +703,13 @@ const askingWhich = (
       h.span([h.Class('text-muted')], ['Which project?']),
       ...inputs.projects.map(({ project, name }) =>
         h.keyed('button')(
-          project,
+          projectKey(project),
           [
             h.Type('button'),
             h.OnClick(Message.ChoseProject({ project })),
             h.Class(smallButton),
           ],
-          [name],
+          [engines > 1 ? `${name} · ${project.engine}` : name],
         ),
       ),
       h.button(
@@ -698,7 +722,8 @@ const askingWhich = (
       ),
     ],
   ),
-]
+  ]
+}
 
 /** What the panel says while it has no talk to show. */
 const emptyWords = (model: Model, inputs: ViewInputs): string =>
@@ -717,7 +742,7 @@ const emptyWords = (model: Model, inputs: ViewInputs): string =>
 const noteOf = (model: Model, inputs: ViewInputs): string => {
   const waiting = model.questions.length
   const asked = `${waiting} question${waiting === 1 ? '' : 's'}`
-  const ofProject = (project: ProjectId): string =>
+  const ofProject = (project: EngineProject): string =>
     Option.isNone(inputs.scope)
       ? ` · ${projectNameOf(inputs.projects, project)}`
       : ''

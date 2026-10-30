@@ -11,13 +11,15 @@ import {
   applyKeyedPatch,
 } from '@fabrica/contracts'
 
+import { type EngineProject, projectKey } from '../app/engine-project'
 import { applyItems } from '../app/streams'
 
 // The console's sidebar: projects and their runs (spec §18.3, H43; Appendix A.2). Header "Projects"
 // and the count; an "All projects" row, then one row per project on every known engine: its chip in
 // its colour (the five role colours in turn, by its index) holding its two-digit index, its name, its
 // Base and, where more than one engine is known, the engine's name, and its run's state on the right.
-// Selecting a row scopes the main area to it; "+ Add project" is pinned at the bottom. A selected row
+// Selecting a row scopes the main area to it, its project named with its engine (engine-project.ts), so the
+// same project on two engines is two rows; "+ Add project" is pinned at the bottom. A selected row
 // is marked by its left bar and background and by `aria-current`, a run's state in a word beside its
 // colour, so neither rests on colour alone (§18.2).
 
@@ -115,6 +117,21 @@ export const rows = (model: Model): ReadonlyArray<Row> =>
     )
     .map((row, at) => ({ ...row, index: at + 1 }))
 
+/** A row's project, named with its engine. */
+export const rowProject = (row: Row): EngineProject => ({
+  engine: row.engine.name,
+  project: row.status.project,
+})
+
+/** The row holding `project` on its engine; none while no row shows it. */
+export const rowOf = (model: Model, project: EngineProject): Option.Option<Row> =>
+  Array.findFirst(
+    rows(model),
+    row =>
+      row.engine.name === project.engine &&
+      row.status.project === project.project,
+  )
+
 /** Every row's status with the name of its engine: the runs History and the notifications watch, each through its engine. */
 export const engineStatuses = (
   model: Model,
@@ -124,32 +141,16 @@ export const engineStatuses = (
 /** The chip of `project`, as its row has it: cards in the All projects scope carry it (§18.3). */
 export const projectChip = (
   model: Model,
-  project: ProjectId,
+  project: EngineProject,
 ): Option.Option<Chip> =>
-  Option.map(
-    Array.findFirst(rows(model), row => row.status.project === project),
-    row => chipOf(row.index),
-  )
+  Option.map(rowOf(model, project), row => chipOf(row.index))
 
 /** The name of `project`, as its row has it; none while no row shows it. */
 export const projectName = (
   model: Model,
-  project: ProjectId,
+  project: EngineProject,
 ): Option.Option<string> =>
-  Option.map(
-    Array.findFirst(rows(model), row => row.status.project === project),
-    row => row.status.name,
-  )
-
-/** The name of the engine whose row holds `project`; none while no row shows it. */
-export const engineName = (
-  model: Model,
-  project: ProjectId,
-): Option.Option<string> =>
-  Option.map(
-    Array.findFirst(rows(model), row => row.status.project === project),
-    row => row.engine.name,
-  )
+  Option.map(rowOf(model, project), row => row.status.name)
 
 /** A run's state in a word, and the role colour beside it: none while idle. */
 export const runLabel = (
@@ -172,16 +173,14 @@ export const isOvernight = (run: ProjectRunState): boolean =>
 /** The run going in `project`, as its row says it: Running or Waiting; none while idle or unknown. */
 export const goingRun = (
   model: Model,
-  project: ProjectId,
+  project: EngineProject,
 ): Option.Option<RunId> =>
-  Option.flatMap(
-    Array.findFirst(rows(model), row => row.status.project === project),
-    row =>
-      ProjectRunState.match(row.status.run, {
-        idle: () => Option.none(),
-        running: ({ run }) => Option.some(run),
-        waiting: ({ run }) => Option.some(run),
-      }),
+  Option.flatMap(rowOf(model, project), row =>
+    ProjectRunState.match(row.status.run, {
+      idle: () => Option.none(),
+      running: ({ run }) => Option.some(run),
+      waiting: ({ run }) => Option.some(run),
+    }),
   )
 
 /** The line under a project's name: its Base, and its engine's name where more than one is known. */
@@ -220,14 +219,14 @@ const roleText: Record<Role, string> = {
 /** What the frame gives the sidebar: the scope, and the Messages its rows and its button send. */
 export interface Config<Message> {
   /** The project selected, or none for every project. */
-  readonly scope: Option.Option<ProjectId>
+  readonly scope: Option.Option<EngineProject>
   readonly messages: Messages<Message>
 }
 
 /** The sidebar's Messages, made once, so the frame's memo of the sidebar holds. */
 export interface Messages<Message> {
   /** Scopes the main area to a project, or to every project. */
-  readonly select: (project: Option.Option<ProjectId>) => Message
+  readonly select: (project: Option.Option<EngineProject>) => Message
   /** Opens the engines screen's add-project flow (§10.1). */
   readonly addProject: Message
 }
@@ -279,16 +278,18 @@ const projectRow = <Message>(
   h: HtmlBuilder<Message>,
 ): Html => {
   const { status } = row
-  const selected = Option.contains(config.scope, status.project)
+  const project = rowProject(row)
+  const selected = Option.contains(config.scope, project)
   const state = runLabel(status.run)
   const overnight = isOvernight(status.run)
   const base = baseLine(row, enginesKnown)
   return h.keyed('button')(
-    status.project,
+    projectKey(project),
     [
       h.Type('button'),
       h.DataAttribute('project', status.project),
-      h.OnClick(config.messages.select(Option.some(status.project))),
+      h.DataAttribute('engine', row.engine.name),
+      h.OnClick(config.messages.select(Option.some(project))),
       ...selection(selected, h),
       h.AriaLabel(
         [

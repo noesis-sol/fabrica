@@ -5,9 +5,10 @@ import type { Html, HtmlBuilder } from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
 import { modifyFields } from 'foldkit/struct'
 
-import { EngineSettings, ProjectId, ProjectSettings } from '@fabrica/contracts'
+import { EngineSettings, ProjectSettings } from '@fabrica/contracts'
 
 import { localEngineName } from '../app/connection'
+import { EngineProject } from '../app/engine-project'
 import {
   type EngineServices,
   requestEngine,
@@ -48,7 +49,7 @@ export interface SettingRow {
 
 export const Model = Schema.Struct({
   /** The project whose settings are shown: the scope's as the screen opened; none for every project. */
-  project: Schema.Option(ProjectId),
+  project: Schema.Option(EngineProject),
   projectSettings: AsyncData.Schema(ProjectSettings, Schema.String).schema,
   engineSettings: AsyncData.Schema(EngineSettings, Schema.String).schema,
 })
@@ -62,10 +63,10 @@ export const init = (): Model => ({
 
 export const Message = defineMessageUnion({
   SucceededLoadProjectSettings: {
-    project: ProjectId,
+    project: EngineProject,
     settings: ProjectSettings,
   },
-  FailedLoadProjectSettings: { project: ProjectId, reason: Schema.String },
+  FailedLoadProjectSettings: { project: EngineProject, reason: Schema.String },
   SucceededLoadEngineSettings: { settings: EngineSettings },
   FailedLoadEngineSettings: { reason: Schema.String },
 })
@@ -74,14 +75,14 @@ export type Message = typeof Message.Type
 // Commands: each a request to the engine, its failure in words.
 
 export const LoadProjectSettings = Command.define('LoadProjectSettings', {
-  args: { project: ProjectId },
+  args: { project: EngineProject },
   messages: [
     Message.SucceededLoadProjectSettings,
     Message.FailedLoadProjectSettings,
   ],
   execute: ({ project }) =>
     requestProject(project, client =>
-      client.rpc['projects.settings.get']({ project }),
+      client.rpc['projects.settings.get']({ project: project.project }),
     ).pipe(
       Effect.map(settings =>
         Message.SucceededLoadProjectSettings({ project, settings }),
@@ -112,7 +113,7 @@ export type Requires = EngineServices
 
 type Return = Update.Return<Model, Message, Requires>
 
-const sameScope = Schema.toEquivalence(Schema.Option(ProjectId))
+const sameScope = Schema.toEquivalence(Schema.Option(EngineProject))
 
 /**
  * As the screen opens, or its scope changes while it is shown: the engine's settings and `scope`'s
@@ -120,7 +121,7 @@ const sameScope = Schema.toEquivalence(Schema.Option(ProjectId))
  */
 export const opened = (
   model: Model,
-  scope: Option.Option<ProjectId>,
+  scope: Option.Option<EngineProject>,
 ): Return => {
   const engine = AsyncData.revalidateOrLoad(model.engineSettings)
   const sameProject = sameScope(model.project, scope)

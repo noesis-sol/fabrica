@@ -29,13 +29,11 @@ import {
   isLive,
   localEngineName,
 } from './connection'
+import { EngineProject } from './engine-project'
 import {
   type EngineServices,
   EngineSessions,
   type EngineSessionsShape,
-  ProjectRoute,
-  engineOf,
-  routes,
   scopeEngine,
   withEngineClient,
   withEngineSession,
@@ -57,12 +55,12 @@ import { watchOf } from './streams'
 // draws it is shown: the run view and attention for the console's scope (under All projects, every
 // connected engine's attention), History's events (under All projects, every project's run going), the
 // backlog while its screen is open, the host's load while connected. Each project's streams go through
-// the engine whose sidebar row holds it, while that engine is connected (engine-route.ts), and the
-// load is the scoped project's engine's. Each stream's items go on once per animation frame, so a
-// burst of patches costs one update. The scope's run talk is opened as the scope changes, and every
-// talk the app holds has its transcript watched. For the app's notifications (§18.5), every connected
-// engine's attention requests and the events of each run going, and the clicks on the notifications
-// shown; and what ssh asks as the app connects (§9.1).
+// the engine holding it, which the project names, while that engine is connected (engine-route.ts),
+// and the load is the scoped project's engine's. Each stream's items go on once per animation frame,
+// so a burst of patches costs one update. The scope's run talk is opened as the scope changes, and
+// every talk the app holds has its transcript watched. For the app's notifications (§18.5), every
+// connected engine's attention requests and the events of each run going, and the clicks on the
+// notifications shown; and what ssh asks as the app connects (§9.1).
 
 /** What the subscriptions need from their host, injected so tests drive them. */
 export interface SubscriptionEnvironment {
@@ -120,11 +118,11 @@ export const linkMessages = (
 /** The project's run view, a frame's items at a time; its end, when the project has no run, as a Message. */
 export const runViewMessages = (
   client: EngineClientShape,
-  project: ProjectId,
+  project: EngineProject,
   nextFrame: Effect.Effect<void>,
 ): Stream.Stream<Message> =>
   watchOf<RunView, RunViewPatch>(client)(resume =>
-    client.rpc['run.watchView']({ project, resume }),
+    client.rpc['run.watchView']({ project: project.project, resume }),
   ).pipe(
     perFrame(nextFrame),
     Stream.map(items => Message.ReceivedRunView({ project, items })),
@@ -133,10 +131,18 @@ export const runViewMessages = (
     ),
   )
 
-/** The run's events, a frame's at a time; the stream ends with the run, its events kept. */
+/** The events of a run on the engine named `engine`, a frame's at a time; the stream ends with the run, its events kept. */
 export const eventMessages = (
   client: EngineClientShape,
-  { project, run }: { readonly project: ProjectId; readonly run: RunId },
+  {
+    engine,
+    project,
+    run,
+  }: {
+    readonly engine: string
+    readonly project: ProjectId
+    readonly run: RunId
+  },
   nextFrame: Effect.Effect<void>,
 ): Stream.Stream<Message> =>
   watchOf<ReadonlyArray<RunEvent>, ReadonlyArray<RunEvent>>(client)(resume =>
@@ -147,11 +153,13 @@ export const eventMessages = (
     }),
   ).pipe(
     perFrame(nextFrame),
-    Stream.map(items => Message.ReceivedEvents({ project, items })),
+    Stream.map(items =>
+      Message.ReceivedEvents({ project: { engine, project }, items }),
+    ),
     Stream.catch(() => Stream.empty),
   )
 
-/** The open attention requests on the engine named `engine`, of one project or every one. */
+/** The open attention requests on the engine named `engine`, of one of its projects or every one. */
 export const attentionMessages = (
   client: EngineClientShape,
   {
@@ -171,11 +179,11 @@ export const attentionMessages = (
 /** The project's tickets. */
 export const backlogMessages = (
   client: EngineClientShape,
-  project: ProjectId,
+  project: EngineProject,
   nextFrame: Effect.Effect<void>,
 ): Stream.Stream<Message> =>
   watchOf<ReadonlyArray<Ticket>, typeof BacklogPatch.Type>(client)(resume =>
-    client.rpc['tickets.watch']({ project, resume }),
+    client.rpc['tickets.watch']({ project: project.project, resume }),
   ).pipe(
     perFrame(nextFrame),
     Stream.map(items => Message.ReceivedBacklog({ project, items })),
@@ -263,10 +271,7 @@ const heldTalks = (
     [
       ...TalkPanel.heldTalks(model.console.talkPanel),
       ...Talks.heldTalks(model.screens.talks),
-    ].map(({ project, talk }) => ({
-      engine: engineOf(model.console.sidebar, project),
-      talk,
-    })),
+    ].map(({ project, talk }) => ({ engine: project.engine, talk })),
     (first, second) => first.talk === second.talk,
   ).filter(({ engine }) => RemoteEngines.isEngineLive(model, engine))
 
@@ -291,7 +296,10 @@ export const projectMessages = (
  * it was started (the app, the CLI, the run talk), else the one the view shows, so a run's end keeps
  * its last view rather than watching afresh.
  */
-const viewedRun = (model: Model, project: ProjectId): Option.Option<RunId> =>
+const viewedRun = (
+  model: Model,
+  project: EngineProject,
+): Option.Option<RunId> =>
   Option.orElse(Sidebar.goingRun(model.console.sidebar, project), () =>
     Option.map(model.runView, view => view.header.run),
   )
@@ -302,6 +310,12 @@ const EngineRun = Schema.Struct({
   project: ProjectId,
   run: RunId,
 })
+
+/** The scoped project, while its engine is connected; none under All projects. */
+const liveScope = (model: Model): Option.Option<EngineProject> =>
+  Option.filter(model.scope, ({ engine }) =>
+    RemoteEngines.isEngineLive(model, engine),
+  )
 
 /** Of `runs`, those on an engine connected now. */
 const onLiveEngines = <Run extends { readonly engine: string }>(
@@ -318,12 +332,12 @@ const historyRuns = (model: Model): ReadonlyArray<typeof EngineRun.Type> =>
   onLiveEngines(
     model,
     Option.match(model.scope, {
-      onSome: () =>
+      onSome: ({ engine }) =>
         Option.match(model.runView, {
           onNone: () => [],
           onSome: view => [
             {
-              engine: engineOf(model.console.sidebar, view.header.project),
+              engine,
               project: view.header.project,
               run: view.header.run,
             },
@@ -339,10 +353,8 @@ const historyRuns = (model: Model): ReadonlyArray<typeof EngineRun.Type> =>
  */
 const attentionEngines = (model: Model): ReadonlyArray<string> =>
   Option.match(model.scope, {
-    onSome: () => {
-      const engine = scopeEngine(model.console.sidebar, model.scope)
-      return RemoteEngines.isEngineLive(model, engine) ? [engine] : []
-    },
+    onSome: ({ engine }) =>
+      RemoteEngines.isEngineLive(model, engine) ? [engine] : [],
     onNone: () => RemoteEngines.liveEngines(model),
   })
 
@@ -417,44 +429,26 @@ export const makeSubscriptions = ({
           live ? withEngineClient(localEngineName, linkMessages) : Stream.empty,
       },
     ),
-    // Each project's streams go through the engine whose sidebar row holds it (engine-route.ts).
-    routes: entry(
-      { routes: Schema.Array(ProjectRoute) },
-      {
-        modelToDependencies: model => ({
-          routes: routes(model.console.sidebar),
-        }),
-        dependenciesToStream: ({ routes }) =>
-          Stream.fromEffectDrain(
-            Effect.flatMap(EngineSessions, sessions => sessions.route(routes)),
-          ),
-      },
-    ),
     runView: entry(
       {
-        engine: Schema.String,
-        project: Schema.Option(ProjectId),
+        project: Schema.Option(EngineProject),
         run: Schema.Option(RunId),
         watch: Schema.Int,
       },
       {
         modelToDependencies: model => {
-          const engine = scopeEngine(model.console.sidebar, model.scope)
-          const project = RemoteEngines.isEngineLive(model, engine)
-            ? model.scope
-            : Option.none()
+          const project = liveScope(model)
           return {
-            engine,
             project,
             run: Option.flatMap(project, scoped => viewedRun(model, scoped)),
             watch: model.runWatch,
           }
         },
-        dependenciesToStream: ({ engine, project }) =>
+        dependenciesToStream: ({ project }) =>
           Option.match(project, {
             onNone: () => Stream.empty,
             onSome: project =>
-              withEngineClient(engine, client =>
+              withEngineClient(project.engine, client =>
                 runViewMessages(client, project, nextFrame),
               ),
           }),
@@ -484,7 +478,7 @@ export const makeSubscriptions = ({
       {
         modelToDependencies: model => ({
           engines: attentionEngines(model),
-          project: model.scope,
+          project: Option.map(model.scope, scoped => scoped.project),
         }),
         dependenciesToStream: ({ engines, project }) =>
           Stream.mergeAll(
@@ -498,24 +492,18 @@ export const makeSubscriptions = ({
       },
     ),
     backlog: entry(
-      { engine: Schema.String, project: Schema.Option(ProjectId) },
+      { project: Schema.Option(EngineProject) },
       {
-        modelToDependencies: model => {
-          const engine = scopeEngine(model.console.sidebar, model.scope)
-          return {
-            engine,
-            project:
-              RemoteEngines.isEngineLive(model, engine) &&
-              Screen.guards.Backlog(model.screen)
-                ? model.scope
-                : Option.none(),
-          }
-        },
-        dependenciesToStream: ({ engine, project }) =>
+        modelToDependencies: model => ({
+          project: Screen.guards.Backlog(model.screen)
+            ? liveScope(model)
+            : Option.none(),
+        }),
+        dependenciesToStream: ({ project }) =>
           Option.match(project, {
             onNone: () => Stream.empty,
             onSome: project =>
-              withEngineClient(engine, client =>
+              withEngineClient(project.engine, client =>
                 backlogMessages(client, project, nextFrame),
               ),
           }),
@@ -580,7 +568,7 @@ export const makeSubscriptions = ({
       { engine: Schema.String, live: Schema.Boolean },
       {
         modelToDependencies: model => {
-          const engine = scopeEngine(model.console.sidebar, model.scope)
+          const engine = scopeEngine(model.scope)
           return { engine, live: RemoteEngines.isEngineLive(model, engine) }
         },
         dependenciesToStream: ({ engine, live }) =>
@@ -626,17 +614,9 @@ export const makeSubscriptions = ({
       },
     ),
     runTalk: entry(
-      { engine: Schema.String, project: Schema.Option(ProjectId) },
+      { project: Schema.Option(EngineProject) },
       {
-        modelToDependencies: model => {
-          const engine = scopeEngine(model.console.sidebar, model.scope)
-          return {
-            engine,
-            project: RemoteEngines.isEngineLive(model, engine)
-              ? model.scope
-              : Option.none(),
-          }
-        },
+        modelToDependencies: model => ({ project: liveScope(model) }),
         dependenciesToStream: ({ project }) =>
           Option.match(project, {
             onNone: () => Stream.empty,

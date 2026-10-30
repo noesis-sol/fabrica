@@ -39,6 +39,8 @@ import {
 } from '@fabrica/contracts'
 
 import { sayElapsed } from '../app/clock'
+import { localEngineName } from '../app/connection'
+import { EngineProject } from '../app/engine-project'
 import {
   type EngineNotConnected,
   type EngineServices,
@@ -57,7 +59,8 @@ import { type Chip, chipView } from './sidebar'
 // why. Your task (`c2`): a maintainer task, done when the maintainer closes it. "Open session" opens
 // the worker view. Keys 1–9 answer the question whose options are drawn, only that one, and only 500 ms
 // after they were first drawn: a guard that starts again whenever the request they would answer changes,
-// counted on the injected clock (§15.1, H88; tutti-14o5). Every answer carries its request's ID.
+// counted on the injected clock (§15.1, H88; tutti-14o5). Every answer carries its request's ID, and
+// goes to the engine whose requests the column shows (engine-route.ts).
 // A Submodel: the root folds its Messages, keeps its open request in step with the stream, and gives it
 // the requests and the time.
 
@@ -101,6 +104,8 @@ export const Sending = defineTaggedUnion({
 export type Sending = typeof Sending.Type
 
 export const Model = Schema.Struct({
+  /** The name of the engine whose requests the column shows: the scope's, where its answers go. */
+  engine: Schema.String,
   open: Open,
   guard: Guard,
   /** How many times options have been drawn: each drawing's guard is its own. */
@@ -110,6 +115,7 @@ export const Model = Schema.Struct({
 export type Model = typeof Model.Type
 
 export const init = (): Model => ({
+  engine: localEngineName,
   open: Open.None(),
   guard: Guard.Off(),
   drawings: 0,
@@ -151,9 +157,9 @@ export type Message = typeof Message.Type
 /** What the root does on the column's behalf: the screens a card opens. */
 export const OutMessage = defineMessageUnion({
   /** The answer talk, for a question (§15.3). */
-  OpenedAnswerTalk: { project: ProjectId, ticket: TicketId },
+  OpenedAnswerTalk: { project: EngineProject, ticket: TicketId },
   /** The Review screen, for a set-aside ticket. */
-  OpenedReview: { project: ProjectId, ticket: TicketId },
+  OpenedReview: { project: EngineProject, ticket: TicketId },
   /** The worker view of a ticket's session. */
   OpenedSession: { ticket: TicketId },
 })
@@ -191,12 +197,12 @@ export const WaitGuard = Command.define('WaitGuard', {
     Effect.as(Effect.sleep(keyGuard), Message.PassedGuard({ drawing })),
 })
 
-/** Sends an answer, carrying the ID of what it answers. */
+/** Sends an answer, carrying the ID of what it answers, to the engine named `engine`. */
 export const Answer = Command.define('Answer', {
-  args: { key: Schema.String, answer: AttentionAnswer },
+  args: { key: Schema.String, engine: Schema.String, answer: AttentionAnswer },
   messages: [Message.SucceededAnswer, Message.FailedAnswer],
-  execute: ({ key, answer }) =>
-    sessionFor(answer.project).pipe(
+  execute: ({ key, engine, answer }) =>
+    sessionFor({ engine, project: answer.project }).pipe(
       Effect.flatMap(({ client }) =>
         client.rpc['attention.answer']({ answer }),
       ),
@@ -211,13 +217,13 @@ export const Answer = Command.define('Answer', {
 
 /** Closes a maintainer task as done, which frees what it blocks (§15.1, H52). */
 export const CloseTask = Command.define('CloseTask', {
-  args: { key: Schema.String, project: ProjectId, ticket: TicketId },
+  args: { key: Schema.String, project: EngineProject, ticket: TicketId },
   messages: [Message.SucceededAnswer, Message.FailedAnswer],
   execute: ({ key, project, ticket }) =>
     sessionFor(project).pipe(
       Effect.flatMap(({ client }) =>
         client.rpc['tickets.close']({
-          project,
+          project: project.project,
           ticket,
           resolution: 'done',
           reason: Option.none(),
@@ -324,7 +330,7 @@ const closed = (model: Model): Model =>
 
 const sending = (model: Model, key: string, answer: AttentionAnswer): Kept => ({
   model: modifyFields(model, { sending: () => Sending.Pending({ key }) }),
-  commands: [Answer({ key, answer })],
+  commands: [Answer({ key, engine: model.engine, answer })],
 })
 
 const isPending = (model: Model): boolean =>
@@ -439,7 +445,10 @@ export const update = (model: Model, message: Message): Return =>
     },
     ClickedTalkItThrough: ({ project, ticket }) => ({
       model,
-      outMessage: OutMessage.OpenedAnswerTalk({ project, ticket }),
+      outMessage: OutMessage.OpenedAnswerTalk({
+        project: { engine: model.engine, project },
+        ticket,
+      }),
     }),
 
     ClickedApprove: ({ key, answer }) =>
@@ -492,11 +501,20 @@ export const update = (model: Model, message: Message): Return =>
             model: modifyFields(model, {
               sending: () => Sending.Pending({ key }),
             }),
-            commands: [CloseTask({ key, project, ticket })],
+            commands: [
+              CloseTask({
+                key,
+                project: { engine: model.engine, project },
+                ticket,
+              }),
+            ],
           },
     ClickedReview: ({ project, ticket }) => ({
       model,
-      outMessage: OutMessage.OpenedReview({ project, ticket }),
+      outMessage: OutMessage.OpenedReview({
+        project: { engine: model.engine, project },
+        ticket,
+      }),
     }),
     ClickedOpenSession: ({ ticket }) => ({
       model,
@@ -557,16 +575,25 @@ const openKey = (open: Open): Option.Option<string> =>
   })
 
 /**
- * The column kept in step with the requests the stream gives: what a card has open closes when its
- * request leaves the list (answered elsewhere, or the scope changed), and drawn options whose request
- * changed are drawn afresh, their guard started again and their choice made again from the new
- * request (none while the maintainer's own words are typed), so an option chosen before can't stand
- * for another (§15.1, tutti-14o5).
+ * The column kept in step with the requests the stream of the engine named `engine` gives: what a card
+ * has open closes when its request leaves the list (answered elsewhere, or the scope changed) or the
+ * requests are another engine's, and drawn options whose request changed are drawn afresh, their guard
+ * started again and their choice made again from the new request (none while the maintainer's own
+ * words are typed), so an option chosen before can't stand for another (§15.1, tutti-14o5).
  */
 export const receivedRequests = (
   model: Model,
-  requests: Option.Option<ReadonlyArray<AttentionRequest>>,
+  {
+    engine,
+    requests,
+  }: {
+    readonly engine: string
+    readonly requests: Option.Option<ReadonlyArray<AttentionRequest>>
+  },
 ): Kept => {
+  if (model.engine !== engine) {
+    return { model: modifyFields(closed(model), { engine: () => engine }) }
+  }
   const listed = Option.getOrElse(requests, () => [])
   const find = (key: string) =>
     Array.findFirst(listed, request => attentionKey(request) === key)

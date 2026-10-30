@@ -31,6 +31,7 @@ import * as Review from '../screens/review'
 import * as Settings from '../screens/settings'
 import * as Talks from '../screens/talks'
 import { Theme } from '../theme/theme'
+import { EngineProject } from './engine-project'
 import { NotificationTarget } from './notify'
 import { Screen } from './screen'
 import {
@@ -70,8 +71,8 @@ export const Message = defineMessageUnion({
   RanPaletteEntry: { id: Schema.String },
   RequestedKeyHelp: {},
   DismissedOverlay: {},
-  /** A project chosen in the sidebar, or none for every project. */
-  SelectedScope: { project: Schema.Option(ProjectId) },
+  /** A project chosen in the sidebar, named with its engine, or none for every project. */
+  SelectedScope: { project: Schema.Option(EngineProject) },
   /** The sidebar's "+ Add project": the engines screen's add-project flow (§10.1). */
   RequestedAddProject: {},
   GotHistoryMessage: { message: History.Message },
@@ -146,15 +147,15 @@ export const Message = defineMessageUnion({
     update: UpdateSide,
   },
 
-  ReceivedRunView: { project: ProjectId, items: itemsOf(RunViewItem) },
+  ReceivedRunView: { project: EngineProject, items: itemsOf(RunViewItem) },
   /** The project's run view ended: no run, or the project gone. */
-  EndedRunView: { project: ProjectId, reason: Schema.String },
+  EndedRunView: { project: EngineProject, reason: Schema.String },
   /** The pause after the project's run view ended NoRun while its row showed `run` going. */
-  WaitedToRewatchRunView: { project: ProjectId, run: RunId },
-  ReceivedEvents: { project: ProjectId, items: itemsOf(EventsItem) },
-  /** The scope's open attention requests on the engine named `engine`. */
+  WaitedToRewatchRunView: { project: EngineProject, run: RunId },
+  ReceivedEvents: { project: EngineProject, items: itemsOf(EventsItem) },
+  /** The scope's open attention requests, on the engine named `engine`. */
   ReceivedAttention: { engine: Schema.String, items: itemsOf(AttentionItem) },
-  ReceivedBacklog: { project: ProjectId, items: itemsOf(BacklogItem) },
+  ReceivedBacklog: { project: EngineProject, items: itemsOf(BacklogItem) },
   /** The host's load of the engine named `engine`, the scoped project's. */
   ReceivedLoad: { engine: Schema.String, items: itemsOf(LoadItem) },
   /** An engine's project rows, for the sidebar; `name` is the engine's, as the app knows it. */

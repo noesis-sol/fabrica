@@ -6,7 +6,6 @@ import {
   AttentionRequest,
   HostLoad,
   Platform,
-  ProjectId,
   ReleaseVersion,
   RunView,
   Ticket,
@@ -31,6 +30,7 @@ import * as Talks from '../screens/talks'
 import * as Worker from '../screens/worker'
 import { Theme } from '../theme/theme'
 import { Connection } from './connection'
+import { EngineProject } from './engine-project'
 import * as Notify from './notify'
 import * as RemoteEngines from './remote-engines'
 import { Screen } from './screen'
@@ -99,8 +99,8 @@ export const Model = Schema.Struct({
   sshPrompts: SshPrompts.Model,
   screen: Screen,
   overlay: Overlay,
-  /** The project the sidebar chose; none for every project. */
-  scope: Schema.Option(ProjectId),
+  /** The project the sidebar chose, named with its engine; none for every project. */
+  scope: Schema.Option(EngineProject),
   /** The scoped project's run view, while it has a run. */
   runView: Schema.Option(RunView),
   /**

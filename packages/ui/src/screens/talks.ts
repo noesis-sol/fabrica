@@ -8,13 +8,13 @@ import { defineView } from 'foldkit/submodel'
 
 import {
   OpenedTalk,
-  ProjectId,
   TalkContext,
   TalkId,
   Text,
   type TranscriptItem,
 } from '@fabrica/contracts'
 
+import { EngineProject } from '../app/engine-project'
 import type { EngineServices } from '../app/engine-route'
 import * as Conversation from '../console/conversation'
 
@@ -63,9 +63,9 @@ export const init = (): Model => ({
 export const Message = defineMessageUnion({
   ClickedStart: { mode: StartMode },
   TypedStart: { text: Schema.String },
-  SubmittedStart: { project: ProjectId },
+  SubmittedStart: { project: EngineProject },
   CancelledStart: {},
-  OpenedTalk: { project: ProjectId, mode: StartMode, opened: OpenedTalk },
+  OpenedTalk: { project: EngineProject, mode: StartMode, opened: OpenedTalk },
   FailedOpenTalk: { mode: StartMode, reason: Schema.String },
   Selected: { selected: Selected },
   TypedDraft: { text: Schema.String },
@@ -91,7 +91,7 @@ export const startContext = (
 }
 
 export const OpenTalk = Command.define('OpenTalk', {
-  args: { project: ProjectId, mode: StartMode, context: TalkContext },
+  args: { project: EngineProject, mode: StartMode, context: TalkContext },
   messages: [Message.OpenedTalk, Message.FailedOpenTalk],
   execute: ({ project, mode, context }) =>
     Conversation.openTalk(project, context).pipe(
@@ -124,7 +124,7 @@ type Return = Update.Return<Model, Message, EngineServices>
 /** The talks this screen holds, whose transcripts are watched, each with its project. */
 export const heldTalks = (
   model: Model,
-): ReadonlyArray<{ readonly project: ProjectId; readonly talk: TalkId }> =>
+): ReadonlyArray<{ readonly project: EngineProject; readonly talk: TalkId }> =>
   model.talks
     .filter(talk => !talk.ended)
     .map(({ project, talk }) => ({ project, talk }))
@@ -259,13 +259,13 @@ export const update = (model: Model, message: Message): Return =>
 
 export interface ViewInputs {
   /** The scoped project, on which a talk starts; none under All projects. */
-  readonly scope: Option.Option<ProjectId>
+  readonly scope: Option.Option<EngineProject>
   readonly live: boolean
   /** The console's talks, as its panel holds them. */
   readonly run: Option.Option<Conversation.Conversation>
   readonly answer: Option.Option<Conversation.Conversation>
   /** A project's name, as the sidebar has it. */
-  readonly projectName: (project: ProjectId) => string
+  readonly projectName: (project: EngineProject) => string
 }
 
 const startTitle: Record<StartMode, string> = {
@@ -332,7 +332,7 @@ const listEntry = (
 
 const startForm = (
   start: Start,
-  scope: Option.Option<ProjectId>,
+  scope: Option.Option<EngineProject>,
   live: boolean,
   h: HtmlBuilder<Message>,
 ): Html =>

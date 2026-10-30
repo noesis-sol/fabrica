@@ -10,13 +10,13 @@ import { defineView } from 'foldkit/submodel'
 import {
   Diff,
   type FileDiff,
-  ProjectId,
   Report,
   RunId,
   Text,
   TicketId,
 } from '@fabrica/contracts'
 
+import { EngineProject, sameProject } from '../app/engine-project'
 import { type EngineServices, requestProject } from '../app/engine-route'
 import { sidesOf } from '../mounts/diff'
 import { showDiff } from '../mounts/monaco'
@@ -34,8 +34,8 @@ export type Tab = typeof Tab.Type
 
 /** Whose diff: a ticket's branch against its merge base with Base, or what a run merged into Base. */
 export const Subject = defineTaggedUnion({
-  Ticket: { project: ProjectId, ticket: TicketId },
-  Run: { project: ProjectId, run: RunId },
+  Ticket: { project: EngineProject, ticket: TicketId },
+  Run: { project: EngineProject, run: RunId },
 })
 export type Subject = typeof Subject.Type
 
@@ -43,7 +43,7 @@ const sameSubject = Schema.toEquivalence(Subject)
 
 export const Model = Schema.Struct({
   /** The project whose reports and log are shown. */
-  project: Schema.Option(ProjectId),
+  project: Schema.Option(EngineProject),
   tab: Tab,
   subject: Schema.Option(Subject),
   diff: AsyncData.Schema(Diff, Schema.String).schema,
@@ -70,14 +70,14 @@ export const init = (): Model => ({
 export const Message = defineMessageUnion({
   SelectedTab: { tab: Tab },
   SelectedFile: { path: Text },
-  RequestedRunDiff: { project: ProjectId, run: RunId },
+  RequestedRunDiff: { project: EngineProject, run: RunId },
   RequestedLog: {},
   SucceededLoadDiff: { subject: Subject, diff: Diff },
   FailedLoadDiff: { subject: Subject, reason: Schema.String },
-  SucceededLoadReport: { project: ProjectId, report: Report },
-  FailedLoadReport: { project: ProjectId, reason: Schema.String },
-  SucceededLoadLog: { project: ProjectId, lines: Schema.Array(Schema.String) },
-  FailedLoadLog: { project: ProjectId, reason: Schema.String },
+  SucceededLoadReport: { project: EngineProject, report: Report },
+  FailedLoadReport: { project: EngineProject, reason: Schema.String },
+  SucceededLoadLog: { project: EngineProject, lines: Schema.Array(Schema.String) },
+  FailedLoadLog: { project: EngineProject, reason: Schema.String },
   /** Monaco drew the file, or couldn't. */
   CompletedShowDiff: {},
   FailedShowDiff: { path: Text, reason: Schema.String },
@@ -96,14 +96,15 @@ export const LoadDiff = Command.define('LoadDiff', {
     requestProject(subject.project, client =>
       Subject.match<Effect.Effect<Diff, unknown>>(subject, {
         Ticket: ({ project, ticket }) =>
-          client.rpc['diff.ticket']({ project, ticket }).pipe(
+          client.rpc['diff.ticket']({ project: project.project, ticket }).pipe(
             Effect.catchTag('NoBranch', () =>
               Effect.fail(
                 `${ticket} has no branch: it was never dispatched, or its worktree is gone.`,
               ),
             ),
           ),
-        Run: ({ project, run }) => client.rpc['diff.run']({ project, run }),
+        Run: ({ project, run }) =>
+          client.rpc['diff.run']({ project: project.project, run }),
       }),
     ).pipe(
       Effect.map(diff => Message.SucceededLoadDiff({ subject, diff })),
@@ -115,11 +116,14 @@ export const LoadDiff = Command.define('LoadDiff', {
 
 /** The project's last run's report. */
 export const LoadReport = Command.define('LoadReport', {
-  args: { project: ProjectId },
+  args: { project: EngineProject },
   messages: [Message.SucceededLoadReport, Message.FailedLoadReport],
   execute: ({ project }) =>
     requestProject(project, client =>
-      client.rpc['report.get']({ project, run: Option.none() }).pipe(
+      client.rpc['report.get']({
+        project: project.project,
+        run: Option.none(),
+      }).pipe(
         Effect.catchTags({
           NoRun: () => Effect.fail('The project has had no run yet.'),
           NoReport: () =>
@@ -135,11 +139,11 @@ export const LoadReport = Command.define('LoadReport', {
 })
 
 export const LoadLog = Command.define('LoadLog', {
-  args: { project: ProjectId },
+  args: { project: EngineProject },
   messages: [Message.SucceededLoadLog, Message.FailedLoadLog],
   execute: ({ project }) =>
     requestProject(project, client =>
-      client.rpc['log.tail']({ project, lines: logLines }),
+      client.rpc['log.tail']({ project: project.project, lines: logLines }),
     ).pipe(
       Effect.map(({ lines }) => Message.SucceededLoadLog({ project, lines })),
       Effect.catch(reason =>
@@ -188,18 +192,20 @@ const show = (
     subject,
     tab,
   }: {
-    readonly project: ProjectId
+    readonly project: EngineProject
     readonly subject: Option.Option<Subject>
     readonly tab: Tab
   },
 ): Return => {
-  const sameProject = Option.contains(model.project, project)
+  const keptProject = Option.exists(model.project, shown =>
+    sameProject(shown, project),
+  )
   const keptSubject = Option.match(Option.all([model.subject, subject]), {
     onNone: () => Option.isNone(model.subject) && Option.isNone(subject),
     onSome: ([shown, chosen]) => sameSubject(shown, chosen),
   })
-  const report = sameProject ? reload(model.report) : AsyncData.Loading()
-  const log = sameProject ? reload(model.log) : AsyncData.Loading()
+  const report = keptProject ? reload(model.report) : AsyncData.Loading()
+  const log = keptProject ? reload(model.log) : AsyncData.Loading()
   const diff = Option.isNone(subject)
     ? AsyncData.Idle()
     : keptSubject
@@ -233,7 +239,7 @@ export const openTicket = (
   {
     project,
     ticket,
-  }: { readonly project: ProjectId; readonly ticket: TicketId },
+  }: { readonly project: EngineProject; readonly ticket: TicketId },
 ): Return =>
   show(model, {
     project,
@@ -251,7 +257,7 @@ export const opened = (
     project,
     run,
   }: {
-    readonly project: Option.Option<ProjectId>
+    readonly project: Option.Option<EngineProject>
     readonly run: Option.Option<RunId>
   },
 ): Return =>
@@ -264,7 +270,7 @@ export const opened = (
           project: shown,
           subject: Option.filter(
             model.subject,
-            subject => subject.project === shown,
+            subject => sameProject(subject.project, shown),
           ).pipe(
             Option.orElse(() =>
               Option.map(run, going =>

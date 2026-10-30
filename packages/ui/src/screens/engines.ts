@@ -61,11 +61,7 @@ import {
 } from '@fabrica/contracts'
 
 import { Connection, localEngineName } from '../app/connection'
-import {
-  type EngineServices,
-  requestEngine,
-  requestProject,
-} from '../app/engine-route'
+import { type EngineServices, requestEngine } from '../app/engine-route'
 import { AppHost, ServiceInstall } from '../app/host'
 import type * as RemoteEngines from '../app/remote-engines'
 import { type EngineProjects, runLabel } from '../console/sidebar'
@@ -383,8 +379,8 @@ export const Message = defineMessageUnion({
 })
 export type Message = typeof Message.Type
 
-// Commands: each a request to the engine, its failure in words: a project's to the engine whose sidebar
-// row holds it, the rest to this machine's, whose card, folders and credentials the screen shows.
+// Commands: each a request to the engine, its failure in words: to this machine's, whose card, folders,
+// credentials and projects the screen shows.
 
 export const LoadEngineStatus = Command.define('LoadEngineStatus', {
   messages: [Message.SucceededLoadStatus, Message.FailedLoadStatus],
@@ -445,7 +441,7 @@ export const SetUpProject = Command.define('SetUpProject', {
   args: { project: ProjectId },
   messages: [Message.SucceededSetUp, Message.FailedSetUp],
   execute: ({ project }) =>
-    requestProject(project, client =>
+    requestEngine(localEngineName, client =>
       client.rpc['projects.init']({ project }).pipe(
         Effect.map(({ written }) =>
           Message.SucceededSetUp({ project, written }),
@@ -466,7 +462,7 @@ export const SetProjectTrust = Command.define('SetProjectTrust', {
   args: { project: ProjectId, trusted: Schema.Boolean },
   messages: [Message.SucceededTrust, Message.FailedTrust],
   execute: ({ project, trusted }) =>
-    requestProject(project, client =>
+    requestEngine(localEngineName, client =>
       client.rpc['projects.trust']({ project, trusted }),
     ).pipe(
       Effect.as(Message.SucceededTrust({ project })),

@@ -12,18 +12,21 @@ import {
   attentionKey,
 } from '@fabrica/contracts'
 
+import { EngineProject } from './engine-project'
+
 // The app's system notifications (spec §18.5, §7.7, §15.2): a question, a permission request, a run's
 // end, a hold, and the battery at 10%, each told once, as it arrives; nothing for what was already
 // there when the app started listening, nor for a question the run's `--auto-answer` answers at once.
 // The renderer decides here what to tell and asks main to show it through the preload's validated
 // `notify`; a click on one comes back as its target, which the console focuses: the request, or the
-// project its run belongs to. This module imports nothing but `effect` and the contracts, so the
-// preload and main decode with the same schemas.
+// project its run belongs to, each named with its engine. This module imports nothing but `effect`, the
+// contracts and engine-project.ts, which imports nothing more, so the preload and main decode with the
+// same schemas.
 
-/** What a click on a notification focuses: an attention request, or a project's run. */
+/** What a click on a notification focuses: an attention request on an engine, or a project's run. */
 export const NotificationTarget = Schema.TaggedUnion({
-  Request: { ref: AttentionRef },
-  Project: { project: ProjectId },
+  Request: { engine: Schema.String, ref: AttentionRef },
+  Project: EngineProject.fields,
 })
 export type NotificationTarget = typeof NotificationTarget.Type
 
@@ -81,8 +84,8 @@ export interface Told {
   readonly notifications: ReadonlyArray<DesktopNotification>
 }
 
-/** The name a project is told by. */
-export type ProjectName = (project: ProjectId) => string
+/** The name a project, named with its engine, is told by. */
+export type ProjectName = (project: EngineProject) => string
 
 /** `text` cut to `max` characters, an ellipsis ending it where it was cut. */
 const clip = (text: string, max: number): string =>
@@ -192,9 +195,10 @@ const requestNotification = (
         ? Option.none()
         : Option.some(
             notification({
-              title: `Question · ${name(question.project)}`,
+              title: `Question · ${name({ engine, project: question.project })}`,
               body: question.title,
               target: NotificationTarget.cases.Request.make({
+                engine,
                 ref: AttentionRef.cases.question.make({
                   project: question.project,
                   ticket: question.ticket,
@@ -205,9 +209,10 @@ const requestNotification = (
     permission: permission =>
       Option.some(
         notification({
-          title: `Permission request · ${name(permission.project)}`,
+          title: `Permission request · ${name({ engine, project: permission.project })}`,
           body: `${permission.ticket} asks to use ${permission.tool}: ${permission.why}`,
           target: NotificationTarget.cases.Request.make({
+            engine,
             ref: AttentionRef.cases.permission.make({
               project: permission.project,
               id: permission.id,
@@ -337,9 +342,8 @@ const readEvent = (
   event: RunEvent,
   name: ProjectName,
 ): readonly [RunWatch, Option.Option<DesktopNotification>] => {
-  const target = NotificationTarget.cases.Project.make({
-    project: watch.project,
-  })
+  const project = { engine: watch.engine, project: watch.project }
+  const target = NotificationTarget.cases.Project.make(project)
   return Match.value(event).pipe(
     Match.discriminators('kind')({
       start: ({ auto_answer }) =>
@@ -356,7 +360,7 @@ const readEvent = (
           { ...watch, ended: true },
           Option.some(
             notification({
-              title: `Run ended · ${name(watch.project)}`,
+              title: `Run ended · ${name(project)}`,
               body: Option.getOrElse(
                 watch.ending,
                 () => `It ended with exit code ${code}.`,
@@ -371,7 +375,7 @@ const readEvent = (
           lifted !== true && toldHolds.includes(hold)
             ? Option.some(
                 notification({
-                  title: `Run held · ${name(watch.project)}`,
+                  title: `Run held · ${name(project)}`,
                   body: text,
                   target,
                 }),
@@ -384,7 +388,7 @@ const readEvent = (
           threshold === toldBatteryThreshold
             ? Option.some(
                 notification({
-                  title: `Battery at ${level}% · ${name(watch.project)}`,
+                  title: `Battery at ${level}% · ${name(project)}`,
                   body: text,
                   target,
                 }),

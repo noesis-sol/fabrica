@@ -7,7 +7,6 @@ import {
   AttentionRequest,
   BacklogPatch,
   HostLoad,
-  ProjectId,
   type Resume,
   type RunEvent,
   RunEvents,
@@ -19,6 +18,8 @@ import {
   applyRunViewPatch,
   streamItem,
 } from '@fabrica/contracts'
+
+import { EngineProject, sameProject } from './engine-project'
 
 // The streams the app keeps (spec §8.3, §18.1): each sends a snapshot, then patches, which the client
 // has already put in order and resumed across lost connections. The Model keeps each stream's value,
@@ -159,9 +160,9 @@ export const applyEvents = (
         ),
   )
 
-/** One project's run's events, newest first, from its stream's first snapshot. */
+/** One project's run's events, newest first, from its stream's first snapshot; the project named with its engine. */
 export const ProjectEvents = Schema.Struct({
-  project: ProjectId,
+  project: EngineProject,
   events: RunEvents,
 })
 export type ProjectEvents = typeof ProjectEvents.Type
@@ -173,10 +174,12 @@ export type ProjectEvents = typeof ProjectEvents.Type
  */
 export const applyProjectEvents = (
   current: ReadonlyArray<ProjectEvents>,
-  project: ProjectId,
+  project: EngineProject,
   items: Array.NonEmptyReadonlyArray<typeof EventsItem.Type>,
 ): ReadonlyArray<ProjectEvents> => {
-  const known = Array.findFirst(current, entry => entry.project === project)
+  const known = Array.findFirst(current, entry =>
+    sameProject(entry.project, project),
+  )
   return Option.match(
     applyEvents(
       Option.map(known, entry => entry.events),
@@ -187,7 +190,9 @@ export const applyProjectEvents = (
       onSome: events =>
         Option.isSome(known)
           ? current.map(entry =>
-              entry.project === project ? { project, events } : entry,
+              sameProject(entry.project, project)
+                ? { project, events }
+                : entry,
             )
           : [...current, { project, events }],
     },

@@ -6,7 +6,6 @@ import {
   MessageRole,
   ModelName,
   type OpenedTalk,
-  ProjectId,
   type TalkContext,
   TalkId,
   type TalkMode,
@@ -16,6 +15,7 @@ import {
   type TranscriptItem,
 } from '@fabrica/contracts'
 
+import { EngineProject } from '../app/engine-project'
 import { openTalkOn, requestTalk } from '../app/engine-route'
 import { sayTokens, tokenTotal } from './stats'
 
@@ -41,7 +41,8 @@ export type Line = typeof Line.Type
 /** A talk the app holds, and its transcript so far. */
 export const Conversation = Schema.Struct({
   talk: TalkId,
-  project: ProjectId,
+  /** The project it was opened on, named with its engine. */
+  project: EngineProject,
   mode: Schema.Literals(['refine', 'feature', 'answer', 'run']),
   model: ModelName,
   lines: Schema.Array(Line),
@@ -54,7 +55,7 @@ export type Conversation = typeof Conversation.Type
 
 /** A talk just opened on `project` in `mode`, its transcript still to come. */
 export const opened = (
-  project: ProjectId,
+  project: EngineProject,
   mode: TalkMode,
   talk: OpenedTalk,
 ): Conversation => ({
@@ -161,9 +162,13 @@ export const modeTitle: Record<TalkMode, string> = {
 // The requests.
 
 /** Opens a talk on `project` in `context`, with the project's model (§15.4), on the project's engine. */
-export const openTalk = (project: ProjectId, context: TalkContext) =>
+export const openTalk = (project: EngineProject, context: TalkContext) =>
   openTalkOn(project, client =>
-    client.rpc['talk.open']({ project, context, model: Option.none() }),
+    client.rpc['talk.open']({
+      project: project.project,
+      context,
+      model: Option.none(),
+    }),
   )
 
 const decodeText = Schema.decodeUnknownOption(Text)

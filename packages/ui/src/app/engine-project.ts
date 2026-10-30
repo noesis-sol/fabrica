@@ -1,0 +1,22 @@
+import { Schema } from 'effect'
+
+import { ProjectId } from '@fabrica/contracts'
+
+// A project as the console names it (spec §9.1, §18.3): its ID and the name of the engine that holds
+// it. A project's ID is a slug of its name, so the same repository added on two engines has one ID on
+// both: the console's scope, its sidebar's rows, its requests and every lookup by project name the
+// engine with it, and two projects are the same only where both are.
+
+/** A project and the name of the engine holding it, as the app's known engines name it. */
+export const EngineProject = Schema.Struct({
+  engine: Schema.String,
+  project: ProjectId,
+})
+export type EngineProject = typeof EngineProject.Type
+
+/** Whether two projects are the same: one ID on one engine. */
+export const sameProject = Schema.toEquivalence(EngineProject)
+
+/** A project's key, for a keyed element or an entry's ID: its engine's name and its ID. */
+export const projectKey = ({ engine, project }: EngineProject): string =>
+  `${engine}/${project}`

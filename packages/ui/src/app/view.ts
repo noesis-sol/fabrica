@@ -10,7 +10,6 @@ import {
   type AttentionRequest,
   MergeQueue,
   type Platform,
-  type ProjectId,
   type TicketRow,
 } from '@fabrica/contracts'
 
@@ -74,7 +73,7 @@ const sidebarMessages: Sidebar.Messages<Message> = {
 
 const sidebarView = (
   sidebar: Sidebar.Model,
-  scope: Option.Option<ProjectId>,
+  scope: Model['scope'],
   h: HtmlBuilder<Message>,
 ): Html => Sidebar.view(sidebar, { scope, messages: sidebarMessages }, h)
 const lazyStats = createLazy()
@@ -155,8 +154,8 @@ const inProgressView = (
 /** The scoped run's project's colour, its sidebar chip's; `c1`, running, until the sidebar knows it. */
 const runRole = (model: Model): Sidebar.Role =>
   Option.match(
-    Option.flatMap(model.runView, run =>
-      Sidebar.projectChip(model.console.sidebar, run.header.project),
+    Option.flatMap(model.scope, project =>
+      Sidebar.projectChip(model.console.sidebar, project),
     ),
     { onNone: () => 'c1', onSome: chip => chip.role },
   )
@@ -185,7 +184,10 @@ const attentionPart = (
       live,
       chip: project =>
         Option.isNone(scope)
-          ? Sidebar.projectChip(sidebar, project)
+          ? Sidebar.projectChip(sidebar, {
+              engine: attention.engine,
+              project,
+            })
           : Option.none(),
     },
     toParentMessage: message => Message.GotAttentionMessage({ message }),
@@ -410,7 +412,7 @@ const screenView = (model: Model, h: HtmlBuilder<Message>): Html =>
           projectName: project =>
             Option.getOrElse(
               Sidebar.projectName(model.console.sidebar, project),
-              () => project,
+              () => project.project,
             ),
         },
         toParentMessage: message => Message.GotTalksMessage({ message }),

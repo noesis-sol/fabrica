@@ -20,7 +20,6 @@ import { defineView } from 'foldkit/submodel'
 import {
   Edge,
   NotReadyReason,
-  ProjectId,
   type RunView,
   type Ticket,
   TicketId,
@@ -31,6 +30,7 @@ import {
 import * as VirtualList from '@foldkit/ui/virtualList'
 
 import { sayMoment } from '../app/clock'
+import { EngineProject } from '../app/engine-project'
 import { type EngineServices, requestProject } from '../app/engine-route'
 import type { Role } from '../console/history'
 import {
@@ -83,7 +83,7 @@ export type Waiting = typeof Waiting.Type
 
 /** What the engine says of a project's backlog besides its tickets. */
 export const Facts = Schema.Struct({
-  project: ProjectId,
+  project: EngineProject,
   /** The tickets ready to dispatch, most urgent first. */
   ready: Schema.Array(TicketId),
   waiting: Schema.Array(Waiting),
@@ -93,7 +93,7 @@ export type Facts = typeof Facts.Type
 
 /** What the facts are asked of: the project, and its open tickets, whose reasons are asked. */
 export const Ask = Schema.Struct({
-  project: ProjectId,
+  project: EngineProject,
   open: Schema.Array(TicketId),
 })
 export type Ask = typeof Ask.Type
@@ -104,7 +104,7 @@ export const Model = Schema.Struct({
   selected: Schema.Option(TicketId),
   facts: AsyncData.Schema(Facts, Schema.String).schema,
   /** The project whose facts are being asked, while they are. */
-  asking: Schema.Option(ProjectId),
+  asking: Schema.Option(EngineProject),
   /** What to ask once the answer in flight comes: the backlog changed meanwhile. */
   again: Schema.Option(Ask),
 })
@@ -129,7 +129,7 @@ export const Message = defineMessageUnion({
   CompletedFocusGraph: {},
   GotListMessage: { message: VirtualList.Message },
   SucceededLoadFacts: { facts: Facts },
-  FailedLoadFacts: { project: ProjectId, reason: Schema.String },
+  FailedLoadFacts: { project: EngineProject, reason: Schema.String },
 })
 export type Message = typeof Message.Type
 
@@ -145,8 +145,8 @@ export const LoadFacts = Command.define('LoadFacts', {
       Effect.gen(function* () {
         const [ready, edges] = yield* Effect.all(
           [
-            client.rpc['tickets.ready']({ project }),
-            client.rpc['tickets.edges']({ project }),
+            client.rpc['tickets.ready']({ project: project.project }),
+            client.rpc['tickets.edges']({ project: project.project }),
           ],
           { concurrency: 'unbounded' },
         )
@@ -154,7 +154,10 @@ export const LoadFacts = Command.define('LoadFacts', {
         const waiting = yield* Effect.forEach(
           open.filter(ticket => !HashSet.has(readyIds, ticket)),
           ticket =>
-            client.rpc['tickets.why']({ project, ticket }).pipe(
+            client.rpc['tickets.why']({
+              project: project.project,
+              ticket,
+            }).pipe(
               Effect.map(why =>
                 Why.match(why, {
                   ready: () => Option.none<Waiting>(),
@@ -239,7 +242,7 @@ export const receivedBacklog = (
     project,
     tickets,
   }: {
-    readonly project: ProjectId
+    readonly project: EngineProject
     readonly tickets: ReadonlyArray<Ticket>
   },
 ): Return => {
@@ -257,7 +260,7 @@ export const receivedBacklog = (
 /** An answer came for `project`: the next ask goes, if the backlog changed meanwhile. */
 const answered = (
   model: Model,
-  project: ProjectId,
+  project: EngineProject,
   facts: Model['facts'],
 ): Return =>
   Option.contains(model.asking, project)
@@ -315,7 +318,7 @@ export interface Mark {
 
 const factsOf = (
   facts: Model['facts'],
-  project: Option.Option<ProjectId>,
+  project: Option.Option<EngineProject>,
 ): Option.Option<Facts> =>
   Option.filter(AsyncData.getData(facts), loaded =>
     Option.contains(project, loaded.project),
@@ -561,7 +564,7 @@ export const rowsOf = (
 /** What the frame gives the screen. */
 export interface ViewInputs {
   /** The scoped project; none with every project. */
-  readonly project: Option.Option<ProjectId>
+  readonly project: Option.Option<EngineProject>
   /** Its tickets, none before the stream's first snapshot. */
   readonly tickets: Option.Option<ReadonlyArray<Ticket>>
   readonly runView: Option.Option<RunView>

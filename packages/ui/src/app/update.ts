@@ -6,7 +6,6 @@ import { KeepAnswer, KnownEnginesAnswer } from '@fabrica/client'
 import {
   type AttentionRef,
   type NoRun,
-  ProjectId,
   RunId,
   type Ticket,
   type TicketId,
@@ -28,6 +27,7 @@ import * as Talks from '../screens/talks'
 import { themeTitle, themes } from '../theme/theme'
 import { dayOf, sameDay } from './clock'
 import { Connection, isLive, retryAfter } from './connection'
+import { EngineProject, projectKey, sameProject } from './engine-project'
 import { type EngineServices, scopeEngine } from './engine-route'
 import { commandFor, commandsFor, keyLabel, paletteCommands } from './keys'
 import { Message } from './message'
@@ -66,7 +66,7 @@ export const rewatchAfter = Duration.seconds(1)
 
 /** Waits before watching the project's run view again, for the run its row showed going. */
 export const WaitToRewatchRunView = Command.define('WaitToRewatchRunView', {
-  args: { project: ProjectId, run: RunId },
+  args: { project: EngineProject, run: RunId },
   messages: [Message.WaitedToRewatchRunView],
   execute: ({ project, run }) =>
     Effect.as(
@@ -228,7 +228,7 @@ const scopeTalkPanel = (model: Model): Return =>
 /** The answer talk opened by the maintainer, on `project` or the first with questions. */
 const requestAnswerTalk = (
   model: Model,
-  project: Option.Option<ProjectId>,
+  project: Option.Option<EngineProject>,
 ): Return =>
   stepTalkPanel(model, talkPanel =>
     TalkPanel.requestedAnswerTalk(talkPanel, project),
@@ -337,7 +337,7 @@ export const paletteEntries = (
     },
     ...Sidebar.rows(model.console.sidebar).map(
       (row): Palette.Entry<Message> => ({
-        id: `project.${row.status.project}`,
+        id: `project.${projectKey(Sidebar.rowProject(row))}`,
         group: 'project',
         title:
           enginesKnown > 1
@@ -345,7 +345,7 @@ export const paletteEntries = (
             : row.status.name,
         key: Option.none(),
         run: Message.SelectedScope({
-          project: Option.some(row.status.project),
+          project: Option.some(Sidebar.rowProject(row)),
         }),
       }),
     ),
@@ -426,7 +426,7 @@ const runPaletteEntry = (
 const sameScreen = Schema.toEquivalence(Screen)
 
 /** Selecting the scope already chosen keeps the Model: its streams aren't subscribed again. */
-const sameScope = Schema.toEquivalence(Schema.Option(ProjectId))
+const sameScope = Schema.toEquivalence(Schema.Option(EngineProject))
 
 /** Shows `screen`, closing any overlay; the same screen again keeps the Model as it is. */
 const showScreen = (model: Model, screen: Screen): Model =>
@@ -445,7 +445,7 @@ const projectName =
   project =>
     Option.getOrElse(
       Sidebar.projectName(model.console.sidebar, project),
-      () => project,
+      () => project.project,
     )
 
 /** `told`'s model as the Model's, and its notifications shown. */
@@ -466,14 +466,14 @@ const focusOn = (
     project,
     request,
   }: {
-    readonly project: ProjectId
+    readonly project: EngineProject
     readonly request: Option.Option<AttentionRef>
   },
 ): Return => {
   const scoped = Option.match(model.scope, {
     onNone: () => model,
     onSome: scope =>
-      scope === project
+      sameProject(scope, project)
         ? model
         : update(
             model,
@@ -587,7 +587,7 @@ const openBacklog = (model: Model): Model =>
 /** The Backlog screen told of its project's tickets, and what it asks of them lifted. */
 const tellBacklog = (
   model: Model,
-  project: ProjectId,
+  project: EngineProject,
   tickets: Option.Option<ReadonlyArray<Ticket>>,
 ): Return =>
   Option.match(tickets, {
@@ -715,12 +715,11 @@ export const update = (model: Model, message: Message): Return =>
           usage: () => Option.none(),
           // The load is the scoped project's engine's host's: another engine's is read afresh.
           load: load =>
-            scopeEngine(model.console.sidebar, project) ===
-            scopeEngine(model.console.sidebar, model.scope)
+            scopeEngine(project) === scopeEngine(model.scope)
               ? load
               : Option.none(),
         }),
-        Option.none(),
+        { engine: scopeEngine(project), requests: Option.none() },
       )
       // The Settings and Insights screens show the new scope's settings and telemetry; the Review screen
       // follows the scope to its project.
@@ -863,7 +862,7 @@ export const update = (model: Model, message: Message): Return =>
             }),
           screens: screens => modifyFields(screens, { talks: Talks.init }),
         }),
-        Option.none(),
+        { engine: scopeEngine(model.scope), requests: Option.none() },
       ),
     FailedToConnect: ({ reason }) => ({
       model: modifyFields(model, {
@@ -1048,7 +1047,7 @@ export const update = (model: Model, message: Message): Return =>
       // scope before sends after it.
       if (
         Option.isSome(model.scope) &&
-        engine !== scopeEngine(model.console.sidebar, model.scope)
+        engine !== scopeEngine(model.scope)
       ) {
         return { model }
       }
@@ -1061,17 +1060,19 @@ export const update = (model: Model, message: Message): Return =>
         engineAttention: () => engineAttention,
         attention: () => joinedAttention(engineAttention),
       })
-      return andThen(foldRequests(received, received.attention), requested =>
-        Option.match(requested.attention, {
-          onNone: () => ({ model: requested }),
-          onSome: requests =>
-            stepTalkPanel(requested, talkPanel =>
-              TalkPanel.receivedQuestions(
-                talkPanel,
-                TalkPanel.openQuestions(requests),
+      return andThen(
+        foldRequests(received, { engine, requests: received.attention }),
+        requested =>
+          Option.match(requested.attention, {
+            onNone: () => ({ model: requested }),
+            onSome: requests =>
+              stepTalkPanel(requested, talkPanel =>
+                TalkPanel.receivedQuestions(
+                  talkPanel,
+                  TalkPanel.openQuestions(engine, requests),
+                ),
               ),
-            ),
-        }),
+          }),
       )
     },
     ReceivedBacklog: ({ project, items }) => {
@@ -1083,7 +1084,7 @@ export const update = (model: Model, message: Message): Return =>
     },
     ReceivedLoad: ({ engine, items }) => ({
       model:
-        engine === scopeEngine(model.console.sidebar, model.scope)
+        engine === scopeEngine(model.scope)
           ? modifyFields(model, { load: load => applyLoad(load, items) })
           : model,
     }),
@@ -1175,9 +1176,15 @@ export const update = (model: Model, message: Message): Return =>
     CompletedShowNotification: () => ({ model }),
     ClickedNotification: ({ target }) =>
       Notify.NotificationTarget.match(target, {
-        Request: ({ ref }) =>
-          focusOn(model, { project: ref.project, request: Option.some(ref) }),
-        Project: ({ project }) =>
-          focusOn(model, { project, request: Option.none() }),
+        Request: ({ engine, ref }) =>
+          focusOn(model, {
+            project: { engine, project: ref.project },
+            request: Option.some(ref),
+          }),
+        Project: ({ engine, project }) =>
+          focusOn(model, {
+            project: { engine, project },
+            request: Option.none(),
+          }),
       }),
   })

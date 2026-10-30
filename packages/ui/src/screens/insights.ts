@@ -13,10 +13,10 @@ import {
   InsightsQuery,
   InsightsSummary,
   InsightsTable,
-  ProjectId,
 } from '@fabrica/contracts'
 
 import { sayDuration, sayMoment } from '../app/clock'
+import { EngineProject } from '../app/engine-project'
 import { type EngineServices, requestScope } from '../app/engine-route'
 import { sayTokens, tokenTotal } from '../console/stats'
 
@@ -77,7 +77,7 @@ const panelAbout: Record<Panel, string> = {
 
 /** What a panel's query depends on: the project in scope, none for every project, and the tokens' grouping. */
 interface Scope {
-  readonly project: Option.Option<ProjectId>
+  readonly project: Option.Option<EngineProject>
   readonly tokensBy: TokensBy
 }
 
@@ -86,9 +86,11 @@ const since = Option.none<DateTime.Utc>()
 /** The query a panel asks for `scope`; none where it needs a project and every project is in scope. */
 export const queryOf = (
   panel: Panel,
-  { project, tokensBy }: Scope,
-): Option.Option<InsightsQuery> =>
-  Match.value(panel).pipe(
+  scope: Scope,
+): Option.Option<InsightsQuery> => {
+  const project = Option.map(scope.project, scoped => scoped.project)
+  const { tokensBy } = scope
+  return Match.value(panel).pipe(
     Match.when('tokens', () =>
       Option.some(
         InsightsQuery.cases.tokens_by_model.make({
@@ -135,16 +137,17 @@ export const queryOf = (
     ),
     Match.exhaustive,
   )
+}
 
 const sameQuery = Schema.toEquivalence(InsightsQuery)
-const sameScope = Schema.toEquivalence(Schema.Option(ProjectId))
+const sameScope = Schema.toEquivalence(Schema.Option(EngineProject))
 
 const TableData = AsyncData.Schema(InsightsTable, Schema.String).schema
 type TableData = typeof TableData.Type
 
 export const Model = Schema.Struct({
   /** The project whose telemetry is shown: the scope's as the screen opened; none for every project. */
-  project: Schema.Option(ProjectId),
+  project: Schema.Option(EngineProject),
   tokensBy: TokensBy,
   summary: AsyncData.Schema(InsightsSummary, Schema.String).schema,
   tables: Schema.Record(Panel, TableData),
@@ -173,26 +176,39 @@ export const Message = defineMessageUnion({
   SelectedTokensBy: { by: TokensBy },
   PressedRefresh: {},
   SucceededLoadSummary: {
-    project: Schema.Option(ProjectId),
+    project: Schema.Option(EngineProject),
     summary: InsightsSummary,
   },
   FailedLoadSummary: {
-    project: Schema.Option(ProjectId),
+    project: Schema.Option(EngineProject),
     reason: Schema.String,
   },
-  SucceededQuery: { panel: Panel, query: InsightsQuery, table: InsightsTable },
-  FailedQuery: { panel: Panel, query: InsightsQuery, reason: Schema.String },
+  SucceededQuery: {
+    panel: Panel,
+    scope: Schema.Option(EngineProject),
+    query: InsightsQuery,
+    table: InsightsTable,
+  },
+  FailedQuery: {
+    panel: Panel,
+    scope: Schema.Option(EngineProject),
+    query: InsightsQuery,
+    reason: Schema.String,
+  },
 })
 export type Message = typeof Message.Type
 
 // Commands: each a request to the engine, its failure in words.
 
 export const LoadSummary = Command.define('LoadSummary', {
-  args: { project: Schema.Option(ProjectId) },
+  args: { project: Schema.Option(EngineProject) },
   messages: [Message.SucceededLoadSummary, Message.FailedLoadSummary],
   execute: ({ project }) =>
     requestScope(project, client =>
-      client.rpc['insights.summary']({ project, since }),
+      client.rpc['insights.summary']({
+        project: Option.map(project, scoped => scoped.project),
+        since,
+      }),
     ).pipe(
       Effect.map(summary => Message.SucceededLoadSummary({ project, summary })),
       Effect.catch(reason =>
@@ -201,20 +217,23 @@ export const LoadSummary = Command.define('LoadSummary', {
     ),
 })
 
-/** The project `query` asks about, or none for every project's: its engine answers it. */
-const queryScope = (query: InsightsQuery): Option.Option<ProjectId> =>
-  query._tag === 'ticket_time' ? Option.some(query.project) : query.project
-
+/** Asks `scope`'s engine `query`, for `panel`. */
 export const RunQuery = Command.define('RunQuery', {
-  args: { panel: Panel, query: InsightsQuery },
+  args: {
+    panel: Panel,
+    scope: Schema.Option(EngineProject),
+    query: InsightsQuery,
+  },
   messages: [Message.SucceededQuery, Message.FailedQuery],
-  execute: ({ panel, query }) =>
-    requestScope(queryScope(query), client =>
+  execute: ({ panel, scope, query }) =>
+    requestScope(scope, client =>
       client.rpc['insights.query']({ query }),
     ).pipe(
-      Effect.map(table => Message.SucceededQuery({ panel, query, table })),
+      Effect.map(table =>
+        Message.SucceededQuery({ panel, scope, query, table }),
+      ),
       Effect.catch(reason =>
-        Effect.succeed(Message.FailedQuery({ panel, query, reason })),
+        Effect.succeed(Message.FailedQuery({ panel, scope, query, reason })),
       ),
     ),
 })
@@ -260,7 +279,9 @@ const asked = (model: Model, scope: Scope): Return => {
       ...Panel.literals.flatMap(panel =>
         Option.match(tables[panel].ask, {
           onNone: () => [],
-          onSome: query => [RunQuery({ panel, query })],
+          onSome: query => [
+            RunQuery({ panel, scope: scope.project, query }),
+          ],
         }),
       ),
     ],
@@ -268,11 +289,26 @@ const asked = (model: Model, scope: Scope): Return => {
 }
 
 /** As the screen opens, or its scope changes while it is shown: everything asked for `scope`. */
-export const opened = (model: Model, scope: Option.Option<ProjectId>): Return =>
+export const opened = (
+  model: Model,
+  scope: Option.Option<EngineProject>,
+): Return =>
   asked(model, { project: scope, tokensBy: model.tokensBy })
 
-/** Whether `query` is still what `panel` shows. */
-const shown = (model: Model, panel: Panel, query: InsightsQuery): boolean =>
+/** Whether `query`, asked of `scope`'s engine, is still what `panel` shows. */
+const shown = (
+  model: Model,
+  {
+    panel,
+    scope,
+    query,
+  }: {
+    readonly panel: Panel
+    readonly scope: Option.Option<EngineProject>
+    readonly query: InsightsQuery
+  },
+): boolean =>
+  sameScope(model.project, scope) &&
   Option.exists(queryOf(panel, model), current => sameQuery(current, query))
 
 const settleTable = (
@@ -298,7 +334,9 @@ const regrouped = (model: Model, by: TokensBy): Return => {
     model: regroupedModel,
     commands: Option.match(queryOf('tokens', regroupedModel), {
       onNone: () => [],
-      onSome: query => [RunQuery({ panel: 'tokens', query })],
+      onSome: query => [
+        RunQuery({ panel: 'tokens', scope: regroupedModel.project, query }),
+      ],
     }),
   }
 }
@@ -323,13 +361,13 @@ export const update = (model: Model, message: Message): Return =>
           })
         : model,
     }),
-    SucceededQuery: ({ panel, query, table }) => ({
-      model: shown(model, panel, query)
+    SucceededQuery: ({ panel, scope, query, table }) => ({
+      model: shown(model, { panel, scope, query })
         ? settleTable(model, panel, Result.succeed(table))
         : model,
     }),
-    FailedQuery: ({ panel, query, reason }) => ({
-      model: shown(model, panel, query)
+    FailedQuery: ({ panel, scope, query, reason }) => ({
+      model: shown(model, { panel, scope, query })
         ? settleTable(model, panel, Result.fail(reason))
         : model,
     }),
