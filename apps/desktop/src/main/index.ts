@@ -32,6 +32,7 @@ import type {
 import { findDistribution } from '@fabrica/client/node'
 import { ReleaseVersion } from '@fabrica/contracts'
 import { ServiceInstall } from '@fabrica/ui/host'
+import type { EnginePortRequest } from '@fabrica/ui/port'
 import { type Theme, defaultTheme } from '@fabrica/ui/theme'
 import { windowColours } from '@fabrica/ui/window-colours'
 
@@ -41,8 +42,15 @@ import { ConnectionTarget } from '../connection/target'
 import { FolderPick, UpdateStatus, channels } from '../preload/api'
 import { appDataFolder } from './dataFolder'
 import { checkEngineOn, engineSource, installEngineOn } from './engine-install'
-import { type MainIpc, registerIpc, sendEnginePort, sendSshPrompt } from './ipc'
+import {
+  type MainIpc,
+  registerIpc,
+  sendEnginePort,
+  sendRemoteEnginePort,
+  sendSshPrompt,
+} from './ipc'
 import { keptTheme, makeThemeKeeper } from './keptTheme'
+import { keepEngineIn, knownEnginesOf } from './known-engines'
 import {
   bundledLauncher,
   ensureLocalEngine,
@@ -50,7 +58,12 @@ import {
 } from './local-engine'
 import { AppPage, isAppUrl } from './navigation'
 import { makeNotifications } from './notifications'
-import { type BrokeredPage, localTarget, makeBroker } from './ports'
+import {
+  type BrokeredPage,
+  knownTarget,
+  localTarget,
+  makeBroker,
+} from './ports'
 import { guardPermissions, guardWebContents } from './security'
 import { askpassNode, makePromptDesk } from './ssh-prompts'
 import { makeAppState, safeStorageBox } from './state'
@@ -77,10 +90,10 @@ import {
 } from './wsl'
 
 // Electron main (spec §5): the window, its title bar and its confinement, the preload's API, the
-// connection process, to which it brokers each page's engine port and whose ssh prompts it asks the
-// page (§9.1), and the local engine, started at launch when none answers (§7.1); on Windows, where
-// none runs, the engine in WSL2, kept running (§7.6). It runs no orchestration and stays out of the
-// data path.
+// connection process, to which it brokers each page's engine port, and a port to each known engine the
+// page asks for, and whose ssh prompts it asks the page (§9.1), the app's state with its known engines,
+// and the local engine, started at launch when none answers (§7.1); on Windows, where none runs, the
+// engine in WSL2, kept running (§7.6). It runs no orchestration and stays out of the data path.
 
 const preload = fileURLToPath(new URL('../preload/index.cjs', import.meta.url))
 const connectionProcess = fileURLToPath(
@@ -175,12 +188,16 @@ const reachWsl = (distro: WslDistro) =>
     broker.retarget(target),
   )
 
+/** The app's own state, in its data folder: the known engines, and pairing tokens in safeStorage. */
+const appState = Effect.runSync(
+  makeAppState({
+    folder: app.getPath('userData'),
+    secrets: safeStorageBox(safeStorage, process.platform),
+  }),
+)
+
 /** The app's engine in WSL2 at launch, where this machine runs none: the first known one. */
-const reachKnownWslEngine = makeAppState({
-  folder: app.getPath('userData'),
-  secrets: safeStorageBox(safeStorage, process.platform),
-}).pipe(
-  Effect.flatMap(state => state.engines),
+const reachKnownWslEngine = appState.engines.pipe(
   Effect.flatMap(known =>
     Option.match(launchDistro({ local: target, known }), {
       onNone: () => Effect.void,
@@ -257,6 +274,15 @@ const broker = makeBroker<MessagePortMain>({
   },
   target,
 })
+
+/** Relays a port to the known engine at `address`, for the page's request numbered `request`. */
+const connectEngine = ({ request, address }: EnginePortRequest): void => {
+  Option.map(Option.fromUndefinedOr(appWindow.current()), window =>
+    broker.connect(knownTarget(address, target), port =>
+      sendRemoteEnginePort(window.webContents, { request, port }),
+    ),
+  )
+}
 
 const brokeredPage = (
   contents: WebContents,
@@ -489,6 +515,9 @@ if (!app.requestSingleInstanceLock()) {
       findWsl,
       installUbuntu: installUbuntuInWsl,
       answerSshPrompt: promptDesk.answer,
+      knownEngines: () => Effect.runPromise(knownEnginesOf(appState)),
+      keepEngine: engine => Effect.runPromise(keepEngineIn(appState, engine)),
+      connectEngine,
     },
   })
 

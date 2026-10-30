@@ -2,20 +2,28 @@ import { Context, Effect, Option, Schema } from 'effect'
 
 import {
   CheckAnswer,
+  type EngineAddress,
   type EngineHost,
   InstallAnswer,
   type InstallConsent,
+  KeepAnswer,
+  type KnownEngine,
+  KnownEnginesAnswer,
   UbuntuInstall,
   WslSearch,
 } from '@fabrica/client'
+
+import type { EnginePortRequest } from './port'
 
 // What the renderer may ask of the app around it (spec §7.1, §9.2, §20.1): installing the local engine
 // as a login service, which main does through the bundled `fabrica service install` when the user
 // chooses; checking a host, this machine, one over SSH or a WSL2 distribution, for an engine, then
 // installing or updating it there with the user's consent (`@fabrica/client/install`); and, on
 // Windows, finding the WSL2 distribution to run it in, or installing Ubuntu. The preload's API answers
-// them in the desktop app; the renderer alone in a browser has no app around it. What crosses is
-// decoded, here and in the preload, with the schemas below and the client's.
+// them in the desktop app; the renderer alone in a browser has no app around it. The app keeps the
+// engines it knows (§9.1): the renderer reads them, has one kept once it reached it, and asks for a
+// port to each at each attempt to connect. What crosses is decoded, here and in the preload, with the
+// schemas below and the client's.
 
 /** What installing the login service came to. */
 export const ServiceInstall = Schema.TaggedUnion({
@@ -43,6 +51,16 @@ export interface AppHostShape {
   readonly findWsl: Option.Option<Effect.Effect<WslSearch>>
   /** Installs Ubuntu in WSL, as the user agreed: none where no app is around. */
   readonly installUbuntu: Option.Option<Effect.Effect<UbuntuInstall>>
+  /** The engines the app knows, from its state: none where no app is around. */
+  readonly knownEngines: Option.Option<Effect.Effect<KnownEnginesAnswer>>
+  /** Keeps an engine among the app's known engines: none where no app is around. */
+  readonly keepEngine: Option.Option<
+    (engine: KnownEngine) => Effect.Effect<KeepAnswer>
+  >
+  /** A new port to the known engine at an address, through the connection process: none where no app is around. */
+  readonly enginePort: Option.Option<
+    (address: EngineAddress) => Effect.Effect<MessagePort>
+  >
 }
 
 export class AppHost extends Context.Service<AppHost, AppHostShape>()(
@@ -56,6 +74,9 @@ export const noAppHost: AppHostShape = {
   installEngine: Option.none(),
   findWsl: Option.none(),
   installUbuntu: Option.none(),
+  knownEngines: Option.none(),
+  keepEngine: Option.none(),
+  enginePort: Option.none(),
 }
 
 const decodeInstall = Schema.decodeUnknownEffect(ServiceInstall)
@@ -63,6 +84,8 @@ const decodeCheckAnswer = Schema.decodeUnknownEffect(CheckAnswer)
 const decodeInstallAnswer = Schema.decodeUnknownEffect(InstallAnswer)
 const decodeWslSearch = Schema.decodeUnknownEffect(WslSearch)
 const decodeUbuntuInstall = Schema.decodeUnknownEffect(UbuntuInstall)
+const decodeKnownEngines = Schema.decodeUnknownEffect(KnownEnginesAnswer)
+const decodeKeepAnswer = Schema.decodeUnknownEffect(KeepAnswer)
 
 /** The `window.fabrica` method the preload exposes for the login service, by name. */
 export const installLoginServiceMethod = 'installLoginService'
@@ -74,6 +97,16 @@ export const installEngineMethod = 'installEngine'
 /** The `window.fabrica` methods the preload exposes for finding a WSL2 distribution and installing Ubuntu. */
 export const findWslMethod = 'findWsl'
 export const installUbuntuMethod = 'installUbuntu'
+
+/** The `window.fabrica` methods the preload exposes for the known engines and their ports. */
+export const knownEnginesMethod = 'knownEngines'
+export const keepEngineMethod = 'keepEngine'
+export const connectEngineMethod = 'connectEngine'
+
+/** Calls its listener with each known engine's port and the number of the request it answers; the function returned stops it. */
+export type RemoteEnginePorts = (
+  listener: (request: number, port: MessagePort) => void,
+) => () => void
 
 const failureWords = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
@@ -106,16 +139,50 @@ const methodOf = <A>(
 }
 
 /**
- * The app around `target` (the window), through what its preload exposes as `window.fabrica`; its
- * answers are decoded, and one that doesn't decode, or a call that rejects, is a failure in words.
+ * A new port to the known engine at an address, through `connect` (the preload's method): each request
+ * numbered, its port taken from `ports` as the message carrying its number comes.
  */
-export const appHostOf = (target: object): AppHostShape => {
+const enginePortOf = (
+  connect: (request: EnginePortRequest) => void,
+  ports: RemoteEnginePorts,
+) => {
+  let requests = 0
+  return (address: EngineAddress): Effect.Effect<MessagePort> =>
+    Effect.callback<MessagePort>(resume => {
+      requests += 1
+      const asked = requests
+      const stop = ports((request, port) => {
+        if (request === asked) {
+          stop()
+          resume(Effect.succeed(port))
+        }
+      })
+      connect({ request: asked, address })
+      return Effect.sync(stop)
+    })
+}
+
+/**
+ * The app around `target` (the window), through what its preload exposes as `window.fabrica`; its
+ * answers are decoded, and one that doesn't decode, or a call that rejects, is a failure in words. A
+ * known engine's port comes from `ports`, the window's messages, where the page listens for them.
+ */
+export const appHostOf = (
+  target: object,
+  ports: Option.Option<RemoteEnginePorts> = Option.none(),
+): AppHostShape => {
   const api: unknown = Reflect.get(target, 'fabrica')
   const install = methodOf(api, installLoginServiceMethod, decodeInstall)
   const check = methodOf(api, checkEngineMethod, decodeCheckAnswer)
   const installEngine = methodOf(api, installEngineMethod, decodeInstallAnswer)
   const findWsl = methodOf(api, findWslMethod, decodeWslSearch)
   const installUbuntu = methodOf(api, installUbuntuMethod, decodeUbuntuInstall)
+  const known = methodOf(api, knownEnginesMethod, decodeKnownEngines)
+  const keep = methodOf(api, keepEngineMethod, decodeKeepAnswer)
+  const connect: unknown =
+    typeof api === 'object' && api !== null
+      ? Reflect.get(api, connectEngineMethod)
+      : undefined
   return {
     installLoginService: Option.map(install, call =>
       call([]).pipe(
@@ -162,6 +229,32 @@ export const appHostOf = (target: object): AppHostShape => {
           Effect.succeed(UbuntuInstall.cases.Unfinished.make({ reason })),
         ),
       ),
+    ),
+    knownEngines: Option.map(known, call =>
+      call([]).pipe(
+        Effect.catch(reason =>
+          Effect.succeed(KnownEnginesAnswer.cases.Failed.make({ reason })),
+        ),
+      ),
+    ),
+    keepEngine: Option.map(
+      keep,
+      call => (engine: KnownEngine) =>
+        call([engine]).pipe(
+          Effect.catch(reason =>
+            Effect.succeed(KeepAnswer.cases.Failed.make({ reason })),
+          ),
+        ),
+    ),
+    enginePort: Option.flatMap(ports, listen =>
+      typeof connect === 'function'
+        ? Option.some(
+            enginePortOf(
+              request => Reflect.apply(connect, api, [request]),
+              listen,
+            ),
+          )
+        : Option.none(),
     ),
   }
 }

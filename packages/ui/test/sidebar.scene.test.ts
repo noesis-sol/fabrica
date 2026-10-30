@@ -452,7 +452,7 @@ describe("the engine's project rows", () => {
         client: { name: clientName, kind: 'app', release: '0.0.0' },
       })
       const messages = yield* Stream.runCollect(
-        projectMessages(session, Effect.void),
+        projectMessages(session, localEngineName, Effect.void),
       )
       const shown = after(connected, ...messages)
       const [engine] = shown.console.sidebar.engines

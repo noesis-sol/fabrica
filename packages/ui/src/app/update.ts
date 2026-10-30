@@ -2,6 +2,7 @@ import { Array, Duration, Effect, Option, Redacted, Schema } from 'effect'
 import { Command, Update } from 'foldkit'
 import { modifyFields } from 'foldkit/struct'
 
+import { EngineAddress, KeepAnswer, KnownEnginesAnswer } from '@fabrica/client'
 import {
   type AttentionRef,
   type NoRun,
@@ -37,6 +38,7 @@ import { Message } from './message'
 import { type Model, Overlay } from './model'
 import { type Notifier, ShowNotification } from './notifier'
 import * as Notify from './notify'
+import * as RemoteEngines from './remote-engines'
 import { Screen } from './screen'
 import * as SshPrompts from './ssh-prompts'
 import {
@@ -49,7 +51,8 @@ import {
 import { ShowTheme, type ThemeHost } from './theme-host'
 
 // The root's update (spec §18.1): routing, the keys through the screen's command list, the
-// connection's lifecycle and what ssh asks as it connects (§9.1), each stream's items applied to the part of the Model they change, and the
+// connection's lifecycle and what ssh asks as it connects (§9.1), the known engines on other hosts and
+// each one's connection, each stream's items applied to the part of the Model they change, and the
 // app's notifications: those to show, and a click on one focusing its target (§18.5).
 
 /** Waits before the next connection attempt. */
@@ -491,16 +494,16 @@ const focusOn = (
   }
 }
 
-const foldEngines = Update.foldChild({
-  update: Engines.update,
-  read: (model: Model) => Option.some(model.screens.engines),
-  write: (model: Model, engines: Engines.Model) =>
-    modifyFields(model, {
-      screens: screens => modifyFields(screens, { engines: () => engines }),
-    }),
-  toParentMessage: (message: Engines.Message) =>
-    Message.GotEnginesMessage({ message }),
-})
+/** The known engine named `name`'s connection now `connection`. */
+const remoteConnection = (
+  model: Model,
+  name: string,
+  connection: Connection,
+): Model =>
+  modifyFields(model, {
+    remotes: remotes =>
+      RemoteEngines.connectionChanged(remotes, name, connection),
+  })
 
 /** The Engines screen's own Model changed, and its Commands lifted, by `step`. */
 const stepEngines = (
@@ -753,20 +756,41 @@ export const update = (model: Model, message: Message): Return =>
     },
     GotHistoryMessage: ({ message }) => foldHistory(model, message),
     GotEnginesMessage: ({ message }) => {
-      const folded = foldEngines(model, message)
+      const remote = Engines.remoteAfter(model.screens.engines, message)
+      const folded = stepEngines(model, engines =>
+        Engines.update(engines, message, model.remotes.engines),
+      )
       // The app's engine installed or updated: a connection it refused, or one stopped at a refusal
       // (the WSL2 distribution had no fabrica), is tried again.
-      return Engines.reconnectsAfter(message) &&
+      const local =
+        Engines.reconnectsAfter(message) &&
         (Connection.guards.Refused(folded.model.connection) ||
           Connection.guards.Stopped(folded.model.connection))
-        ? {
-            ...folded,
-            model: modifyFields(folded.model, {
+          ? modifyFields(folded.model, {
               attempt: attempt => attempt + 1,
               connection: () => Connection.Connecting(),
+            })
+          : folded.model
+      // An engine installed on another host joins the known engines; one tried again is connected to.
+      return {
+        ...folded,
+        model: Option.match(remote, {
+          onNone: () => local,
+          onSome: change =>
+            modifyFields(local, {
+              remotes: remotes =>
+                Engines.RemoteChange.$match(change, {
+                  Added: ({ name, destination }) =>
+                    RemoteEngines.added(remotes, {
+                      name,
+                      address: EngineAddress.cases.Ssh.make({ destination }),
+                    }),
+                  Retried: ({ name }) =>
+                    RemoteEngines.reconnected(remotes, name),
+                }),
             }),
-          }
-        : folded
+        }),
+      }
     },
     GotSettingsMessage: ({ message }) => foldSettings(model, message),
     GotInsightsMessage: ({ message }) => foldInsights(model, message),
@@ -899,6 +923,66 @@ export const update = (model: Model, message: Message): Return =>
             }),
     }),
 
+    LoadedKnownEngines: ({ answer }) => ({
+      model: modifyFields(model, {
+        remotes: remotes =>
+          KnownEnginesAnswer.match(answer, {
+            Read: ({ engines }) => RemoteEngines.loaded(remotes, engines),
+            Failed: ({ reason }) =>
+              modifyFields(remotes, {
+                problem: () =>
+                  Option.some(
+                    `The app’s known engines couldn’t be read: ${reason}`,
+                  ),
+              }),
+          }),
+      }),
+    }),
+    CompletedKeepEngine: ({ name, answer }) => ({
+      model: KeepAnswer.match(answer, {
+        Kept: () => model,
+        Failed: ({ reason }) =>
+          modifyFields(model, {
+            remotes: remotes =>
+              modifyFields(remotes, {
+                problem: () =>
+                  Option.some(
+                    `${name} couldn’t be kept among the app’s engines: ${reason}`,
+                  ),
+              }),
+          }),
+      }),
+    }),
+    ConnectedToRemote: ({ name, engine, release, protocol }) => {
+      const connected = RemoteEngines.connected(model.remotes, {
+        name,
+        hello: Connection.Up({ engine, release, protocol }),
+      })
+      return {
+        model: modifyFields(model, { remotes: () => connected.model }),
+        commands: Option.match(connected.keep, {
+          onNone: () => [],
+          onSome: engine => [RemoteEngines.KeepEngine({ engine })],
+        }),
+      }
+    },
+    LostRemote: ({ name }) => ({
+      model: remoteConnection(model, name, Connection.Down()),
+    }),
+    FailedToConnectRemote: ({ name, reason }) => ({
+      model: remoteConnection(model, name, Connection.Failed({ reason })),
+    }),
+    StoppedConnectingRemote: ({ name, reason }) => ({
+      model: remoteConnection(model, name, Connection.Stopped({ reason })),
+    }),
+    RefusedByRemote: ({ name, client, engine, update }) => ({
+      model: remoteConnection(
+        model,
+        name,
+        Connection.Refused({ client, engine, update }),
+      ),
+    }),
+
     ReceivedRunView: ({ project, items }) =>
       Option.contains(model.scope, project)
         ? {
@@ -982,7 +1066,9 @@ export const update = (model: Model, message: Message): Return =>
           notify: notify =>
             Notify.receivedRuns(
               notify,
-              Notify.liveRuns(Sidebar.rows(sidebar).map(row => row.status)),
+              Notify.liveRuns(
+                Sidebar.localRows(sidebar).map(row => row.status),
+              ),
             ),
         }),
       }

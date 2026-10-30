@@ -6,6 +6,9 @@ import {
   EngineHost,
   type InstallAnswer,
   InstallConsent,
+  type KeepAnswer,
+  KnownEngine,
+  type KnownEnginesAnswer,
   SshPromptAnswer,
   type UbuntuInstall,
   type WslSearch,
@@ -13,6 +16,7 @@ import {
 import type { ReleaseVersion } from '@fabrica/contracts'
 import type { ServiceInstall } from '@fabrica/ui/host'
 import { DesktopNotification } from '@fabrica/ui/notify'
+import { EnginePortRequest } from '@fabrica/ui/port'
 import { Theme } from '@fabrica/ui/theme'
 
 import { type FolderPick, type UpdateStatus, channels } from '../preload/api'
@@ -47,6 +51,12 @@ export interface MainActions {
   readonly installUbuntu: () => Promise<UbuntuInstall>
   /** The page's answer to what ssh asked (spec §9.1), for the connection process. */
   readonly answerSshPrompt: (answer: SshPromptAnswer) => void
+  /** The engines the app knows, from its state (§9.1). */
+  readonly knownEngines: () => Promise<KnownEnginesAnswer>
+  /** Keeps an engine among the app's known engines. */
+  readonly keepEngine: (engine: KnownEngine) => Promise<KeepAnswer>
+  /** Relays a port to a known engine, handed to the page with the number of its request. */
+  readonly connectEngine: (request: EnginePortRequest) => void
 }
 
 /** The part of `ipcMain` main uses; each listener gets the sending frame's URL (none once it has gone) and the values. */
@@ -87,6 +97,10 @@ const decodeInstall = Schema.decodeUnknownOption(
 )
 const decodeSshAnswer = Schema.decodeUnknownOption(
   Schema.Tuple([SshPromptAnswer]),
+)
+const decodeKeep = Schema.decodeUnknownOption(Schema.Tuple([KnownEngine]))
+const decodePortRequest = Schema.decodeUnknownOption(
+  Schema.Tuple([EnginePortRequest]),
 )
 
 /** Registers `actions` on `ipc`, for messages from frames whose URL `trusted` takes. */
@@ -134,6 +148,11 @@ export const registerIpc = ({
       actions.answerSshPrompt(answer),
     )
   })
+  onSend(channels.connectEngine, values => {
+    Option.map(decodePortRequest(values), ([request]) =>
+      actions.connectEngine(request),
+    )
+  })
 
   /** Answers requests on `channel` from the app's page whose values `decode` takes. */
   const onRequest = <A>(
@@ -167,11 +186,24 @@ export const registerIpc = ({
   onRequest(channels.installEngine, decodeInstall, ([host, consent]) =>
     actions.installEngine({ host, consent }),
   )
+  onInvoke(channels.knownEngines, actions.knownEngines)
+  onRequest(channels.keepEngine, decodeKeep, ([engine]) =>
+    actions.keepEngine(engine),
+  )
 }
 
 /** Tells the page in `contents` that ssh asked something, or withdrew it, encoded as the preload decodes it. */
 export const sendSshPrompt = (contents: WebContents, event: unknown): void =>
   contents.send(channels.sshPrompt, event)
+
+/** Hands the page in `contents` a port to a known engine, with the number of the request it answers. */
+export const sendRemoteEnginePort = (
+  contents: WebContents,
+  {
+    request,
+    port,
+  }: { readonly request: number; readonly port: MessagePortMain },
+): void => contents.postMessage(channels.remoteEnginePort, { request }, [port])
 
 /** Hands the page in `contents` an engine port, which the preload passes on as a window message. */
 export const sendEnginePort = (

@@ -180,6 +180,7 @@ describe('Add engine in WSL2', () => {
         expect(shown.engineSetup).toEqual(
           Engines.EngineSetup.Running({
             host: ubuntu,
+            name: Option.none(),
             step: Engines.SetupStep.Checked({ check: fresh }),
           }),
         )

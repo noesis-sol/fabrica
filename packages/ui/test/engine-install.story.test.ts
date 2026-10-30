@@ -83,6 +83,7 @@ describe('Add engine', () => {
         expect(shown.engineSetup).toEqual(
           Engines.EngineSetup.Editing({
             destination: ' ',
+            name: '',
             problem: Option.some(
               'Give the host’s SSH destination: user@host, or a host of your ~/.ssh/config.',
             ),
@@ -137,6 +138,7 @@ describe('Add engine', () => {
         ...Engines.init(),
         engineSetup: Engines.EngineSetup.Running({
           host: server,
+          name: Option.some('build-box'),
           step: Engines.SetupStep.Checked({ check: older }),
         }),
       }),
@@ -202,6 +204,7 @@ describe('Add engine', () => {
           ...Engines.init(),
           engineSetup: Engines.EngineSetup.Running({
             host: server,
+            name: Option.some('build-box'),
             step: Engines.SetupStep.Checked({ check: checkOf(plan) }),
           }),
         }),
@@ -218,6 +221,7 @@ describe('Add engine', () => {
         ...Engines.init(),
         engineSetup: Engines.EngineSetup.Running({
           host: server,
+          name: Option.some('build-box'),
           step: Engines.SetupStep.Checking(),
         }),
       }),

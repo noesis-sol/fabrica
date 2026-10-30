@@ -457,6 +457,7 @@ const screenView = (model: Model, h: HtmlBuilder<Message>): Html =>
           connection: model.connection,
           engines: model.console.sidebar.engines,
           platform: model.platform,
+          remotes: model.remotes,
         },
         toParentMessage: message => Message.GotEnginesMessage({ message }),
       }),

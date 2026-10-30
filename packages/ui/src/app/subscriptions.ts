@@ -10,6 +10,7 @@ import {
   ProjectId,
   type ProjectStatus,
   type ProjectStatusPatch,
+  ReleaseVersion,
   type RunEvent,
   RunId,
   type RunView,
@@ -25,17 +26,20 @@ import * as Talks from '../screens/talks'
 import {
   type EngineConnectionService,
   type EngineSession,
+  clientName,
   isLive,
   localEngineName,
   withClient,
   withSession,
 } from './connection'
 import { perFrame } from './frame'
+import { AppHost } from './host'
 import type { Pressed } from './keys'
 import { Message } from './message'
 import type { Model } from './model'
 import { Notifier } from './notifier'
 import { liveRuns, watchedRuns } from './notify'
+import * as RemoteEngines from './remote-engines'
 import { Screen } from './screen'
 import { SshPromptHost } from './ssh-prompts'
 import { watchOf } from './streams'
@@ -227,9 +231,10 @@ const heldTalks = (model: Model): ReadonlyArray<TalkId> =>
     ...Talks.heldTalks(model.screens.talks),
   ])
 
-/** The engine's projects and their runs' states, for the sidebar's rows. */
+/** The engine's projects and their runs' states, for the sidebar's rows, under `name`, the app's name for it. */
 export const projectMessages = (
   { client, hello }: EngineSession,
+  name: string,
   nextFrame: Effect.Effect<void>,
 ): Stream.Stream<Message> =>
   watchOf<ReadonlyArray<ProjectStatus>, typeof ProjectStatusPatch.Type>(client)(
@@ -237,11 +242,7 @@ export const projectMessages = (
   ).pipe(
     perFrame(nextFrame),
     Stream.map(items =>
-      Message.ReceivedProjects({
-        engine: hello.engine,
-        name: localEngineName,
-        items,
-      }),
+      Message.ReceivedProjects({ engine: hello.engine, name, items }),
     ),
     Stream.catch(() => Stream.empty),
   )
@@ -258,7 +259,7 @@ const viewedRun = (model: Model, project: ProjectId): Option.Option<RunId> =>
 
 /**
  * The runs whose events History shows (§18.3): the scoped project's viewed run, or under All projects
- * every project's run its sidebar row shows going.
+ * every run going that the local engine's rows show.
  */
 const historyRuns = (
   model: Model,
@@ -272,11 +273,55 @@ const historyRuns = (
         ],
       }),
     onNone: () =>
-      liveRuns(Sidebar.rows(model.console.sidebar).map(row => row.status)),
+      liveRuns(Sidebar.localRows(model.console.sidebar).map(row => row.status)),
   })
 
-/** The services the subscriptions use: the engine connection, the notifier, and ssh's prompts. */
-type Services = EngineConnectionService | Notifier | SshPromptHost
+/** What the app says where no app is around the renderer to reach its known engines. */
+export const noAppToReachEngines =
+  'only the desktop app reaches engines on other hosts'
+
+/**
+ * Each known engine on another host's connection, attempt after attempt, with its project rows; the
+ * ports come from the app around the renderer.
+ */
+export const remoteMessages = (
+  engines: RemoteEngines.Attempts,
+  {
+    release,
+    nextFrame,
+  }: {
+    readonly release: ReleaseVersion
+    readonly nextFrame: Effect.Effect<void>
+  },
+): Stream.Stream<Message, never, AppHost> =>
+  Stream.unwrap(
+    Effect.map(AppHost, host =>
+      Stream.mergeAll(
+        engines.map(({ name, address }) =>
+          Option.match(host.enginePort, {
+            onNone: () =>
+              Stream.make(
+                Message.StoppedConnectingRemote({
+                  name,
+                  reason: noAppToReachEngines,
+                }),
+              ),
+            onSome: port =>
+              RemoteEngines.remoteEngineMessages({
+                name,
+                port: port(address),
+                client: { name: clientName, kind: 'app', release },
+                streams: session => projectMessages(session, name, nextFrame),
+              }),
+          }),
+        ),
+        { concurrency: 'unbounded' },
+      ),
+    ),
+  )
+
+/** The services the subscriptions use: the engine connection, the notifier, ssh's prompts, and the app around the renderer. */
+type Services = EngineConnectionService | Notifier | SshPromptHost | AppHost
 
 export const makeSubscriptions = ({
   nextFrame,
@@ -379,8 +424,23 @@ export const makeSubscriptions = ({
         modelToDependencies: model => ({ live: isLive(model.connection) }),
         dependenciesToStream: ({ live }) =>
           live
-            ? withSession(session => projectMessages(session, nextFrame))
+            ? withSession(session =>
+                projectMessages(session, localEngineName, nextFrame),
+              )
             : Stream.empty,
+      },
+    ),
+    remotes: entry(
+      { engines: RemoteEngines.Attempts, release: ReleaseVersion },
+      {
+        modelToDependencies: model => ({
+          engines: RemoteEngines.attempts(model.remotes),
+          release: model.release,
+        }),
+        dependenciesToStream: ({ engines, release }) =>
+          engines.length === 0
+            ? Stream.empty
+            : remoteMessages(engines, { release, nextFrame }),
       },
     ),
     clock: entry(

@@ -1,5 +1,6 @@
 import { Option, Result } from 'effect'
 
+import { EngineAddress } from '@fabrica/client'
 import { type HostPlaces, enginePaths } from '@fabrica/engine/paths'
 
 import { ConnectionTarget } from '../connection/target'
@@ -8,7 +9,9 @@ import { ConnectionTarget } from '../connection/target'
 // and, at each load of a page, makes a port pair and hands one end to the page and the other, with
 // the engine to reach, to the connection process; it then leaves the data path. A connection process
 // that exits is started again after a pause, and every page it served gets a new port; so does every
-// page when the app's engine changes (the Windows app's in WSL2, once Add engine has installed it).
+// page when the app's engine changes (the Windows app's in WSL2, once Add engine has installed it). A
+// known engine on another host (§9.1) has a connection of its own, whose port the page asks for at
+// each attempt.
 
 /** The engine the app reaches on this machine: its local socket, where the engine runs here (§4). */
 export const localTarget = (host: HostPlaces): ConnectionTarget =>
@@ -17,6 +20,21 @@ export const localTarget = (host: HostPlaces): ConnectionTarget =>
       ConnectionTarget.cases.LocalSocket.make({ path: paths.socket }),
     onFailure: unsupported =>
       ConnectionTarget.cases.Unavailable.make({ reason: unsupported.message }),
+  })
+
+/** The engine a known engine's address names, `local` for this machine's. */
+export const knownTarget = (
+  address: EngineAddress,
+  local: ConnectionTarget,
+): ConnectionTarget =>
+  EngineAddress.match(address, {
+    Local: () => local,
+    Ssh: ({ destination }) => ConnectionTarget.cases.Ssh.make({ destination }),
+    Wsl: ({ distro }) => ConnectionTarget.cases.Wsl.make({ distro }),
+    Tls: () =>
+      ConnectionTarget.cases.Unavailable.make({
+        reason: 'the app does not reach engines over TLS yet',
+      }),
   })
 
 /** The connection process, as main reaches it. */
@@ -50,8 +68,9 @@ export interface BrokerHost<Port> {
 }
 
 /**
- * The broker: `attach` gives a page a port at each of its loads, until it has gone; `post` reaches the
- * connection process running; `retarget` gives every page a port to another engine.
+ * The broker: `attach` gives a page a port at each of its loads, until it has gone; `connect` relays a
+ * port to a known engine's target for the page that asked; `post` reaches the connection process
+ * running; `retarget` gives every page a port to another engine.
  */
 export const makeBroker = <Port>(host: BrokerHost<Port>) => {
   let child: Option.Option<ConnectionProcess<Port>> = Option.none()
@@ -72,17 +91,21 @@ export const makeBroker = <Port>(host: BrokerHost<Port>) => {
       return started
     })
 
-  const broker = (page: BrokeredPage<Port>): void => {
+  /** A new port pair: one end relayed to `to`, the other handed to `send`. */
+  const connect = (to: ConnectionTarget, send: (port: Port) => void): void => {
     const { page: pageEnd, relay } = host.channel()
-    connection().relay(target, relay)
-    page.send(pageEnd)
+    connection().relay(to, relay)
+    send(pageEnd)
   }
+
+  const broker = (page: BrokeredPage<Port>): void => connect(target, page.send)
 
   return {
     /** Hands the connection process `message` while it runs; nothing once it has exited. */
     post: (message: unknown): void => {
       Option.map(child, running => running.post(message))
     },
+    connect,
     /** Has every page reach `next` from now on, each through a new port. */
     retarget: (next: ConnectionTarget): void => {
       target = next

@@ -5,6 +5,9 @@ import {
   EngineHost,
   InstallAnswer,
   InstallConsent,
+  KeepAnswer,
+  KnownEngine,
+  KnownEnginesAnswer,
   SshPromptAnswer,
   SshPromptEvent,
   type SshPromptsApi,
@@ -16,17 +19,24 @@ import { ReleaseVersion } from '@fabrica/contracts'
 import {
   ServiceInstall,
   checkEngineMethod,
+  connectEngineMethod,
   findWslMethod,
   installEngineMethod,
   installLoginServiceMethod,
   installUbuntuMethod,
+  keepEngineMethod,
+  knownEnginesMethod,
 } from '@fabrica/ui/host'
 import {
   DesktopNotification,
   NotificationTarget,
   type NotificationsApi,
 } from '@fabrica/ui/notify'
-import { enginePortMessage } from '@fabrica/ui/port'
+import {
+  EnginePortRequest,
+  enginePortMessage,
+  remoteEnginePortMessage,
+} from '@fabrica/ui/port'
 import { Theme } from '@fabrica/ui/theme'
 
 // The preload's API (spec §20.1): what the page may ask of main, and no more. The renderer is treated
@@ -35,8 +45,10 @@ import { Theme } from '@fabrica/ui/theme'
 // folder picker, the app's version, the update status, the system notifications and their clicks
 // (§18.5), installing the local engine's login service, checking a host for an engine and installing it
 // there (§9.2), finding a WSL2 distribution to run it in and installing Ubuntu where there is none
-// (§7.6), what ssh asks as it connects and the page's answers (§9.1), and the engine port, which the
-// preload hands to the page as a window message (contextBridge can't carry a MessagePort).
+// (§7.6), what ssh asks as it connects and the page's answers (§9.1), the engines the app knows and one
+// to keep (§9.1), and the engine ports, the local engine's and those the page asks for to its other
+// known engines, which the preload hands to the page as window messages (contextBridge can't carry a
+// MessagePort).
 
 /** The IPC channels between main and the preload, each named once. */
 export const channels = {
@@ -57,7 +69,11 @@ export const channels = {
   installUbuntu: 'fabrica:install-ubuntu',
   sshPrompt: 'fabrica:ssh-prompt',
   answerSshPrompt: 'fabrica:ssh-prompt-answer',
+  knownEngines: 'fabrica:known-engines',
+  keepEngine: 'fabrica:keep-engine',
+  connectEngine: 'fabrica:connect-engine',
   enginePort: 'fabrica:engine-port',
+  remoteEnginePort: 'fabrica:remote-engine-port',
 } as const
 
 /** A folder the user picked, or none. */
@@ -121,6 +137,12 @@ export interface FabricaApi {
   readonly [installUbuntuMethod]: () => Promise<UbuntuInstall>
   /** What ssh asks as the app connects, and the page's answers (spec §9.1). */
   readonly [sshPromptsMember]: SshPromptsApi
+  /** The engines the app knows, from its state (§9.1). */
+  readonly [knownEnginesMethod]: () => Promise<KnownEnginesAnswer>
+  /** Keeps an engine among the app's known engines, or replaces the one of its name. */
+  readonly [keepEngineMethod]: (engine: KnownEngine) => Promise<KeepAnswer>
+  /** Asks for a port to a known engine, which comes as a window message carrying the request's number. */
+  readonly [connectEngineMethod]: (request: EnginePortRequest) => void
 }
 
 /** The part of `ipcRenderer` the API uses; a listener gets a message's value and the ports it carries. */
@@ -156,6 +178,15 @@ const decodeSshEventOption = Schema.decodeUnknownOption(SshPromptEvent)
 const encodeSshEvent = Schema.encodeSync(SshPromptEvent)
 const decodeSshAnswer = Schema.decodeUnknownSync(SshPromptAnswer)
 const encodeSshAnswer = Schema.encodeSync(SshPromptAnswer)
+const decodeKnownEngines = Schema.decodeUnknownSync(KnownEnginesAnswer)
+const decodeKnownEngine = Schema.decodeUnknownSync(KnownEngine)
+const encodeKnownEngine = Schema.encodeSync(KnownEngine)
+const decodeKeepAnswer = Schema.decodeUnknownSync(KeepAnswer)
+const decodePortRequest = Schema.decodeUnknownSync(EnginePortRequest)
+const encodePortRequest = Schema.encodeSync(EnginePortRequest)
+const decodePortAnswer = Schema.decodeUnknownOption(
+  Schema.Struct({ request: Schema.Int }),
+)
 
 /** The API over `ipc`: what the page passes is decoded before it is sent, what main answers before the page sees it. */
 export const makeApi = (ipc: PreloadIpc): FabricaApi => ({
@@ -214,6 +245,22 @@ export const makeApi = (ipc: PreloadIpc): FabricaApi => ({
         encodeSshAnswer(decodeSshAnswer(answer)),
       ),
   },
+  [knownEnginesMethod]: () =>
+    ipc.invoke(channels.knownEngines).then(decodeKnownEngines),
+  [keepEngineMethod]: engine =>
+    Promise.resolve()
+      .then(() =>
+        ipc.invoke(
+          channels.keepEngine,
+          encodeKnownEngine(decodeKnownEngine(engine)),
+        ),
+      )
+      .then(decodeKeepAnswer),
+  [connectEngineMethod]: request =>
+    ipc.send(
+      channels.connectEngine,
+      encodePortRequest(decodePortRequest(request)),
+    ),
 })
 
 /** Hands the page each engine port main sends, as a window message of type `fabrica:engine-port`. */
@@ -225,5 +272,25 @@ export const forwardEnginePorts = (
     const [port] = ports
     if (ports.length === 1 && port instanceof MessagePort) {
       post({ type: enginePortMessage }, [port])
+    }
+  })
+
+/**
+ * Hands the page each port main sends to a known engine, as a window message of type
+ * `fabrica:remote-engine-port` carrying the number of the request it answers.
+ */
+export const forwardRemoteEnginePorts = (
+  ipc: PreloadIpc,
+  post: (
+    message: { readonly type: string; readonly request: number },
+    ports: [MessagePort],
+  ) => void,
+): (() => void) =>
+  ipc.on(channels.remoteEnginePort, (value, ports) => {
+    const [port] = ports
+    if (ports.length === 1 && port instanceof MessagePort) {
+      Option.map(decodePortAnswer(value), ({ request }) =>
+        post({ type: remoteEnginePortMessage, request }, [port]),
+      )
     }
   })

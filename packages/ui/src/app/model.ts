@@ -32,13 +32,15 @@ import * as Worker from '../screens/worker'
 import { Theme } from '../theme/theme'
 import { Connection } from './connection'
 import * as Notify from './notify'
+import * as RemoteEngines from './remote-engines'
 import { Screen } from './screen'
 import * as SshPrompts from './ssh-prompts'
 import { ProjectEvents } from './streams'
 
 // The root Model (spec §18.1): the screen shown and any overlay over it, the scope the sidebar chose,
-// the connection, each stream's latest value, and every part's submodel. Each part draws its own slice,
-// and a slice a patch leaves alone keeps its identity, so the part isn't redrawn (§18.5).
+// the connection, the known engines on other hosts with theirs (§9.1), each stream's latest value, and
+// every part's submodel. Each part draws its own slice, and a slice a patch leaves alone keeps its
+// identity, so the part isn't redrawn (§18.5).
 
 /** What opens over the screen. */
 export const Overlay = defineTaggedUnion({
@@ -91,6 +93,8 @@ export const Model = Schema.Struct({
   /** The connection attempt: each new one acquires the client afresh. */
   attempt: Schema.Int,
   connection: Connection,
+  /** The known engines on other hosts, each with its own connection (§9.1). */
+  remotes: RemoteEngines.Model,
   /** What ssh asks as the app connects, waiting for the user (§9.1). */
   sshPrompts: SshPrompts.Model,
   screen: Screen,
@@ -136,6 +140,7 @@ export const initialModel = (flags: Flags): Model => ({
   theme: Option.fromUndefinedOr(flags.theme),
   attempt: 1,
   connection: Connection.Connecting(),
+  remotes: RemoteEngines.init(),
   sshPrompts: SshPrompts.init(),
   screen: Screen.Console(),
   overlay: Overlay.Closed(),

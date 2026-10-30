@@ -7,6 +7,7 @@ import {
   EngineConnection,
   type EngineConnectionService,
   attemptFailure,
+  clientName,
   connect,
   connectionRequirements,
 } from './connection'
@@ -14,6 +15,7 @@ import { AppHost, type AppHostShape } from './host'
 import { Message } from './message'
 import { Flags, Model, initialModel } from './model'
 import { type NotifierShape, layerNotifier } from './notifier'
+import { LoadKnownEngines } from './remote-engines'
 import { type SshPromptHostShape, layerSshPromptHost } from './ssh-prompts'
 import {
   type SubscriptionEnvironment,
@@ -43,11 +45,17 @@ export interface Environment extends SubscriptionEnvironment {
   readonly themeHost: ThemeHostShape
 }
 
-/** How the app names itself in its hello. */
-export const clientName = 'Fabrica'
+export { clientName } from './connection'
 
-export const init: Runtime.ApplicationInit<Model, Message, Flags> = flags => ({
+/** The Model the app starts with, and the known engines asked of the app's state (§9.1). */
+export const init: Runtime.ApplicationInit<
+  Model,
+  Message,
+  Flags,
+  AppHost
+> = flags => ({
   model: initialModel(flags),
+  commands: [LoadKnownEngines()],
 })
 
 export const makeManagedResources = (

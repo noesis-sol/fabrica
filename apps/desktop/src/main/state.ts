@@ -9,39 +9,16 @@ import {
   Semaphore,
 } from 'effect'
 
-import { WslDistro } from '@fabrica/client'
-import { EngineId, ProtocolVersion } from '@fabrica/contracts'
+import { EngineName, KnownEngine } from '@fabrica/client'
 import { readFileText, writeFileWhole } from '@fabrica/engine/files'
 
 // The app's own state (spec §5, §9.1): the engines it knows (a name, how to reach it, the engine's ID
 // and protocol version), and the pairing tokens of those reached over TLS, encrypted with Electron's
 // safeStorage (the Keychain, DPAPI, or the Linux keyring). It is one file in the app's data folder,
-// written whole through the engine's writer, so a crash leaves the old state or the new one.
+// written whole through the engine's writer, so a crash leaves the old state or the new one. The
+// known engines' schemas are the client's, which the renderer decodes them with too.
 
-/** The name the user gives an engine, unique among the app's. */
-export const EngineName = Schema.NonEmptyString
-export type EngineName = typeof EngineName.Type
-
-/** How the app reaches an engine (spec §8.2). */
-export const EngineAddress = Schema.TaggedUnion({
-  /** The engine on this machine, through its local socket. */
-  Local: {},
-  /** Through the SSH stdio bridge: `user@host`, or a host of `~/.ssh/config`. */
-  Ssh: { destination: Schema.NonEmptyString },
-  /** Through the bridge in a WSL2 distribution. */
-  Wsl: { distro: WslDistro },
-  /** WebSocket over TLS, at `host:port`, with a pairing token. */
-  Tls: { address: Schema.NonEmptyString },
-})
-export type EngineAddress = typeof EngineAddress.Type
-
-/** An engine the app knows. */
-export class KnownEngine extends Schema.Class<KnownEngine>('KnownEngine')({
-  name: EngineName,
-  address: EngineAddress,
-  engine: EngineId,
-  protocol: ProtocolVersion,
-}) {}
+export { EngineAddress, EngineName, KnownEngine } from '@fabrica/client'
 
 /** The state file: the known engines, and each paired engine's token, encrypted, as base64. */
 const StateFile = Schema.Struct({

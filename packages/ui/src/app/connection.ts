@@ -74,6 +74,9 @@ export const isLive = (connection: Connection): boolean =>
     Refused: () => false,
   })
 
+/** How the app names itself in its hello. */
+export const clientName = 'Fabrica'
+
 /** How long a failed attempt waits before the next. */
 export const retryAfter = Duration.seconds(2)
 

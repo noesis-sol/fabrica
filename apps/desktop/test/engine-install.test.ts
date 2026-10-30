@@ -124,6 +124,9 @@ describe('main’s engine install', () => {
       updateStatus: () => ({ _tag: 'Unavailable' }),
       installLoginService: unused,
       answerSshPrompt: () => undefined,
+      knownEngines: unused,
+      keepEngine: unused,
+      connectEngine: () => undefined,
       checkEngine: host => {
         asked.push(host)
         return Promise.resolve(checked)

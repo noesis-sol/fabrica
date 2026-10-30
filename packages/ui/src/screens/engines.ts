@@ -1,10 +1,12 @@
 import {
+  Data,
   DateTime,
   Effect,
   Equal,
   Match,
   Option,
   Redacted,
+  Result,
   Schema,
 } from 'effect'
 import { Command, type Update } from 'foldkit'
@@ -17,8 +19,10 @@ import { defineView } from 'foldkit/submodel'
 
 import {
   CheckAnswer,
+  EngineAddress,
   EngineHost,
   EngineInstalled,
+  EngineName,
   HostCheck,
   InstallAnswer,
   InstallConsent,
@@ -27,6 +31,7 @@ import {
   UbuntuInstall,
   WslSearch,
   consentFor,
+  defaultEngineName,
   windowsDriveWarning,
 } from '@fabrica/client'
 import {
@@ -53,19 +58,22 @@ import {
   requestEngine,
 } from '../app/connection'
 import { AppHost, ServiceInstall } from '../app/host'
+import type * as RemoteEngines from '../app/remote-engines'
 import { type EngineProjects, runLabel } from '../console/sidebar'
 
 // The Engines and projects screen (spec §18.4, §10.1, §20.3): the known engines with their versions
 // and status, each engine's projects, whether the user trusts each (§12.1), Add project, and the
 // engine's credentials, listed by name.
-// The app reaches its local engine through the connection; the SSH, WSL2 and TLS engines join it with
-// remote engines. Add engine takes an SSH destination and has the app check the host (its system, the
-// engine there and its version), then install the app's engine there, or update an older one, only
-// once the user agrees to what the check proposes (§9.2). On Windows it offers WSL2 too (§7.6): the
-// distribution the app found is checked the same way, and where there is none the app offers to
-// install Ubuntu, or says why WSL can't run. An engine that refuses the app's version at
-// connect is offered its update the same way, on this machine (§8.4); an app too old for its engine is
-// told to update itself. A project is added as a checkout on the engine's host,
+// The app reaches its local engine through the connection, and each known engine on another host
+// through its own (§9.1), each with its card. Add engine takes an SSH destination and the engine's name
+// (its host's, where none is given), and has the app check the host (its system, the engine there and
+// its version), then install the app's engine there, or update an older one, only once the user agrees
+// to what the check proposes (§9.2); the engine installed, or found up to date, joins the known engines
+// and is connected to. On Windows it offers WSL2 too (§7.6): the distribution the app found is checked
+// the same way, and where there is none the app offers to install Ubuntu, or says why WSL can't run. An
+// engine that refuses the app's version at connect is offered its update the same way, on this machine
+// or over SSH on its host (§8.4); an app too old for its engine is told to update itself. A project is
+// added as a checkout on the engine's host,
 // by its path, typed or found by browsing the host's folders through the engine (from the path typed,
 // or its home folder), or as a clone of a git URL, which the engine checks and, where `.fabrica/` is
 // missing, offers to set up (`init`); a checkout on a Windows drive, as a WSL2 engine sees it under
@@ -177,14 +185,20 @@ export type WslStep = typeof WslStep.Type
 /** Add engine, and the update offered to an engine that refused the app at connect (§9.2, §8.4). */
 export const EngineSetup = defineTaggedUnion({
   Closed: {},
-  /** The host's SSH destination, as typed. */
+  /** The host's SSH destination and the engine's name, as typed. */
   Editing: {
     destination: Schema.String,
+    name: Schema.String,
     problem: Schema.Option(Schema.String),
   },
   /** A WSL2 distribution to add the engine in, being found (§7.6). */
   Wsl: { step: WslStep },
-  Running: { host: EngineHost, step: SetupStep },
+  /** On `host`; `name` the engine's among the known engines, none for this machine's. */
+  Running: {
+    host: EngineHost,
+    name: Schema.Option(EngineName),
+    step: SetupStep,
+  },
 })
 export type EngineSetup = typeof EngineSetup.Type
 
@@ -286,9 +300,14 @@ export const Message = defineMessageUnion({
 
   OpenedAddEngine: {},
   ChangedEngineDestination: { destination: Schema.String },
+  ChangedEngineName: { name: Schema.String },
   SubmittedAddEngine: {},
   /** The update offered to the engine that refused the app at connect: this machine's. */
   RequestedEngineUpdate: {},
+  /** The update offered to the known engine named `name` that refused the app, on its host over SSH. */
+  RequestedRemoteUpdate: { name: EngineName, destination: SshDestination },
+  /** The user tried the known engine named `name` again, whose connection had stopped. */
+  RetriedRemote: { name: EngineName },
   CompletedEngineCheck: { host: EngineHost, answer: CheckAnswer },
   /** The user agreed to what the check proposes. */
   ConsentedInstall: {},
@@ -706,11 +725,15 @@ const foundDistro = (setup: EngineSetup): Option.Option<WslSearch> =>
     ? Option.some(setup.step.search)
     : Option.none()
 
-/** The host is checked: the setup running on it, and the check asked. */
-const startCheck = (model: Model, host: EngineHost): Return => ({
+/** The host is checked: the setup running on it, for the engine named `name`, and the check asked. */
+const startCheck = (
+  model: Model,
+  host: EngineHost,
+  name: Option.Option<EngineName>,
+): Return => ({
   model: modifyFields(model, {
     engineSetup: () =>
-      EngineSetup.Running({ host, step: SetupStep.Checking() }),
+      EngineSetup.Running({ host, name, step: SetupStep.Checking() }),
   }),
   commands: [CheckEngine({ host })],
 })
@@ -728,8 +751,7 @@ const stepSetup = (
             onNone: () => model,
             onSome: step =>
               modifyFields(model, {
-                engineSetup: () =>
-                  EngineSetup.Running({ host: running.host, step }),
+                engineSetup: () => EngineSetup.Running({ ...running, step }),
               }),
           })
         : model,
@@ -753,7 +775,125 @@ export const reconnectsAfter = (message: Message): boolean =>
     Match.orElse(() => false),
   )
 
-export const update = (model: Model, message: Message): Return =>
+/** What the screen's Message changes among the known engines on other hosts (§9.1). */
+export type RemoteChange = Data.TaggedEnum<{
+  /** Installed by Add engine, or found up to date: it joins the known engines, connected to. */
+  Added: { readonly name: EngineName; readonly destination: SshDestination }
+  /** The user tried its connection again. */
+  Retried: { readonly name: EngineName }
+}>
+export const RemoteChange = Data.taggedEnum<RemoteChange>()
+
+/** The name of the engine the setup on the SSH host `host` is for, while it is at `at`. */
+const settingUp = (
+  model: Model,
+  host: EngineHost,
+  at: (step: SetupStep) => boolean,
+): Option.Option<{
+  readonly name: EngineName
+  readonly destination: SshDestination
+}> =>
+  EngineSetup.guards.Running(model.engineSetup) &&
+  EngineHost.guards.Ssh(host) &&
+  sameHost(model.engineSetup.host, host) &&
+  at(model.engineSetup.step)
+    ? Option.map(model.engineSetup.name, name => ({
+        name,
+        destination: host.destination,
+      }))
+    : Option.none()
+
+/**
+ * What `message`, coming to the screen as `model`, changes among the known engines: an engine on an SSH
+ * host installed or updated, or found up to date, joins them (or one of its name is connected to
+ * again); the user's try again reaches its engine.
+ */
+export const remoteAfter = (
+  model: Model,
+  message: Message,
+): Option.Option<RemoteChange> =>
+  Match.value(message).pipe(
+    Match.tag('CompletedEngineInstall', ({ host, answer }) =>
+      InstallAnswer.guards.Installed(answer)
+        ? Option.map(
+            settingUp(model, host, SetupStep.guards.Installing),
+            RemoteChange.Added,
+          )
+        : Option.none(),
+    ),
+    Match.tag('CompletedEngineCheck', ({ host, answer }) =>
+      CheckAnswer.guards.Checked(answer) &&
+      InstallPlan.guards.Current(answer.check.plan)
+        ? Option.map(
+            settingUp(model, host, SetupStep.guards.Checking),
+            RemoteChange.Added,
+          )
+        : Option.none(),
+    ),
+    Match.tag('RetriedRemote', ({ name }) =>
+      Option.some(RemoteChange.Retried({ name })),
+    ),
+    Match.orElse(() => Option.none()),
+  )
+
+/** Add engine's form, as typed. */
+interface EngineForm {
+  readonly destination: string
+  readonly name: string
+}
+
+/** Add engine's form changed by `change`, while it is typed; its problem cleared. */
+const editEngine = (
+  model: Model,
+  change: (typed: EngineForm) => EngineForm,
+): Model =>
+  EngineSetup.match(model.engineSetup, {
+    Editing: ({ destination, name }) =>
+      modifyFields(model, {
+        engineSetup: () =>
+          EngineSetup.Editing({
+            ...change({ destination, name }),
+            problem: Option.none(),
+          }),
+      }),
+    Closed: () => model,
+    Wsl: () => model,
+    Running: () => model,
+  })
+
+/** The name Add engine's form gives the engine on `destination`, or why it can't take it. */
+const engineName = (
+  typed: string,
+  destination: SshDestination,
+  known: ReadonlyArray<RemoteEngines.RemoteEngine>,
+): Result.Result<EngineName, string> => {
+  const there = known.find(
+    engine =>
+      EngineAddress.guards.Ssh(engine.address) &&
+      engine.address.destination === destination,
+  )
+  if (there !== undefined) {
+    return Result.succeed(there.name)
+  }
+  const name =
+    typed.trim() === '' ? defaultEngineName(destination) : typed.trim()
+  if (name === '' || name === localEngineName) {
+    return Result.fail(
+      `${localEngineName} names this machine’s engine: give the engine another name.`,
+    )
+  }
+  return known.some(engine => engine.name === name)
+    ? Result.fail(
+        `${name} names another of the app’s engines: give this one another name.`,
+      )
+    : Result.succeed(name)
+}
+
+export const update = (
+  model: Model,
+  message: Message,
+  known: ReadonlyArray<RemoteEngines.RemoteEngine> = [],
+): Return =>
   Message.match<Return>(message, {
     SucceededLoadStatus: ({ status }) => ({
       model: modifyFields(model, { status: () => AsyncData.succeed(status) }),
@@ -988,35 +1128,48 @@ export const update = (model: Model, message: Message): Return =>
         ? model
         : modifyFields(model, {
             engineSetup: () =>
-              EngineSetup.Editing({ destination: '', problem: Option.none() }),
+              EngineSetup.Editing({
+                destination: '',
+                name: '',
+                problem: Option.none(),
+              }),
           }),
     }),
     ChangedEngineDestination: ({ destination }) => ({
-      model: EngineSetup.guards.Editing(model.engineSetup)
-        ? modifyFields(model, {
-            engineSetup: () =>
-              EngineSetup.Editing({ destination, problem: Option.none() }),
-          })
-        : model,
+      model: editEngine(model, editing => ({ ...editing, destination })),
+    }),
+    ChangedEngineName: ({ name }) => ({
+      model: editEngine(model, editing => ({ ...editing, name })),
     }),
     SubmittedAddEngine: () =>
       EngineSetup.match(model.engineSetup, {
-        Editing: ({ destination }): Return =>
-          Option.match(decodeDestination(destination.trim()), {
-            onNone: () => ({
-              model: modifyFields(model, {
-                engineSetup: () =>
-                  EngineSetup.Editing({
-                    destination,
-                    problem: Option.some(
-                      'Give the host’s SSH destination: user@host, or a host of your ~/.ssh/config.',
-                    ),
-                  }),
-              }),
+        Editing: (editing): Return => {
+          const refuse = (problem: string): Return => ({
+            model: modifyFields(model, {
+              engineSetup: () =>
+                EngineSetup.Editing({
+                  ...editing,
+                  problem: Option.some(problem),
+                }),
             }),
+          })
+          return Option.match(decodeDestination(editing.destination.trim()), {
+            onNone: () =>
+              refuse(
+                'Give the host’s SSH destination: user@host, or a host of your ~/.ssh/config.',
+              ),
             onSome: destination =>
-              startCheck(model, EngineHost.cases.Ssh.make({ destination })),
-          }),
+              Result.match(engineName(editing.name, destination, known), {
+                onFailure: refuse,
+                onSuccess: name =>
+                  startCheck(
+                    model,
+                    EngineHost.cases.Ssh.make({ destination }),
+                    Option.some(name),
+                  ),
+              }),
+          })
+        },
         Closed: () => ({ model }),
         Wsl: () => ({ model }),
         Running: () => ({ model }),
@@ -1024,7 +1177,16 @@ export const update = (model: Model, message: Message): Return =>
     RequestedEngineUpdate: () =>
       busy(model.engineSetup)
         ? { model }
-        : startCheck(model, EngineHost.cases.Local.make({})),
+        : startCheck(model, EngineHost.cases.Local.make({}), Option.none()),
+    RequestedRemoteUpdate: ({ name, destination }) =>
+      busy(model.engineSetup)
+        ? { model }
+        : startCheck(
+            model,
+            EngineHost.cases.Ssh.make({ destination }),
+            Option.some(name),
+          ),
+    RetriedRemote: () => ({ model }),
     CompletedEngineCheck: ({ host, answer }) => ({
       model: stepSetup(model, host, step =>
         SetupStep.guards.Checking(step)
@@ -1039,8 +1201,8 @@ export const update = (model: Model, message: Message): Return =>
     }),
     ConsentedInstall: () =>
       EngineSetup.match(model.engineSetup, {
-        Running: ({ host, step }): Return =>
-          SetupStep.match(step, {
+        Running: (running): Return =>
+          SetupStep.match(running.step, {
             Checked: ({ check }): Return =>
               Option.match(consentFor(check.plan), {
                 onNone: () => ({ model }),
@@ -1048,11 +1210,11 @@ export const update = (model: Model, message: Message): Return =>
                   model: modifyFields(model, {
                     engineSetup: () =>
                       EngineSetup.Running({
-                        host,
+                        ...running,
                         step: SetupStep.Installing({ consent }),
                       }),
                   }),
-                  commands: [InstallEngine({ host, consent })],
+                  commands: [InstallEngine({ host: running.host, consent })],
                 }),
               }),
             Checking: () => ({ model }),
@@ -1079,7 +1241,7 @@ export const update = (model: Model, message: Message): Return =>
     }),
     RetriedEngineCheck: () =>
       EngineSetup.guards.Running(model.engineSetup) && !busy(model.engineSetup)
-        ? startCheck(model, model.engineSetup.host)
+        ? startCheck(model, model.engineSetup.host, model.engineSetup.name)
         : { model },
     ClosedEngineSetup: () => ({
       model: busy(model.engineSetup)
@@ -1102,6 +1264,7 @@ export const update = (model: Model, message: Message): Return =>
               engineSetup: () =>
                 EngineSetup.Editing({
                   destination: '',
+                  name: '',
                   problem: Option.none(),
                 }),
             })
@@ -1146,7 +1309,11 @@ export const update = (model: Model, message: Message): Return =>
         {
           onNone: () => ({ model }),
           onSome: ({ distro }) =>
-            startCheck(model, EngineHost.cases.Wsl.make({ distro })),
+            startCheck(
+              model,
+              EngineHost.cases.Wsl.make({ distro }),
+              Option.none(),
+            ),
         },
       ),
   })
@@ -1156,12 +1323,14 @@ export const update = (model: Model, message: Message): Return =>
 
 /**
  * What the frame gives the screen: the connection, each known engine's projects, as the sidebar holds
- * them, and where the app runs, since only the Windows app adds engines in WSL2.
+ * them, where the app runs, since only the Windows app adds engines in WSL2, and the known engines on
+ * other hosts with their connections.
  */
 export interface ViewInputs {
   readonly connection: Connection
   readonly engines: ReadonlyArray<EngineProjects>
   readonly platform: Platform
+  readonly remotes: RemoteEngines.Model
 }
 
 const card = 'flex flex-col gap-10 rounded-card border border-line bg-panel'
@@ -1329,16 +1498,114 @@ const engineCard = (
             ],
           ),
       }),
-      updateOffer(model, inputs.connection, h),
+      updateOffer(
+        model,
+        inputs.connection,
+        Option.some(Message.RequestedEngineUpdate()),
+        h,
+      ),
       loginServiceView(model, h),
     ],
   )
 }
 
-/** What the card offers an engine that refused the app at connect (§8.4): its update, or the app's. */
+/** Where a known engine is reached, in words. */
+export const addressText = (address: EngineAddress): string =>
+  EngineAddress.match(address, {
+    Local: () => 'This machine',
+    Ssh: ({ destination }) => destination,
+    Wsl: ({ distro }) => `WSL ${distro}`,
+    Tls: ({ address }) => address,
+  })
+
+/** A known engine on another host: where it is, its connection's state, and what it offers. */
+const remoteCard = (
+  model: Model,
+  remote: RemoteEngines.RemoteEngine,
+  h: HtmlBuilder<Message>,
+): Html => {
+  const state = connectionWord(remote.connection)
+  const protocol = Connection.match(remote.connection, {
+    Connecting: () => Option.none<string>(),
+    Up: ({ release, protocol }) =>
+      Option.some(`${release} · protocol ${protocol}`),
+    Down: () => Option.none<string>(),
+    Failed: () => Option.none<string>(),
+    Stopped: () => Option.none<string>(),
+    Refused: ({ engine }) => Option.some(`protocol ${engine}`),
+  })
+  const requestUpdate = EngineAddress.guards.Ssh(remote.address)
+    ? Option.some(
+        Message.RequestedRemoteUpdate({
+          name: remote.name,
+          destination: remote.address.destination,
+        }),
+      )
+    : Option.none()
+  return h.article(
+    [h.AriaLabel(`Engine ${remote.name}`), h.Class(card), h.Style(cardStyle)],
+    [
+      h.div(
+        [h.Class('flex items-center gap-10')],
+        [
+          h.h3([h.Class('text-sm font-extrabold')], [remote.name]),
+          h.span(
+            [h.Class('font-mono text-xs text-muted')],
+            [addressText(remote.address)],
+          ),
+          ...Option.match(protocol, {
+            onNone: () => [],
+            onSome: text => [
+              h.span([h.Class('font-mono text-xs text-muted')], [text]),
+            ],
+          }),
+          h.span(
+            [
+              h.DataAttribute('engine-state', remote.connection._tag),
+              h.Class(`ml-auto text-xs font-bold ${state.tone}`),
+            ],
+            [state.word],
+          ),
+        ],
+      ),
+      Connection.match(remote.connection, {
+        Connecting: () => h.empty,
+        Up: () => h.empty,
+        Down: () => h.empty,
+        Failed: ({ reason }) =>
+          h.p(
+            [h.Class('text-xs text-muted')],
+            [`It couldn't be reached: ${reason}. Trying again…`],
+          ),
+        Stopped: ({ reason }) =>
+          h.div(
+            [h.Class('flex items-center gap-10')],
+            [
+              problemLine(reason, h),
+              h.button(
+                [
+                  h.Type('button'),
+                  h.OnClick(Message.RetriedRemote({ name: remote.name })),
+                  h.Class(quietButton),
+                ],
+                ['Try again'],
+              ),
+            ],
+          ),
+        Refused: () => updateOffer(model, remote.connection, requestUpdate, h),
+      }),
+    ],
+  )
+}
+
+/**
+ * What the card offers an engine that refused the app at connect (§8.4): its update, through
+ * `requestUpdate` where the app can update it, or the app's.
+ */
 const updateOffer = (
   model: Model,
   connection: Connection,
+  requestUpdate: Option.Option<Message>,
   h: HtmlBuilder<Message>,
 ): Html =>
   Connection.match(connection, {
@@ -1348,26 +1615,34 @@ const updateOffer = (
             `The engine speaks protocol ${engine}, newer than this app's ${client}: update the app to reach it.`,
             h,
           )
-        : h.div(
-            [h.Class('flex items-center gap-10')],
-            [
-              h.button(
-                [
-                  h.Type('button'),
-                  h.OnClick(Message.RequestedEngineUpdate()),
-                  h.Disabled(busy(model.engineSetup)),
-                  h.Class(primaryButton),
-                ],
-                ['Update the engine'],
+        : Option.match(requestUpdate, {
+            onNone: () =>
+              problemLine(
+                `The engine speaks protocol ${engine}, older than this app's ${client}: update it on its host.`,
+                h,
               ),
-              h.span(
-                [h.Class('text-xs text-c3')],
+            onSome: request =>
+              h.div(
+                [h.Class('flex items-center gap-10')],
                 [
-                  `The engine speaks protocol ${engine}, older than this app's ${client}: updating it winds its runs down first.`,
+                  h.button(
+                    [
+                      h.Type('button'),
+                      h.OnClick(request),
+                      h.Disabled(busy(model.engineSetup)),
+                      h.Class(primaryButton),
+                    ],
+                    ['Update the engine'],
+                  ),
+                  h.span(
+                    [h.Class('text-xs text-c3')],
+                    [
+                      `The engine speaks protocol ${engine}, older than this app's ${client}: updating it winds its runs down first.`,
+                    ],
+                  ),
                 ],
               ),
-            ],
-          ),
+          }),
     Connecting: () => h.empty,
     Up: () => h.empty,
     Down: () => h.empty,
@@ -1447,7 +1722,7 @@ const placeChoice = (chosen: EnginePlace, h: HtmlBuilder<Message>): Html =>
   )
 
 const addEngineForm = (
-  destination: string,
+  { destination, name }: EngineForm,
   problem: Option.Option<string>,
   platform: Platform,
   h: HtmlBuilder<Message>,
@@ -1481,6 +1756,19 @@ const addEngineForm = (
         [
           'user@host, or a host of your ~/.ssh/config, reached with your own keys. The host is checked first; nothing is installed until you agree.',
         ],
+      ),
+      labelled(
+        'add-engine-name',
+        'Name',
+        h.input([
+          h.Id('add-engine-name'),
+          h.Type('text'),
+          h.Value(name),
+          h.Placeholder('its host’s, where left empty'),
+          h.OnInput(name => Message.ChangedEngineName({ name })),
+          h.Class(field),
+        ]),
+        h,
       ),
       Option.match(problem, {
         onNone: () => h.empty,
@@ -1732,8 +2020,8 @@ const setupView = (
 ): Html =>
   EngineSetup.match(model.engineSetup, {
     Closed: () => h.empty,
-    Editing: ({ destination, problem }) =>
-      addEngineForm(destination, problem, platform, h),
+    Editing: ({ destination, name, problem }) =>
+      addEngineForm({ destination, name }, problem, platform, h),
     Wsl: ({ step }) => wslView(step, h),
     Running: ({ host, step }) =>
       h.section(
@@ -2497,6 +2785,11 @@ export const view = defineView<Model, Message, ViewInputs>((model, inputs, h) =>
             ],
           ),
           engineCard(model, inputs, h),
+          ...inputs.remotes.engines.map(remote => remoteCard(model, remote, h)),
+          Option.match(inputs.remotes.problem, {
+            onNone: () => h.empty,
+            onSome: text => problemLine(text, h),
+          }),
           setupView(model, inputs.platform, h),
         ],
       ),

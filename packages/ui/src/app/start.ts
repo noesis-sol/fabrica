@@ -10,7 +10,7 @@ import { nextAnimationFrame } from './frame'
 import { appHostOf } from './host'
 import { Message } from './message'
 import { type NotifierShape, silentNotifier } from './notifier'
-import { onEnginePorts } from './port'
+import { onEnginePorts, onRemoteEnginePorts } from './port'
 import { program } from './program'
 import { sshPromptHostOf } from './ssh-prompts'
 import { documentKeys } from './subscriptions'
@@ -50,7 +50,10 @@ export const start = (
       keys: documentKeys(target.document),
       ticks: localTicks,
       notifier,
-      host: appHostOf(target),
+      host: appHostOf(
+        target,
+        Option.some(listener => onRemoteEnginePorts(target, listener)),
+      ),
       sshPrompts: sshPromptHostOf(target),
       themeHost,
     }),

@@ -149,6 +149,9 @@ describe('the prompts across the preload', () => {
         findWsl: unused,
         installUbuntu: unused,
         answerSshPrompt: answer => answers.push(answer),
+        knownEngines: unused,
+        keepEngine: unused,
+        connectEngine: () => undefined,
       },
     })
     const send = (sender: string | undefined, value: unknown) =>

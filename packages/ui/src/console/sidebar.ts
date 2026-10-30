@@ -11,6 +11,7 @@ import {
   applyKeyedPatch,
 } from '@fabrica/contracts'
 
+import { localEngineName } from '../app/connection'
 import { applyItems } from '../app/streams'
 
 // The console's sidebar: projects and their runs (spec §18.3, H43; Appendix A.2). Header "Projects"
@@ -114,6 +115,13 @@ export const rows = (model: Model): ReadonlyArray<Row> =>
       }),
     )
     .map((row, at) => ({ ...row, index: at + 1 }))
+
+/**
+ * The rows of the engine the app's own connection reaches, this machine's: the runs History and the
+ * notifications watch through it, until a project's streams go through its own engine's connection.
+ */
+export const localRows = (model: Model): ReadonlyArray<Row> =>
+  rows(model).filter(row => row.engine.name === localEngineName)
 
 /** The chip of `project`, as its row has it: cards in the All projects scope carry it (§18.3). */
 export const projectChip = (

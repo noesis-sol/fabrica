@@ -128,6 +128,9 @@ describe('main’s WSL2 search and Ubuntu install', () => {
         return Promise.resolve(ready)
       },
       answerSshPrompt: () => undefined,
+      knownEngines: unused,
+      keepEngine: unused,
+      connectEngine: () => undefined,
     }
     registerIpc({
       ipc: {

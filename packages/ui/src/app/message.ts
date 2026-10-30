@@ -1,7 +1,12 @@
 import { Schema } from 'effect'
 import { defineMessageUnion } from 'foldkit/message'
 
-import { SshPrompt } from '@fabrica/client'
+import {
+  EngineName,
+  KeepAnswer,
+  KnownEnginesAnswer,
+  SshPrompt,
+} from '@fabrica/client'
 import {
   EngineId,
   ProjectId,
@@ -38,8 +43,8 @@ import {
 } from './streams'
 
 // The root's Messages: keys pressed and commands asked for, the connection's lifecycle and what ssh
-// asks as it connects, and each stream's items, a frame's worth at a time (spec §18.1, §18.5, §9.1),
-// and the app's notifications.
+// asks as it connects, the known engines on other hosts and each one's connection (§9.1), and each
+// stream's items, a frame's worth at a time (spec §18.1, §18.5, §9.1), and the app's notifications.
 
 /** How the user answers what ssh asked: yes, no (a cancel, a dismissal), or the secret typed. */
 export const SshReply = Schema.Literals(['Accepted', 'Declined', 'Entered'])
@@ -115,6 +120,31 @@ export const Message = defineMessageUnion({
   WaitedToReconnect: {},
   /** Main handed the page a new engine port, the connection's dead with the relay that served it. */
   ReplacedEnginePort: {},
+
+  /** The known engines, as the app's state holds them (§9.1). */
+  LoadedKnownEngines: { answer: KnownEnginesAnswer },
+  /** A known engine kept in the app's state, or why it wasn't. */
+  CompletedKeepEngine: { name: EngineName, answer: KeepAnswer },
+  /** The known engine named `name` took the app's hello. */
+  ConnectedToRemote: {
+    name: EngineName,
+    engine: EngineId,
+    release: ReleaseVersion,
+    protocol: ProtocolVersion,
+  },
+  /** The known engine's link was lost; its client is reconnecting. */
+  LostRemote: { name: EngineName },
+  /** The known engine couldn't be reached; another attempt follows. */
+  FailedToConnectRemote: { name: EngineName, reason: Schema.String },
+  /** The known engine's connection was refused in a way trying again won't mend: ssh refused its host. */
+  StoppedConnectingRemote: { name: EngineName, reason: Schema.String },
+  /** The known engine and the app share no protocol version. */
+  RefusedByRemote: {
+    name: EngineName,
+    client: ProtocolVersion,
+    engine: ProtocolVersion,
+    update: UpdateSide,
+  },
 
   ReceivedRunView: { project: ProjectId, items: itemsOf(RunViewItem) },
   /** The project's run view ended: no run, or the project gone. */
