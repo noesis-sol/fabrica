@@ -13,7 +13,7 @@ export const SecretName = Schema.String.check(
 export type SecretName = typeof SecretName.Type
 
 /** Where the credentials are kept: a keyring, or the encrypted file on a host without one. */
-export type SecretStoreKind = 'keychain' | 'libsecret' | 'kwallet' | 'file'
+export type SecretStoreKind = 'keychain' | 'libsecret' | 'file'
 
 /** An API key: the key itself, or a command whose output is the key, run when it is needed (Pi's `!command`). */
 export type ApiKey = Data.TaggedEnum<{

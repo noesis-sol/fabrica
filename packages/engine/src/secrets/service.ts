@@ -27,7 +27,6 @@ import {
   type Keyring,
   KeyringCli,
   keychain,
-  kwallet,
   layerKeyringCli,
   libsecret,
 } from './keyring'
@@ -45,7 +44,7 @@ import {
 
 // The engine's credentials (spec §20.3): model credentials kept by name in the host's secret store,
 // read only by the model proxy (§12.9). The store is the host's keyring where one answers (the macOS
-// Keychain; libsecret, then KWallet, on Linux), or else the encrypted file, which the engine warns
+// Keychain; on Linux the Secret Service, GNOME Keyring's or KWallet's, through libsecret), or else the encrypted file, which the engine warns
 // about. A key may be a command whose output is the key, run each time the key is needed. Nothing here
 // logs a credential: secrets stay `Redacted`, and no error carries one.
 
@@ -213,7 +212,7 @@ const keyringsOf = (
     case 'darwin':
       return [keychain(cli)]
     case 'linux':
-      return [libsecret(cli), kwallet(cli)]
+      return [libsecret(cli)]
     default:
       return []
   }

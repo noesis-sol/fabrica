@@ -105,35 +105,27 @@ const fakeKeyrings = (options: { readonly reachable: boolean }) => {
     if (operation === 'delete-generic-password') items.delete(key)
     return exited(0, operation === 'find-generic-password' ? `${value}\n` : '')
   }
+  // secret-tool as libsecret 0.21.7 answers: `lookup` and `clear` exit 1 saying nothing for an item
+  // that isn't there, and `search` lists the items it finds.
   const secretTool = (call: KeyringCall) => {
-    const key = `libsecret/${after(call.args, 'account')}`
+    const account = after(call.args, 'account')
+    const key = `libsecret/${account}`
+    const value = items.get(key)
     switch (call.args[0]) {
       case 'store':
         items.set(key, input(call))
         return exited(0)
-      case 'lookup': {
-        const value = items.get(key)
+      case 'lookup':
         return value === undefined ? exited(1) : exited(0, value)
-      }
+      case 'search':
+        return value === undefined
+          ? exited(0)
+          : exited(0, `[/1]\nlabel = Fabrica: ${account}\n`)
       default:
+        if (value === undefined) return exited(1)
         items.delete(key)
         return exited(0)
     }
-  }
-  const kwalletQuery = (call: KeyringCall) => {
-    if (!call.args.includes('-f')) return exited(0)
-    if (call.args[0] === '-l') {
-      const entries = [...items.keys()]
-        .filter(key => key.startsWith('kwallet/'))
-        .map(key => key.slice('kwallet/'.length))
-      return entries.length === 0 ? exited(1) : exited(0, entries.join('\n'))
-    }
-    const key = `kwallet/${call.args[1] ?? ''}`
-    if (call.args[0] === '-w') {
-      items.set(key, input(call))
-      return exited(0)
-    }
-    return exited(0, `${items.get(key) ?? ''}\n`)
   }
   const call = (call: KeyringCall) =>
     Effect.sync(() => {
@@ -144,14 +136,7 @@ const fakeKeyrings = (options: { readonly reachable: boolean }) => {
           : KeyringOutcome.Failed({
               reason: `${call.command} isn't on the PATH`,
             })
-      switch (call.command) {
-        case 'security':
-          return security(call)
-        case 'secret-tool':
-          return secretTool(call)
-        default:
-          return kwalletQuery(call)
-      }
+      return call.command === 'security' ? security(call) : secretTool(call)
     })
   const layer = Layer.succeed(KeyringCli, KeyringCli.of({ call }))
   return { items, calls, call, layer }
@@ -336,40 +321,6 @@ describe('the keyrings, through their CLIs', () => {
     )
   }
 
-  it.effect('fall back to KWallet where libsecret is unreachable', () =>
-    Effect.gen(function* () {
-      const data = yield* tempFolder('secrets-kwallet')
-      const keyrings = fakeKeyrings({ reachable: true })
-      const kwalletOnly = Layer.succeed(
-        KeyringCli,
-        KeyringCli.of({
-          call: call =>
-            call.command === 'secret-tool'
-              ? Effect.succeed(
-                  KeyringOutcome.Failed({
-                    reason: "secret-tool isn't on the PATH",
-                  }),
-                )
-              : keyrings.call(call),
-        }),
-      )
-      const kept = yield* roundTrip.pipe(
-        Effect.provide(
-          secretsLayer({
-            platform: 'linux',
-            data,
-            passphrase: Option.none(),
-          }).pipe(Layer.provide(Layer.merge(kwalletOnly, runner(data)))),
-        ),
-      )
-      expect(kept).toBe('kwallet')
-      // kwallet-query can't delete: the removed entry is left empty, and reads as missing.
-      expect(keyrings.items.get('kwallet/openai.work')).toBe('')
-      for (const call of keyrings.calls)
-        expect(call.args.join(' ')).not.toContain(KEY)
-    }),
-  )
-
   it.effect(
     'are run with the secret on stdin, through the process runner',
     () =>
@@ -389,7 +340,7 @@ describe('the keyrings, through their CLIs', () => {
               'case "$1" in',
               '  store) /bin/cat > "$HOME/item-$6" ;;',
               '  lookup) [ -f "$HOME/item-$5" ] || exit 1; /bin/cat "$HOME/item-$5" ;;',
-              '  clear) /bin/rm -f "$HOME/item-$5" ;;',
+              '  clear) [ -f "$HOME/item-$5" ] || exit 1; /bin/rm "$HOME/item-$5" ;;',
               'esac',
               '',
             ].join('\n'),

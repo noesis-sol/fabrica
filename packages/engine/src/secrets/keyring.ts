@@ -19,11 +19,13 @@ import { SecretStoreFailed } from './errors'
 import type { ItemStore, SecretStoreKind } from './values'
 
 // The host's keyrings (spec §20.3), reached through their CLIs so the engine adds no native module
-// (§22.4): the macOS Keychain through `security`, libsecret through `secret-tool`, KWallet through
-// `kwallet-query`. Every CLI runs through `KeyringCli`, the boundary a test stubs. A secret never
-// goes on a command line, which `ps` shows anyone on the host: it is written to the CLI's stdin.
-// Each item is kept in base64, so no CLI splits, trims or reprints it as hex.
-// [VERIFY on a Linux desktop] secret-tool's and kwallet-query's exit codes, read from their manuals.
+// (§22.4): the macOS Keychain through `security`, the Secret Service through `secret-tool`. KWallet
+// is reached through the Secret Service, which it serves by default since KDE Frameworks 5.97:
+// `kwallet-query` can't make a folder or an entry, and exits 0 from a write it dropped (KF 6.24).
+// Every CLI runs through `KeyringCli`, the boundary a test stubs. A secret never goes on a command
+// line, which `ps` shows anyone on the host: it is written to the CLI's stdin. Each item is kept in
+// base64, so no CLI splits, trims or reprints it as hex. secret-tool's answers were run against
+// GNOME Keyring 50 and KWallet 6.24 (libsecret 0.21.7).
 
 /** A keyring CLI's run: its stdin is `input`, then closed, or /dev/null. */
 export interface KeyringCall {
@@ -207,6 +209,22 @@ const failedWith = (store: SecretStoreKind, operation: string, code: number) =>
 const SECURITY_NOT_FOUND = 44
 
 /**
+ * `security`'s code for a locked keychain it may not ask to unlock, as over SSH
+ * (errSecInteractionNotAllowed: `security` exits with an error's low byte, as 44 is -25300's).
+ */
+const SECURITY_INTERACTION_NOT_ALLOWED = 36
+
+const keychainFailed = (operation: string, code: number) =>
+  code === SECURITY_INTERACTION_NOT_ALLOWED
+    ? new SecretStoreFailed({
+        store: 'keychain',
+        operation,
+        reason:
+          "the keychain is locked, and can't ask to be unlocked here (over SSH, run security unlock-keychain first)",
+      })
+    : failedWith('keychain', operation, code)
+
+/**
  * `security -i` reads its commands a line at a time, into a buffer that cuts a longer line: a line
  * of 4,060 bytes was taken whole, one of 5,400 cut and refused (macOS 26).
  */
@@ -224,7 +242,7 @@ export const keychain = (cli: KeyringCliShape): Keyring => {
   const read = Effect.fn('Keychain.read')(function* (name: string) {
     const { code, stdout } = yield* item('find-generic-password', name, ['-w'])
     if (code === SECURITY_NOT_FOUND) return Option.none()
-    if (code !== 0) return yield* failedWith('keychain', 'read an item', code)
+    if (code !== 0) return yield* keychainFailed('read an item', code)
     return Option.some(fromBase64(stdout))
   })
   const write = Effect.fn('Keychain.write')(function* (
@@ -244,12 +262,12 @@ export const keychain = (cli: KeyringCliShape): Keyring => {
       args: ['-i'],
       input: Option.some(Redacted.make(line)),
     })
-    if (code !== 0) return yield* failedWith('keychain', 'write an item', code)
+    if (code !== 0) return yield* keychainFailed('write an item', code)
   })
   const remove = Effect.fn('Keychain.remove')(function* (name: string) {
     const { code } = yield* item('delete-generic-password', name)
     if (code !== 0 && code !== SECURITY_NOT_FOUND)
-      return yield* failedWith('keychain', 'remove an item', code)
+      return yield* keychainFailed('remove an item', code)
   })
   return {
     store: { kind: 'keychain', read, write, remove },
@@ -257,7 +275,13 @@ export const keychain = (cli: KeyringCliShape): Keyring => {
   }
 }
 
-/** libsecret (GNOME Keyring, KeePassXC, KWallet's Secret Service), through `secret-tool`: attributes `service fabrica`, `account <item>`. */
+/**
+ * What `secret-tool store` keeps of its stdin: it reads 8,192 bytes at most, and cuts a longer secret
+ * to that, saying so on stderr but exiting 0 (libsecret 0.21.7); 8,191 is the longest kept whole.
+ */
+const SECRET_TOOL_INPUT_LIMIT = 8191
+
+/** libsecret (GNOME Keyring, KWallet, KeePassXC: any Secret Service), through `secret-tool`: attributes `service fabrica`, `account <item>`. */
 export const libsecret = (cli: KeyringCliShape): Keyring => {
   const run = runFor(cli, 'libsecret')
   const attributes = (name: string) => [
@@ -266,15 +290,40 @@ export const libsecret = (cli: KeyringCliShape): Keyring => {
     'account',
     name,
   ]
+  /**
+   * Fails where `lookup` or `clear`, exiting 1 saying nothing, didn't find the item missing: they say
+   * the same of an item in a locked collection they couldn't unlock (no one answered the prompt, or
+   * none can be shown), which `search` still lists, without its secret and without a prompt.
+   */
+  const confirmMissing = Effect.fn('Libsecret.confirmMissing')(function* (
+    operation: string,
+    name: string,
+  ) {
+    const { code, stdout } = yield* run(operation, {
+      command: 'secret-tool',
+      args: ['search', ...attributes(name)],
+      input: Option.none(),
+    })
+    if (code !== 0) return yield* failedWith('libsecret', operation, code)
+    if (!isBlank(stdout))
+      return yield* new SecretStoreFailed({
+        store: 'libsecret',
+        operation,
+        reason: 'its keyring is locked: unlock it, and try again',
+      })
+  })
   const read = Effect.fn('Libsecret.read')(function* (name: string) {
     const { code, stdout, stderr } = yield* run('read an item', {
       command: 'secret-tool',
       args: ['lookup', ...attributes(name)],
       input: Option.none(),
     })
-    // `lookup` exits 1 saying nothing for an item that isn't there, and 1 with a message when the
+    // `lookup` exits 1 saying nothing for an item it can't give, and 1 with a message when the
     // Secret Service can't be reached (no D-Bus session, no keyring daemon).
-    if (code === 1 && isBlank(stderr)) return Option.none()
+    if (code === 1 && isBlank(stderr)) {
+      yield* confirmMissing('read an item', name)
+      return Option.none()
+    }
     if (code !== 0) return yield* failedWith('libsecret', 'read an item', code)
     return Option.some(fromBase64(stdout))
   })
@@ -282,10 +331,17 @@ export const libsecret = (cli: KeyringCliShape): Keyring => {
     name: string,
     value: Redacted.Redacted<string>,
   ) {
+    const encoded = toBase64(value)
+    if (Redacted.value(encoded).length > SECRET_TOOL_INPUT_LIMIT)
+      return yield* new SecretStoreFailed({
+        store: 'libsecret',
+        operation: 'write an item',
+        reason: `the credential is longer than secret-tool keeps whole (${SECRET_TOOL_INPUT_LIMIT} bytes in base64)`,
+      })
     const { code } = yield* run('write an item', {
       command: 'secret-tool',
       args: ['store', `--label=Fabrica: ${name}`, ...attributes(name)],
-      input: Option.some(toBase64(value)),
+      input: Option.some(encoded),
     })
     if (code !== 0) return yield* failedWith('libsecret', 'write an item', code)
   })
@@ -295,84 +351,13 @@ export const libsecret = (cli: KeyringCliShape): Keyring => {
       args: ['clear', ...attributes(name)],
       input: Option.none(),
     })
-    if (code !== 0 && !(code === 1 && isBlank(stderr)))
+    if (code === 1 && isBlank(stderr))
+      return yield* confirmMissing('remove an item', name)
+    if (code !== 0)
       return yield* failedWith('libsecret', 'remove an item', code)
   })
   return {
     store: { kind: 'libsecret', read, write, remove },
     probe: Effect.isSuccess(read('.probe')),
   }
-}
-
-/** The wallet KWallet keeps by default. */
-const KWALLET_WALLET = 'kdewallet'
-
-/** The wallet's folder the engine's entries are kept in. */
-const KWALLET_FOLDER = 'Fabrica'
-
-/**
- * KWallet, through `kwallet-query`: an entry per item in the folder `Fabrica` of the default wallet.
- * `kwallet-query` can't delete an entry, so a removed item is written empty, and an empty one reads as
- * missing.
- */
-export const kwallet = (cli: KeyringCliShape): Keyring => {
-  const run = runFor(cli, 'kwallet')
-  const query = (
-    operation: string,
-    args: ReadonlyArray<string>,
-    input: Option.Option<Redacted.Redacted<string>> = Option.none(),
-  ) =>
-    run(operation, {
-      command: 'kwallet-query',
-      args: [...args, '-f', KWALLET_FOLDER, KWALLET_WALLET],
-      input,
-    })
-  const entries = Effect.fn('Kwallet.entries')(function* () {
-    const { code, stdout } = yield* query('list its entries', ['-l'])
-    // A folder that isn't there yet lists nothing, and exits non-zero.
-    if (code !== 0) return []
-    return Redacted.value(stdout)
-      .split('\n')
-      .map(line => line.trim())
-  })
-  const read = Effect.fn('Kwallet.read')(function* (name: string) {
-    if (!(yield* entries()).includes(name)) return Option.none()
-    const { code, stdout } = yield* query('read an item', ['-r', name])
-    if (code !== 0) return yield* failedWith('kwallet', 'read an item', code)
-    return isBlank(stdout) ? Option.none() : Option.some(fromBase64(stdout))
-  })
-  const writeEntry = (
-    operation: string,
-    name: string,
-    value: Redacted.Redacted<string>,
-  ) =>
-    Effect.flatMap(
-      query(operation, ['-w', name], Option.some(value)),
-      ({ code }) =>
-        code === 0
-          ? Effect.void
-          : Effect.fail(failedWith('kwallet', operation, code)),
-    )
-  const write = Effect.fn('Kwallet.write')(function* (
-    name: string,
-    value: Redacted.Redacted<string>,
-  ) {
-    yield* writeEntry('write an item', name, toBase64(value))
-  })
-  const remove = Effect.fn('Kwallet.remove')(function* (name: string) {
-    if (!(yield* entries()).includes(name)) return
-    yield* writeEntry('remove an item', name, Redacted.make(''))
-  })
-  const probe = Effect.map(
-    cli.call({
-      command: 'kwallet-query',
-      args: ['-l', KWALLET_WALLET],
-      input: Option.none(),
-    }),
-    KeyringOutcome.$match({
-      Exited: ({ code }) => code === 0,
-      Failed: () => false,
-    }),
-  )
-  return { store: { kind: 'kwallet', read, write, remove }, probe }
 }
