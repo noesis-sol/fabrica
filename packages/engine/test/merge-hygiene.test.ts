@@ -484,7 +484,10 @@ describe('what a check leaves', () => {
         expect(hash(checkout, 'main')).toBe(first)
         const { ticket, notes } = yield* show(worktree.ticket)
         expect(ticket.status).toBe('deferred')
-        expect(notes.map(note => note.body)).toEqual([detail])
+        // Its worktree is kept, the changed file put back.
+        expect(notes.map(note => note.body)).toEqual([
+          `${detail}; the tracked files it changed were put back: README.md`,
+        ])
         expect(existsSync(worktree.path)).toBe(true)
       }).pipe(Effect.scoped, Effect.provide(services())),
   )

@@ -8,9 +8,11 @@ export {
   type MergeWaitsShape,
   RECHECKS,
   asideFolder,
+  changedRecorded,
   cleanUp,
   clearAside,
   diagnose,
+  putBackChanged,
   removeWrote,
   wroteRecorded,
 } from './hygiene'

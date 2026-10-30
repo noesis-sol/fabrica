@@ -151,6 +151,15 @@ export interface GitShape {
     readonly worktree: string
     readonly files: ReadonlyArray<string>
   }) => Effect.Effect<void, GitFailed>
+  /**
+   * Puts the tracked `files` (paths from the worktree's root, as its status names them) back as HEAD has
+   * them, in the index and the worktree: one HEAD doesn't have is taken out of both, and one named that
+   * git doesn't track is left as it is.
+   */
+  readonly restoreTracked: (input: {
+    readonly worktree: string
+    readonly files: ReadonlyArray<string>
+  }) => Effect.Effect<void, CantTell | GitFailed>
   /** Fast-forwards the branch `base`, checked out in `checkout`, to the commit `to`, by its hash. */
   readonly fastForward: (input: {
     readonly checkout: string
@@ -886,6 +895,62 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     )
   })
 
+  const restoreTracked = Effect.fn('Git.restoreTracked')(function* ({
+    worktree,
+    files,
+  }: {
+    readonly worktree: string
+    readonly files: ReadonlyArray<string>
+  }) {
+    const named = new Set(files)
+    const listed = (args: ReadonlyArray<string>) =>
+      readExit('restoreTracked', { cwd: worktree, args }, exit =>
+        exit.code === 0 ? Option.some(nulList(exit.stdout)) : Option.none(),
+      )
+    yield* Effect.forEach(
+      argumentBatches(files),
+      paths =>
+        Effect.gen(function* () {
+          // Restore refuses a path neither HEAD nor the index has: only those either has are named to it.
+          const [indexed, committed] = yield* Effect.all(
+            [
+              listed(['--literal-pathspecs', 'ls-files', '-z', '--', ...paths]),
+              listed([
+                '--literal-pathspecs',
+                'ls-tree',
+                '-r',
+                '-z',
+                '--name-only',
+                'HEAD',
+                '--',
+                ...paths,
+              ]),
+            ],
+            { concurrency: 'unbounded' },
+          )
+          const tracked = [...new Set([...indexed, ...committed])].filter(
+            file => named.has(file),
+          )
+          if (tracked.length === 0) return
+          // Literal pathspecs: a file named `*.ts` puts back that file, never every match.
+          yield* writeOnly({
+            cwd: worktree,
+            args: [
+              '--literal-pathspecs',
+              'restore',
+              '--source=HEAD',
+              '--staged',
+              '--worktree',
+              '--quiet',
+              '--',
+              ...tracked,
+            ],
+          })
+        }),
+      { discard: true },
+    )
+  })
+
   const addWorktree = Effect.fn('Git.addWorktree')(function* ({
     repo,
     path,
@@ -1023,6 +1088,7 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     abortRebase,
     resetTo,
     removeUntracked,
+    restoreTracked,
     fastForward,
     addWorktree,
     addWorktreeOn,

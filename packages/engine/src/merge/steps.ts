@@ -31,6 +31,7 @@ import {
   cleanUp,
   diagnose,
   mayGoRound,
+  putBackChanged,
   removeWrote,
   wroteRecorded,
 } from './hygiene'
@@ -175,6 +176,8 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
     const stranded = yield* train.arrive(turn)
     if (Option.isSome(stranded)) return done(stranded.value)
     yield* git.abortRebase({ worktree: path })
+    // What the queue's setups and checks changed, on an earlier turn or a ride, isn't its worker's either.
+    yield* putBackChanged(git, { worktree: path })
     const { status, wrote } = yield* Effect.all(
       {
         status: git.status({ worktree: path }),
@@ -512,8 +515,26 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
     )
 
   /**
+   * The tracked files the queue changed in a set-aside ticket's worktree put back: those it put back; a
+   * failure is logged, and they stay recorded.
+   */
+  const putBack = (turn: MergeTurn) =>
+    putBackChanged(git, { worktree: turn.worktree.path }).pipe(
+      Effect.catch(error =>
+        Effect.as(
+          Effect.logWarning(
+            `Couldn't put back the files the merge changed in ${turn.worktree.ticket}'s worktree`,
+            error,
+          ),
+          [],
+        ),
+      ),
+    )
+
+  /**
    * What an outcome records in the work graph: a ticket with no change closed, one set aside deferred,
-   * the files the queue wrote in its worktree removed first.
+   * the files the queue wrote in its worktree removed and those it changed put back first, its note
+   * naming those.
    */
   const settle = (turn: MergeTurn, outcome: MergeOutcome) => {
     const { ticket } = turn.worktree
@@ -534,7 +555,17 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
           ),
       SetAside: ({ detail }) =>
         dropWrote(turn).pipe(
-          Effect.andThen(graph.note({ id: ticket, body: detail, actor })),
+          Effect.andThen(putBack(turn)),
+          Effect.flatMap(files =>
+            graph.note({
+              id: ticket,
+              body:
+                files.length === 0
+                  ? detail
+                  : `${detail}; the tracked files it changed were put back: ${files.join(', ')}`,
+              actor,
+            }),
+          ),
           Effect.andThen(
             graph.defer({ id: ticket, until: Option.none(), actor }),
           ),
