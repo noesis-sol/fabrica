@@ -227,10 +227,6 @@ export interface HandBackBook {
     readonly kind: HandBackKind
     readonly limit: number
   }) => Effect.Effect<Option.Option<number>>
-  /** How many hand-backs of each kind the ticket has had. */
-  readonly counts: (
-    ticket: TicketId,
-  ) => Effect.Effect<{ readonly resolve: number; readonly fix: number }>
   /** Keeps the job for the queue to give, as its turn ends. */
   readonly hold: (job: HandBackJob) => Effect.Effect<void>
   /** The job the ticket's turn ended handing back, taken. */
@@ -269,11 +265,6 @@ export const makeHandBackBook: Effect.Effect<HandBackBook> = Effect.gen(
             Option.some(attempt),
             new Map(all).set(ticket, { ...tally, [kind]: attempt }),
           ]
-        }),
-      counts: ticket =>
-        Effect.map(Ref.get(tallies), all => {
-          const { resolve, fix } = tallyOf(all, ticket)
-          return { resolve, fix }
         }),
       hold: job =>
         change(job.turn.worktree.ticket, tally => ({

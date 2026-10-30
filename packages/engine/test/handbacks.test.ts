@@ -489,7 +489,7 @@ describe('a conflict hand-back', () => {
   })
 
   it.live(
-    'sets the ticket aside once its resolve hand-backs are used up, its branch put back',
+    'sets the ticket aside where its worker leaves the rebase undone, its branch put back',
     () =>
       Effect.gen(function* () {
         const { checkout } = repository()
@@ -521,6 +521,44 @@ describe('a conflict hand-back', () => {
         expect(git(worktree.path, 'status', '--porcelain')).toBe('')
         const { ticket } = yield* show(worktree.ticket)
         expect(ticket.status).toBe('deferred')
+      }).pipe(Effect.scoped, Effect.provide(services())),
+  )
+
+  it.live(
+    'counts its resolve hand-backs over the run: a second conflict past the limit sets it aside',
+    () =>
+      Effect.gen(function* () {
+        const { checkout } = repository()
+        const worktree = yield* ticketWorktree(checkout)
+        conflicting(checkout, worktree, 'src/a.ts')
+        // It resolves the conflict, and Base changes the file again meanwhile.
+        const { worker, heard } = scripted(() =>
+          settled(() => {
+            resolve(worktree, 'src/a.ts')()
+            commit(checkout, 'Base changes it again', {
+              'src/a.ts': 'theirs again\n',
+            })
+          }),
+        )
+        const { all } = yield* mergeAll(
+          config(checkout, 'check-pass', { resolve: 1 }),
+          [worktree],
+          worker,
+        )
+        expect(heard.prompts).toHaveLength(1)
+        expect(outcomes(all).map(update => update._tag)).toEqual([
+          'HandedBack',
+          'Requeued',
+          'SetAside',
+        ])
+        expect(all[all.length - 1]).toEqual(
+          MergeOutcome.SetAside({
+            ticket: worktree.ticket,
+            reason: 'MERGE_CONFLICT',
+            detail:
+              'MERGE_CONFLICT in src/a.ts; its hand-back to resolve used up',
+          }),
+        )
       }).pipe(Effect.scoped, Effect.provide(services())),
   )
 
