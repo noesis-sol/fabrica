@@ -316,14 +316,15 @@ const runStarted = Effect.fn('Run.started')(function* (
             yield* Verdict.$match(verdict, {
               Passed: () =>
                 Effect.gen(function* () {
-                  yield* merges.enqueue(worktree)
+                  // Its phase moves before it is in line, so the queue's first step comes after it.
                   const line = yield* merges.line
-                  const place = Math.max(1, line.waiting.indexOf(ticket) + 1)
+                  const place = line.waiting.length + 1
                   yield* state.move({
                     ticket,
                     to: Phase.cases.waiting_to_merge.make({ place }),
                     cause: 'verified',
                   })
+                  yield* merges.enqueue(worktree)
                 }),
             })
           }),
