@@ -37,6 +37,7 @@ import {
   layerMemory,
   make,
 } from '../src'
+import { maxFrame } from '../src/frames'
 import { layerUnixSocket } from '../src/node'
 
 // A watched stream fails where no reconnect follows the error it got (fab-mgi.25), rather than wait
@@ -44,10 +45,11 @@ import { layerUnixSocket } from '../src/node'
 // `Lost` and the stream ends with the connection's loss; when the engine sends a frame the client
 // can't read, which Effect's socket protocol reports as a defect on a connection it keeps open, the
 // stream ends with that defect. (Its NDJSON parser skips a line that isn't JSON: what it can't read is
-// a line longer than its buffer, 16 MiB, sent here over the local socket as the CLI reaches its engine.)
+// a line longer than its buffer, `maxFrame`, sent here over the local socket as the CLI reaches its
+// engine.)
 
 /** A line longer than the NDJSON parser's buffer. */
-const overlong = `${'x'.repeat(16 * 1024 * 1024 + 1)}\n`
+const overlong = `${'x'.repeat(maxFrame + 1)}\n`
 
 const status = Schema.decodeUnknownSync(EngineStatus)({
   id: 'e-1',

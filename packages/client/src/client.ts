@@ -24,6 +24,7 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
+import { ndjson } from './frames'
 import { Reconnect, type StreamItem, isDefect, resumable } from './resume'
 
 // The engine client (spec §8): Effect RPC over a transport's `Socket`, its frames NDJSON. The client
@@ -227,10 +228,7 @@ export const make = Effect.fn('EngineClient.make')(function* (
         : endingWith(options.reconnect, lost),
   }).pipe(
     Effect.provideService(RpcClient.ConnectionHooks, hooks),
-    Effect.provideService(
-      RpcSerialization.RpcSerialization,
-      RpcSerialization.ndjson,
-    ),
+    Effect.provideService(RpcSerialization.RpcSerialization, ndjson),
   )
   const rpc = failingOnDefects(
     yield* RpcClient.make(FabricaRpcs).pipe(
