@@ -1,0 +1,3 @@
+# oxfmt's ignore file. The vendored source under repos/ (spec §23) is listed here and not only in
+# .oxfmtrc.json's ignorePatterns, which the .oxfmtrc.json files nested there override for their folders.
+repos/

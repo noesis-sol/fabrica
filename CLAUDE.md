@@ -140,8 +140,43 @@ One TypeScript monorepo, pnpm workspaces (spec §6):
 - `packages/ui`: the renderer, a Foldkit program.
 - `packages/testkit`: the shared test kit (temp git repositories, an airtight PATH and environment, injected
   host facts) and the test runner's worker count and reruns.
+- `repos/`: Foldkit, Effect and Pi's source, vendored as git subtrees for reference (below).
 
 The spec is `docs/spec/fabrica-spec.md`; the console's design handoff is under `design/console/`.
+
+## Vendored source
+
+Foldkit, Effect v4 and Pi are git subtrees under `repos/` (spec §23), each at the exact version installed:
+
+- `repos/foldkit`: Foldkit 0.169.0, tag `foldkit@0.169.0` of https://github.com/foldkit/foldkit.
+- `repos/effect`: Effect 4.0.0, tag `effect@4.0.0` of https://github.com/Effect-TS/effect.
+- `repos/pi`: Pi 1.4.0 (`@earendil-works/pi-coding-agent`), tag `v1.4.0` of
+  https://github.com/earendil-works/pi. No package depends on Pi yet: 1.4.0 is the version its spike
+  verified, and the version the engine pins.
+
+They are read-only references, for the source, the examples and the docs of the versions this project runs:
+never edit them and never import from them; code imports from `node_modules`. The checks leave `repos/` out:
+oxlint and oxfmt through `.eslintignore` and `.prettierignore` (their configs' `ignorePatterns` alone don't
+stop the configs nested there), the type checks and Vitest cover only `apps/`, `packages/` and `scripts/`, and
+`pnpm check:own` counts no change there.
+
+`FOLDKIT.md` is Foldkit's, copied whole from
+`repos/foldkit/packages/create-foldkit-app/templates/base/FOLDKIT.md` at the same tag: read it before working on
+the UI, and never edit it. The project's own rules live in `AGENTS.md`, mirrored in `CLAUDE.md`. `FOLDKIT.md`
+reads the next line to know Foldkit's source is vendored already.
+
+subtree_prompted: true
+
+Each upgrade refreshes its subtree in the same change, to the tag of the version it installs: Foldkit's
+with Foldkit, `FOLDKIT.md` replaced whole from the refreshed subtree, and Effect's with Effect, which moves
+only with Foldkit's pin. On a clean worktree, with `<version>` the version installed:
+
+```bash
+git subtree pull --prefix=repos/foldkit https://github.com/foldkit/foldkit.git foldkit@<version> --squash
+cp -f repos/foldkit/packages/create-foldkit-app/templates/base/FOLDKIT.md FOLDKIT.md
+git subtree pull --prefix=repos/effect https://github.com/Effect-TS/effect.git effect@<version> --squash
+git subtree pull --prefix=repos/pi https://github.com/earendil-works/pi.git v<version> --squash
+```
 
 ## Conventions & Patterns
 
