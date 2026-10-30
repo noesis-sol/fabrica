@@ -1,6 +1,5 @@
 // @vitest-environment node
 import { readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   type ConsoleMessage,
@@ -11,6 +10,8 @@ import {
 } from 'playwright-core'
 import { type Plugin, build } from 'vite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+
+import { electronBinary } from './electron'
 
 // The Review screen's diff view as the packaged app loads it (spec §18.1): the Monaco Mount
 // (src/mounts/monaco.ts) built by Vite with the app's base, from a file, under the app's
@@ -47,15 +48,6 @@ const withAppPolicy = (policy: string): Plugin => ({
   transformIndexHtml: html => html.replace('<head>', () => `<head>${policy}`),
 })
 
-/** Where Electron's binary is: what its package gives Node. */
-const electronBinary = (): string => {
-  const path: unknown = createRequire(import.meta.url)('electron')
-  if (typeof path !== 'string') {
-    throw new Error("electron's package gave no binary's path")
-  }
-  return path
-}
-
 let electron: ElectronApplication
 let page: Page
 let worker: Promise<Worker>
@@ -87,9 +79,10 @@ beforeAll(async () => {
   await page.goto(pathToFileURL(`${outDir}/${pagePath}`).href)
 }, 120_000)
 
+// Electron's quit, as its start, can take longer than Vitest's 10 s for a hook on a loaded machine.
 afterAll(async () => {
   await electron?.close()
-})
+}, 60_000)
 
 describe('the diff view, loaded from a file', () => {
   it('computes the diff in Monaco’s editor worker', async () => {

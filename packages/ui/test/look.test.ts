@@ -1,6 +1,5 @@
 // @vitest-environment node
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { type ElectronApplication, type Page, _electron } from 'playwright-core'
 import { PNG } from 'pngjs'
@@ -8,6 +7,7 @@ import { type Rollup, build } from 'vite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { type Theme, themes } from '../src/theme/theme'
+import { electronBinary } from './electron'
 
 // The console's look (spec §18.2, §24): the console scene (test/fixtures/console-scene.ts) drawn in an
 // Electron window, as the app's, through Playwright's Electron support, at the handoff's 1280 × 800
@@ -552,15 +552,6 @@ const underEachOther = (images: ReadonlyArray<PNG>): PNG => {
   return sheet
 }
 
-/** Where Electron's binary is: what its package gives Node. */
-const electronBinary = (): string => {
-  const path: unknown = createRequire(import.meta.url)('electron')
-  if (typeof path !== 'string') {
-    throw new Error("electron's package gave no binary's path")
-  }
-  return path
-}
-
 let electron: ElectronApplication
 let page: Page
 
@@ -611,9 +602,10 @@ beforeAll(async () => {
   mkdirSync(capturesRoot, { recursive: true })
 }, 120_000)
 
+// Electron's quit, as its start, can take longer than Vitest's 10 s for a hook on a loaded machine.
 afterAll(async () => {
   await electron?.close()
-})
+}, 60_000)
 
 const contentTypeOf = (path: string): string =>
   path.endsWith('.html')

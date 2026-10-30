@@ -12,6 +12,8 @@ export default defineProject({
     // Vitest blanks unless it processes them.
     css: { include: [/\/(theme|console)\/[\w-]+\.css/] },
     setupFiles: ['./src/vitest-setup.ts'],
+    // Installs Electron, once, before the files that draw in its windows run side by side.
+    globalSetup: ['./test/electron.ts'],
     server: {
       deps: {
         inline: ['foldkit', '@foldkit/ui', '@foldkit/devtools'],
