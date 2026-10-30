@@ -328,8 +328,10 @@ layer(layerToolbox({ tools, stubs }))('the install script', it => {
         }),
     )
 
+    // fabrica engine update switches ~/.local/bin/fabrica and the login service runs it (§7.1, §9.2), so
+    // FABRICA_INSTALL_DIR's link names that link, never the engine, and follows each update.
     it.effect(
-      'the release FABRICA_VERSION names, linked from FABRICA_INSTALL_DIR',
+      'the release FABRICA_VERSION names, linked from ~/.local/bin and from FABRICA_INSTALL_DIR to that',
       () =>
         Effect.gen(function* () {
           const host = yield* makeHost()
@@ -338,16 +340,62 @@ layer(layerToolbox({ tools, stubs }))('the install script', it => {
             { tag: 'v0.2.0', targets: ['linux-arm64'] },
           ])
           const dir = join(host.root, 'bin')
+          const bin = join(host.home, '.local', 'bin')
+          // An earlier script's link straight to an engine is replaced.
+          yield* Effect.promise(async () => {
+            await mkdir(dir)
+            await symlink(join(host.root, 'old-engine'), join(dir, 'fabrica'))
+          })
           const ran = yield* install({
             host,
             releases,
             machine: hosts['linux-arm64'],
             vars: { FABRICA_VERSION: '0.1.0-rc.1', FABRICA_INSTALL_DIR: dir },
           })
+          expect(ran.stderr).toBe('')
           expect(ran.code).toBe(0)
-          expect(yield* linked(host, dir)).toBe(
+          expect(yield* linked(host)).toBe(
             join(engineFolder(host), '0.1.0-rc.1', 'bin', 'fabrica'),
           )
+          expect(yield* linked(host, dir)).toBe(join(bin, 'fabrica'))
+          expect(ran.stdout).toContain(
+            `Linked ${join(dir, 'fabrica')} to ${join(bin, 'fabrica')}, which fabrica engine update switches to later releases.`,
+          )
+          expect(ran.stdout).toContain(`${dir} isn't on your PATH. To add it:`)
+          expect(ran.stdout).not.toContain(`${bin} isn't on your PATH`)
+          expect(yield* Effect.promise(() => readdir(dir))).toEqual(['fabrica'])
+          expect(yield* Effect.promise(() => readdir(bin))).toEqual(['fabrica'])
+        }),
+    )
+
+    it.effect(
+      'with FABRICA_INSTALL_DIR naming ~/.local/bin another way, one link alone',
+      () =>
+        Effect.gen(function* () {
+          const host = yield* makeHost()
+          const releases = yield* fixtureReleases([
+            { tag: 'v0.1.0', targets: ['linux-x64'] },
+          ])
+          const ran = yield* install({
+            host,
+            releases,
+            machine: hosts['linux-x64'],
+            vars: {
+              FABRICA_INSTALL_DIR:
+                join(host.home, '.local', 'share', '..', 'bin') + '/',
+            },
+          })
+          expect(ran.stderr).toBe('')
+          expect(ran.code).toBe(0)
+          expect(yield* linked(host)).toBe(
+            join(engineFolder(host), '0.1.0', 'bin', 'fabrica'),
+          )
+          expect(ran.stdout).not.toContain('Linked ')
+          expect(
+            yield* Effect.promise(() =>
+              readdir(join(host.home, '.local', 'bin')),
+            ),
+          ).toEqual(['fabrica'])
         }),
     )
 

@@ -15,12 +15,16 @@
 # with OpenSSL 3 or else a Node on the PATH (macOS's own openssl, LibreSSL, can't verify ed25519: with
 # neither it says so and goes on), and the archive's SHA-256 against checksums.txt; unpacks it into
 # ~/.local/share/fabrica/engine/<version>/; runs its fabrica --version there, reading stdout only, never
-# in /tmp, which hardened hosts mount noexec; and links fabrica into the folder below, saying how to put
-# it on the PATH. It never calls sudo.
+# in /tmp, which hardened hosts mount noexec; and links ~/.local/bin/fabrica to it, saying how to put
+# that folder on the PATH. It never calls sudo.
 #
 #   FABRICA_VERSION      the release to install, such as v0.1.0; the latest when unset
-#   FABRICA_INSTALL_DIR  the folder to link fabrica into, made where it doesn't exist; else ~/.local/bin,
-#                        never /usr/local/bin, which Homebrew owns on many Macs
+#   FABRICA_INSTALL_DIR  a folder of the PATH's, made where it doesn't exist, to link fabrica into as
+#                        well, its link naming ~/.local/bin/fabrica; never /usr/local/bin, which Homebrew
+#                        owns on many Macs
+#
+# ~/.local/bin/fabrica is made whatever FABRICA_INSTALL_DIR names, since it is the link §7.1 and §9.2
+# name: fabrica engine update switches it to the version it installs, and the login service runs it.
 #
 # For the tests only (scripts/install.test.ts): FABRICA_DOWNLOAD_URL replaces the releases' address,
 # https://github.com/noesis-sol/fabrica/releases. It may be a file:// URL of a folder laid out as GitHub
@@ -322,16 +326,37 @@ sha256() {
   fi
 }
 
-# folders sets dir, the folder to link fabrica into (FABRICA_INSTALL_DIR, or else ~/.local/bin), and
-# engines, the folder the engine's versions are unpacked in, making both.
+# folders sets engines, the folder the engine's versions are unpacked in; bin, ~/.local/bin, where
+# fabrica is linked to the version installed; extra, FABRICA_INSTALL_DIR where it names another folder,
+# empty where it doesn't; and dir, the folder the user runs fabrica from: extra, or else bin. It makes
+# them all.
 folders() {
   [ -n "${HOME:-}" ] || fail "HOME isn't set: the engine is installed under ~/.local/share/fabrica"
   engines="$HOME/.local/share/fabrica/engine"
-  dir="${FABRICA_INSTALL_DIR:-$HOME/.local/bin}"
+  bin="$HOME/.local/bin"
+  extra="${FABRICA_INSTALL_DIR:-}"
   mkdir -p "$engines" 2>/dev/null || fail "cannot make $engines"
-  mkdir -p "$dir" 2>/dev/null || fail "cannot make $dir"
-  [ -w "$dir" ] || fail "cannot write in $dir: set FABRICA_INSTALL_DIR to a folder of yours on the PATH,
+  mkdir -p "$bin" 2>/dev/null || fail "cannot make $bin"
+  [ -w "$bin" ] || fail "cannot write in $bin, where fabrica is always linked, since fabrica engine update
+and the login service use that link: make it a folder of yours."
+  if [ -n "$extra" ]; then
+    mkdir -p "$extra" 2>/dev/null || fail "cannot make $extra"
+    [ -w "$extra" ] || fail "cannot write in $extra: set FABRICA_INSTALL_DIR to a folder of yours on the PATH,
 curl -fsSL $script_url | FABRICA_INSTALL_DIR=<folder> sh"
+    # The same folder, named another way, gets no link of its own, which would name itself.
+    if [ "$(CDPATH='' cd "$extra" && pwd -P)" = "$(CDPATH='' cd "$bin" && pwd -P)" ]; then
+      extra=
+    fi
+  fi
+  dir="${extra:-$bin}"
+}
+
+# relink makes $2 a link to $1 beside it and renames it over $2, so that $2 never names nothing.
+relink() {
+  link="${2%/*}/.fabrica-install-$$"
+  ln -s "$1" "$link" || fail "cannot write in ${2%/*}"
+  mv -f "$link" "$2" || fail "cannot replace $2"
+  link=
 }
 
 # after says how to put dir on the PATH when it isn't there, or that another fabrica comes first.
@@ -459,11 +484,12 @@ release workflow from another. Nothing was installed." ;;
     mv "$engines/$version" "$stage/old" || fail "cannot replace $engines/$version"
   fi
   mv "$new" "$engines/$version" || fail "cannot write $engines/$version"
-  link="$dir/.fabrica-install-$$"
-  ln -s "$engines/$version/bin/fabrica" "$link" || fail "cannot write in $dir"
-  mv -f "$link" "$dir/fabrica" || fail "cannot replace $dir/fabrica"
-  link=
-  say "Installed the Fabrica engine $tag in $engines/$version, linked from $dir/fabrica."
+  relink "$engines/$version/bin/fabrica" "$bin/fabrica"
+  say "Installed the Fabrica engine $tag in $engines/$version, linked from $bin/fabrica."
+  if [ -n "$extra" ]; then
+    relink "$bin/fabrica" "$extra/fabrica"
+    say "Linked $extra/fabrica to $bin/fabrica, which fabrica engine update switches to later releases."
+  fi
   after
 }
 
