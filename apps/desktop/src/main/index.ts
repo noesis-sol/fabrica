@@ -34,6 +34,7 @@ import { askpassArguments } from '../connection/askpass'
 import { definedOf } from '../connection/env'
 import { ConnectionTarget } from '../connection/target'
 import { FolderPick, UpdateStatus, channels } from '../preload/api'
+import { appDataFolder } from './dataFolder'
 import { checkEngineOn, engineSource, installEngineOn } from './engine-install'
 import { type MainIpc, registerIpc, sendEnginePort, sendSshPrompt } from './ipc'
 import { keptTheme, makeThemeKeeper } from './keptTheme'
@@ -71,6 +72,16 @@ import {
 const preload = fileURLToPath(new URL('../preload/index.cjs', import.meta.url))
 const connectionProcess = fileURLToPath(
   new URL('./connection.js', import.meta.url),
+)
+
+// The app's data folder, set before anything reads it: the single-instance lock and the kept theme are in it.
+Option.map(
+  appDataFolder({
+    platform: process.platform,
+    packaged: app.isPackaged,
+    appData: app.getPath('appData'),
+  }),
+  folder => app.setPath('userData', folder),
 )
 
 /** How long main waits before starting a connection process that exited again. */

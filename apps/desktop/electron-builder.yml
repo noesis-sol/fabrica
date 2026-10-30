@@ -39,6 +39,11 @@ afterPack: ./build/fuses.ts
 
 artifactName: Fabrica-${version}-${os}-${arch}.${ext}
 
+# The app's icon, drawn by build/icon.ts, in build: macOS's on Apple's icon grid, made into the icns, and
+# the others' filling the canvas, made into Windows's ico. Linux names its own, as it would otherwise take
+# macOS's.
+icon: icon.png
+
 # The third-party notices (§20.5, THIRD_PARTY_NOTICES.md), and the licence files that travel with their
 # components, in every app's resources (electron-builder keeps Electron's and Chromium's, LICENSE.electron.txt
 # and LICENSES.chromium.html, beside the app, in its resources on macOS); each platform's own
@@ -67,6 +72,7 @@ mac:
     - dmg
     - zip
   category: public.app-category.developer-tools
+  icon: icon-mac.png
   # The pinned Electron's floor (spike fab-mgi.2.6).
   minimumSystemVersion: '13.0'
   hardenedRuntime: true
@@ -87,6 +93,7 @@ linux:
     - deb
     - rpm
   category: Development
+  icon: icon.png
   # Not `fabrica`, the engine's command (§19), which the deb and rpm would link into /usr/bin.
   executableName: fabrica-app
   maintainer: Michael Michailidis

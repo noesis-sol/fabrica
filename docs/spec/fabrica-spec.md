@@ -277,6 +277,8 @@ The engine's data folder (`<data>`): `~/Library/Application Support/fabrica/` on
 
 A project's own files are under `<repo>/.fabrica/` (§10.2).
 
+The app's own data (Chromium's storage, the theme its window opens in) is in Electron's userData, which a packaged app names after itself: `~/Library/Application Support/solutions.noesis.fabrica/` on macOS, after its ID, since `Fabrica` would be the engine's `fabrica` on a case-insensitive disk; `~/.config/Fabrica/` on Linux and `%APPDATA%\Fabrica\` on Windows. A development build keeps Electron's own, named after its package.
+
 ### 7.3 Projects and runs
 
 - The engine holds any number of projects and runs any number of them at once, one run per project.
@@ -1050,6 +1052,8 @@ Exact pins and a committed lockfile; CI verifies the checksums of every download
 ### 22.2 The app
 
 \[DECISION\] electron-builder, in CI, for the app's five targets (§4): dmg and zip per architecture (macOS, Developer ID, hardened runtime, notarised, every Mach-O signed), AppImage, deb and rpm (Linux), NSIS (Windows, Authenticode). Updates through electron-updater for macOS (from the zip), Windows (NSIS) and the AppImage; deb and rpm are downloads updated by hand until a package repository is worth running (H39). The macOS and Linux apps embed the engine distribution for their own architecture, for the local engine; the Windows app embeds the Linux x64 distribution and installs it in WSL2 (§7.6).
+
+The handoff has no mark (§18.2), so the app's icon is drawn from its blocks: the title bar's CORES meter in Lichen Bright, a 3 × 3 grid whose busy blocks (`--c1`) make an F among idle ones (`--line`), on `--bg`; macOS's on Apple's icon grid, with rounded corners, the other platforms' filling its square.
 
 ### 22.3 CI
 
