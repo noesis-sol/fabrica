@@ -1,0 +1,828 @@
+import {
+  Cause,
+  Data,
+  Effect,
+  Exit,
+  FiberSet,
+  Option,
+  Scope,
+  Stream,
+} from 'effect'
+
+import {
+  type Actor,
+  type DoneKind,
+  type EndKind,
+  type ExitCode,
+  type MergeStep,
+  Phase,
+  SessionId,
+  type StopKind,
+  type Ticket,
+  type TicketId,
+  WaitFor,
+  exitCodeOf,
+} from '@fabrica/contracts'
+
+import { Git, ticketBranch } from '../git'
+import {
+  type MergeQueueShape,
+  MergeUpdate,
+  make as makeMergeQueue,
+} from '../merge'
+import {
+  RunLog,
+  dispatchingLine,
+  mergedLine,
+  settledLine,
+  shortCommit,
+  warningLine,
+} from '../runlog'
+import { WorkGraph } from '../workgraph'
+import { drawBase36 } from '../workgraph/ids'
+import { carriedOver } from './carryover'
+import { type RunConfig, RunMode } from './config'
+import { endSteps } from './end'
+import { gateReady } from './footprints-gate'
+import { MayTake, mayTake } from './holds'
+import { record } from './records'
+import { StartChecked, type Started, runStartChecks } from './start-checks'
+import {
+  type RunSnapshot,
+  type RunStateShape,
+  inPhase,
+  inProgress,
+  makeRunState,
+  slotsTaken,
+} from './state'
+import { makeSupervision } from './supervisor'
+import { Verdict, verifyFinished } from './verify'
+import { WakeReason, makeWakes, readsReady } from './wakes'
+import { type WorkerContext, WorkerEnd, dispatchWorker } from './worker'
+
+// The run loop (spec §13, §13.1, §13.2, §13.5, §13.9, H58): one run of a project. Its start checks
+// list every problem together; then it fills its free slots at once and on every change, each wake
+// carrying its reasons; each worker's outcome moves its ticket (to the merge queue, set aside, back in
+// the queue until another merges, waiting on a question), and each merge's; and when nothing is in
+// progress and nothing more can be dispatched, it ends: supervision stopped first, sessions closed all
+// at once, its end line, and its exit code. The run's state has one owner (`state.ts`); the loop is
+// one fiber, woken by the workers, the merge queue and the work graph.
+
+/** How a run ended, and the exit code the CLI exits with (§13.11). */
+export interface RunEnd {
+  readonly kind: EndKind
+  readonly code: ExitCode
+}
+
+/** What the loop decided ends the run. */
+type Ending = Data.TaggedEnum<{
+  /** It ended by itself: nothing more to do. */
+  Done: { readonly kind: DoneKind }
+  /** Something stopped it. */
+  Stop: {
+    readonly kind: StopKind
+    readonly ticket: Option.Option<TicketId>
+    readonly detail: string
+  }
+}>
+const Ending = Data.taggedEnum<Ending>()
+
+/** A worker's session, as its claim and its control channel name it. */
+const drawSession = Effect.map(drawBase36(16), random =>
+  SessionId.make(`worker-${random}`),
+)
+
+/** The ticket and every ticket below it by `parent` edges (§13.1, `--ticket`). */
+const descendants = (
+  root: TicketId,
+  edges: ReadonlyArray<{
+    readonly from: TicketId
+    readonly to: TicketId
+    readonly kind: string
+  }>,
+): ReadonlySet<TicketId> => {
+  const found = new Set<TicketId>([root])
+  let added = true
+  while (added) {
+    added = false
+    for (const edge of edges)
+      if (
+        edge.kind === 'parent' &&
+        found.has(edge.from) &&
+        !found.has(edge.to)
+      ) {
+        found.add(edge.to)
+        added = true
+      }
+  }
+  return found
+}
+
+/** The phases a ticket can be dispatched from: back in the queue. */
+const dispatchable = (snapshot: RunSnapshot, ticket: TicketId): boolean => {
+  const taken = snapshot.tickets.get(ticket)
+  return (
+    taken === undefined ||
+    taken.phase._tag === 'queued' ||
+    taken.phase._tag === 'held_back' ||
+    taken.phase._tag === 'waiting'
+  )
+}
+
+/** The words of a merge's step on its phase record. */
+const stepCause = (step: MergeStep): string => `merge: ${step}`
+
+/** Runs the project's run to its end, its records written through the RunLog. */
+export const runProject = Effect.fn('Run.project')(function* (
+  config: RunConfig,
+) {
+  const log = yield* RunLog
+  const run = log.run
+  const checked = yield* runStartChecks({ config, run, log })
+  if (StartChecked.$is('Problems')(checked)) {
+    // Every problem together, then the stop: exit 2 (§13.1).
+    yield* Effect.forEach(
+      checked.problems,
+      problem =>
+        record(log, {
+          kind: 'warn',
+          text: warningLine({ tag: 'SETUP', about: 'run', text: problem }),
+        }),
+      { discard: true },
+    )
+    const count = checked.problems.length
+    yield* record(log, {
+      kind: 'stop',
+      detail: 'SETUP',
+      text: `SETUP: the run didn't start: ${count === 1 ? 'a problem' : `${count} problems`}`,
+    })
+    const code = exitCodeOf('SETUP')
+    yield* record(log, { kind: 'end', code })
+    return { kind: 'SETUP', code } satisfies RunEnd
+  }
+  return yield* Effect.scoped(runStarted(config, checked.started))
+})
+
+/** The run once its start checks passed: until it ends, within its scope. */
+const runStarted = Effect.fn('Run.started')(function* (
+  config: RunConfig,
+  started: Started,
+) {
+  const log = yield* RunLog
+  const graph = yield* WorkGraph
+  const git = yield* Git
+  const run = log.run
+  const project = started.settings.project
+  const actor: Actor = { _tag: 'engine', engine: config.engine }
+  const { limit } = config.options
+
+  // Getting ready (H80): each of the start's steps said as it ends.
+  const carried = yield* carriedOver({ checkout: config.checkout })
+  yield* record(log, {
+    kind: 'info',
+    text: `start: the carry-over: ${carried.length === 0 ? 'nothing to resume' : `${carried.length} to resume`}`,
+  })
+
+  // The merge queue lives in a scope of its own, so the end stops it before writing its records.
+  const mergeScope = yield* Scope.make()
+  const merges = yield* makeMergeQueue({
+    home: config.home,
+    base: started.base,
+    checkFast: project.check_fast,
+    checkTimeout: project.check_timeout,
+    setupFiles: project.setup_files,
+    train: project.merge.train,
+    cores: config.cores,
+    actor,
+  }).pipe(Scope.provide(mergeScope))
+  const mergeUpdates = yield* merges.updates.pipe(Scope.provide(mergeScope))
+  const graphChanges = yield* graph.changes
+
+  yield* record(log, {
+    kind: 'start',
+    version: config.version,
+    engine: config.engine,
+    repo: config.checkout,
+    branch: started.base,
+    commit: started.baseCommit,
+    ...RunMode.$match(config.options.mode, {
+      Tickets: () => ({}),
+      Ticket: ({ ticket }) => ({ scope: ticket }),
+    }),
+    concurrency: project.concurrent,
+    ...Option.match(limit, {
+      onNone: () => ({}),
+      onSome: most => ({ limit: most }),
+    }),
+    ...Option.match(project.model, {
+      onNone: () => ({}),
+      onSome: choice => ({ model: `${choice.provider}/${choice.model}` }),
+    }),
+    permissions: project.permissions,
+  })
+
+  const state = yield* makeRunState(log)
+  const wakes = yield* makeWakes
+  const supervision = yield* makeSupervision
+  const workers = yield* FiberSet.make<void>()
+  const context: WorkerContext = {
+    config,
+    run,
+    started,
+    log,
+    merges,
+    actor,
+  }
+
+  const stop = (
+    kind: StopKind,
+    detail: string,
+    ticket = Option.none<TicketId>(),
+  ) => wakes.wake(WakeReason.Stopped({ kind, ticket, detail }))
+
+  /** A change of the work graph the run made failed: the run stops, `TRACKER_FAILED`. */
+  const tracked = <A, E extends { readonly message: string }>(
+    effect: Effect.Effect<A, E>,
+  ): Effect.Effect<void> =>
+    effect.pipe(
+      Effect.asVoid,
+      Effect.catch(error => stop('TRACKER_FAILED', error.message)),
+    )
+
+  const titleOf = (snapshot: RunSnapshot, ticket: TicketId) =>
+    snapshot.tickets.get(ticket)?.title ?? ticket
+
+  /** Sets the ticket aside in the work graph with `note`, then in the run, as `reason`. */
+  const setAside = (
+    ticket: TicketId,
+    reason: 'UNFINISHED' | 'TOOL_DEFECT',
+    note: string,
+  ) =>
+    Effect.gen(function* () {
+      yield* tracked(
+        Effect.andThen(
+          graph.note({ id: ticket, body: note, actor }),
+          graph.defer({ id: ticket, until: Option.none(), actor }),
+        ),
+      )
+      const before = yield* state.move({
+        ticket,
+        to: Phase.cases.set_aside.make({ reason }),
+        cause: note,
+      })
+      yield* record(log, {
+        kind: 'deferred',
+        ticket,
+        title: Option.match(before, {
+          onNone: () => ticket,
+          onSome: ({ title }) => title,
+        }),
+        reason,
+        detail: note,
+        text: warningLine({
+          tag: reason,
+          about: 'ticket',
+          text: `${ticket} set aside: ${note}`,
+        }),
+      })
+    })
+
+  const settled = (
+    ticket: TicketId,
+    outcome: 'finish' | 'defer' | 'wait_for' | 'ask_question' | 'none',
+    how: string,
+  ) =>
+    record(log, {
+      kind: 'settled',
+      ticket,
+      outcome,
+      text: settledLine({ ticket, how }),
+    })
+
+  /** Moves the ticket as its worker's end asks (§13.5), then frees its slot. */
+  const workerEnded = (ticket: TicketId, end: WorkerEnd) =>
+    Effect.gen(function* () {
+      const title = titleOf(yield* state.current, ticket)
+      yield* WorkerEnd.$match(end, {
+        Finished: ({ worktree }) =>
+          Effect.gen(function* () {
+            yield* settled(ticket, 'finish', 'finished')
+            yield* state.move({
+              ticket,
+              to: Phase.cases.verifying.make({ round: 1 }),
+              cause: 'finished',
+            })
+            const verdict = yield* verifyFinished({ ticket, worktree })
+            yield* Verdict.$match(verdict, {
+              Passed: () =>
+                Effect.gen(function* () {
+                  yield* merges.enqueue(worktree)
+                  const line = yield* merges.line
+                  const place = Math.max(1, line.waiting.indexOf(ticket) + 1)
+                  yield* state.move({
+                    ticket,
+                    to: Phase.cases.waiting_to_merge.make({ place }),
+                    cause: 'verified',
+                  })
+                }),
+            })
+          }),
+        Deferred: ({ reason }) =>
+          Effect.gen(function* () {
+            yield* settled(ticket, 'defer', `deferred: ${reason}`)
+            yield* state.move({
+              ticket,
+              to: Phase.cases.set_aside.make({ reason: 'DEFERRED' }),
+              cause: reason,
+            })
+            yield* record(log, {
+              kind: 'deferred',
+              ticket,
+              title,
+              reason: 'DEFERRED',
+              detail: reason,
+              text: warningLine({
+                tag: 'DEFERRED',
+                about: 'ticket',
+                text: `${ticket} set aside: ${reason}`,
+              }),
+            })
+          }),
+        WaitsFor: ({ ticket: other, needs }) =>
+          Effect.gen(function* () {
+            yield* settled(ticket, 'wait_for', `waits for ${other} to merge`)
+            yield* tracked(graph.release({ id: ticket, actor }))
+            yield* state.move({
+              ticket,
+              to: Phase.cases.waiting.make({
+                for: WaitFor.cases.merge.make({ tickets: [other] }),
+              }),
+              cause: `waits for ${other} to merge`,
+            })
+            yield* record(log, {
+              kind: 'waits',
+              ticket,
+              title,
+              waits_for: [other],
+              detail: needs,
+              text: warningLine({
+                tag: 'WAITS_FOR_MERGE',
+                about: 'ticket',
+                text: `${ticket} waits for ${other} to merge: ${needs}`,
+              }),
+            })
+          }),
+        Asked: ({ question }) =>
+          Effect.gen(function* () {
+            yield* settled(ticket, 'ask_question', `asked ${question}`)
+            const asked = yield* graph.show(question).pipe(
+              Effect.map(({ ticket: shown }) => shown.title),
+              Effect.orElseSucceed(() => question),
+            )
+            yield* state.move({
+              ticket,
+              to: Phase.cases.asked.make({ question }),
+              cause: `asked ${question}`,
+            })
+            yield* record(log, {
+              kind: 'asked',
+              ticket,
+              title,
+              question,
+              detail: `${question}: ${asked}`,
+              text: `  ${ticket} asked ${question}: ${asked}`,
+            })
+          }),
+        Unfinished: () =>
+          Effect.andThen(
+            settled(ticket, 'none', 'no outcome'),
+            setAside(
+              ticket,
+              'UNFINISHED',
+              'its worker settled with no outcome: no finish, defer, wait_for or ask_question',
+            ),
+          ),
+        ToolFailed: ({ tool, reason }) =>
+          Effect.andThen(
+            settled(ticket, 'none', `${tool} failed`),
+            setAside(
+              ticket,
+              'TOOL_DEFECT',
+              `${tool} failed in the engine: ${reason}`,
+            ),
+          ),
+        SetupFailed: ({ detail }) =>
+          Effect.gen(function* () {
+            yield* tracked(graph.release({ id: ticket, actor }))
+            yield* state.move({
+              ticket,
+              to: Phase.cases.waiting.make({
+                for: WaitFor.cases.setup.make({}),
+              }),
+              cause: detail,
+            })
+          }),
+        Failed: ({ reason }) =>
+          Effect.andThen(
+            Effect.ignore(graph.release({ id: ticket, actor })),
+            setAside(
+              ticket,
+              'TOOL_DEFECT',
+              `its worker couldn't start: ${reason}`,
+            ),
+          ),
+      })
+      yield* wakes.wake(WakeReason.Settled({ ticket }))
+    })
+
+  /** Closes each epic whose children are all closed and merged, as a ticket merges (§13.3). */
+  const closeEpics = tracked(
+    graph.closeEpics({
+      onBase: id =>
+        git
+          .isOnBase({
+            repo: config.checkout,
+            branch: ticketBranch(id),
+            base: started.base,
+          })
+          .pipe(Effect.orElseSucceed(() => false)),
+      actor,
+    }),
+  )
+
+  /** A merge's update: its ticket's phase, its records, and a wake where its turn ended (§13.7). */
+  const mergeUpdated = (update: MergeUpdate) =>
+    Effect.gen(function* () {
+      const ticket = update.ticket
+      const title = titleOf(yield* state.current, ticket)
+      const ended = (effect: Effect.Effect<void>) =>
+        Effect.andThen(effect, wakes.wake(WakeReason.MergeEnded({ ticket })))
+      yield* MergeUpdate.$match(update, {
+        Step: ({ step }) =>
+          Effect.asVoid(
+            state.move({
+              ticket,
+              to: Phase.cases.merging.make({ step }),
+              cause: stepCause(step),
+            }),
+          ),
+        Check: ({ record: check }) => record(log, check),
+        // The run's log of what a merge wrote and why it waits comes with fab-mgi.30.
+        Wrote: () => Effect.void,
+        MergesWait: () => Effect.void,
+        Merged: ({ commit, unchecked }) =>
+          ended(
+            Effect.gen(function* () {
+              yield* state.move({
+                ticket,
+                to: Phase.cases.merged.make({ commit }),
+                cause: `merged into ${started.base}`,
+              })
+              yield* record(log, {
+                kind: 'closed',
+                ticket,
+                title,
+                commit,
+                detail: `${shortCommit(commit)} merged into ${started.base}${unchecked ? ', unchecked' : ''}`,
+                text: mergedLine({
+                  ticket,
+                  commit,
+                  subject: title,
+                  base: started.base,
+                }),
+              })
+              yield* closeEpics
+            }),
+          ),
+        NoChange: () =>
+          ended(
+            Effect.gen(function* () {
+              yield* state.move({
+                ticket,
+                to: Phase.cases.no_change.make({}),
+                cause: 'no change to merge',
+              })
+              yield* record(log, {
+                kind: 'closed',
+                ticket,
+                title,
+                detail: 'no change to merge',
+                text: `  ${ticket} closed: no change to merge; worktree and branch removed`,
+              })
+              yield* closeEpics
+            }),
+          ),
+        SetAside: ({ reason, detail }) =>
+          ended(
+            Effect.gen(function* () {
+              yield* state.move({
+                ticket,
+                to: Phase.cases.set_aside.make({ reason }),
+                cause: detail,
+              })
+              yield* record(log, {
+                kind: 'deferred',
+                ticket,
+                title,
+                reason,
+                detail,
+                text: warningLine({
+                  tag: reason,
+                  about: 'ticket',
+                  text: `${ticket} set aside: ${detail}`,
+                }),
+              })
+            }),
+          ),
+        // Nothing merges without a merge check (H62): the ticket is left for a run that has one.
+        NoMergeCheck: () =>
+          ended(
+            Effect.gen(function* () {
+              yield* state.move({
+                ticket,
+                to: Phase.cases.stopped.make({}),
+                cause: "the project's check_fast isn't set",
+              })
+              yield* record(log, {
+                kind: 'warn',
+                ticket,
+                text: warningLine({
+                  tag: 'NO_MERGE_CHECK',
+                  about: 'ticket',
+                  text: `${ticket} isn't merged: the project's check_fast isn't set (set it, or "none" to merge unchecked)`,
+                }),
+              })
+            }),
+          ),
+        SetupFailed: ({ detail }) =>
+          ended(
+            Effect.asVoid(
+              state.move({
+                ticket,
+                to: Phase.cases.waiting.make({
+                  for: WaitFor.cases.setup.make({}),
+                }),
+                cause: detail,
+              }),
+            ),
+          ),
+        // Only the end stops the queue; it moves the tickets left to stopped itself.
+        Interrupted: () => Effect.void,
+        Stopped: ({ kind, detail }) => stop(kind, detail, Option.some(ticket)),
+      })
+    })
+
+  /** The ready tickets the run's mode takes, read through the ready rule (§13.3). */
+  const readReady = (snapshot: RunSnapshot) =>
+    Effect.gen(function* () {
+      const ready = yield* graph.ready({
+        onBase: id =>
+          git
+            .isOnBase({
+              repo: config.checkout,
+              branch: ticketBranch(id),
+              base: started.base,
+            })
+            .pipe(Effect.orElseSucceed(() => false)),
+        setAside: inPhase(snapshot, 'set_aside').map(({ ticket }) => ticket),
+      })
+      return yield* RunMode.$match(config.options.mode, {
+        Tickets: () => Effect.succeed(ready),
+        Ticket: ({ ticket }) =>
+          Effect.map(graph.edges(), edges => {
+            const scope = descendants(ticket, edges)
+            return ready.filter(candidate => scope.has(candidate.id))
+          }),
+      })
+    })
+
+  /** Dispatches `ticket`: its record, then its worker, forked under its supervision. */
+  const dispatchOne = (ticket: Ticket, n: number, queued: number) =>
+    Effect.gen(function* () {
+      yield* record(log, {
+        kind: 'dispatch',
+        ticket: ticket.id,
+        title: ticket.title,
+        n,
+        ...Option.match(limit, {
+          onNone: () => ({}),
+          onSome: most => ({ limit: most }),
+        }),
+        ...Option.match(project.model, {
+          onNone: () => ({}),
+          onSome: choice => ({ model: `${choice.provider}/${choice.model}` }),
+        }),
+        text: dispatchingLine({
+          n,
+          limit,
+          ticket: ticket.id,
+          title: ticket.title,
+          solo: false,
+        }),
+        queued,
+      })
+      const session = yield* drawSession
+      yield* FiberSet.run(
+        workers,
+        supervision
+          .watch(ticket.id, dispatchWorker(context, ticket.id, session))
+          .pipe(
+            Effect.flatMap(end =>
+              Effect.uninterruptible(workerEnded(ticket.id, end)),
+            ),
+            Effect.catchCause(cause =>
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.void
+                : stop('PANIC', `${ticket.id}: ${Cause.pretty(cause)}`),
+            ),
+          ),
+      )
+    })
+
+  /** One look: the ready set where its reasons can have moved it, the free slots filled; whether the run ends. */
+  let ready: ReadonlyArray<Ticket> = []
+  const look = (reasons: ReadonlyArray<WakeReason>) =>
+    Effect.gen(function* () {
+      if (readsReady(reasons)) ready = yield* readReady(yield* state.current)
+      if (reasons.some(reason => WakeReason.$is('Started')(reason)))
+        yield* record(log, {
+          kind: 'info',
+          text: `start: the backlog: ${ready.length === 1 ? '1 ticket' : `${ready.length} tickets`} ready`,
+        })
+      const before = yield* state.current
+      const candidates = ready.filter(ticket => dispatchable(before, ticket.id))
+      for (const ticket of candidates) {
+        const entered = yield* state.enter({
+          ticket: ticket.id,
+          title: ticket.title,
+        })
+        const taken = before.tickets.get(ticket.id)
+        if (!entered && taken !== undefined && taken.phase._tag === 'waiting')
+          yield* state.move({
+            ticket: ticket.id,
+            to: Phase.cases.queued.make({}),
+            cause: 'ready again',
+          })
+      }
+      const gated = yield* gateReady({ ready: candidates, snapshot: before })
+      const may = yield* mayTake(before)
+      let free = project.concurrent - slotsTaken(before)
+      const dispatched = new Set<TicketId>()
+      if (MayTake.$is('Yes')(may))
+        for (const ticket of gated.take) {
+          if (free <= 0) break
+          const n = yield* state.dispatch({
+            ticket: ticket.id,
+            title: ticket.title,
+            limit,
+          })
+          if (Option.isNone(n)) continue
+          dispatched.add(ticket.id)
+          free -= 1
+          yield* dispatchOne(
+            ticket,
+            n.value,
+            candidates.length - dispatched.size,
+          )
+        }
+      // Dispatched tickets leave the ready set the look keeps: they are the run's now.
+      ready = ready.filter(ticket => !dispatched.has(ticket.id))
+      const after = yield* state.current
+      if (inProgress(after).length > 0) return Option.none<Ending>()
+      const limitReached = Option.exists(
+        limit,
+        most => after.dispatched >= most,
+      )
+      return Option.some(
+        Ending.Done({ kind: limitReached ? 'LIMIT_REACHED' : 'READY_EMPTY' }),
+      )
+    })
+
+  yield* mergeUpdates.pipe(Stream.runForEach(mergeUpdated), Effect.forkScoped)
+  yield* graphChanges.pipe(
+    Stream.runForEach(event =>
+      Option.exists(
+        event.actor,
+        by => by._tag === 'engine' && by.engine === config.engine,
+      )
+        ? Effect.void
+        : wakes.wake(WakeReason.TicketsChanged()),
+    ),
+    Effect.catch(error => Effect.logWarning(error.message)),
+    Effect.forkScoped,
+  )
+  yield* wakes.wake(WakeReason.Started())
+
+  let ending = Option.none<Ending>()
+  while (Option.isNone(ending)) {
+    const reasons = yield* wakes.next
+    const stopped = reasons.find(reason => WakeReason.$is('Stopped')(reason))
+    ending =
+      stopped !== undefined && WakeReason.$is('Stopped')(stopped)
+        ? Option.some(
+            Ending.Stop({
+              kind: stopped.kind,
+              ticket: stopped.ticket,
+              detail: stopped.detail,
+            }),
+          )
+        : yield* look(reasons).pipe(
+            // The work graph couldn't be read: the run stops (§13.11).
+            Effect.catchTag('StoreFailed', error =>
+              Effect.succeed(
+                Option.some(
+                  Ending.Stop({
+                    kind: 'TRACKER_FAILED',
+                    ticket: Option.none(),
+                    detail: error.message,
+                  }),
+                ),
+              ),
+            ),
+          )
+  }
+  return yield* endRun({
+    ending: ending.value,
+    state,
+    supervision,
+    workers,
+    mergeScope,
+    merges,
+    log,
+  })
+})
+
+/**
+ * The end, in order (§13.9): no further dispatch, every ticket's supervision stopped first, then
+ * every worker interrupted at once (their sessions closing side by side, the end waiting for the
+ * slowest), the merge queue stopped, the end's steps, the end line and what is left, each ticket's
+ * `ticket_end`, and the `end` record with its exit code.
+ */
+const endRun = Effect.fn('Run.end')(function* (input: {
+  readonly ending: Ending
+  readonly state: RunStateShape
+  readonly supervision: { readonly stop: Effect.Effect<void> }
+  readonly workers: FiberSet.FiberSet<void>
+  readonly mergeScope: Scope.Closeable
+  readonly merges: MergeQueueShape
+  readonly log: RunLog['Service']
+}) {
+  const { ending, state, log } = input
+  yield* state.end
+  yield* input.supervision.stop
+  yield* FiberSet.clear(input.workers)
+  yield* Scope.close(input.mergeScope, Exit.void)
+  const left = yield* state.current
+  yield* Effect.forEach(
+    inProgress(left),
+    taken =>
+      state.move({
+        ticket: taken.ticket,
+        to: Phase.cases.stopped.make({}),
+        cause: 'the run ended',
+      }),
+    { discard: true },
+  )
+  const kind: EndKind = ending.kind
+  yield* endSteps({
+    kind,
+    merged: inPhase(left, 'merged').length,
+  })
+  const asked = inPhase(left, 'asked').flatMap(taken =>
+    taken.phase._tag === 'asked'
+      ? [
+          `QUESTIONS_WAITING: ${taken.ticket} waits on the question ${taken.phase.question}`,
+        ]
+      : [],
+  )
+  yield* Ending.$match(ending, {
+    Done: ({ kind: done }) =>
+      record(
+        log,
+        {
+          kind: 'done',
+          detail: done,
+          text: `${done} after ${left.dispatched} ${left.dispatched === 1 ? 'ticket' : 'tickets'}`,
+        },
+        asked,
+      ),
+    Stop: ({ kind: stopped, ticket, detail }) =>
+      record(
+        log,
+        {
+          kind: 'stop',
+          detail: stopped,
+          ...Option.match(ticket, {
+            onNone: () => ({}),
+            onSome: id => ({ ticket: id }),
+          }),
+          text: `${stopped}: ${detail}`,
+        },
+        asked,
+      ),
+  })
+  yield* state.endLeft
+  const code = exitCodeOf(kind)
+  yield* record(log, { kind: 'end', code })
+  return { kind, code } satisfies RunEnd
+})
