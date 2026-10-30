@@ -9,7 +9,7 @@ import {
 } from 'effect'
 import type { RpcClientError } from 'effect/rpc'
 import { Command, type Update } from 'foldkit'
-import type { Html, HtmlBuilder } from 'foldkit/html'
+import type { Attribute, Html, HtmlBuilder } from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
 import { defineTaggedUnion } from 'foldkit/schema'
 import { modifyFields } from 'foldkit/struct'
@@ -66,7 +66,9 @@ import { type Chip, chipView } from './sidebar'
 // why. Your task (`c2`): a maintainer task, done when the maintainer closes it. "Open session" opens
 // the worker view. Keys 1–9 answer the question whose options are drawn, only that one, and only 500 ms
 // after they were first drawn: a guard that starts again whenever the request they would answer changes,
-// counted on the injected clock (§15.1, H88; tutti-14o5). Every answer carries its request's ID, and
+// counted on the injected clock (§15.1, H88; tutti-14o5). The approval keys answer the column's first
+// permission request as its buttons do, only while they are drawn, behind a guard of their own that
+// starts again whenever that request changes (§18.5, H62). Every answer carries its request's ID, and
 // goes to the engine the request is open on (engine-route.ts): under All projects the column holds
 // every connected engine's requests, each card with its engine.
 // A Submodel: the root folds its Messages, keeps its open request in step with the stream, and gives it
@@ -118,6 +120,8 @@ export type Sending = typeof Sending.Type
 export const Model = Schema.Struct({
   open: Open,
   guard: Guard,
+  /** The approval keys' guard, for the column's first permission request: off while there is none. */
+  approvalGuard: Guard,
   /** How many times options have been drawn: each drawing's guard is its own. */
   drawings: Schema.Int,
   sending: Sending,
@@ -127,6 +131,7 @@ export type Model = typeof Model.Type
 export const init = (): Model => ({
   open: Open.None(),
   guard: Guard.Off(),
+  approvalGuard: Guard.Off(),
   drawings: 0,
   sending: Sending.None(),
 })
@@ -137,7 +142,7 @@ export const Message = defineMessageUnion({
   ChoseOption: { key: Schema.String, index: Schema.Int },
   TypedAnswer: { key: Schema.String, text: Schema.String },
   SubmittedAnswer: { key: Schema.String },
-  /** The guard's time has gone by for one drawing of a request's options. */
+  /** The guard's time has gone by for one drawing of a request's options, or of the keyed permission request. */
   PassedGuard: { drawing: Schema.Int },
   ClickedTalkItThrough: { project: EngineProject, ticket: TicketId },
 
@@ -293,14 +298,18 @@ export const preselected = (request: AttentionRequest): Option.Option<number> =>
     ? Option.map(request.choices, choices => choices.recommended)
     : Option.none()
 
+/** The request a guard keeps, with the engine it is open on: none while it is off. */
+const guardedRequest = (guard: Guard): Option.Option<EngineRequest> =>
+  Guard.match(guard, {
+    Off: (): Option.Option<EngineRequest> => Option.none(),
+    Waiting: ({ engine, request }) => Option.some({ engine, request }),
+    Passed: ({ engine, request }) => Option.some({ engine, request }),
+  })
+
 /** The request whose options are drawn, if any: what keys 1–9 would answer. */
 export const drawnRequest = (model: Model): Option.Option<AttentionRequest> =>
   Open.guards.Answering(model.open)
-    ? Guard.match(model.guard, {
-        Off: () => Option.none(),
-        Waiting: ({ request }) => Option.some(request),
-        Passed: ({ request }) => Option.some(request),
-      })
+    ? Option.map(guardedRequest(model.guard), ({ request }) => request)
     : Option.none()
 
 /** The options keys 1–9 answer, in the order drawn, with the request's key: none while no options are drawn. */
@@ -318,6 +327,86 @@ export const keyedOptions = (
         }))
       : Option.none(),
   )
+
+/** The answers the approval keys give, as the Approval card's buttons do: allow once, allow for this run, refuse. */
+export const ApprovalKey = Schema.Literals([
+  'allow_once',
+  'allow_run',
+  'refuse',
+])
+export type ApprovalKey = typeof ApprovalKey.Type
+
+type Permission = Extract<AttentionRequest, { readonly _tag: 'permission' }>
+
+/** The permission request the approval keys answer, with its engine and key. */
+export interface KeyedApproval {
+  readonly key: string
+  readonly engine: string
+  readonly request: Permission
+}
+
+/**
+ * The permission request the approval keys answer: the column's first, while its buttons are drawn
+ * (not while its refusal's note is open in their place); none while the column has no permission request.
+ */
+export const keyedApproval = (model: Model): Option.Option<KeyedApproval> =>
+  Option.flatMap(guardedRequest(model.approvalGuard), ({ engine, request }) =>
+    AttentionRequest.guards.permission(request) &&
+    !(
+      Open.guards.Refusing(model.open) &&
+      model.open.key === attentionKey(request)
+    )
+      ? Option.some({ key: attentionKey(request), engine, request })
+      : Option.none(),
+  )
+
+const permissionAnswer = (
+  request: Permission,
+  decision: PermissionDecision,
+): AttentionAnswer =>
+  AttentionAnswer.cases.permission.make({
+    project: request.project,
+    id: request.id,
+    decision,
+  })
+
+/** What each approval key does: the click on the card's button it stands for. */
+const approvalClicks: Record<ApprovalKey, (shown: KeyedApproval) => Message> = {
+  allow_once: ({ key, engine, request }) =>
+    Message.ClickedApprove({
+      key,
+      engine,
+      answer: permissionAnswer(
+        request,
+        PermissionDecision.cases.allow_once.make({}),
+      ),
+    }),
+  allow_run: ({ key, engine, request }) =>
+    Message.ClickedAllowForRun({
+      key,
+      engine,
+      answer: permissionAnswer(
+        request,
+        PermissionDecision.cases.allow_run.make({}),
+      ),
+    }),
+  refuse: ({ key }) => Message.ClickedRefuse({ key }),
+}
+
+/**
+ * An approval key pressed for the permission request `key`: its button's click, for only the request
+ * the keys answer, only while its buttons are drawn, and only once its guard has passed (§15.1, H62).
+ */
+export const approvalKeyMessage = (
+  model: Model,
+  { key, decision }: { readonly key: string; readonly decision: ApprovalKey },
+): Option.Option<Message> =>
+  Guard.guards.Passed(model.approvalGuard)
+    ? Option.map(
+        Option.filter(keyedApproval(model), shown => shown.key === key),
+        approvalClicks[decision],
+      )
+    : Option.none()
 
 // The update.
 
@@ -342,6 +431,27 @@ const drawing = (model: Model, { engine, request }: EngineRequest): Kept => {
     commands: [WaitGuard({ drawing: next })],
   }
 }
+
+/** The approval keys' guard started afresh for the permission request `request`, the column's first now. */
+const drawingApproval = (
+  model: Model,
+  { engine, request }: EngineRequest,
+): Kept => {
+  const next = model.drawings + 1
+  return {
+    model: modifyFields(model, {
+      approvalGuard: () => Guard.Waiting({ engine, request, drawing: next }),
+      drawings: () => next,
+    }),
+    commands: [WaitGuard({ drawing: next })],
+  }
+}
+
+/** A guard passed, if it waits for the drawing `drawing`. */
+const passedGuard = (guard: Guard, drawing: number): Guard =>
+  Guard.guards.Waiting(guard) && guard.drawing === drawing
+    ? Guard.Passed({ engine: guard.engine, request: guard.request })
+    : guard
 
 const closed = (model: Model): Model =>
   modifyFields(model, {
@@ -385,11 +495,7 @@ const drawnWithKey = (
 ): Option.Option<EngineRequest> =>
   Open.guards.Answering(model.open)
     ? Option.filter(
-        Guard.match(model.guard, {
-          Off: (): Option.Option<EngineRequest> => Option.none(),
-          Waiting: ({ engine, request }) => Option.some({ engine, request }),
-          Passed: ({ engine, request }) => Option.some({ engine, request }),
-        }),
+        guardedRequest(model.guard),
         ({ request }) => attentionKey(request) === key,
       )
     : Option.none()
@@ -466,21 +572,12 @@ export const update = (model: Model, message: Message): Return =>
           ),
       })
     },
-    PassedGuard: ({ drawing }) => {
-      const { guard } = model
-      return {
-        model:
-          Guard.guards.Waiting(guard) && guard.drawing === drawing
-            ? modifyFields(model, {
-                guard: () =>
-                  Guard.Passed({
-                    engine: guard.engine,
-                    request: guard.request,
-                  }),
-              })
-            : model,
-      }
-    },
+    PassedGuard: ({ drawing }) => ({
+      model: modifyFields(model, {
+        guard: guard => passedGuard(guard, drawing),
+        approvalGuard: guard => passedGuard(guard, drawing),
+      }),
+    }),
     ClickedTalkItThrough: ({ project, ticket }) => ({
       model,
       outMessage: OutMessage.OpenedAnswerTalk({ project, ticket }),
@@ -554,7 +651,17 @@ export const update = (model: Model, message: Message): Return =>
     SucceededAnswer: ({ key }) => ({
       model: modifyFields(
         Option.isSome(drawnWithKey(model, key)) ? closed(model) : model,
-        { sending: () => Sending.None() },
+        {
+          sending: () => Sending.None(),
+          // The keys answer a request once: an answered one's are off until the column's next.
+          approvalGuard: guard =>
+            Option.exists(
+              guardedRequest(guard),
+              ({ request }) => attentionKey(request) === key,
+            )
+              ? Guard.Off()
+              : guard,
+        },
       ),
     }),
     FailedAnswer: ({ key, reason }) => ({
@@ -611,13 +718,54 @@ const openKey = (open: Open): Option.Option<string> =>
  * options whose request changed are drawn afresh, their guard started again and their choice made
  * again from the new request (none while the maintainer's own words are typed), so an option chosen
  * before can't stand for another (§15.1, tutti-14o5). A drawn request is the one of its key on its own
- * engine.
+ * engine. The approval keys follow the column's first permission request, as `keptApproval` keeps them.
  */
 export const receivedRequests = (
   model: Model,
   engines: ReadonlyArray<EngineAttention>,
 ): Kept => {
   const listed = engineRequests(engines)
+  const kept = keptOpen(model, listed)
+  const approval = keptApproval(kept.model, listed)
+  return {
+    model: approval.model,
+    commands: [...(kept.commands ?? []), ...(approval.commands ?? [])],
+  }
+}
+
+/**
+ * The approval keys kept on the column's first permission request: their guard starts again whenever
+ * that request changes (another, or the same one changed), and is off while the column has none (H62).
+ */
+const keptApproval = (
+  model: Model,
+  listed: ReadonlyArray<EngineRequest>,
+): Kept => {
+  const guarded = guardedRequest(model.approvalGuard)
+  return Option.match(
+    Array.findFirst(listed, ({ request }) =>
+      AttentionRequest.guards.permission(request),
+    ),
+    {
+      onNone: () => ({
+        model: Option.isNone(guarded)
+          ? model
+          : modifyFields(model, { approvalGuard: () => Guard.Off() }),
+      }),
+      onSome: shown =>
+        Option.exists(
+          guarded,
+          ({ engine, request }) =>
+            engine === shown.engine && sameRequest(request, shown.request),
+        )
+          ? { model }
+          : drawingApproval(model, shown),
+    },
+  )
+}
+
+/** What a card has open, kept in step with the requests listed. */
+const keptOpen = (model: Model, listed: ReadonlyArray<EngineRequest>): Kept => {
   const open = openKey(model.open)
   if (
     Option.isSome(open) &&
@@ -733,6 +881,8 @@ export interface ViewInputs {
   readonly live: boolean
   /** The chip a request's card carries for its project: none in a project's own scope (§18.3). */
   readonly chip: (project: EngineProject) => Option.Option<Chip>
+  /** The approval keys as the platform writes them, drawn on the keyed permission request's buttons. */
+  readonly approvalKeys: Readonly<Record<ApprovalKey, string>>
 }
 
 const primaryButton =
@@ -909,22 +1059,37 @@ const actions = (
 ): Html =>
   h.div([h.Class('relative flex flex-wrap items-center gap-8')], children)
 
-type Permission = Extract<AttentionRequest, { readonly _tag: 'permission' }>
 type Question = Extract<AttentionRequest, { readonly _tag: 'question' }>
 
-const permissionAnswer = (
-  request: Permission,
-  decision: PermissionDecision,
-): AttentionAnswer =>
-  AttentionAnswer.cases.permission.make({
-    project: request.project,
-    id: request.id,
-    decision,
+const keyCap = (label: string, h: HtmlBuilder<Message>): Html =>
+  h.kbd(
+    [h.Class('rounded-button border border-line px-4 font-mono text-xs')],
+    [label],
+  )
+
+/** A button's key, where the approval keys answer its card: its cap, and the shortcut named for it. */
+interface ButtonKey {
+  readonly cap: Html
+  readonly shortcut: ReadonlyArray<Attribute<Message>>
+}
+
+const buttonKey = (
+  keys: Option.Option<Readonly<Record<ApprovalKey, string>>>,
+  decision: ApprovalKey,
+  h: HtmlBuilder<Message>,
+): ButtonKey =>
+  Option.match(keys, {
+    onNone: () => ({ cap: h.empty, shortcut: [] }),
+    onSome: labels => ({
+      cap: keyCap(labels[decision], h),
+      shortcut: [h.AriaKeyshortcuts(labels[decision])],
+    }),
   })
 
 const decisionMenu = (
   { key, engine }: { readonly key: string; readonly engine: string },
   request: Permission,
+  keys: Option.Option<Readonly<Record<ApprovalKey, string>>>,
   h: HtmlBuilder<Message>,
 ): Html =>
   h.ul(
@@ -954,9 +1119,12 @@ const decisionMenu = (
                   ),
                 }),
               ),
-              h.Class('w-full px-12 py-4 text-left text-sm hover:bg-bg'),
+              ...buttonKey(keys, 'allow_run', h).shortcut,
+              h.Class(
+                'flex w-full items-center gap-8 px-12 py-4 text-left text-sm hover:bg-bg',
+              ),
             ],
-            ['Allow for this run'],
+            ['Allow for this run', buttonKey(keys, 'allow_run', h).cap],
           ),
         ],
       ),
@@ -968,9 +1136,12 @@ const decisionMenu = (
               h.Type('button'),
               h.Role('menuitem'),
               h.OnClick(Message.ClickedRefuse({ key })),
-              h.Class('w-full px-12 py-4 text-left text-sm hover:bg-bg'),
+              ...buttonKey(keys, 'refuse', h).shortcut,
+              h.Class(
+                'flex w-full items-center gap-8 px-12 py-4 text-left text-sm hover:bg-bg',
+              ),
             ],
-            ['Refuse…'],
+            ['Refuse…', buttonKey(keys, 'refuse', h).cap],
           ),
         ],
       ),
@@ -1000,6 +1171,7 @@ const refusalForm = (
         h.Type('text'),
         h.AriaLabel('Note'),
         h.Placeholder('Why, for the worker (optional)'),
+        h.Autofocus(true),
         h.Value(note),
         h.OnInput(note => Message.TypedRefusalNote({ key, note })),
         h.Class(
@@ -1037,6 +1209,13 @@ const approvalBody = (
   const busy = !inputs.live || isPending(model)
   const menuOpen =
     Open.guards.ChoosingDecision(model.open) && model.open.key === key
+  // The approval keys answer this card's request only where it is the one keyed: its buttons say so.
+  const keys = Option.exists(
+    keyedApproval(model),
+    keyed => keyed.key === key && keyed.engine === engine,
+  )
+    ? Option.some(inputs.approvalKeys)
+    : Option.none()
   return [
     title(`Allow ${request.tool}?`, h),
     reason(request.why, h),
@@ -1059,9 +1238,10 @@ const approvalBody = (
                     ),
                   }),
                 ),
-                h.Class(primaryButton),
+                ...buttonKey(keys, 'allow_once', h).shortcut,
+                h.Class(`${primaryButton} flex items-center gap-8`),
               ],
-              ['Approve'],
+              ['Approve', buttonKey(keys, 'allow_once', h).cap],
             ),
             h.button(
               [
@@ -1076,19 +1256,15 @@ const approvalBody = (
               ['▾'],
             ),
             openSession(engine, request, h),
-            menuOpen ? decisionMenu({ key, engine }, request, h) : h.empty,
+            menuOpen
+              ? decisionMenu({ key, engine }, request, keys, h)
+              : h.empty,
           ],
           h,
         ),
     failure(model, key, h),
   ]
 }
-
-const keyCap = (label: string, h: HtmlBuilder<Message>): Html =>
-  h.kbd(
-    [h.Class('rounded-button border border-line px-4 font-mono text-xs')],
-    [label],
-  )
 
 const optionsPanel = (
   model: Model,

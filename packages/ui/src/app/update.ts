@@ -343,6 +343,7 @@ export const modelCommands = (model: Model) =>
     overlayOpen: isOverlayOpen(model),
     paletteOpen: Overlay.guards.Palette(model.overlay),
     options: Attention.keyedOptions(model.console.attention),
+    approval: Attention.keyedApproval(model.console.attention),
     offers: runOffers(model),
   })
 
@@ -366,6 +367,7 @@ export const paletteEntries = (
       screen: model.screen,
       overlayOpen: false,
       options: Attention.keyedOptions(model.console.attention),
+      approval: Attention.keyedApproval(model.console.attention),
       offers: runOffers(model),
     }),
   ).map((command): Palette.Entry<Message> => ({
@@ -1303,6 +1305,17 @@ const receive = (model: Model, message: Message): Return =>
     GotStatsMessage: ({ message }) => foldStats(model, message),
     GotAttentionMessage: ({ message }) => foldAttention(model, message),
     PressedAnswerKey: ({ key, place }) => foldAnswerKey(model, { key, place }),
+    PressedApprovalKey: ({ key, decision }) =>
+      Option.match(
+        Attention.approvalKeyMessage(model.console.attention, {
+          key,
+          decision,
+        }),
+        {
+          onNone: () => ({ model }),
+          onSome: message => foldAttention(model, message),
+        },
+      ),
     GotTalkPanelMessage: ({ message }) =>
       stepTalkPanel(model, talkPanel =>
         TalkPanel.update(talkPanel, message, {

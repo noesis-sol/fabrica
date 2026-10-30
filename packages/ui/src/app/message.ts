@@ -182,6 +182,8 @@ export const Message = defineMessageUnion({
   GotAttentionMessage: { message: Attention.Message },
   /** A key 1–9 for the option at `place` (from 0) of the attention request `key`'s drawn options. */
   PressedAnswerKey: { key: Schema.String, place: Schema.Int },
+  /** An approval key for the attention request `key`, the permission request the column keys. */
+  PressedApprovalKey: { key: Schema.String, decision: Attention.ApprovalKey },
   /** A Message of the console's talk panel. */
   GotTalkPanelMessage: { message: TalkPanel.Message },
   /** A Message of the Talks screen's. */

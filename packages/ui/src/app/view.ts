@@ -35,6 +35,7 @@ import { dialog } from './dialog'
 import { type EngineProject, sameProject } from './engine-project'
 import {
   type KeyCommand,
+  approvalKeyLabels,
   hints,
   keyHelp,
   keyLabel,
@@ -259,6 +260,7 @@ const attentionPart = (
   live: boolean,
   scope: Model['scope'],
   sidebar: Sidebar.Model,
+  platform: Platform,
   h: HtmlBuilder<Message>,
 ): Html =>
   h.submodel({
@@ -274,6 +276,7 @@ const attentionPart = (
         Option.isNone(scope)
           ? Sidebar.projectChip(sidebar, project)
           : Option.none(),
+      approvalKeys: approvalKeyLabels(platform),
     },
     toParentMessage: message => Message.GotAttentionMessage({ message }),
   })
@@ -459,6 +462,7 @@ const consoleView = (model: Model, h: HtmlBuilder<Message>): Html => {
                     isLive(model.connection),
                     model.scope,
                     parts.sidebar,
+                    model.platform,
                     h,
                   ]),
                 ],

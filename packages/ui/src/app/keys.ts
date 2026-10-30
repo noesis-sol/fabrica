@@ -107,6 +107,47 @@ const answerKeys = (options: KeyedOptions): ReadonlyArray<KeyCommand> =>
       })),
   })
 
+/** The keys that answer the column's keyed permission request, each as its card's button (§18.5, H62). */
+export const approvalChords: Readonly<Record<Attention.ApprovalKey, Chord>> = {
+  allow_once: { key: 'y', mod: false },
+  allow_run: { key: 'w', mod: false },
+  refuse: { key: 'n', mod: false },
+}
+
+const approvalTitles: Readonly<Record<Attention.ApprovalKey, string>> = {
+  allow_once: 'Approve',
+  allow_run: 'Allow for this run',
+  refuse: 'Refuse',
+}
+
+/** The approval keys as the platform writes them, for the keyed card's buttons. */
+export const approvalKeyLabels = (
+  platform: Platform,
+): Readonly<Record<Attention.ApprovalKey, string>> => ({
+  allow_once: chordLabel(approvalChords.allow_once, platform),
+  allow_run: chordLabel(approvalChords.allow_run, platform),
+  refuse: chordLabel(approvalChords.refuse, platform),
+})
+
+/**
+ * Approve, allow for this run and refuse, for the permission request the column keys while its buttons
+ * are drawn; the column guards them as it does keys 1–9 (§15.1, §18.5, H62).
+ */
+const approvalKeys = (
+  approval: Option.Option<Attention.KeyedApproval>,
+): ReadonlyArray<KeyCommand> =>
+  Option.match(approval, {
+    onNone: () => [],
+    onSome: ({ key, request }) =>
+      Attention.ApprovalKey.literals.map(decision => ({
+        id: `approval.${decision}`,
+        title: `${approvalTitles[decision]}: ${request.tool}`,
+        chord: Option.some(approvalChords[decision]),
+        hint: false,
+        message: Message.PressedApprovalKey({ key, decision }),
+      })),
+  })
+
 /** The answer talk, opened in the talk panel by the maintainer's key (§15.3, §18.5). */
 const answerTalk: KeyCommand = {
   id: 'talk.answer',
@@ -189,10 +230,16 @@ const workerKeys: ReadonlyArray<KeyCommand> = (
 const ofScreen = (
   screen: Screen,
   options: KeyedOptions,
+  approval: Option.Option<Attention.KeyedApproval>,
   offers: ReadonlyArray<Stats.Offer>,
 ): ReadonlyArray<KeyCommand> =>
   Screen.match(screen, {
-    Console: () => [...answerKeys(options), answerTalk, ...runKeys(offers)],
+    Console: () => [
+      ...answerKeys(options),
+      ...approvalKeys(approval),
+      answerTalk,
+      ...runKeys(offers),
+    ],
     Worker: () => [...workerKeys, backToConsole],
     Talks: () => [backToConsole],
     Backlog: () => [backToConsole],
@@ -249,6 +296,8 @@ export const commandsFor = (options: {
   readonly paletteOpen?: boolean
   /** The attention column's drawn options, which keys 1–9 answer while no overlay covers them. */
   readonly options?: KeyedOptions
+  /** The permission request the approval keys answer while no overlay covers it (`Attention.keyedApproval`). */
+  readonly approval?: Option.Option<Attention.KeyedApproval>
   /** The run controls the console's stats row offers now (`Stats.offers`). */
   readonly offers?: ReadonlyArray<Stats.Offer>
 }): ReadonlyArray<KeyCommand> => [
@@ -257,6 +306,7 @@ export const commandsFor = (options: {
   ...ofScreen(
     options.screen,
     options.overlayOpen ? Option.none() : (options.options ?? Option.none()),
+    options.overlayOpen ? Option.none() : (options.approval ?? Option.none()),
     options.offers ?? [],
   ),
   ...everywhere,
