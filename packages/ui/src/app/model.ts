@@ -35,7 +35,7 @@ import * as Notify from './notify'
 import * as RemoteEngines from './remote-engines'
 import { Screen } from './screen'
 import * as SshPrompts from './ssh-prompts'
-import { ProjectEvents } from './streams'
+import { EngineAttention, ProjectEvents } from './streams'
 
 // The root Model (spec §18.1): the screen shown and any overlay over it, the scope the sidebar chose,
 // the connection, the known engines on other hosts with theirs (§9.1), each stream's latest value, and
@@ -108,8 +108,13 @@ export const Model = Schema.Struct({
    * scoped project's run's, or under All projects every project's run going (§18.3).
    */
   events: Schema.Array(ProjectEvents),
-  /** The scope's open attention requests. */
+  /**
+   * The scope's open attention requests, every engine's joined oldest first (`joinedAttention`): under
+   * All projects every connected engine's, else the scoped project's engine's.
+   */
   attention: Schema.Option(Schema.Array(AttentionRequest)),
+  /** Each engine's open attention requests, kept apart: an engine is missing until its first snapshot. */
+  engineAttention: Schema.Array(EngineAttention),
   /** The request a clicked notification focused, which the attention column shows focused (§18.5). */
   focusedRequest: Schema.Option(AttentionRef),
   /** What the app's notifications have been told of (§18.5). */
@@ -148,6 +153,7 @@ export const initialModel = (flags: Flags): Model => ({
   runView: Option.none(),
   events: [],
   attention: Option.none(),
+  engineAttention: [],
   focusedRequest: Option.none(),
   notify: Notify.init(),
   backlog: Option.none(),

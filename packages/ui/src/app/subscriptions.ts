@@ -54,14 +54,15 @@ import { watchOf } from './streams'
 
 // The streams the app listens to (spec §18.1, §18.5): the keys, the engine ports that replace the
 // connection's, the client's link, and the engine's streams, each subscribed only while a part that
-// draws it is shown: the run view and attention for the console's scope, History's events (under All
-// projects, every project's run going), the backlog while its screen is open, the host's load while
-// connected. Each project's streams go through the engine whose sidebar row holds it, while that
-// engine is connected (engine-route.ts), and the load is the scoped project's engine's. Each stream's
-// items go on once per animation frame, so a burst of patches costs one update. The scope's run talk is
-// opened as the scope changes, and every talk the app holds has its transcript watched. For the app's
-// notifications (§18.5), every connected engine's attention requests and the events of each run going,
-// and the clicks on the notifications shown; and what ssh asks as the app connects (§9.1).
+// draws it is shown: the run view and attention for the console's scope (under All projects, every
+// connected engine's attention), History's events (under All projects, every project's run going), the
+// backlog while its screen is open, the host's load while connected. Each project's streams go through
+// the engine whose sidebar row holds it, while that engine is connected (engine-route.ts), and the
+// load is the scoped project's engine's. Each stream's items go on once per animation frame, so a
+// burst of patches costs one update. The scope's run talk is opened as the scope changes, and every
+// talk the app holds has its transcript watched. For the app's notifications (§18.5), every connected
+// engine's attention requests and the events of each run going, and the clicks on the notifications
+// shown; and what ssh asks as the app connects (§9.1).
 
 /** What the subscriptions need from their host, injected so tests drive them. */
 export interface SubscriptionEnvironment {
@@ -150,17 +151,20 @@ export const eventMessages = (
     Stream.catch(() => Stream.empty),
   )
 
-/** The open attention requests, of one project or every one. */
+/** The open attention requests on the engine named `engine`, of one project or every one. */
 export const attentionMessages = (
   client: EngineClientShape,
-  project: Option.Option<ProjectId>,
+  {
+    engine,
+    project,
+  }: { readonly engine: string; readonly project: Option.Option<ProjectId> },
   nextFrame: Effect.Effect<void>,
 ): Stream.Stream<Message> =>
   watchOf<ReadonlyArray<AttentionRequest>, typeof AttentionPatch.Type>(client)(
     resume => client.rpc['attention.watch']({ project, resume }),
   ).pipe(
     perFrame(nextFrame),
-    Stream.map(items => Message.ReceivedAttention({ items })),
+    Stream.map(items => Message.ReceivedAttention({ engine, items })),
     Stream.catch(() => Stream.empty),
   )
 
@@ -329,6 +333,19 @@ const historyRuns = (model: Model): ReadonlyArray<typeof EngineRun.Type> =>
     }),
   )
 
+/**
+ * The engines whose attention requests the console shows: the scoped project's, or under All projects
+ * every one connected now.
+ */
+const attentionEngines = (model: Model): ReadonlyArray<string> =>
+  Option.match(model.scope, {
+    onSome: () => {
+      const engine = scopeEngine(model.console.sidebar, model.scope)
+      return RemoteEngines.isEngineLive(model, engine) ? [engine] : []
+    },
+    onNone: () => RemoteEngines.liveEngines(model),
+  })
+
 /** What the app says where no app is around the renderer to reach its known engines. */
 export const noAppToReachEngines =
   'only the desktop app reaches engines on other hosts'
@@ -458,28 +475,26 @@ export const makeSubscriptions = ({
           ),
       },
     ),
-    // Under All projects, this machine's engine's requests, until every engine's are joined.
+    // The scoped project's requests on its engine, or under All projects every connected engine's.
     attention: entry(
       {
-        engine: Schema.String,
-        live: Schema.Boolean,
+        engines: Schema.Array(Schema.String),
         project: Schema.Option(ProjectId),
       },
       {
-        modelToDependencies: model => {
-          const engine = scopeEngine(model.console.sidebar, model.scope)
-          return {
-            engine,
-            live: RemoteEngines.isEngineLive(model, engine),
-            project: model.scope,
-          }
-        },
-        dependenciesToStream: ({ engine, live, project }) =>
-          live
-            ? withEngineClient(engine, client =>
-                attentionMessages(client, project, nextFrame),
-              )
-            : Stream.empty,
+        modelToDependencies: model => ({
+          engines: attentionEngines(model),
+          project: model.scope,
+        }),
+        dependenciesToStream: ({ engines, project }) =>
+          Stream.mergeAll(
+            engines.map(engine =>
+              withEngineClient(engine, client =>
+                attentionMessages(client, { engine, project }, nextFrame),
+              ),
+            ),
+            { concurrency: 'unbounded' },
+          ),
       },
     ),
     backlog: entry(

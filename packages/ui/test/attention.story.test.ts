@@ -36,7 +36,7 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { Screen } from '../src/app/screen'
@@ -205,7 +205,10 @@ const snapshotOf = (
 })
 
 const received = (requests: ReadonlyArray<AttentionRequest>) =>
-  Message.ReceivedAttention({ items: [snapshotOf(requests)] })
+  Message.ReceivedAttention({
+    engine: localEngineName,
+    items: [snapshotOf(requests)],
+  })
 
 const attentionMessage = (child: Attention.Message) =>
   Message.GotAttentionMessage({ message: child })

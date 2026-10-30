@@ -186,6 +186,7 @@ const question = (project: ProjectId, ticket: string): AttentionRequest =>
 
 const attention = (...requests: ReadonlyArray<AttentionRequest>): Message =>
   Message.ReceivedAttention({
+    engine: localEngineName,
     items: [
       {
         _tag: 'snapshot',

@@ -38,11 +38,12 @@ import * as RemoteEngines from './remote-engines'
 import { Screen } from './screen'
 import * as SshPrompts from './ssh-prompts'
 import {
-  applyAttention,
   applyBacklog,
+  applyEngineAttention,
   applyLoad,
   applyProjectEvents,
   applyRunView,
+  joinedAttention,
 } from './streams'
 import { ShowTheme, type ThemeHost } from './theme-host'
 
@@ -708,6 +709,7 @@ export const update = (model: Model, message: Message): Return =>
           runView: () => Option.none(),
           events: () => [],
           attention: () => Option.none(),
+          engineAttention: () => [],
           focusedRequest: () => Option.none(),
           backlog: () => Option.none(),
           usage: () => Option.none(),
@@ -850,6 +852,7 @@ export const update = (model: Model, message: Message): Return =>
           runView: () => Option.none(),
           events: () => [],
           attention: () => Option.none(),
+          engineAttention: () => [],
           backlog: () => Option.none(),
           load: () => Option.none(),
           usage: () => Option.none(),
@@ -1040,9 +1043,23 @@ export const update = (model: Model, message: Message): Return =>
             }),
           }
         : { model },
-    ReceivedAttention: ({ items }) => {
+    ReceivedAttention: ({ engine, items }) => {
+      // A project's scope shows its own engine's requests alone, whatever an engine's stream of the
+      // scope before sends after it.
+      if (
+        Option.isSome(model.scope) &&
+        engine !== scopeEngine(model.console.sidebar, model.scope)
+      ) {
+        return { model }
+      }
+      const engineAttention = applyEngineAttention(
+        model.engineAttention,
+        engine,
+        items,
+      )
       const received = modifyFields(model, {
-        attention: attention => applyAttention(attention, items),
+        engineAttention: () => engineAttention,
+        attention: () => joinedAttention(engineAttention),
       })
       return andThen(foldRequests(received, received.attention), requested =>
         Option.match(requested.attention, {

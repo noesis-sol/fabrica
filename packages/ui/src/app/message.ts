@@ -152,7 +152,8 @@ export const Message = defineMessageUnion({
   /** The pause after the project's run view ended NoRun while its row showed `run` going. */
   WaitedToRewatchRunView: { project: ProjectId, run: RunId },
   ReceivedEvents: { project: ProjectId, items: itemsOf(EventsItem) },
-  ReceivedAttention: { items: itemsOf(AttentionItem) },
+  /** The scope's open attention requests on the engine named `engine`. */
+  ReceivedAttention: { engine: Schema.String, items: itemsOf(AttentionItem) },
   ReceivedBacklog: { project: ProjectId, items: itemsOf(BacklogItem) },
   /** The host's load of the engine named `engine`, the scoped project's. */
   ReceivedLoad: { engine: Schema.String, items: itemsOf(LoadItem) },

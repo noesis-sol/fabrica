@@ -1,4 +1,4 @@
-import { Array, Option, Schema, type Stream } from 'effect'
+import { Array, DateTime, Option, Order, Schema, type Stream } from 'effect'
 import type { RpcClientError } from 'effect/rpc'
 
 import type { EngineClientShape, StreamItem } from '@fabrica/client'
@@ -73,6 +73,62 @@ export const applyAttention = (
   items: Array.NonEmptyReadonlyArray<typeof AttentionItem.Type>,
 ): Option.Option<ReadonlyArray<AttentionRequest>> =>
   applyItems(current, items, applyAttentionPatch)
+
+/** One engine's open attention requests, from its stream's first snapshot. */
+export const EngineAttention = Schema.Struct({
+  engine: Schema.String,
+  requests: Schema.Array(AttentionRequest),
+})
+export type EngineAttention = typeof EngineAttention.Type
+
+/**
+ * The engine named `engine`'s requests with `items` applied (`applyAttention`): its entry takes their
+ * place, or joins the list at its end; a patch before its first snapshot changes nothing, and the
+ * other engines' entries keep their identity.
+ */
+export const applyEngineAttention = (
+  current: ReadonlyArray<EngineAttention>,
+  engine: string,
+  items: Array.NonEmptyReadonlyArray<typeof AttentionItem.Type>,
+): ReadonlyArray<EngineAttention> => {
+  const known = Array.findFirst(current, entry => entry.engine === engine)
+  return Option.match(
+    applyAttention(
+      Option.map(known, entry => entry.requests),
+      items,
+    ),
+    {
+      onNone: () => current,
+      onSome: requests =>
+        Option.isSome(known)
+          ? current.map(entry =>
+              entry.engine === engine ? { engine, requests } : entry,
+            )
+          : [...current, { engine, requests }],
+    },
+  )
+}
+
+const byOpenedAt = Order.mapInput(
+  DateTime.Order,
+  (request: AttentionRequest) => request.openedAt,
+)
+
+/**
+ * Every engine's open requests in one list, oldest first, those opened at once in their engines'
+ * order; none until an engine's first snapshot.
+ */
+export const joinedAttention = (
+  engines: ReadonlyArray<EngineAttention>,
+): Option.Option<ReadonlyArray<AttentionRequest>> =>
+  engines.length === 0
+    ? Option.none()
+    : Option.some(
+        Array.sort(
+          engines.flatMap(entry => entry.requests),
+          byOpenedAt,
+        ),
+      )
 
 const byId = {
   of: (ticket: Ticket) => ticket.id,

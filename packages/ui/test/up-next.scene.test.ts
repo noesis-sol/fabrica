@@ -20,7 +20,7 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { update } from '../src/app/update'
@@ -162,6 +162,7 @@ const withQueue = (
 /** The scope's attention requests as a snapshot of their stream. */
 const receivedAttention = (requests: ReadonlyArray<object>) =>
   Message.ReceivedAttention({
+    engine: localEngineName,
     items: [
       {
         _tag: 'snapshot',
