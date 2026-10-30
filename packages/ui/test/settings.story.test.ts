@@ -122,6 +122,7 @@ const onScreen = (
     withProject,
     settingsMessage(
       Settings.Message.SucceededLoadEngineSettings({
+        engine: localEngineName,
         settings: engineSettings(written.engine),
       }),
     ),
@@ -165,7 +166,7 @@ describe('the settings asked of the engine', () => {
     )
     const opened = Settings.opened(Settings.init(), Option.some(project))
     expect(namesAndArgs(opened.commands)).toStrictEqual([
-      ['LoadEngineSettings', undefined],
+      ['LoadEngineSettings', { engine: localEngineName }],
       ['LoadProjectSettings', { project }],
     ])
   })
@@ -173,7 +174,7 @@ describe('the settings asked of the engine', () => {
   test('with every project in scope, only the engine’s; the screen entered from the root asks for both', () => {
     const everyProject = Settings.opened(Settings.init(), Option.none())
     expect(namesAndArgs(everyProject.commands)).toStrictEqual([
-      ['LoadEngineSettings', undefined],
+      ['LoadEngineSettings', { engine: localEngineName }],
     ])
     const entered = update(
       connected(),
@@ -295,6 +296,7 @@ describe("a setting's source", () => {
       everyProject,
       settingsMessage(
         Settings.Message.FailedLoadEngineSettings({
+          engine: localEngineName,
           reason: 'not connected to the engine',
         }),
       ),

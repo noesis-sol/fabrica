@@ -353,11 +353,17 @@ describe('+ Add project', () => {
   const engineScreenAnswers = [
     [
       Engines.LoadEngineStatus,
-      Engines.Message.FailedLoadStatus({ reason: 'not this test’s' }),
+      Engines.Message.FailedLoadStatus({
+        engine: localEngineName,
+        reason: 'not this test’s',
+      }),
     ],
     [
       Engines.LoadCredentials,
-      Engines.Message.FailedLoadCredentials({ reason: 'not this test’s' }),
+      Engines.Message.FailedLoadCredentials({
+        engine: localEngineName,
+        reason: 'not this test’s',
+      }),
     ],
   ] as const
 

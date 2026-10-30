@@ -152,6 +152,7 @@ describe('routing', () => {
       Command.resolve(
         Settings.LoadEngineSettings,
         Settings.Message.FailedLoadEngineSettings({
+          engine: localEngineName,
           reason: 'not connected to the engine',
         }),
       ),

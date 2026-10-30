@@ -331,6 +331,21 @@ describe('an engine paired over TLS', () => {
           answer: KeepAnswer.cases.Kept.make({}),
         }),
       ),
+      // The screen shown asks the engine just reached for its status and credentials.
+      Command.resolve(
+        Engines.LoadEngineStatus({ engine: 'build-box' }),
+        Engines.Message.FailedLoadStatus({
+          engine: 'build-box',
+          reason: 'not this test’s',
+        }),
+      ),
+      Command.resolve(
+        Engines.LoadCredentials({ engine: 'build-box' }),
+        Engines.Message.FailedLoadCredentials({
+          engine: 'build-box',
+          reason: 'not this test’s',
+        }),
+      ),
     )
   })
 

@@ -20,7 +20,8 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { Screen } from '../src/app/screen'
@@ -33,8 +34,12 @@ import * as Engines from '../src/screens/engines'
 // time, beside words saying what trusting it lets its own files do. The row shows the trust the
 // engine's status stream sends; a refusal says so.
 
-const project = ProjectId.make('p-1')
-const other = ProjectId.make('p-2')
+/** The projects, named with this machine's engine, which holds them. */
+const project: EngineProject = {
+  engine: localEngineName,
+  project: ProjectId.make('p-1'),
+}
+const other: EngineProject = { ...project, project: ProjectId.make('p-2') }
 
 describe('the trust in a project', () => {
   test('changed one project at a time; a failure says so', () => {
@@ -75,9 +80,10 @@ describe('the trust in a project', () => {
       model(shown => {
         expect(shown.trusting).toStrictEqual(Option.none())
         expect(shown.trustProblem).toStrictEqual(
-          Option.some(
-            "Couldn't change the trust in p-1: the engine has no project p-1",
-          ),
+          Option.some({
+            engine: localEngineName,
+            text: "Couldn't change the trust in p-1: the engine has no project p-1",
+          }),
         )
       }),
     )
@@ -138,7 +144,7 @@ describe('the trust on the screen', () => {
       expectScene(within(projects, text(Engines.trustWords))).toExist(),
       expectScene(role('button', { name: 'Trust fabrica' })).toHaveAttr(
         'aria-describedby',
-        'project-trust-words',
+        'project-trust-words-local',
       ),
       click(role('button', { name: 'Trust fabrica' })),
       SceneCommand.expectExact(

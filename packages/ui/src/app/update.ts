@@ -502,6 +502,12 @@ const remoteConnection = (
       RemoteEngines.connectionChanged(remotes, name, connection),
   })
 
+/** The Engines screen asks again for each engine's status and credentials: this machine's and each connected known engine's. */
+const openEngines = (model: Model): Return =>
+  stepEngines(model, engines =>
+    Engines.opened(engines, Engines.shownEngines(model.remotes)),
+  )
+
 /** The Engines screen's own Model changed, and its Commands lifted, by `step`. */
 const stepEngines = (
   model: Model,
@@ -532,7 +538,7 @@ const foldSettings = Update.foldChild({
     Message.GotSettingsMessage({ message }),
 })
 
-/** The Settings screen asks again for the settings it shows: the engine's and the scope's (§18.4). */
+/** The Settings screen asks again for the settings it shows: the scope's and its engine's (§18.4). */
 const openSettings = (model: Model): Return => {
   const stepped = Settings.opened(model.screens.settings, model.scope)
   return {
@@ -615,14 +621,14 @@ const tellBacklog = (
 
 /**
  * Shows `screen`; a screen that wasn't shown already asks what it shows as it opens: the Engines
- * screen, its engine's status and credentials; the Settings screen, its settings; the Insights screen,
+ * screen, its engines' status and credentials; the Settings screen, its settings; the Insights screen,
  * the scope's telemetry; the Review screen, the scope's report, log and diff (§18.4); the Backlog
  * screen starts afresh.
  */
 const enterScreen = (model: Model, screen: Screen): Return => {
   const shown = showScreen(model, screen)
   return Screen.guards.Engines(screen) && !Screen.guards.Engines(model.screen)
-    ? stepEngines(shown, Engines.opened)
+    ? openEngines(shown)
     : Screen.guards.Settings(screen) && !Screen.guards.Settings(model.screen)
       ? openSettings(shown)
       : Screen.guards.Insights(screen) && !Screen.guards.Insights(model.screen)
@@ -638,7 +644,7 @@ const enterScreen = (model: Model, screen: Screen): Return => {
 /** What the screen shown asks again of the engine just reached, or of the scope just chosen. */
 const reopenScreen = (model: Model): Return =>
   Screen.guards.Engines(model.screen)
-    ? stepEngines(model, Engines.opened)
+    ? openEngines(model)
     : Screen.guards.Settings(model.screen)
       ? openSettings(model)
       : Screen.guards.Insights(model.screen)
@@ -794,7 +800,8 @@ const receive = (model: Model, message: Message): Return =>
         model: modifyFields(entered.model, {
           screens: screens =>
             modifyFields(screens, {
-              engines: Engines.openAddProject,
+              engines: engines =>
+                Engines.openAddProject(engines, scopeEngine(model.scope)),
             }),
         }),
       }
@@ -1019,12 +1026,23 @@ const receive = (model: Model, message: Message): Return =>
         name,
         hello: Connection.Up({ engine, release, protocol }),
       })
+      // The screen shown asks again what it shows of the engine just reached: the Engines screen its
+      // status and credentials, another screen its scope's, where the scope is that engine's.
+      const reached = modifyFields(model, { remotes: () => connected.model })
+      const reopened = Screen.guards.Engines(model.screen)
+        ? stepEngines(reached, engines => Engines.opened(engines, [name]))
+        : scopeEngine(model.scope) === name
+          ? reopenScreen(reached)
+          : { model: reached }
       return {
-        model: modifyFields(model, { remotes: () => connected.model }),
-        commands: Option.match(connected.keep, {
-          onNone: () => [],
-          onSome: engine => [RemoteEngines.KeepEngine({ engine })],
-        }),
+        ...reopened,
+        commands: [
+          ...(reopened.commands ?? []),
+          ...Option.match(connected.keep, {
+            onNone: () => [],
+            onSome: engine => [RemoteEngines.KeepEngine({ engine })],
+          }),
+        ],
       }
     },
     LostRemote: ({ name }) => ({

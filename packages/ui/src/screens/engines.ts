@@ -52,7 +52,6 @@ import {
   FolderListing,
   type HostFolder,
   type Platform,
-  ProjectId,
   ProjectInfo,
   ProjectSource,
   type ProjectStatus,
@@ -60,17 +59,26 @@ import {
   Text,
 } from '@fabrica/contracts'
 
-import { Connection, localEngineName } from '../app/connection'
-import { type EngineServices, requestEngine } from '../app/engine-route'
+import { Connection, isLive, localEngineName } from '../app/connection'
+import { EngineProject, sameProject } from '../app/engine-project'
+import {
+  type EngineServices,
+  requestEngine,
+  requestProject,
+} from '../app/engine-route'
 import { AppHost, ServiceInstall } from '../app/host'
 import type * as RemoteEngines from '../app/remote-engines'
 import { type EngineProjects, runLabel } from '../console/sidebar'
 
 // The Engines and projects screen (spec §18.4, §10.1, §20.3): the known engines with their versions
-// and status, each engine's projects, whether the user trusts each (§12.1), Add project, and the
+// and status, each engine's projects, whether the user trusts each (§12.1), Add project, and each
 // engine's credentials, listed by name.
 // The app reaches its local engine through the connection, and each known engine on another host
-// through its own (§9.1), each with its card. Add engine takes an SSH destination and the engine's name
+// through its own (§9.1), each with its card. This machine's engine and each known engine connected
+// are asked for their status and credentials, kept by the engine's name, and each has its projects
+// listed under its name: Add project opened from an engine's list adds the project on that engine,
+// its folders browsed on that engine's host, and a project's trust and setting up go to the engine
+// holding it; a credential is set on the engine the form chooses, and removed from the one listing it. Add engine takes an SSH destination and the engine's name
 // (its host's, where none is given), and has the app check the host (its system, the engine there and
 // its version), then install the app's engine there, or update an older one, only once the user agrees
 // to what the check proposes (§9.2); the engine installed, or found up to date, joins the known engines
@@ -98,6 +106,8 @@ export type SourceKind = typeof SourceKind.Type
 
 /** The add-project form, as typed. */
 export const AddForm = Schema.Struct({
+  /** The name of the engine the project is added on, whose host's folders are browsed. */
+  engine: Schema.String,
   kind: SourceKind,
   path: Schema.String,
   url: Schema.String,
@@ -122,7 +132,7 @@ export type AddFlow = typeof AddFlow.Type
  */
 export const FolderBrowser = defineTaggedUnion({
   Closed: {},
-  Loading: { path: Schema.Option(Text) },
+  Loading: { engine: Schema.String, path: Schema.Option(Text) },
   Shown: { listing: FolderListing },
   Failed: { path: Schema.Option(Text), reason: Schema.String },
 })
@@ -138,7 +148,12 @@ export const Setup = defineTaggedUnion({
 })
 export type Setup = typeof Setup.Type
 
-export const Added = Schema.Struct({ project: ProjectInfo, setup: Setup })
+/** A project just added on the engine named `engine`. */
+export const Added = Schema.Struct({
+  engine: Schema.String,
+  project: ProjectInfo,
+  setup: Setup,
+})
 export type Added = typeof Added.Type
 
 /** How a credential's value is given: a key, or a command whose output is the key (§20.3). */
@@ -147,6 +162,8 @@ export type ValueKind = typeof ValueKind.Type
 
 /** The set-credential form, as typed: the key kept redacted. */
 export const CredentialForm = Schema.Struct({
+  /** The name of the engine the credential is set on. */
+  engine: Schema.String,
   name: Schema.String,
   kind: ValueKind,
   key: Schema.Redacted(Schema.String),
@@ -240,44 +257,71 @@ export const EngineSetup = defineTaggedUnion({
 })
 export type EngineSetup = typeof EngineSetup.Type
 
+const StatusData = AsyncData.Schema(EngineStatus, Schema.String).schema
+const CredentialsData = AsyncData.Schema(
+  Schema.Array(CredentialInfo),
+  Schema.String,
+).schema
+
+/** A credential on the engine named `engine`. */
+export const EngineCredential = Schema.Struct({
+  engine: Schema.String,
+  name: CredentialName,
+})
+export type EngineCredential = typeof EngineCredential.Type
+
+/** What a request to the engine named `engine` said where it failed, shown with that engine's projects or credentials. */
+export const EngineProblem = Schema.Struct({
+  engine: Schema.String,
+  text: Schema.String,
+})
+export type EngineProblem = typeof EngineProblem.Type
+
 export const Model = Schema.Struct({
-  /** The local engine's status, asked as the screen opens. */
-  status: AsyncData.Schema(EngineStatus, Schema.String).schema,
+  /** Each engine's status, by its name: this machine's and each connected known engine's, asked as the screen opens. */
+  status: Schema.Record(Schema.String, StatusData),
   addProject: AddFlow,
   folders: FolderBrowser,
   added: Schema.Option(Added),
-  credentials: AsyncData.Schema(Schema.Array(CredentialInfo), Schema.String)
-    .schema,
+  /** Each engine's credentials, by its name, asked with its status. */
+  credentials: Schema.Record(Schema.String, CredentialsData),
   credentialForm: CredentialForm,
   credentialSave: CredentialSave,
   /** The project whose trust is being changed, and what the last change said where it failed. */
-  trusting: Schema.Option(ProjectId),
-  trustProblem: Schema.Option(Schema.String),
+  trusting: Schema.Option(EngineProject),
+  trustProblem: Schema.Option(EngineProblem),
   /** The credential being removed, and what the last removal said where it failed. */
-  removing: Schema.Option(CredentialName),
-  removeProblem: Schema.Option(Schema.String),
+  removing: Schema.Option(EngineCredential),
+  removeProblem: Schema.Option(EngineProblem),
   loginService: LoginService,
   engineSetup: EngineSetup,
 })
 export type Model = typeof Model.Type
 
-const emptyAddForm: AddForm = { kind: 'path', path: '', url: '', name: '' }
+const emptyAddForm = (engine: string): AddForm => ({
+  engine,
+  kind: 'path',
+  path: '',
+  url: '',
+  name: '',
+})
 
-const emptyCredentialForm: CredentialForm = {
+const emptyCredentialForm = (engine: string): CredentialForm => ({
+  engine,
   name: '',
   kind: 'key',
   key: Redacted.make(''),
   command: '',
   provider: '',
-}
+})
 
 export const init = (): Model => ({
-  status: AsyncData.Idle(),
+  status: {},
   addProject: AddFlow.Closed(),
   folders: FolderBrowser.Closed(),
   added: Option.none(),
-  credentials: AsyncData.Idle(),
-  credentialForm: emptyCredentialForm,
+  credentials: {},
+  credentialForm: emptyCredentialForm(localEngineName),
   credentialSave: CredentialSave.Editing({ problem: Option.none() }),
   trusting: Option.none(),
   trustProblem: Option.none(),
@@ -288,12 +332,16 @@ export const init = (): Model => ({
 })
 
 export const Message = defineMessageUnion({
-  SucceededLoadStatus: { status: EngineStatus },
-  FailedLoadStatus: { reason: Schema.String },
-  SucceededLoadCredentials: { credentials: Schema.Array(CredentialInfo) },
-  FailedLoadCredentials: { reason: Schema.String },
+  SucceededLoadStatus: { engine: Schema.String, status: EngineStatus },
+  FailedLoadStatus: { engine: Schema.String, reason: Schema.String },
+  SucceededLoadCredentials: {
+    engine: Schema.String,
+    credentials: Schema.Array(CredentialInfo),
+  },
+  FailedLoadCredentials: { engine: Schema.String, reason: Schema.String },
 
-  OpenedAddProject: {},
+  /** Add project, on the engine named `engine`. */
+  OpenedAddProject: { engine: Schema.String },
   ChoseSource: { kind: SourceKind },
   ChangedProjectPath: { path: Schema.String },
   ChangedProjectUrl: { url: Schema.String },
@@ -303,35 +351,48 @@ export const Message = defineMessageUnion({
   /** Browse from the path typed, or the engine's home folder where none is. */
   OpenedFolders: {},
   RequestedFolders: { path: Schema.Option(Text) },
-  SucceededFolders: { path: Schema.Option(Text), listing: FolderListing },
-  FailedFolders: { path: Schema.Option(Text), reason: Schema.String },
+  SucceededFolders: {
+    engine: Schema.String,
+    path: Schema.Option(Text),
+    listing: FolderListing,
+  },
+  FailedFolders: {
+    engine: Schema.String,
+    path: Schema.Option(Text),
+    reason: Schema.String,
+  },
   ChoseFolder: { path: Text },
   ClosedFolders: {},
-  SucceededAddProject: { project: ProjectInfo },
+  SucceededAddProject: { engine: Schema.String, project: ProjectInfo },
   FailedAddProject: { reason: Schema.String },
-  RequestedSetUp: { project: ProjectId },
-  SucceededSetUp: { project: ProjectId, written: Schema.Array(Text) },
+  RequestedSetUp: { project: EngineProject },
+  SucceededSetUp: { project: EngineProject, written: Schema.Array(Text) },
   FailedSetUp: {
-    project: ProjectId,
+    project: EngineProject,
     reason: Schema.String,
     written: Schema.Array(Text),
   },
   DismissedAdded: {},
-  RequestedTrust: { project: ProjectId, trusted: Schema.Boolean },
-  SucceededTrust: { project: ProjectId },
-  FailedTrust: { project: ProjectId, reason: Schema.String },
+  RequestedTrust: { project: EngineProject, trusted: Schema.Boolean },
+  SucceededTrust: { project: EngineProject },
+  FailedTrust: { project: EngineProject, reason: Schema.String },
 
+  /** The credential is set on the engine named `engine` instead. */
+  ChoseCredentialEngine: { engine: Schema.String },
   ChangedCredentialName: { name: Schema.String },
   ChoseValueKind: { kind: ValueKind },
   ChangedCredentialKey: { key: Schema.Redacted(Schema.String) },
   ChangedCredentialCommand: { command: Schema.String },
   ChangedCredentialProvider: { provider: Schema.String },
   SubmittedCredential: {},
-  SucceededSetCredential: { name: CredentialName },
+  SucceededSetCredential: { credential: EngineCredential },
   FailedSetCredential: { reason: Schema.String },
-  RequestedRemoveCredential: { name: CredentialName },
-  SucceededRemoveCredential: { name: CredentialName },
-  FailedRemoveCredential: { name: CredentialName, reason: Schema.String },
+  RequestedRemoveCredential: { credential: EngineCredential },
+  SucceededRemoveCredential: { credential: EngineCredential },
+  FailedRemoveCredential: {
+    credential: EngineCredential,
+    reason: Schema.String,
+  },
 
   RequestedLoginService: {},
   CompletedLoginService: { outcome: ServiceInstall },
@@ -379,43 +440,47 @@ export const Message = defineMessageUnion({
 })
 export type Message = typeof Message.Type
 
-// Commands: each a request to the engine, its failure in words: to this machine's, whose card, folders,
-// credentials and projects the screen shows.
+// Commands: each a request to the engine it names, its failure in words: this machine's, or a known
+// engine's on another host, whose card, folders, credentials and projects the screen shows.
 
 export const LoadEngineStatus = Command.define('LoadEngineStatus', {
+  args: { engine: Schema.String },
   messages: [Message.SucceededLoadStatus, Message.FailedLoadStatus],
-  execute: requestEngine(localEngineName, client =>
-    client.rpc['engine.status'](),
-  ).pipe(
-    Effect.map(status => Message.SucceededLoadStatus({ status })),
-    Effect.catch(reason =>
-      Effect.succeed(Message.FailedLoadStatus({ reason })),
+  execute: ({ engine }) =>
+    requestEngine(engine, client => client.rpc['engine.status']()).pipe(
+      Effect.map(status => Message.SucceededLoadStatus({ engine, status })),
+      Effect.catch(reason =>
+        Effect.succeed(Message.FailedLoadStatus({ engine, reason })),
+      ),
     ),
-  ),
 })
 
 export const LoadCredentials = Command.define('LoadCredentials', {
+  args: { engine: Schema.String },
   messages: [Message.SucceededLoadCredentials, Message.FailedLoadCredentials],
-  execute: requestEngine(localEngineName, client =>
-    client.rpc['credentials.list'](),
-  ).pipe(
-    Effect.map(credentials =>
-      Message.SucceededLoadCredentials({ credentials }),
+  execute: ({ engine }) =>
+    requestEngine(engine, client => client.rpc['credentials.list']()).pipe(
+      Effect.map(credentials =>
+        Message.SucceededLoadCredentials({ engine, credentials }),
+      ),
+      Effect.catch(reason =>
+        Effect.succeed(Message.FailedLoadCredentials({ engine, reason })),
+      ),
     ),
-    Effect.catch(reason =>
-      Effect.succeed(Message.FailedLoadCredentials({ reason })),
-    ),
-  ),
 })
 
 export const AddProject = Command.define('AddProject', {
-  args: { source: ProjectSource, name: Schema.Option(Text) },
+  args: {
+    engine: Schema.String,
+    source: ProjectSource,
+    name: Schema.Option(Text),
+  },
   messages: [Message.SucceededAddProject, Message.FailedAddProject],
-  execute: ({ source, name }) =>
-    requestEngine(localEngineName, client =>
+  execute: ({ engine, source, name }) =>
+    requestEngine(engine, client =>
       client.rpc['projects.add']({ source, name }),
     ).pipe(
-      Effect.map(project => Message.SucceededAddProject({ project })),
+      Effect.map(project => Message.SucceededAddProject({ engine, project })),
       Effect.catch(reason =>
         Effect.succeed(Message.FailedAddProject({ reason })),
       ),
@@ -424,25 +489,27 @@ export const AddProject = Command.define('AddProject', {
 
 /** Lists a folder on the engine's host: its home folder where no path is given. */
 export const LoadFolders = Command.define('LoadFolders', {
-  args: { path: Schema.Option(Text) },
+  args: { engine: Schema.String, path: Schema.Option(Text) },
   messages: [Message.SucceededFolders, Message.FailedFolders],
-  execute: ({ path }) =>
-    requestEngine(localEngineName, client =>
+  execute: ({ engine, path }) =>
+    requestEngine(engine, client =>
       client.rpc['projects.folders']({ path }),
     ).pipe(
-      Effect.map(listing => Message.SucceededFolders({ path, listing })),
+      Effect.map(listing =>
+        Message.SucceededFolders({ engine, path, listing }),
+      ),
       Effect.catch(reason =>
-        Effect.succeed(Message.FailedFolders({ path, reason })),
+        Effect.succeed(Message.FailedFolders({ engine, path, reason })),
       ),
     ),
 })
 
 export const SetUpProject = Command.define('SetUpProject', {
-  args: { project: ProjectId },
+  args: { project: EngineProject },
   messages: [Message.SucceededSetUp, Message.FailedSetUp],
   execute: ({ project }) =>
-    requestEngine(localEngineName, client =>
-      client.rpc['projects.init']({ project }).pipe(
+    requestProject(project, client =>
+      client.rpc['projects.init']({ project: project.project }).pipe(
         Effect.map(({ written }) =>
           Message.SucceededSetUp({ project, written }),
         ),
@@ -459,11 +526,11 @@ export const SetUpProject = Command.define('SetUpProject', {
 
 /** Gives or takes back the user's trust in the project; its row comes back changed on the status stream. */
 export const SetProjectTrust = Command.define('SetProjectTrust', {
-  args: { project: ProjectId, trusted: Schema.Boolean },
+  args: { project: EngineProject, trusted: Schema.Boolean },
   messages: [Message.SucceededTrust, Message.FailedTrust],
   execute: ({ project, trusted }) =>
-    requestEngine(localEngineName, client =>
-      client.rpc['projects.trust']({ project, trusted }),
+    requestProject(project, client =>
+      client.rpc['projects.trust']({ project: project.project, trusted }),
     ).pipe(
       Effect.as(Message.SucceededTrust({ project })),
       Effect.catch(reason =>
@@ -474,16 +541,19 @@ export const SetProjectTrust = Command.define('SetProjectTrust', {
 
 export const SetCredential = Command.define('SetCredential', {
   args: {
+    engine: Schema.String,
     name: CredentialName,
     value: CredentialValue,
     provider: Schema.Option(ProviderName),
   },
   messages: [Message.SucceededSetCredential, Message.FailedSetCredential],
-  execute: ({ name, value, provider }) =>
-    requestEngine(localEngineName, client =>
+  execute: ({ engine, name, value, provider }) =>
+    requestEngine(engine, client =>
       client.rpc['credentials.set']({ name, value, provider }),
     ).pipe(
-      Effect.as(Message.SucceededSetCredential({ name })),
+      Effect.as(
+        Message.SucceededSetCredential({ credential: { engine, name } }),
+      ),
       Effect.catch(reason =>
         Effect.succeed(Message.FailedSetCredential({ reason })),
       ),
@@ -491,15 +561,15 @@ export const SetCredential = Command.define('SetCredential', {
 })
 
 export const RemoveCredential = Command.define('RemoveCredential', {
-  args: { name: CredentialName },
+  args: { credential: EngineCredential },
   messages: [Message.SucceededRemoveCredential, Message.FailedRemoveCredential],
-  execute: ({ name }) =>
-    requestEngine(localEngineName, client =>
-      client.rpc['credentials.remove']({ name }),
+  execute: ({ credential }) =>
+    requestEngine(credential.engine, client =>
+      client.rpc['credentials.remove']({ name: credential.name }),
     ).pipe(
-      Effect.as(Message.SucceededRemoveCredential({ name })),
+      Effect.as(Message.SucceededRemoveCredential({ credential })),
       Effect.catch(reason =>
-        Effect.succeed(Message.FailedRemoveCredential({ name, reason })),
+        Effect.succeed(Message.FailedRemoveCredential({ credential, reason })),
       ),
     ),
 })
@@ -629,28 +699,80 @@ export type Requires = EngineServices | AppHost
 
 type Return = Update.Return<Model, Message, Requires>
 
-/** As the screen opens: the engine's status and credentials asked again, what was shown kept meanwhile. */
-export const opened = (model: Model): Return => {
-  const status = AsyncData.revalidateOrLoad(model.status)
-  const credentials = AsyncData.revalidateOrLoad(model.credentials)
+/** What the screen holds of the engine named `engine` in `byEngine`: nothing asked yet where it holds none. */
+const engineData = <A>(
+  byEngine: Readonly<Record<string, AsyncData.AsyncData<A, string>>>,
+  engine: string,
+): AsyncData.AsyncData<A, string> => byEngine[engine] ?? AsyncData.Idle()
+
+/** The status and credentials of the engine named `engine` asked again, what was shown kept meanwhile. */
+const askEngine = (model: Model, engine: string): Return => {
+  const status = AsyncData.revalidateOrLoad(engineData(model.status, engine))
+  const credentials = AsyncData.revalidateOrLoad(
+    engineData(model.credentials, engine),
+  )
   return {
     model: modifyFields(model, {
-      status: current => Option.getOrElse(status, () => current),
-      credentials: current => Option.getOrElse(credentials, () => current),
+      status: current =>
+        Option.match(status, {
+          onNone: () => current,
+          onSome: asked => ({ ...current, [engine]: asked }),
+        }),
+      credentials: current =>
+        Option.match(credentials, {
+          onNone: () => current,
+          onSome: asked => ({ ...current, [engine]: asked }),
+        }),
     }),
     commands: [
-      ...(Option.isSome(status) ? [LoadEngineStatus()] : []),
-      ...(Option.isSome(credentials) ? [LoadCredentials()] : []),
+      ...(Option.isSome(status) ? [LoadEngineStatus({ engine })] : []),
+      ...(Option.isSome(credentials) ? [LoadCredentials({ engine })] : []),
     ],
   }
 }
 
-/** Opens the add-project flow, as the sidebar's "+ Add project" asks; one already open is kept. */
-export const openAddProject = (model: Model): Model =>
+/**
+ * The engines whose status, credentials and projects the screen shows: this machine's, then each known
+ * engine on another host while it is connected, in their order.
+ */
+export const shownEngines = (
+  remotes: RemoteEngines.Model,
+): ReadonlyArray<string> => [
+  localEngineName,
+  ...remotes.engines
+    .filter(remote => isLive(remote.connection))
+    .map(remote => remote.name),
+]
+
+/**
+ * As the screen opens, or an engine is reached while it is shown: the status and credentials of each
+ * engine named in `engines` (this machine's and the connected known engines') asked again, what was
+ * shown kept meanwhile.
+ */
+export const opened = (model: Model, engines: ReadonlyArray<string>): Return =>
+  engines.reduce<Return>(
+    (done, engine) => {
+      const asked = askEngine(done.model, engine)
+      return {
+        model: asked.model,
+        commands: [...(done.commands ?? []), ...(asked.commands ?? [])],
+      }
+    },
+    { model },
+  )
+
+/**
+ * Opens the add-project flow on the engine named `engine`, as the sidebar's "+ Add project" asks; one
+ * already open is kept.
+ */
+export const openAddProject = (model: Model, engine: string): Model =>
   AddFlow.guards.Closed(model.addProject)
     ? modifyFields(model, {
         addProject: () =>
-          AddFlow.Editing({ form: emptyAddForm, problem: Option.none() }),
+          AddFlow.Editing({
+            form: emptyAddForm(engine),
+            problem: Option.none(),
+          }),
       })
     : model
 
@@ -711,25 +833,34 @@ const credentialProblem = (form: CredentialForm): string =>
       ? 'Give the key.'
       : 'Give the command that prints the key, on one line.'
 
-/** The folder at `path` asked of the engine, where a checkout's path is being edited. */
-const browse = (model: Model, path: Option.Option<string>): Return =>
-  AddFlow.guards.Editing(model.addProject) &&
-  model.addProject.form.kind === 'path'
-    ? {
-        model: modifyFields(model, {
-          folders: () => FolderBrowser.Loading({ path }),
-        }),
-        commands: [LoadFolders({ path })],
-      }
-    : { model }
+/** The folder at `path` asked of the form's engine, where a checkout's path is being edited. */
+const browse = (model: Model, path: Option.Option<string>): Return => {
+  if (
+    !AddFlow.guards.Editing(model.addProject) ||
+    model.addProject.form.kind !== 'path'
+  ) {
+    return { model }
+  }
+  const { engine } = model.addProject.form
+  return {
+    model: modifyFields(model, {
+      folders: () => FolderBrowser.Loading({ engine, path }),
+    }),
+    commands: [LoadFolders({ engine, path })],
+  }
+}
 
-/** The browser moved on to `next`, where it is waiting on the folder at `path`. */
+/** The browser moved on to `next`, where it is waiting on the folder at `path` on the engine named `engine`. */
 const answerFolders = (
   model: Model,
-  path: Option.Option<string>,
+  {
+    engine,
+    path,
+  }: { readonly engine: string; readonly path: Option.Option<string> },
   next: FolderBrowser,
 ): Model =>
   FolderBrowser.guards.Loading(model.folders) &&
+  model.folders.engine === engine &&
   Equal.equals(model.folders.path, path)
     ? modifyFields(model, { folders: () => next })
     : model
@@ -758,26 +889,44 @@ const editCredential = (
           CredentialSave.Editing({ problem: Option.none() }),
       })
 
-/** The credentials listed again, after one was set or removed. */
-const reloadCredentials = (model: Model): Return => {
-  const credentials = AsyncData.revalidateOrLoad(model.credentials)
+/** The credentials of the engine named `engine` listed again, after one was set or removed there. */
+const reloadCredentials = (model: Model, engine: string): Return => {
+  const credentials = AsyncData.revalidateOrLoad(
+    engineData(model.credentials, engine),
+  )
   return {
     model: modifyFields(model, {
-      credentials: current => Option.getOrElse(credentials, () => current),
+      credentials: current =>
+        Option.match(credentials, {
+          onNone: () => current,
+          onSome: asked => ({ ...current, [engine]: asked }),
+        }),
     }),
-    commands: Option.isSome(credentials) ? [LoadCredentials()] : [],
+    commands: Option.isSome(credentials) ? [LoadCredentials({ engine })] : [],
   }
 }
 
 /** The added project's setup, where `project` is the one just added. */
-const setAddedSetup = (model: Model, project: ProjectId, setup: Setup): Model =>
+const setAddedSetup = (
+  model: Model,
+  project: EngineProject,
+  setup: Setup,
+): Model =>
   modifyFields(model, {
     added: added =>
       Option.map(
-        Option.filter(added, ({ project: info }) => info.id === project),
+        Option.filter(added, current =>
+          sameProject(addedProject(current), project),
+        ),
         current => ({ ...current, setup }),
       ).pipe(Option.orElse(() => added)),
   })
+
+/** The project just added, named with its engine. */
+const addedProject = ({ engine, project }: Added): EngineProject => ({
+  engine,
+  project: project.id,
+})
 
 const decodeDestination = Schema.decodeUnknownOption(SshDestination)
 
@@ -1098,24 +1247,39 @@ export const update = (
   known: ReadonlyArray<RemoteEngines.RemoteEngine> = [],
 ): Return =>
   Message.match<Return>(message, {
-    SucceededLoadStatus: ({ status }) => ({
-      model: modifyFields(model, { status: () => AsyncData.succeed(status) }),
-    }),
-    FailedLoadStatus: ({ reason }) => ({
-      model: modifyFields(model, { status: () => AsyncData.fail(reason) }),
-    }),
-    SucceededLoadCredentials: ({ credentials }) => ({
+    SucceededLoadStatus: ({ engine, status }) => ({
       model: modifyFields(model, {
-        credentials: () => AsyncData.succeed(credentials),
+        status: current => ({
+          ...current,
+          [engine]: AsyncData.succeed(status),
+        }),
       }),
     }),
-    FailedLoadCredentials: ({ reason }) => ({
+    FailedLoadStatus: ({ engine, reason }) => ({
       model: modifyFields(model, {
-        credentials: () => AsyncData.fail(reason),
+        status: current => ({ ...current, [engine]: AsyncData.fail(reason) }),
+      }),
+    }),
+    SucceededLoadCredentials: ({ engine, credentials }) => ({
+      model: modifyFields(model, {
+        credentials: current => ({
+          ...current,
+          [engine]: AsyncData.succeed(credentials),
+        }),
+      }),
+    }),
+    FailedLoadCredentials: ({ engine, reason }) => ({
+      model: modifyFields(model, {
+        credentials: current => ({
+          ...current,
+          [engine]: AsyncData.fail(reason),
+        }),
       }),
     }),
 
-    OpenedAddProject: () => ({ model: openAddProject(model) }),
+    OpenedAddProject: ({ engine }) => ({
+      model: openAddProject(model, engine),
+    }),
     ChoseSource: ({ kind }) => ({
       model: editForm(model, form => ({ ...form, kind })),
     }),
@@ -1145,7 +1309,7 @@ export const update = (
               model: modifyFields(model, {
                 addProject: () => AddFlow.Adding({ form }),
               }),
-              commands: [AddProject({ source, name })],
+              commands: [AddProject({ engine: form.engine, source, name })],
             }),
           }),
         Closed: () => ({ model }),
@@ -1166,11 +1330,19 @@ export const update = (
         Adding: () => ({ model }),
       }),
     RequestedFolders: ({ path }) => browse(model, path),
-    SucceededFolders: ({ path, listing }) => ({
-      model: answerFolders(model, path, FolderBrowser.Shown({ listing })),
+    SucceededFolders: ({ engine, path, listing }) => ({
+      model: answerFolders(
+        model,
+        { engine, path },
+        FolderBrowser.Shown({ listing }),
+      ),
     }),
-    FailedFolders: ({ path, reason }) => ({
-      model: answerFolders(model, path, FolderBrowser.Failed({ path, reason })),
+    FailedFolders: ({ engine, path, reason }) => ({
+      model: answerFolders(
+        model,
+        { engine, path },
+        FolderBrowser.Failed({ path, reason }),
+      ),
     }),
     ChoseFolder: ({ path }) => ({
       model: AddFlow.guards.Editing(model.addProject)
@@ -1185,11 +1357,11 @@ export const update = (
     ClosedFolders: () => ({
       model: modifyFields(model, { folders: () => FolderBrowser.Closed() }),
     }),
-    SucceededAddProject: ({ project }) => ({
+    SucceededAddProject: ({ engine, project }) => ({
       model: modifyFields(model, {
         addProject: () => AddFlow.Closed(),
         folders: () => FolderBrowser.Closed(),
-        added: () => Option.some({ project, setup: Setup.NotAsked() }),
+        added: () => Option.some({ engine, project, setup: Setup.NotAsked() }),
       }),
     }),
     FailedAddProject: ({ reason }) => ({
@@ -1233,10 +1405,16 @@ export const update = (
       model: modifyFields(model, {
         trusting: () => Option.none(),
         trustProblem: () =>
-          Option.some(`Couldn't change the trust in ${project}: ${reason}`),
+          Option.some({
+            engine: project.engine,
+            text: `Couldn't change the trust in ${project.project}: ${reason}`,
+          }),
       }),
     }),
 
+    ChoseCredentialEngine: ({ engine }) => ({
+      model: editCredential(model, form => ({ ...form, engine })),
+    }),
     ChangedCredentialName: ({ name }) => ({
       model: editCredential(model, form => ({ ...form, name })),
     }),
@@ -1270,16 +1448,22 @@ export const update = (
               model: modifyFields(model, {
                 credentialSave: () => CredentialSave.Saving(),
               }),
-              commands: [SetCredential(credential)],
+              commands: [
+                SetCredential({
+                  engine: model.credentialForm.engine,
+                  ...credential,
+                }),
+              ],
             }),
           }),
-    SucceededSetCredential: () =>
+    SucceededSetCredential: ({ credential }) =>
       reloadCredentials(
         modifyFields(model, {
-          credentialForm: () => emptyCredentialForm,
+          credentialForm: () => emptyCredentialForm(credential.engine),
           credentialSave: () =>
             CredentialSave.Editing({ problem: Option.none() }),
         }),
+        credential.engine,
       ),
     FailedSetCredential: ({ reason }) => ({
       model: modifyFields(model, {
@@ -1287,22 +1471,29 @@ export const update = (
           CredentialSave.Editing({ problem: Option.some(reason) }),
       }),
     }),
-    RequestedRemoveCredential: ({ name }) =>
+    RequestedRemoveCredential: ({ credential }) =>
       Option.isSome(model.removing)
         ? { model }
         : {
             model: modifyFields(model, {
-              removing: () => Option.some(name),
+              removing: () => Option.some(credential),
               removeProblem: () => Option.none(),
             }),
-            commands: [RemoveCredential({ name })],
+            commands: [RemoveCredential({ credential })],
           },
-    SucceededRemoveCredential: () =>
-      reloadCredentials(modifyFields(model, { removing: () => Option.none() })),
-    FailedRemoveCredential: ({ name, reason }) => ({
+    SucceededRemoveCredential: ({ credential }) =>
+      reloadCredentials(
+        modifyFields(model, { removing: () => Option.none() }),
+        credential.engine,
+      ),
+    FailedRemoveCredential: ({ credential, reason }) => ({
       model: modifyFields(model, {
         removing: () => Option.none(),
-        removeProblem: () => Option.some(`Couldn't remove ${name}: ${reason}`),
+        removeProblem: () =>
+          Option.some({
+            engine: credential.engine,
+            text: `Couldn't remove ${credential.name}: ${reason}`,
+          }),
       }),
     }),
 
@@ -1803,6 +1994,35 @@ const loginServiceView = (model: Model, h: HtmlBuilder<Message>): Html =>
     ],
   )
 
+/** The status of the engine named `engine`, as asked of it. */
+const statusView = (
+  model: Model,
+  engine: string,
+  h: HtmlBuilder<Message>,
+): Html =>
+  AsyncData.matchData(engineData(model.status, engine), {
+    onEmpty: () =>
+      h.p(
+        [h.Class('text-xs text-muted')],
+        ['Asking the engine for its status…'],
+      ),
+    onFailure: reason =>
+      problemLine(`Its status couldn't be read: ${reason}`, h),
+    onData: status =>
+      h.div(
+        [h.Class('flex flex-col gap-8')],
+        [
+          statusFacts(status, h),
+          status.stopping
+            ? h.p(
+                [h.Role('status'), h.Class('text-xs text-c2')],
+                ['Winding its runs down to stop.'],
+              )
+            : h.empty,
+        ],
+      ),
+  })
+
 const engineCard = (
   model: Model,
   inputs: ViewInputs,
@@ -1845,28 +2065,7 @@ const engineCard = (
           ),
         ],
       ),
-      AsyncData.matchData(model.status, {
-        onEmpty: () =>
-          h.p(
-            [h.Class('text-xs text-muted')],
-            ['Asking the engine for its status…'],
-          ),
-        onFailure: reason =>
-          problemLine(`Its status couldn't be read: ${reason}`, h),
-        onData: status =>
-          h.div(
-            [h.Class('flex flex-col gap-8')],
-            [
-              statusFacts(status, h),
-              status.stopping
-                ? h.p(
-                    [h.Role('status'), h.Class('text-xs text-c2')],
-                    ['Winding its runs down to stop.'],
-                  )
-                : h.empty,
-            ],
-          ),
-      }),
+      statusView(model, localEngineName, h),
       updateOffer(
         model,
         inputs.connection,
@@ -1939,7 +2138,7 @@ const remoteCard = (
       ),
       Connection.match(remote.connection, {
         Connecting: () => h.empty,
-        Up: () => h.empty,
+        Up: () => statusView(model, remote.name, h),
         Down: () => h.empty,
         Failed: ({ reason }) =>
           h.p(
@@ -2728,12 +2927,13 @@ const folderRow = (folder: HostFolder, h: HtmlBuilder<Message>): Html =>
 /** The engine host's folders, as the browser shows them. */
 const folderBrowser = (
   folders: FolderBrowser,
+  engine: string,
   h: HtmlBuilder<Message>,
 ): Html => {
   const browser = (children: ReadonlyArray<Html>): Html =>
     h.section(
       [
-        h.AriaLabel(`Folders on ${localEngineName}`),
+        h.AriaLabel(`Folders on ${engine}`),
         h.Class('flex flex-col gap-8 rounded-button border border-line'),
         h.Style({ padding: '8px 10px' }),
       ],
@@ -2823,7 +3023,7 @@ const addProjectForm = (
       form.kind === 'path'
         ? labelled(
             'add-project-path',
-            `Its folder on ${localEngineName}`,
+            `Its folder on ${form.engine}`,
             h.div(
               [h.Class('flex items-center gap-8')],
               [
@@ -2864,7 +3064,9 @@ const addProjectForm = (
             h,
           ),
       form.kind === 'path' ? driveWarning(form.path.trim(), h) : h.empty,
-      form.kind === 'path' && !adding ? folderBrowser(folders, h) : h.empty,
+      form.kind === 'path' && !adding
+        ? folderBrowser(folders, form.engine, h)
+        : h.empty,
       labelled(
         'add-project-name',
         'Name (optional)',
@@ -2916,7 +3118,9 @@ const addedView = (added: Added, h: HtmlBuilder<Message>): Html => {
               h.button(
                 [
                   h.Type('button'),
-                  h.OnClick(Message.RequestedSetUp({ project: project.id })),
+                  h.OnClick(
+                    Message.RequestedSetUp({ project: addedProject(added) }),
+                  ),
                   h.Class(quietButton),
                 ],
                 ['Set it up'],
@@ -2995,15 +3199,18 @@ const driveWarning = (path: string, h: HtmlBuilder<Message>): Html =>
 export const trustWords =
   "Trusting a project lets its agents load its own .pi/ settings and packages: code from the project's files, run with your permissions. Trust only a project whose files you trust; a change reaches its agents as they next start."
 
-const trustWordsId = 'project-trust-words'
+/** The ID of the words beside the projects on the engine named `engine`. */
+const trustWordsId = (engine: string): string => `project-trust-words-${engine}`
 
 /** A project's trust, in a word, and the button that changes it. */
 const trustControl = (
   model: Model,
+  engine: string,
   project: ProjectStatus,
   h: HtmlBuilder<Message>,
-): Html =>
-  h.span(
+): Html => {
+  const named: EngineProject = { engine, project: project.project }
+  return h.span(
     [h.Class('flex items-center gap-8')],
     [
       h.span(
@@ -3021,10 +3228,10 @@ const trustControl = (
               ? `Stop trusting ${project.name}`
               : `Trust ${project.name}`,
           ),
-          h.AriaDescribedBy(trustWordsId),
+          h.AriaDescribedBy(trustWordsId(engine)),
           h.OnClick(
             Message.RequestedTrust({
-              project: project.project,
+              project: named,
               trusted: !project.trusted,
             }),
           ),
@@ -3032,7 +3239,9 @@ const trustControl = (
           h.Class(quietButton),
         ],
         [
-          Option.contains(model.trusting, project.project)
+          Option.exists(model.trusting, trusting =>
+            sameProject(trusting, named),
+          )
             ? 'Changing…'
             : project.trusted
               ? 'Untrust'
@@ -3041,36 +3250,51 @@ const trustControl = (
       ),
     ],
   )
+}
 
+/** A problem the engine named `engine` gave, where it gave one. */
+const problemOn = (
+  problem: Option.Option<EngineProblem>,
+  engine: string,
+  h: HtmlBuilder<Message>,
+): Html =>
+  Option.match(
+    Option.filter(problem, said => said.engine === engine),
+    {
+      onNone: () => h.empty,
+      onSome: ({ text }) => problemLine(text, h),
+    },
+  )
+
+/**
+ * The projects on the engine named `engine`, as the sidebar holds them, each trusted or not, with Add
+ * project on that engine: the form, and the project just added there.
+ */
 const projectsView = (
   model: Model,
   inputs: ViewInputs,
+  engine: string,
   h: HtmlBuilder<Message>,
 ): Html => {
-  const local = inputs.engines.find(engine => engine.name === localEngineName)
+  const held = inputs.engines.find(known => known.name === engine)
   const projects = Option.getOrElse(
-    Option.flatMap(Option.fromUndefinedOr(local), engine => engine.projects),
+    Option.flatMap(Option.fromUndefinedOr(held), known => known.projects),
     () => [],
   )
+  const formHere = (form: AddForm): boolean => form.engine === engine
   return h.section(
-    [
-      h.AriaLabel(`Projects on ${localEngineName}`),
-      h.Class('flex flex-col gap-8'),
-    ],
+    [h.AriaLabel(`Projects on ${engine}`), h.Class('flex flex-col gap-8')],
     [
       h.div(
         [h.Class('flex items-center gap-10')],
         [
-          h.h2(
-            [h.Class('text-sm font-extrabold')],
-            [`Projects on ${localEngineName}`],
-          ),
+          h.h2([h.Class('text-sm font-extrabold')], [`Projects on ${engine}`]),
           h.span([h.Class('text-xs text-muted')], [String(projects.length)]),
           AddFlow.guards.Closed(model.addProject)
             ? h.button(
                 [
                   h.Type('button'),
-                  h.OnClick(Message.OpenedAddProject()),
+                  h.OnClick(Message.OpenedAddProject({ engine })),
                   h.Class(`ml-auto ${primaryButton}`),
                 ],
                 ['+ Add project'],
@@ -3081,14 +3305,21 @@ const projectsView = (
       AddFlow.match(model.addProject, {
         Closed: () => h.empty,
         Editing: ({ form, problem }) =>
-          addProjectForm(form, problem, false, model.folders, h),
+          formHere(form)
+            ? addProjectForm(form, problem, false, model.folders, h)
+            : h.empty,
         Adding: ({ form }) =>
-          addProjectForm(form, Option.none(), true, model.folders, h),
+          formHere(form)
+            ? addProjectForm(form, Option.none(), true, model.folders, h)
+            : h.empty,
       }),
-      Option.match(model.added, {
-        onNone: () => h.empty,
-        onSome: added => addedView(added, h),
-      }),
+      Option.match(
+        Option.filter(model.added, added => added.engine === engine),
+        {
+          onNone: () => h.empty,
+          onSome: added => addedView(added, h),
+        },
+      ),
       projects.length === 0
         ? h.p([h.Class('text-xs text-muted')], ['No projects yet.'])
         : h.ul(
@@ -3122,19 +3353,16 @@ const projectsView = (
                     ? h.span([])
                     : h.span([h.Class('text-xs text-c2')], ['Not set up']),
                   h.span([h.Class('text-xs text-muted')], [state.word]),
-                  trustControl(model, project, h),
+                  trustControl(model, engine, project, h),
                 ],
               )
             }),
           ),
-      Option.match(model.trustProblem, {
-        onNone: () => h.empty,
-        onSome: text => problemLine(text, h),
-      }),
+      problemOn(model.trustProblem, engine, h),
       projects.length === 0
         ? h.empty
         : h.p(
-            [h.Id(trustWordsId), h.Class('text-xs text-muted')],
+            [h.Id(trustWordsId(engine)), h.Class('text-xs text-muted')],
             [trustWords],
           ),
     ],
@@ -3143,6 +3371,7 @@ const projectsView = (
 
 const credentialsList = (
   model: Model,
+  engine: string,
   credentials: ReadonlyArray<CredentialInfo>,
   h: HtmlBuilder<Message>,
 ): Html =>
@@ -3173,14 +3402,19 @@ const credentialsList = (
                   h.AriaLabel(`Remove ${credential.name}`),
                   h.OnClick(
                     Message.RequestedRemoveCredential({
-                      name: credential.name,
+                      credential: { engine, name: credential.name },
                     }),
                   ),
                   h.Disabled(Option.isSome(model.removing)),
                   h.Class(quietButton),
                 ],
                 [
-                  Option.contains(model.removing, credential.name)
+                  Option.exists(
+                    model.removing,
+                    removing =>
+                      removing.engine === engine &&
+                      removing.name === credential.name,
+                  )
                     ? 'Removing…'
                     : 'Remove',
                 ],
@@ -3190,7 +3424,46 @@ const credentialsList = (
         ),
       )
 
-const credentialFormView = (model: Model, h: HtmlBuilder<Message>): Html => {
+/** The choice of the engine the credential is set on, where the screen shows more than one. */
+const credentialEngineChoice = (
+  form: CredentialForm,
+  engines: ReadonlyArray<string>,
+  saving: boolean,
+  h: HtmlBuilder<Message>,
+): Html =>
+  engines.length < 2
+    ? h.empty
+    : h.div(
+        [
+          h.Role('group'),
+          h.AriaLabel('Set on'),
+          h.Class('flex items-center gap-8'),
+        ],
+        [
+          h.span([h.Class('text-xs text-muted')], ['Set on']),
+          ...engines.map(engine =>
+            h.keyed('button')(
+              engine,
+              [
+                h.Type('button'),
+                h.AriaPressed(form.engine === engine ? 'true' : 'false'),
+                h.OnClick(Message.ChoseCredentialEngine({ engine })),
+                h.Disabled(saving),
+                h.Class(
+                  `rounded-button border px-10 py-4 text-xs ${form.engine === engine ? 'border-c1 font-bold' : 'border-line text-muted'}`,
+                ),
+              ],
+              [engine],
+            ),
+          ),
+        ],
+      )
+
+const credentialFormView = (
+  model: Model,
+  engines: ReadonlyArray<string>,
+  h: HtmlBuilder<Message>,
+): Html => {
   const form = model.credentialForm
   const saving = CredentialSave.guards.Saving(model.credentialSave)
   return h.form(
@@ -3201,6 +3474,7 @@ const credentialFormView = (model: Model, h: HtmlBuilder<Message>): Html => {
       h.Style(cardStyle),
     ],
     [
+      credentialEngineChoice(form, engines, saving, h),
       h.div(
         [
           h.Class('grid gap-10'),
@@ -3324,12 +3598,17 @@ const credentialFormView = (model: Model, h: HtmlBuilder<Message>): Html => {
   )
 }
 
-const credentialsView = (model: Model, h: HtmlBuilder<Message>): Html =>
+/** The credentials on the engine named `engine`, by name. */
+const engineCredentialsView = (
+  model: Model,
+  engine: string,
+  h: HtmlBuilder<Message>,
+): Html =>
   h.section(
-    [h.AriaLabel('Credentials'), h.Class('flex flex-col gap-8')],
+    [h.AriaLabel(`Credentials on ${engine}`), h.Class('flex flex-col gap-8')],
     [
-      h.h2([h.Class('text-sm font-extrabold')], ['Credentials']),
-      AsyncData.matchData(model.credentials, {
+      h.h3([h.Class('text-xs font-bold text-muted')], [`On ${engine}`]),
+      AsyncData.matchData(engineData(model.credentials, engine), {
         onEmpty: () =>
           h.p(
             [h.Class('text-xs text-muted')],
@@ -3337,50 +3616,65 @@ const credentialsView = (model: Model, h: HtmlBuilder<Message>): Html =>
           ),
         onFailure: reason =>
           problemLine(`The credentials couldn't be listed: ${reason}`, h),
-        onData: credentials => credentialsList(model, credentials, h),
+        onData: credentials => credentialsList(model, engine, credentials, h),
       }),
-      Option.match(model.removeProblem, {
-        onNone: () => h.empty,
-        onSome: text => problemLine(text, h),
-      }),
-      credentialFormView(model, h),
+      problemOn(model.removeProblem, engine, h),
     ],
   )
 
-export const view = defineView<Model, Message, ViewInputs>((model, inputs, h) =>
-  h.div(
-    [h.Class('flex min-h-0 flex-1 flex-col gap-16 overflow-auto')],
+const credentialsView = (
+  model: Model,
+  engines: ReadonlyArray<string>,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.section(
+    [h.AriaLabel('Credentials'), h.Class('flex flex-col gap-8')],
     [
-      h.section(
-        [h.AriaLabel('Engines'), h.Class('flex flex-col gap-8')],
-        [
-          h.div(
-            [h.Class('flex items-center gap-10')],
-            [
-              h.h2([h.Class('text-sm font-extrabold')], ['Engines']),
-              EngineSetup.guards.Closed(model.engineSetup)
-                ? h.button(
-                    [
-                      h.Type('button'),
-                      h.OnClick(Message.OpenedAddEngine()),
-                      h.Class(`ml-auto ${primaryButton}`),
-                    ],
-                    ['+ Add engine'],
-                  )
-                : h.empty,
-            ],
-          ),
-          engineCard(model, inputs, h),
-          ...inputs.remotes.engines.map(remote => remoteCard(model, remote, h)),
-          Option.match(inputs.remotes.problem, {
-            onNone: () => h.empty,
-            onSome: text => problemLine(text, h),
-          }),
-          setupView(model, inputs.platform, h),
-        ],
-      ),
-      projectsView(model, inputs, h),
-      credentialsView(model, h),
+      h.h2([h.Class('text-sm font-extrabold')], ['Credentials']),
+      ...engines.map(engine => engineCredentialsView(model, engine, h)),
+      credentialFormView(model, engines, h),
     ],
-  ),
+  )
+
+export const view = defineView<Model, Message, ViewInputs>(
+  (model, inputs, h) => {
+    const engines = shownEngines(inputs.remotes)
+    return h.div(
+      [h.Class('flex min-h-0 flex-1 flex-col gap-16 overflow-auto')],
+      [
+        h.section(
+          [h.AriaLabel('Engines'), h.Class('flex flex-col gap-8')],
+          [
+            h.div(
+              [h.Class('flex items-center gap-10')],
+              [
+                h.h2([h.Class('text-sm font-extrabold')], ['Engines']),
+                EngineSetup.guards.Closed(model.engineSetup)
+                  ? h.button(
+                      [
+                        h.Type('button'),
+                        h.OnClick(Message.OpenedAddEngine()),
+                        h.Class(`ml-auto ${primaryButton}`),
+                      ],
+                      ['+ Add engine'],
+                    )
+                  : h.empty,
+              ],
+            ),
+            engineCard(model, inputs, h),
+            ...inputs.remotes.engines.map(remote =>
+              remoteCard(model, remote, h),
+            ),
+            Option.match(inputs.remotes.problem, {
+              onNone: () => h.empty,
+              onSome: text => problemLine(text, h),
+            }),
+            setupView(model, inputs.platform, h),
+          ],
+        ),
+        ...engines.map(engine => projectsView(model, inputs, engine, h)),
+        credentialsView(model, engines, h),
+      ],
+    )
+  },
 )

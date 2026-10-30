@@ -27,7 +27,8 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { ServiceInstall } from '../src/app/host'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
@@ -41,9 +42,12 @@ import * as Engines from '../src/screens/engines'
 // the screen opens; credentials set by name, their keys redacted, and removed; and the local engine
 // installed as a login service when the user chooses. The sidebar's "+ Add project" opens the flow.
 
-const opened = Engines.openAddProject(Engines.init())
+const opened = Engines.openAddProject(Engines.init(), localEngineName)
 
 const project = ProjectId.make('p-2')
+
+/** The project just added, named with this machine's engine, which holds it. */
+const onLocal: EngineProject = { engine: localEngineName, project }
 
 const addedInfo = (setUp: boolean, origin: 'registered' | 'cloned') =>
   ProjectInfo.make({
@@ -84,6 +88,7 @@ describe('adding a project', () => {
       message(Engines.Message.SubmittedAddProject()),
       Command.expectExact(
         Engines.AddProject({
+          engine: localEngineName,
           source: ProjectSource.cases.path.make({ path: '/Users/me/src/app' }),
           name: Option.none(),
         }),
@@ -103,6 +108,7 @@ describe('adding a project', () => {
       Command.resolve(
         Engines.AddProject,
         Engines.Message.SucceededAddProject({
+          engine: localEngineName,
           project: addedInfo(false, 'registered'),
         }),
       ),
@@ -112,12 +118,12 @@ describe('adding a project', () => {
         expect(added.project.path).toBe('/Users/me/src/app')
         expect(added.setup).toEqual(Engines.Setup.NotAsked())
       }),
-      message(Engines.Message.RequestedSetUp({ project })),
-      Command.expectExact(Engines.SetUpProject({ project })),
+      message(Engines.Message.RequestedSetUp({ project: onLocal })),
+      Command.expectExact(Engines.SetUpProject({ project: onLocal })),
       Command.resolve(
         Engines.SetUpProject,
         Engines.Message.SucceededSetUp({
-          project,
+          project: onLocal,
           written: ['.fabrica/settings.json', '.fabrica/worker-rules.md'],
         }),
       ),
@@ -143,6 +149,7 @@ describe('adding a project', () => {
       message(Engines.Message.SubmittedAddProject()),
       Command.expectExact(
         Engines.AddProject({
+          engine: localEngineName,
           source: ProjectSource.cases.url.make({
             url: 'git@github.com:me/app.git',
           }),
@@ -159,6 +166,7 @@ describe('adding a project', () => {
         expect(shown.addProject).toEqual(
           Engines.AddFlow.Editing({
             form: {
+              engine: localEngineName,
               kind: 'url',
               path: '',
               url: 'git@github.com:me/app.git',
@@ -175,6 +183,7 @@ describe('adding a project', () => {
       Command.resolve(
         Engines.AddProject,
         Engines.Message.SucceededAddProject({
+          engine: localEngineName,
           project: addedInfo(true, 'cloned'),
         }),
       ),
@@ -195,7 +204,13 @@ describe('adding a project', () => {
       model(shown => {
         expect(shown.addProject).toEqual(
           Engines.AddFlow.Editing({
-            form: { kind: 'path', path: '   ', url: '', name: '' },
+            form: {
+              engine: localEngineName,
+              kind: 'path',
+              path: '   ',
+              url: '',
+              name: '',
+            },
             problem: Option.some(
               "Give the checkout's folder on the engine's host.",
             ),
@@ -215,15 +230,16 @@ describe('adding a project', () => {
       given({
         ...Engines.init(),
         added: Option.some({
+          engine: localEngineName,
           project: addedInfo(false, 'registered'),
           setup: Engines.Setup.NotAsked(),
         }),
       }),
-      message(Engines.Message.RequestedSetUp({ project })),
+      message(Engines.Message.RequestedSetUp({ project: onLocal })),
       Command.resolve(
         Engines.SetUpProject,
         Engines.Message.FailedSetUp({
-          project,
+          project: onLocal,
           reason: 'the scout found no check',
           written: ['.fabrica/settings.json'],
         }),
@@ -282,19 +298,27 @@ describe('the screen in the app', () => {
       }),
       Command.resolve(
         Engines.LoadEngineStatus,
-        Engines.Message.SucceededLoadStatus({ status }),
+        Engines.Message.SucceededLoadStatus({
+          engine: localEngineName,
+          status,
+        }),
       ),
       Command.resolve(
         Engines.LoadCredentials,
         Engines.Message.FailedLoadCredentials({
+          engine: localEngineName,
           reason: 'credentials.list is not implemented yet',
         }),
       ),
       model(shown => {
-        expect(shown.screens.engines.status._tag).toBe('Success')
+        expect(shown.screens.engines.status[localEngineName]?._tag).toBe(
+          'Success',
+        )
         expect(shown.screens.engines.credentials).toEqual({
-          _tag: 'Failure',
-          error: 'credentials.list is not implemented yet',
+          [localEngineName]: {
+            _tag: 'Failure',
+            error: 'credentials.list is not implemented yet',
+          },
         })
       }),
       // Asked again from the screen itself, the flow stays as it is and nothing is asked again.
@@ -346,6 +370,7 @@ describe('the screen in the app', () => {
       click(role('button', { name: 'Add' })),
       SceneCommand.expectExact(
         Engines.AddProject({
+          engine: localEngineName,
           source: ProjectSource.cases.path.make({ path: '/Users/me/src/app' }),
           name: Option.none(),
         }),
@@ -354,6 +379,7 @@ describe('the screen in the app', () => {
       SceneCommand.resolve(
         Engines.AddProject,
         Engines.Message.SucceededAddProject({
+          engine: localEngineName,
           project: addedInfo(false, 'registered'),
         }),
       ),
@@ -373,7 +399,10 @@ describe('the screen in the app', () => {
         screen: Screen.Engines(),
         screens: {
           ...connected.screens,
-          engines: Engines.openAddProject(connected.screens.engines),
+          engines: Engines.openAddProject(
+            connected.screens.engines,
+            localEngineName,
+          ),
         },
       }),
       click(role('button', { name: 'A git URL to clone' })),
@@ -386,6 +415,7 @@ describe('the screen in the app', () => {
       click(role('button', { name: 'Add' })),
       SceneCommand.expectExact(
         Engines.AddProject({
+          engine: localEngineName,
           source: ProjectSource.cases.url.make({
             url: 'https://github.com/me/app.git',
           }),
@@ -417,7 +447,7 @@ describe('credentials', () => {
       Engines.update,
       given({
         ...Engines.init(),
-        credentials: { _tag: 'Success', data: [] },
+        credentials: { [localEngineName]: { _tag: 'Success', data: [] } },
       }),
       message(Engines.Message.ChangedCredentialName({ name: 'anthropic' })),
       message(
@@ -435,22 +465,26 @@ describe('credentials', () => {
       Command.expectHas(Engines.SetCredential),
       Command.resolve(
         Engines.SetCredential,
-        Engines.Message.SucceededSetCredential({ name: 'anthropic' }),
+        Engines.Message.SucceededSetCredential({
+          credential: { engine: localEngineName, name: 'anthropic' },
+        }),
       ),
       Command.expectExact(Engines.LoadCredentials),
       model(shown => {
         expect(Redacted.value(shown.credentialForm.key)).toBe('')
         expect(shown.credentialForm.name).toBe('')
-        expect(shown.credentials._tag).toBe('Refreshing')
+        expect(shown.credentials[localEngineName]?._tag).toBe('Refreshing')
       }),
       Command.resolve(
         Engines.LoadCredentials,
-        Engines.Message.SucceededLoadCredentials({ credentials: [anthropic] }),
+        Engines.Message.SucceededLoadCredentials({
+          engine: localEngineName,
+          credentials: [anthropic],
+        }),
       ),
       model(shown => {
         expect(shown.credentials).toEqual({
-          _tag: 'Success',
-          data: [anthropic],
+          [localEngineName]: { _tag: 'Success', data: [anthropic] },
         })
       }),
     )
@@ -459,6 +493,7 @@ describe('credentials', () => {
   test('what the form sends: the key as a redacted value, or a command', () => {
     const keyed = Option.getOrThrow(
       Engines.credentialOf({
+        engine: localEngineName,
         name: ' anthropic ',
         kind: 'key',
         key: Redacted.make('sk-ant-secret'),
@@ -477,6 +512,7 @@ describe('credentials', () => {
 
     const commanded = Option.getOrThrow(
       Engines.credentialOf({
+        engine: localEngineName,
         name: 'openai',
         kind: 'command',
         key: Redacted.make(''),
@@ -524,14 +560,26 @@ describe('credentials', () => {
       Engines.update,
       given({
         ...Engines.init(),
-        credentials: { _tag: 'Success', data: [anthropic] },
+        credentials: {
+          [localEngineName]: { _tag: 'Success', data: [anthropic] },
+        },
       }),
-      message(Engines.Message.RequestedRemoveCredential({ name: 'anthropic' })),
-      Command.expectExact(Engines.RemoveCredential({ name: 'anthropic' })),
+      message(
+        Engines.Message.RequestedRemoveCredential({
+          credential: { engine: localEngineName, name: 'anthropic' },
+        }),
+      ),
+      Command.expectExact(
+        Engines.RemoveCredential({
+          credential: { engine: localEngineName, name: 'anthropic' },
+        }),
+      ),
       model(shown => {
         const another = Engines.update(
           shown,
-          Engines.Message.RequestedRemoveCredential({ name: 'openai' }),
+          Engines.Message.RequestedRemoveCredential({
+            credential: { engine: localEngineName, name: 'openai' },
+          }),
         )
         expect(another.model).toBe(shown)
         expect(another.commands).toBeUndefined()
@@ -539,27 +587,41 @@ describe('credentials', () => {
       Command.resolve(
         Engines.RemoveCredential,
         Engines.Message.FailedRemoveCredential({
-          name: 'anthropic',
+          credential: { engine: localEngineName, name: 'anthropic' },
           reason: 'CredentialNotFound',
         }),
       ),
       model(shown => {
         expect(shown.removing).toEqual(Option.none())
         expect(shown.removeProblem).toEqual(
-          Option.some("Couldn't remove anthropic: CredentialNotFound"),
+          Option.some({
+            engine: localEngineName,
+            text: "Couldn't remove anthropic: CredentialNotFound",
+          }),
         )
       }),
-      message(Engines.Message.RequestedRemoveCredential({ name: 'anthropic' })),
+      message(
+        Engines.Message.RequestedRemoveCredential({
+          credential: { engine: localEngineName, name: 'anthropic' },
+        }),
+      ),
       Command.resolve(
         Engines.RemoveCredential,
-        Engines.Message.SucceededRemoveCredential({ name: 'anthropic' }),
+        Engines.Message.SucceededRemoveCredential({
+          credential: { engine: localEngineName, name: 'anthropic' },
+        }),
       ),
       Command.resolve(
         Engines.LoadCredentials,
-        Engines.Message.SucceededLoadCredentials({ credentials: [] }),
+        Engines.Message.SucceededLoadCredentials({
+          engine: localEngineName,
+          credentials: [],
+        }),
       ),
       model(shown => {
-        expect(shown.credentials).toEqual({ _tag: 'Success', data: [] })
+        expect(shown.credentials).toEqual({
+          [localEngineName]: { _tag: 'Success', data: [] },
+        })
         expect(shown.removeProblem).toEqual(Option.none())
       }),
     )

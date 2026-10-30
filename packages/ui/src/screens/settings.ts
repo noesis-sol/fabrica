@@ -13,12 +13,14 @@ import {
   type EngineServices,
   requestEngine,
   requestProject,
+  scopeEngine,
 } from '../app/engine-route'
 import { type Theme, defaultTheme, themeTitle, themes } from '../theme/theme'
 
 // The Settings screen (spec §18.4, §13.13, §18.2): the project's, the engine's and the app's settings,
 // each with its source. The project's are the scoped project's `.fabrica/settings.json`, the engine's
-// its own settings, both asked of the engine as the screen opens; a setting its file leaves out, or
+// the settings of the engine holding it (this machine's under All projects), named after it, both asked
+// of that engine as the screen opens; a setting its file leaves out, or
 // writes as its default, shows as the default's. The app's is the theme, a setting of each install (H68), switched here and applied at
 // once. A setting is listed by its path in its file (`verifier.rounds`), every one its schema names.
 
@@ -50,6 +52,8 @@ export interface SettingRow {
 export const Model = Schema.Struct({
   /** The project whose settings are shown: the scope's as the screen opened; none for every project. */
   project: Schema.Option(EngineProject),
+  /** The name of the engine whose settings are shown: the scoped project's, or this machine's. */
+  engine: Schema.String,
   projectSettings: AsyncData.Schema(ProjectSettings, Schema.String).schema,
   engineSettings: AsyncData.Schema(EngineSettings, Schema.String).schema,
 })
@@ -57,6 +61,7 @@ export type Model = typeof Model.Type
 
 export const init = (): Model => ({
   project: Option.none(),
+  engine: localEngineName,
   projectSettings: AsyncData.Idle(),
   engineSettings: AsyncData.Idle(),
 })
@@ -67,8 +72,11 @@ export const Message = defineMessageUnion({
     settings: ProjectSettings,
   },
   FailedLoadProjectSettings: { project: EngineProject, reason: Schema.String },
-  SucceededLoadEngineSettings: { settings: EngineSettings },
-  FailedLoadEngineSettings: { reason: Schema.String },
+  SucceededLoadEngineSettings: {
+    engine: Schema.String,
+    settings: EngineSettings,
+  },
+  FailedLoadEngineSettings: { engine: Schema.String, reason: Schema.String },
 })
 export type Message = typeof Message.Type
 
@@ -94,18 +102,20 @@ export const LoadProjectSettings = Command.define('LoadProjectSettings', {
 })
 
 export const LoadEngineSettings = Command.define('LoadEngineSettings', {
+  args: { engine: Schema.String },
   messages: [
     Message.SucceededLoadEngineSettings,
     Message.FailedLoadEngineSettings,
   ],
-  execute: requestEngine(localEngineName, client =>
-    client.rpc['engine.settings'](),
-  ).pipe(
-    Effect.map(settings => Message.SucceededLoadEngineSettings({ settings })),
-    Effect.catch(reason =>
-      Effect.succeed(Message.FailedLoadEngineSettings({ reason })),
+  execute: ({ engine }) =>
+    requestEngine(engine, client => client.rpc['engine.settings']()).pipe(
+      Effect.map(settings =>
+        Message.SucceededLoadEngineSettings({ engine, settings }),
+      ),
+      Effect.catch(reason =>
+        Effect.succeed(Message.FailedLoadEngineSettings({ engine, reason })),
+      ),
     ),
-  ),
 })
 
 /** What the screen's Commands need: the engines' connections. */
@@ -116,14 +126,19 @@ type Return = Update.Return<Model, Message, Requires>
 const sameScope = Schema.toEquivalence(Schema.Option(EngineProject))
 
 /**
- * As the screen opens, or its scope changes while it is shown: the engine's settings and `scope`'s
- * asked again, what was shown of them kept meanwhile; another project's are asked afresh.
+ * As the screen opens, or its scope changes while it is shown: the settings of `scope`'s engine and
+ * `scope`'s asked again, what was shown of them kept meanwhile; another project's, or another engine's,
+ * are asked afresh.
  */
 export const opened = (
   model: Model,
   scope: Option.Option<EngineProject>,
 ): Return => {
-  const engine = AsyncData.revalidateOrLoad(model.engineSettings)
+  const scoped = scopeEngine(scope)
+  const engine =
+    scoped === model.engine
+      ? AsyncData.revalidateOrLoad(model.engineSettings)
+      : Option.some(AsyncData.Loading())
   const sameProject = sameScope(model.project, scope)
   const project = Option.isNone(scope)
     ? Option.some(AsyncData.Idle())
@@ -133,11 +148,14 @@ export const opened = (
   return {
     model: modifyFields(model, {
       project: () => scope,
+      engine: () => scoped,
       projectSettings: current => Option.getOrElse(project, () => current),
       engineSettings: current => Option.getOrElse(engine, () => current),
     }),
     commands: [
-      ...(Option.isSome(engine) ? [LoadEngineSettings()] : []),
+      ...(Option.isSome(engine)
+        ? [LoadEngineSettings({ engine: scoped })]
+        : []),
       ...Option.match(
         Option.filter(scope, () => Option.exists(project, AsyncData.isPending)),
         {
@@ -165,15 +183,21 @@ export const update = (model: Model, message: Message): Return =>
           })
         : model,
     }),
-    SucceededLoadEngineSettings: ({ settings }) => ({
-      model: modifyFields(model, {
-        engineSettings: () => AsyncData.succeed(settings),
-      }),
+    SucceededLoadEngineSettings: ({ engine, settings }) => ({
+      model:
+        engine === model.engine
+          ? modifyFields(model, {
+              engineSettings: () => AsyncData.succeed(settings),
+            })
+          : model,
     }),
-    FailedLoadEngineSettings: ({ reason }) => ({
-      model: modifyFields(model, {
-        engineSettings: () => AsyncData.fail(reason),
-      }),
+    FailedLoadEngineSettings: ({ engine, reason }) => ({
+      model:
+        engine === model.engine
+          ? modifyFields(model, {
+              engineSettings: () => AsyncData.fail(reason),
+            })
+          : model,
     }),
   })
 
@@ -405,7 +429,7 @@ const engineView = <ParentMessage>(
 ): Html =>
   section(
     'Engine settings',
-    `Engine · ${localEngineName}`,
+    `Engine · ${model.engine}`,
     [
       AsyncData.matchData(model.engineSettings, {
         onEmpty: () => quiet('Asking the engine for its settings…', h),

@@ -26,7 +26,7 @@ import {
 } from '@fabrica/client'
 import { EngineId, ProjectId, ProjectInfo } from '@fabrica/contracts'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
 import { appHostOf } from '../src/app/host'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
@@ -330,6 +330,7 @@ describe('a checkout on a Windows drive', () => {
       SceneCommand.resolve(
         Engines.AddProject,
         Engines.Message.SucceededAddProject({
+          engine: localEngineName,
           project: ProjectInfo.make({
             id: ProjectId.make('p-3'),
             name: 'app',

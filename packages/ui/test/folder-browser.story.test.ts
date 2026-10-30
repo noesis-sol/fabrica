@@ -21,7 +21,7 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
 import { type Model, initialModel } from '../src/app/model'
 import { Screen } from '../src/app/screen'
 import { update } from '../src/app/update'
@@ -62,7 +62,7 @@ const src = FolderListing.make({
   ],
 })
 
-const opened = Engines.openAddProject(Engines.init())
+const opened = Engines.openAddProject(Engines.init(), localEngineName)
 
 const formPath = (shown: Engines.Model): string =>
   Engines.AddFlow.match(shown.addProject, {
@@ -77,15 +77,21 @@ describe('browsing the engine host’s folders', () => {
       Engines.update,
       given(opened),
       message(Engines.Message.OpenedFolders()),
-      Command.expectExact(Engines.LoadFolders({ path: Option.none() })),
+      Command.expectExact(
+        Engines.LoadFolders({ engine: localEngineName, path: Option.none() }),
+      ),
       model(shown => {
         expect(shown.folders).toEqual(
-          Engines.FolderBrowser.Loading({ path: Option.none() }),
+          Engines.FolderBrowser.Loading({
+            engine: localEngineName,
+            path: Option.none(),
+          }),
         )
       }),
       Command.resolve(
         Engines.LoadFolders,
         Engines.Message.SucceededFolders({
+          engine: localEngineName,
           path: Option.none(),
           listing: home,
         }),
@@ -101,11 +107,15 @@ describe('browsing the engine host’s folders', () => {
         }),
       ),
       Command.expectExact(
-        Engines.LoadFolders({ path: Option.some('/Users/me/src') }),
+        Engines.LoadFolders({
+          engine: localEngineName,
+          path: Option.some('/Users/me/src'),
+        }),
       ),
       Command.resolve(
         Engines.LoadFolders,
         Engines.Message.SucceededFolders({
+          engine: localEngineName,
           path: Option.some('/Users/me/src'),
           listing: src,
         }),
@@ -118,6 +128,7 @@ describe('browsing the engine host’s folders', () => {
       message(Engines.Message.SubmittedAddProject()),
       Command.expectExact(
         Engines.AddProject({
+          engine: localEngineName,
           source: ProjectSource.cases.path.make({ path: '/Users/me/src/app' }),
           name: Option.none(),
         }),
@@ -136,11 +147,15 @@ describe('browsing the engine host’s folders', () => {
       message(Engines.Message.ChangedProjectPath({ path: ' /Users/me/gone ' })),
       message(Engines.Message.OpenedFolders()),
       Command.expectExact(
-        Engines.LoadFolders({ path: Option.some('/Users/me/gone') }),
+        Engines.LoadFolders({
+          engine: localEngineName,
+          path: Option.some('/Users/me/gone'),
+        }),
       ),
       Command.resolve(
         Engines.LoadFolders,
         Engines.Message.FailedFolders({
+          engine: localEngineName,
           path: Option.some('/Users/me/gone'),
           reason: 'there is no folder at /Users/me/gone',
         }),
@@ -155,10 +170,13 @@ describe('browsing the engine host’s folders', () => {
         expect(formPath(shown)).toBe(' /Users/me/gone ')
       }),
       message(Engines.Message.RequestedFolders({ path: Option.none() })),
-      Command.expectExact(Engines.LoadFolders({ path: Option.none() })),
+      Command.expectExact(
+        Engines.LoadFolders({ engine: localEngineName, path: Option.none() }),
+      ),
       Command.resolve(
         Engines.LoadFolders,
         Engines.Message.SucceededFolders({
+          engine: localEngineName,
           path: Option.none(),
           listing: home,
         }),
@@ -178,13 +196,18 @@ describe('browsing the engine host’s folders', () => {
     ).model
     const late = Engines.update(
       asked,
-      Engines.Message.SucceededFolders({ path: Option.none(), listing: home }),
+      Engines.Message.SucceededFolders({
+        engine: localEngineName,
+        path: Option.none(),
+        listing: home,
+      }),
     )
     expect(late.model).toBe(asked)
     const closed = Engines.update(asked, Engines.Message.ClosedFolders()).model
     const afterClose = Engines.update(
       closed,
       Engines.Message.SucceededFolders({
+        engine: localEngineName,
         path: Option.some('/Users/me/src'),
         listing: src,
       }),
@@ -215,6 +238,7 @@ describe('browsing the engine host’s folders', () => {
       Command.resolve(
         Engines.LoadFolders,
         Engines.Message.SucceededFolders({
+          engine: localEngineName,
           path: Option.none(),
           listing: home,
         }),
@@ -242,7 +266,10 @@ const onScreen: Model = (() => {
     screen: Screen.Engines(),
     screens: {
       ...connected.screens,
-      engines: Engines.openAddProject(connected.screens.engines),
+      engines: Engines.openAddProject(
+        connected.screens.engines,
+        localEngineName,
+      ),
     },
   }
 })()
@@ -253,13 +280,16 @@ describe('the folder browser on the screen', () => {
       { update, view },
       givenScene(onScreen),
       click(role('button', { name: 'Browse…' })),
-      SceneCommand.expectExact(Engines.LoadFolders({ path: Option.none() })),
+      SceneCommand.expectExact(
+        Engines.LoadFolders({ engine: localEngineName, path: Option.none() }),
+      ),
       expectScene(
         within(role('region', { name: 'Folders on local' }), role('status')),
       ).toHaveText('Listing the folders…'),
       SceneCommand.resolve(
         Engines.LoadFolders,
         Engines.Message.SucceededFolders({
+          engine: localEngineName,
           path: Option.none(),
           listing: home,
         }),
@@ -268,11 +298,15 @@ describe('the folder browser on the screen', () => {
       expectScene(role('button', { name: 'Up' })).toExist(),
       click(role('button', { name: 'Open src' })),
       SceneCommand.expectExact(
-        Engines.LoadFolders({ path: Option.some('/Users/me/src') }),
+        Engines.LoadFolders({
+          engine: localEngineName,
+          path: Option.some('/Users/me/src'),
+        }),
       ),
       SceneCommand.resolve(
         Engines.LoadFolders,
         Engines.Message.SucceededFolders({
+          engine: localEngineName,
           path: Option.some('/Users/me/src'),
           listing: src,
         }),
@@ -291,6 +325,7 @@ describe('the folder browser on the screen', () => {
       click(role('button', { name: 'Add' })),
       SceneCommand.expectExact(
         Engines.AddProject({
+          engine: localEngineName,
           source: ProjectSource.cases.path.make({ path: '/Users/me/src/app' }),
           name: Option.none(),
         }),
@@ -310,11 +345,15 @@ describe('the folder browser on the screen', () => {
       type(label('Its folder on local'), '/Users/me/gone'),
       click(role('button', { name: 'Browse…' })),
       SceneCommand.expectExact(
-        Engines.LoadFolders({ path: Option.some('/Users/me/gone') }),
+        Engines.LoadFolders({
+          engine: localEngineName,
+          path: Option.some('/Users/me/gone'),
+        }),
       ),
       SceneCommand.resolve(
         Engines.LoadFolders,
         Engines.Message.FailedFolders({
+          engine: localEngineName,
           path: Option.some('/Users/me/gone'),
           reason: 'there is no folder at /Users/me/gone',
         }),
@@ -323,10 +362,13 @@ describe('the folder browser on the screen', () => {
         "Couldn't list the folder: there is no folder at /Users/me/gone",
       ),
       click(role('button', { name: 'Home' })),
-      SceneCommand.expectExact(Engines.LoadFolders({ path: Option.none() })),
+      SceneCommand.expectExact(
+        Engines.LoadFolders({ engine: localEngineName, path: Option.none() }),
+      ),
       SceneCommand.resolve(
         Engines.LoadFolders,
         Engines.Message.SucceededFolders({
+          engine: localEngineName,
           path: Option.none(),
           listing: home,
         }),
@@ -335,11 +377,15 @@ describe('the folder browser on the screen', () => {
       expectScene(label('Its folder on local')).toHaveValue('/Users/me'),
       click(role('button', { name: 'Browse…' })),
       SceneCommand.expectExact(
-        Engines.LoadFolders({ path: Option.some('/Users/me') }),
+        Engines.LoadFolders({
+          engine: localEngineName,
+          path: Option.some('/Users/me'),
+        }),
       ),
       SceneCommand.resolve(
         Engines.LoadFolders,
         Engines.Message.SucceededFolders({
+          engine: localEngineName,
           path: Option.some('/Users/me'),
           listing: home,
         }),
