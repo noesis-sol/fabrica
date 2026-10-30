@@ -85,43 +85,75 @@ const unglobbed = (alternative: string): string =>
     )
     .join('/')
 
-/** Where one alternative lands, absolute, or why the gate can't tell. */
-const locate = (
-  alternative: string,
-  context: PathContext,
-): Confinement | string => {
+/** Where one brace alternative lands. */
+export type Place = Data.TaggedEnum<{
+  /** At `path`, absolute. */
+  At: { readonly path: string }
+  /** The gate can't tell where it lands: why. */
+  Unknown: { readonly reason: string }
+}>
+export const Place = Data.taggedEnum<Place>()
+
+/** Where each of a pattern's brace alternatives lands. */
+export type Locations = Data.TaggedEnum<{
+  Located: { readonly places: ReadonlyArray<Place> }
+  /** A pattern the gate refuses to read (§20.2): why. */
+  Refused: { readonly reason: string }
+}>
+export const Locations = Data.taggedEnum<Locations>()
+
+/** Where one alternative lands. */
+const locate = (alternative: string, context: PathContext): Place => {
   const path = unglobbed(alternative)
   if (path === '~' || path.startsWith('~/'))
     return Option.match(context.home, {
-      onNone: () =>
-        Confinement.Unknown({ reason: 'the home folder isn’t known' }),
-      onSome: home => resolve(join(home, path.slice(1))),
+      onNone: () => Place.Unknown({ reason: 'the home folder isn’t known' }),
+      onSome: home => Place.At({ path: resolve(join(home, path.slice(1))) }),
     })
   if (path.startsWith('~'))
-    return Confinement.Unknown({
+    return Place.Unknown({
       reason: `${path.split('/')[0]} is another user’s home folder`,
     })
-  if (isAbsolute(path)) return resolve(path)
+  if (isAbsolute(path)) return Place.At({ path: resolve(path) })
   return Option.match(context.cwd, {
     onNone: () =>
-      Confinement.Unknown({
+      Place.Unknown({
         reason: `${path} is relative to a folder the gate can't tell`,
       }),
-    onSome: cwd => resolve(cwd, path),
+    onSome: cwd => Place.At({ path: resolve(cwd, path) }),
   })
 }
 
-/** Where `pattern`, a path or a shell glob in its escaped form, lands. */
-export const confine = (pattern: string, context: PathContext): Confinement =>
+/** Where each alternative of `pattern`, a path or a shell glob in its escaped form, lands. */
+export const locations = (pattern: string, context: PathContext): Locations =>
   Expansion.$match(expandBraces(pattern), {
+    Refused: ({ reason }) => Locations.Refused({ reason }),
+    Expanded: ({ alternatives }) =>
+      Locations.Located({
+        places: alternatives.map(alternative => locate(alternative, context)),
+      }),
+  })
+
+/** Where `pattern`, a path or a shell glob in its escaped form, lands: outside where any alternative does. */
+export const confine = (pattern: string, context: PathContext): Confinement =>
+  Locations.$match(locations(pattern, context), {
     Refused: ({ reason }) => Confinement.Refused({ reason }),
-    Expanded: ({ alternatives }) => {
-      for (const alternative of alternatives) {
-        const located = locate(alternative, context)
-        if (typeof located !== 'string') return located
-        if (!isInside(context.worktree, located))
-          return Confinement.Outside({ path: located })
-      }
-      return Confinement.Inside()
+    Located: ({ places }) => {
+      const [outside] = places.flatMap(place =>
+        Place.$match(place, {
+          At: ({ path }) => (isInside(context.worktree, path) ? [] : [path]),
+          Unknown: () => [],
+        }),
+      )
+      const [unknown] = places.flatMap(place =>
+        Place.$match(place, {
+          At: () => [],
+          Unknown: ({ reason }) => [reason],
+        }),
+      )
+      if (outside !== undefined) return Confinement.Outside({ path: outside })
+      return unknown === undefined
+        ? Confinement.Inside()
+        : Confinement.Unknown({ reason: unknown })
     },
   })

@@ -1,7 +1,15 @@
-import { Data, Option } from 'effect'
-import { basename, resolve } from 'node:path'
+import { Data, Equivalence, Option } from 'effect'
+import { basename } from 'node:path'
 
-import { Confinement, type PathContext, confine, isInside } from './paths'
+import {
+  Confinement,
+  Locations,
+  type PathContext,
+  Place,
+  confine,
+  isInside,
+  locations,
+} from './paths'
 import { Script, type SimpleCommand, type Word, parseScript } from './shell'
 
 // The command policy (spec §12.6): what a bash command line does that the gate's levels weigh. Each
@@ -226,9 +234,39 @@ const optionValue = (
   return Option.none()
 }
 
-/** Reads a command line's findings, the folder each command runs in followed through `cd`. */
+/**
+ * The folders a command may run in, none where the gate can't tell one. The gate reads a command
+ * line as one list, without knowing which of its commands run (one in a subshell, after a failing
+ * `cd`, in a branch, in a function never called), so a `cd` adds the folder it lands in to the
+ * folders before it and drops none: a path is placed from each.
+ */
+type Folders = ReadonlyArray<Option.Option<string>>
+
+const sameFolder = Option.makeEquivalence(Equivalence.String)
+
+/** `folders` and `more`, each folder once. */
+const joined = (folders: Folders, more: Folders): Folders =>
+  more.reduce<Folders>(
+    (all, folder) =>
+      all.some(known => sameFolder(known, folder)) ? all : [...all, folder],
+    folders,
+  )
+
+const unknownFolder: Folders = [Option.none()]
+
+/** A `cd` target bash looks up in `CDPATH`: relative, its first segment neither `.` nor `..`. */
+const searched = (target: string): boolean =>
+  !target.startsWith('/') &&
+  !target.startsWith('~') &&
+  !/^\.\.?(?:\/|$)/u.test(target)
+
+/** Reads a command line's findings, the folders each command may run in followed through `cd`. */
 class Policy {
   readonly findings: Array<Finding> = []
+  /** The command line sets `CDPATH`, so a `cd` may land under one of its folders. */
+  cdPath = false
+  /** The command line sets `cdable_vars`, so a `cd` may land where a variable names. */
+  cdableVariables = false
 
   constructor(readonly context: CommandContext) {}
 
@@ -244,16 +282,22 @@ class Policy {
     return { worktree: this.context.worktree, home: this.context.home, cwd }
   }
 
-  /** Where `word` lands, read from `cwd`. */
-  place(word: Word, cwd: Option.Option<string>): Confinement {
-    return word.dynamic
-      ? Confinement.Unknown({
-          reason: `${word.text} is known only when it runs`,
-        })
-      : confine(word.pattern, this.paths(cwd))
+  /** Where `word` lands, read from each of `cwd`: outside where it is from any. */
+  place(word: Word, cwd: Folders): Confinement {
+    if (word.dynamic)
+      return Confinement.Unknown({
+        reason: `${word.text} is known only when it runs`,
+      })
+    const found = cwd.map(folder => confine(word.pattern, this.paths(folder)))
+    return (
+      found.find(Confinement.$is('Refused')) ??
+      found.find(Confinement.$is('Outside')) ??
+      found.find(Confinement.$is('Unknown')) ??
+      Confinement.Inside()
+    )
   }
 
-  written(word: Word, cwd: Option.Option<string>): void {
+  written(word: Word, cwd: Folders): void {
     if (!word.dynamic && harmlessTargets.test(word.text)) return
     Confinement.$match(this.place(word, cwd), {
       Inside: () => undefined,
@@ -264,7 +308,7 @@ class Policy {
     })
   }
 
-  removed(word: Word, cwd: Option.Option<string>): void {
+  removed(word: Word, cwd: Folders): void {
     Confinement.$match(this.place(word, cwd), {
       Inside: () => undefined,
       Outside: ({ path }) =>
@@ -275,28 +319,51 @@ class Policy {
     })
   }
 
-  /** The folder `cd` to `word` lands in; none where the gate can't tell. */
-  changeFolder(word: Word, cwd: Option.Option<string>): Option.Option<string> {
-    if (word.dynamic || word.text === '-') return Option.none()
-    const path = word.text
-    if (path === '~' || path.startsWith('~/'))
-      return Option.map(this.context.home, home =>
-        resolve(home, `.${path.slice(1)}`),
-      )
-    return path.startsWith('/')
-      ? Option.some(resolve(path))
-      : Option.map(cwd, folder => resolve(folder, path))
+  /** The folders `word` names from each of `cwd`: every brace alternative, a glob read as `..` where it can be. */
+  folder(word: Word, cwd: Folders): Folders {
+    if (word.dynamic) return unknownFolder
+    return joined(
+      [],
+      cwd.flatMap(from =>
+        Locations.$match(locations(word.pattern, this.paths(from)), {
+          Refused: ({ reason }) => {
+            this.refuse(reason)
+            return unknownFolder
+          },
+          Located: ({ places }) =>
+            places.map(place =>
+              Place.$match(place, {
+                At: ({ path }) => Option.some(path),
+                Unknown: () => Option.none<string>(),
+              }),
+            ),
+        }),
+      ),
+    )
   }
 
-  /** Every command of `source`, run from `cwd`; the folder it leaves the shell in. */
-  script(
-    source: string,
-    cwd: Option.Option<string>,
-    depth: number,
-  ): Option.Option<string> {
+  /** The folders `cd` or `pushd` with `args` may land in from `cwd`. */
+  changeFolder(name: string, args: ReadonlyArray<Word>, cwd: Folders): Folders {
+    const target = operands(args)[0]
+    if (target === undefined)
+      return name === 'cd' ? [this.context.home] : unknownFolder
+    if (
+      target.text === '-' ||
+      (name === 'pushd' && /^\+\d+$/u.test(target.text))
+    )
+      return unknownFolder
+    const landed = this.folder(target, cwd)
+    return this.cdableVariables ||
+      (this.cdPath && (target.dynamic || searched(target.text)))
+      ? joined(landed, unknownFolder)
+      : landed
+  }
+
+  /** Every command of `source`, run from `cwd`; the folders it may leave the shell in. */
+  script(source: string, cwd: Folders, depth: number): Folders {
     if (depth > maxDepth) {
       this.ask('runs shells nested deeper than the gate follows')
-      return Option.none()
+      return joined(cwd, unknownFolder)
     }
     return Script.$match(parseScript(source, this.context.home), {
       Unparsable: ({ reason }) => {
@@ -306,32 +373,32 @@ class Policy {
         if (unreadSudo.test(source))
           this.refuse('sudo: commands never run as another user')
         this.ask(`the gate can’t read the command: ${reason}`)
-        return Option.none()
+        return joined(cwd, unknownFolder)
       },
-      Parsed: ({ commands }) =>
-        commands.reduce(
-          (folder, command) => this.command(command, folder, depth),
+      Parsed: ({ commands }) => {
+        // Set anywhere, even after a `cd` (in a loop, it runs before the next one), they move it.
+        const texts = commands.flatMap(({ words }) =>
+          words.map(({ text }) => text),
+        )
+        if (texts.some(text => text.includes('CDPATH'))) this.cdPath = true
+        if (texts.some(text => text.includes('cdable_vars')))
+          this.cdableVariables = true
+        return commands.reduce(
+          (folders, command) => this.command(command, folders, depth),
           cwd,
-        ),
+        )
+      },
     })
   }
 
-  /** A simple command's findings, run from `cwd`; the folder it leaves the shell in. */
-  command(
-    command: SimpleCommand,
-    cwd: Option.Option<string>,
-    depth: number,
-  ): Option.Option<string> {
+  /** A simple command's findings, run from `cwd`; the folders it may leave the shell in. */
+  command(command: SimpleCommand, cwd: Folders, depth: number): Folders {
     for (const target of command.writes) this.written(target, cwd)
     return this.words(command.words, cwd, depth)
   }
 
   /** A command's words: wrappers seen through, then the command itself. */
-  words(
-    words: ReadonlyArray<Word>,
-    cwd: Option.Option<string>,
-    depth: number,
-  ): Option.Option<string> {
+  words(words: ReadonlyArray<Word>, cwd: Folders, depth: number): Folders {
     let index = 0
     for (; index < words.length; index++) {
       const word = words[index]
@@ -355,13 +422,9 @@ class Policy {
       this.refuse(`${name}: commands never run as another user`)
       return cwd
     }
-    if (name === 'cd' || name === 'pushd') {
-      const target = operands(args)[0]
-      return target === undefined
-        ? this.context.home
-        : this.changeFolder(target, cwd)
-    }
-    if (name === 'popd') return Option.none()
+    if (name === 'cd' || name === 'pushd')
+      return joined(cwd, this.changeFolder(name, args, cwd))
+    if (name === 'popd') return joined(cwd, unknownFolder)
 
     const wrapped = this.wrapped(name, args)
     if (wrapped !== undefined) return this.words(wrapped, cwd, depth)
@@ -389,10 +452,11 @@ class Policy {
       return cwd
     }
     if (name === 'eval') {
-      if (args.some(({ dynamic }) => dynamic))
+      if (args.some(({ dynamic }) => dynamic)) {
         this.ask('eval runs a command known only when it runs')
-      else this.script(args.map(({ text }) => text).join(' '), cwd, depth + 1)
-      return cwd
+        return cwd
+      }
+      return this.script(args.map(({ text }) => text).join(' '), cwd, depth + 1)
     }
     if (name === 'find') {
       this.find(args, cwd, depth)
@@ -487,21 +551,18 @@ class Policy {
   }
 
   /** Where a command runs: outside the worktree, or somewhere the gate can't tell, asks. */
-  runsIn(name: string, cwd: Option.Option<string>): void {
-    Option.match(cwd, {
-      onNone: () => this.ask(`${name} runs in a folder the gate can’t tell`),
-      onSome: folder => {
-        if (!isInside(this.context.worktree, folder))
-          this.ask(`${name} runs outside the worktree, in ${folder}`)
-      },
-    })
+  runsIn(name: string, cwd: Folders): void {
+    for (const from of cwd)
+      Option.match(from, {
+        onNone: () => this.ask(`${name} runs in a folder the gate can’t tell`),
+        onSome: folder => {
+          if (!isInside(this.context.worktree, folder))
+            this.ask(`${name} runs outside the worktree, in ${folder}`)
+        },
+      })
   }
 
-  find(
-    args: ReadonlyArray<Word>,
-    cwd: Option.Option<string>,
-    depth: number,
-  ): void {
+  find(args: ReadonlyArray<Word>, cwd: Folders, depth: number): void {
     const start = args.findIndex(
       ({ text, dynamic }) =>
         !dynamic && (text.startsWith('-') || text === '(' || text === '!'),
@@ -523,23 +584,21 @@ class Policy {
         ({ text }, at) => at > index && (text === ';' || text === '+'),
       )
       const inner = expression.slice(index + 1, end === -1 ? undefined : end)
+      // `-execdir` and `-okdir` run in each match's folder, which the gate doesn't follow.
+      const runIn = word.text.endsWith('dir') ? unknownFolder : cwd
       for (const root of roots)
         this.words(
           inner.map(part =>
             part.text === '{}' ? syntheticWord(root, '/_') : part,
           ),
-          cwd,
+          runIn,
           depth,
         )
       if (end !== -1) index = end
     }
   }
 
-  plain(
-    name: string,
-    args: ReadonlyArray<Word>,
-    cwd: Option.Option<string>,
-  ): void {
+  plain(name: string, args: ReadonlyArray<Word>, cwd: Folders): void {
     if (removals.has(name)) {
       for (const target of operands(args)) this.removed(target, cwd)
       return
@@ -655,7 +714,7 @@ class Policy {
       this.ask(`${name} ${subcommand} publishes a package`)
   }
 
-  git(args: ReadonlyArray<Word>, cwd: Option.Option<string>): void {
+  git(args: ReadonlyArray<Word>, cwd: Folders): void {
     let folder = cwd
     let index = 0
     for (; index < args.length; index++) {
@@ -667,9 +726,7 @@ class Policy {
       if (text === '-C') {
         const target = args[index + 1]
         folder =
-          target === undefined
-            ? Option.none()
-            : this.changeFolder(target, folder)
+          target === undefined ? unknownFolder : this.folder(target, folder)
         index++
       } else if (text === '-c') {
         const setting = args[index + 1]
@@ -959,6 +1016,6 @@ export const commandFindings = (
   context: CommandContext,
 ): ReadonlyArray<Finding> => {
   const policy = new Policy(context)
-  policy.script(source, Option.some(context.worktree), 0)
+  policy.script(source, [Option.some(context.worktree)], 0)
   return policy.findings
 }
