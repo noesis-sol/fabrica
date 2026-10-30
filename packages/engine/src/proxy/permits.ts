@@ -22,10 +22,12 @@ import type {
 // per-provider caps make a call wait its turn, budgets (§14.4) stop a run's calls. Taking a permit
 // waits; it never refuses a call.
 //
-// The usage part (§14.2, H20): each run gives the permits the providers its holds hold, as they change,
-// for as long as it runs; a call of that run to a held provider waits for its permit until the provider
-// is no longer held, or the run's holds are gone, so no agent of the run spends a call finding a limit
-// the proxy has seen already. Calls of other runs, and the proxy's probes, which take no permit, go on.
+// The usage and credentials parts (§14.2, §14.6, H20, H69): each run gives the permits the providers
+// its holds hold, a usage limit's or a refused credential's, as they change, for as long as it runs; a
+// call of that run to a held provider waits for its permit until the provider is no longer held, or the
+// run's holds are gone, so no agent of the run (a worker or an organ) spends a call finding a limit or a
+// refused credential the proxy has seen already. Calls to the run's other providers, calls of other
+// runs, and the proxy's probes, which take no permit, go on: a probe is how a held provider lifts.
 
 /** Who a model call is counted to: its run, its ticket and its agent's session where it has them, and its model. */
 export interface Caller {
@@ -71,7 +73,10 @@ interface Gate {
   readonly gone: Deferred.Deferred<void>
 }
 
-/** The permits: a run's calls to a provider its holds hold wait until it isn't held. */
+/**
+ * The permits: a run's calls to a provider its holds hold (a usage limit, a refused credential) wait
+ * until it isn't held.
+ */
 export const makePermits: Effect.Effect<PermitsShape> = Effect.sync(() => {
   const gates = new Map<RunId, Gate>()
   return {

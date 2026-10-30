@@ -26,6 +26,7 @@ import type { ModelChoice, PiEvent } from '../agent'
 import type { Worktree } from '../git'
 import type { HandBackClockShape } from '../merge/handbacks'
 import { ProxyEvent, Refusal } from '../proxy'
+import type { SecretName } from '../secrets'
 import { WorkerEnd, WorkerTurn } from './worker'
 
 // Each worker's supervision (spec §12.8, §14.5, H37): every path that starts or resumes a worker runs
@@ -55,9 +56,10 @@ export type WorkerFailure = Data.TaggedEnum<{
     readonly provider: ProviderName
     readonly resetAt: DateTime.Utc
   }
-  /** Its provider refused its credential once the run had begun (§14.6). */
+  /** Its provider refused its credential, `account`'s, once the run had begun (§14.6). */
   CredentialRefused: {
     readonly provider: ProviderName
+    readonly account: Option.Option<SecretName>
     readonly reason: string
   }
   /** No events for `quiet`, outside the tools known to be long; `doing` is what its last event said. */
@@ -108,6 +110,7 @@ export interface SupervisorHolds {
   readonly credentialRefused: (input: {
     readonly ticket: TicketId
     readonly provider: ProviderName
+    readonly account: Option.Option<SecretName>
     readonly reason: string
   }) => Effect.Effect<void>
   /** Its session didn't start on any of its models: counted for the environment hold. */
@@ -523,8 +526,8 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
               WorkerFailure.RateLimited({ provider, retryAfter }),
             UsageLimited: ({ resetAt }) =>
               WorkerFailure.UsageLimited({ provider, resetAt }),
-            CredentialRefused: ({ reason }) =>
-              WorkerFailure.CredentialRefused({ provider, reason }),
+            CredentialRefused: ({ reason, account }) =>
+              WorkerFailure.CredentialRefused({ provider, account, reason }),
             StartFailed: ({ reason }) =>
               WorkerFailure.StartFailed({
                 reason: `${provider}: ${reason}`,
@@ -704,11 +707,12 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
                 ),
               )
             }),
-          CredentialRefused: ({ provider, reason }) =>
+          CredentialRefused: ({ provider, account, reason }) =>
             Effect.gen(function* () {
               yield* options.holds.credentialRefused({
                 ticket,
                 provider,
+                account,
                 reason,
               })
               return resumed(

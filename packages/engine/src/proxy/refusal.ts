@@ -1,6 +1,8 @@
 import { Array, Data, DateTime, Duration, Option } from 'effect'
 import type { IncomingHttpHeaders } from 'node:http'
 
+import type { SecretName } from '../secrets'
+
 // What a provider's refusal of a model call means for the run (spec §12.9): read by the model proxy
 // from the response's status and headers, which it passes on unchanged. A quota with its reset time
 // starts the usage-limit hold (§14.2); a refusal with no reset is a rate limit to back off from
@@ -14,8 +16,14 @@ export type Refusal = Data.TaggedEnum<{
   RateLimited: { readonly retryAfter: Option.Option<Duration.Duration> }
   /** The credential was refused, or there is none, before any call to its provider went through in the run. */
   StartFailed: { readonly reason: string }
-  /** The credential was refused, or is gone, after a call to its provider went through in the run. */
-  CredentialRefused: { readonly reason: string }
+  /**
+   * The credential was refused, or is gone, after a call to its provider went through in the run;
+   * `account` is the credential's name, none for a provider that takes none.
+   */
+  CredentialRefused: {
+    readonly reason: string
+    readonly account: Option.Option<SecretName>
+  }
 }>
 export const Refusal = Data.taggedEnum<Refusal>()
 
@@ -84,9 +92,14 @@ export const retryAfterOf = (
 export const credentialRefusal = (options: {
   readonly wentThrough: boolean
   readonly reason: string
+  /** The credential's name: the account the call was made as. */
+  readonly account: Option.Option<SecretName>
 }): Refusal =>
   options.wentThrough
-    ? Refusal.CredentialRefused({ reason: options.reason })
+    ? Refusal.CredentialRefused({
+        reason: options.reason,
+        account: options.account,
+      })
     : Refusal.StartFailed({ reason: options.reason })
 
 /** What a provider's response refuses, from its status and headers; none for an answer or another failure. */
@@ -95,6 +108,8 @@ export const classify = (response: {
   readonly headers: IncomingHttpHeaders
   /** Whether a call to the provider has gone through in the run. */
   readonly wentThrough: boolean
+  /** The credential's name: the account the call was made as. */
+  readonly account: Option.Option<SecretName>
 }): Option.Option<Refusal> => {
   if (response.status === 429)
     return Option.some(
@@ -108,6 +123,7 @@ export const classify = (response: {
     return Option.some(
       credentialRefusal({
         wentThrough: response.wentThrough,
+        account: response.account,
         reason: `the provider refused the credential (HTTP ${response.status})`,
       }),
     )

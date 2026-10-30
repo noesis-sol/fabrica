@@ -2,7 +2,6 @@ import { Data, Duration, Effect, Option, Redacted, Ref, Stream } from 'effect'
 
 import {
   type HoldKind,
-  type ProviderName,
   type RunId,
   SessionId,
   TicketId,
@@ -11,6 +10,7 @@ import {
 
 import { type ModelChoice, PiAgent } from '../agent'
 import {
+  type CredentialsHoldShape,
   ENV_PROBE,
   type EnvironmentCount,
   EnvironmentProbe,
@@ -207,56 +207,22 @@ export const makeEnvironmentHold = Effect.fn('EnvironmentHold.make')(
 
 /**
  * The supervisor's trouble routed to the holds (§14.1, §14.2, §14.6): a usage limit waits on the usage
- * hold for its provider (`usage`), which lifts on the model proxy's probe; a refused credential holds
- * the run for its provider for `retry`, each worker waiting until its hold lifts; a session that didn't
- * start is counted for the environment hold. The credentials' lift on the proxy's probe comes with its
- * hold (fab-mgi.4.13).
+ * hold for its provider (`usage`), a refused credential on the credentials hold for its provider
+ * (`credentials`), each lifting on the model proxy's probe; a session that didn't start is counted for
+ * the environment hold.
  */
 export const supervisorHolds = (input: {
-  readonly holds: HoldsShape
   readonly environment: EnvironmentHoldShape
   readonly usage: UsageHoldShape
-  readonly retry: Duration.Duration
-  readonly sleep: (duration: Duration.Duration) => Effect.Effect<void>
-  /** Where the timed lifts run: the run's scope. */
-  readonly fork: (effect: Effect.Effect<void>) => Effect.Effect<void>
-}): SupervisorHolds => {
-  const { holds } = input
-  const waitOn = (hold: {
-    readonly hold: HoldKind
-    readonly provider: ProviderName
-    readonly why: string
-    readonly until: Duration.Duration
-    readonly lifted: string
-  }) =>
-    Effect.gen(function* () {
-      const key = { hold: hold.hold, provider: hold.provider }
-      const raised = yield* holds.raise({ ...key, why: hold.why })
-      if (raised)
-        yield* input.fork(
-          Effect.andThen(
-            input.sleep(hold.until),
-            holds.lift({ ...key, why: hold.lifted }),
-          ),
-        )
-      yield* holds.lifted(key)
-    })
-  return {
-    usageLimited: input.usage.waitOut,
-    credentialRefused: ({ provider, reason }) =>
-      waitOn({
-        hold: 'CREDENTIALS',
-        provider,
-        why: `${provider}'s credential was refused (${reason})`,
-        until: input.retry,
-        lifted: `${formatDurationMillis(Duration.toMillis(input.retry))} waited on ${provider}'s credential`,
-      }),
-    startFailed: ({ ticket, reason }) =>
-      input.environment.settled(
-        Settle.Idle({ ticket, why: `its session didn't start: ${reason}` }),
-      ),
-  }
-}
+  readonly credentials: CredentialsHoldShape
+}): SupervisorHolds => ({
+  usageLimited: input.usage.waitOut,
+  credentialRefused: input.credentials.waitOut,
+  startFailed: ({ ticket, reason }) =>
+    input.environment.settled(
+      Settle.Idle({ ticket, why: `its session didn't start: ${reason}` }),
+    ),
+})
 
 /** The most the minimal agent may take to start and answer. */
 export const PROBE_LIMIT = Duration.minutes(2)

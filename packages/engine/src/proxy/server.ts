@@ -476,6 +476,7 @@ export const make = Effect.fn('ModelProxy.make')(function* (
       const reason = credential.failure.message
       const refusal = credentialRefusal({
         wentThrough: hasGoneThrough(caller.run, route.provider),
+        account: accountOf(route.authentication),
         reason,
       })
       yield* refused(refusal)
@@ -503,6 +504,7 @@ export const make = Effect.fn('ModelProxy.make')(function* (
       status,
       headers: upstream.headers,
       wentThrough: hasGoneThrough(caller.run, route.provider),
+      account: accountOf(route.authentication),
     })
     if (status >= 200 && status < 300) {
       const providers = wentThrough.get(caller.run) ?? new Set()

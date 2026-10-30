@@ -494,7 +494,10 @@ describe('model proxy', () => {
           ProxyEvent.Refused({
             provider: 'anthropic',
             caller: first,
-            refusal: Refusal.CredentialRefused({ reason }),
+            refusal: Refusal.CredentialRefused({
+              reason,
+              account: Option.some(SecretName.make('anthropic')),
+            }),
           }),
           ProxyEvent.Refused({
             provider: 'anthropic',

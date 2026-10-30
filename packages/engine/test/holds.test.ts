@@ -25,6 +25,7 @@ import {
 } from '@fabrica/contracts'
 
 import {
+  CREDENTIALS_PROBE,
   ENV_PROBE,
   EnvironmentProbe,
   ProbeOutcome,
@@ -33,11 +34,13 @@ import {
   banners,
   clockHeld,
   counted,
+  makeCredentialsHold,
   makeHolds,
   noCount,
   stopping,
   tripped,
 } from '../src/holds'
+import { ProbeOutcome as ProxyProbe, Refusal } from '../src/proxy'
 import { WorkerEnd, makeRunControl, runProject } from '../src/run'
 import {
   MayTake,
@@ -168,7 +171,8 @@ describe('the holds as one state', () => {
             }),
           ).toBe(true)
           const afterReset = yield* holds.current
-          expect(clockHeld(afterReset)).toBe(false)
+          // A refused credential stops the clocks as a usage limit does (§14.6).
+          expect(clockHeld(afterReset)).toBe(true)
           expect(banners(afterReset)).toEqual([
             "HOLD: CREDENTIALS (openai): openai's key was refused",
           ])
@@ -440,14 +444,32 @@ describe('the environment hold', () => {
             const { holds, environment, reopened } = yield* environmentHold(
               ProbeOutcome.Passed(),
             )
-            const scope = yield* Effect.scope
-            const routed = supervisorHolds({
+            // The credential is refused until the proxy's second probe goes through.
+            const answers = yield* Ref.make<ReadonlyArray<ProxyProbe>>([
+              ProxyProbe.Refused({
+                refusal: Refusal.CredentialRefused({
+                  reason: 'OAuth session expired',
+                  account: Option.none(),
+                }),
+              }),
+            ])
+            const credentials = yield* makeCredentialsHold({
               holds,
+              log: yield* RunLog,
+              run,
+              wait: Duration.hours(6),
+              events: Stream.never,
+              probe: () =>
+                Ref.modify(answers, ([next = ProxyProbe.Passed(), ...rest]) => [
+                  next,
+                  rest,
+                ]),
+              modelFor: () => Option.some('claude-test'),
+            })
+            const routed = supervisorHolds({
               environment,
               usage: { refused: () => Effect.void, waitOut: () => Effect.void },
-              retry: Duration.minutes(15),
-              sleep: Effect.sleep,
-              fork: effect => Effect.asVoid(Effect.forkIn(effect, scope)),
+              credentials,
             })
             yield* environment.settled(idle(one))
             yield* routed.startFailed({ ticket: two, reason: 'no Pi' })
@@ -456,6 +478,7 @@ describe('the environment hold', () => {
               routed.credentialRefused({
                 ticket: three,
                 provider: 'anthropic',
+                account: Option.none(),
                 reason: 'OAuth session expired',
               }),
             )
@@ -473,7 +496,7 @@ describe('the environment hold', () => {
               'ENVIRONMENT',
             ])
             expect(yield* Ref.get(reopened)).toEqual([one, two, four])
-            yield* TestClock.adjust(Duration.minutes(15))
+            yield* TestClock.adjust(CREDENTIALS_PROBE)
             yield* Fiber.join(waiting)
             // The credentials' lift leaves the environment hold on.
             expect((yield* holds.current).on.map(({ hold }) => hold)).toEqual([

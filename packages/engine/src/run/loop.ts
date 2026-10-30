@@ -22,7 +22,9 @@ import {
   type ExitCode,
   type HoldBack,
   type MergeStep,
+  type ModelName,
   Phase,
+  type ProviderName,
   SessionId,
   type SetAsideReason,
   type StopKind,
@@ -45,10 +47,11 @@ import { footprintParts } from '../footprints'
 import { Git, Worktrees, isClean, ticketBranch } from '../git'
 import {
   QUICK_SETTLE,
+  heldProviders,
+  makeCredentialsHold,
   makeHolds,
   makeUsageHold,
   stopping,
-  usageHeld,
 } from '../holds'
 import {
   type MergeQueueShape,
@@ -532,7 +535,6 @@ const runStarted = Effect.fn('Run.started')(function* (
     sharedFiles: project.shared_files,
   })
   const wakes = control.wakes
-  const runScope = yield* Effect.scope
   const agents = yield* PiAgent
   const proxy = yield* ModelProxy
   // Each move of a usage window the run's calls see is recorded (§12.9, H90).
@@ -559,8 +561,23 @@ const runStarted = Effect.fn('Run.started')(function* (
     reopen: tickets => Effect.forEach(tickets, reopened, { discard: true }),
     probed: Effect.suspend(() => probeFreed),
   })
-  // The usage-limit hold (§14.2): a quota refused holds the run for its provider, whose calls the
-  // proxy's permits hold back until the hold lifts on the proxy's probe.
+  /** The run's model on `provider`, for a hold's probe where the refused call named none of it. */
+  const modelFor = (provider: ProviderName) =>
+    Option.map(
+      Option.fromUndefinedOr(
+        [...Option.toArray(project.model), ...project.model_fallbacks].find(
+          choice => choice.provider === provider,
+        ),
+      ),
+      choice => choice.model,
+    )
+  const probeFor = (call: {
+    readonly provider: ProviderName
+    readonly model: ModelName
+  }) => proxy.probe({ ...call, run })
+  // The usage-limit hold (§14.2) and the credentials hold (§14.6): a quota or a credential refused
+  // holds the run for its provider, whose calls the proxy's permits hold back until the hold lifts on
+  // the proxy's probe.
   const usage = yield* makeUsageHold({
     holds,
     log,
@@ -568,31 +585,25 @@ const runStarted = Effect.fn('Run.started')(function* (
     retry: project.usage_limit_retry,
     wait: project.usage_limit_wait,
     events: yield* proxy.events,
-    probe: ({ provider, model }) => proxy.probe({ provider, model, run }),
-    modelFor: provider =>
-      Option.map(
-        Option.fromUndefinedOr(
-          [...Option.toArray(project.model), ...project.model_fallbacks].find(
-            choice => choice.provider === provider,
-          ),
-        ),
-        choice => choice.model,
-      ),
+    probe: probeFor,
+    modelFor,
+  })
+  const credentials = yield* makeCredentialsHold({
+    holds,
+    log,
+    run,
+    wait: started.settings.engine.credentials_wait,
+    events: yield* proxy.events,
+    probe: probeFor,
+    modelFor,
   })
   yield* (yield* Permits).hold({
     run,
-    held: holds.changes.pipe(Stream.map(usageHeld)),
+    held: holds.changes.pipe(Stream.map(heldProviders)),
   })
   const supervision = yield* makeSupervision({
     proxy: yield* proxy.events,
-    holds: supervisorHolds({
-      holds,
-      environment,
-      usage,
-      retry: project.usage_limit_retry,
-      sleep: clock.sleep,
-      fork: effect => Effect.asVoid(Effect.forkIn(effect, runScope)),
-    }),
+    holds: supervisorHolds({ environment, usage, credentials }),
     clock,
     ticketLimit: project.ticket_limit,
     fallbacks: project.model_fallbacks.map(choice => ({

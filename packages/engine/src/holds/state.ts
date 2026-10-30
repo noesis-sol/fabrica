@@ -73,11 +73,31 @@ export const banners = (snapshot: HoldsSnapshot): ReadonlyArray<string> =>
   snapshot.on.map(on => `HOLD: ${named(on)}: ${on.why}`)
 
 /**
- * Whether the hand-backs' and the workers' clocks stop (§13.7, §14.2): while the run holds for the
- * usage limit or the machine's load.
+ * Whether the hand-backs' and the workers' clocks stop (§13.7, §14.2, §14.6): while the run holds for
+ * the usage limit, a refused credential or the machine's load.
  */
 export const clockHeld = (snapshot: HoldsSnapshot): boolean =>
-  snapshot.on.some(on => on.hold === 'USAGE_LIMIT' || on.hold === 'MACHINE')
+  snapshot.on.some(
+    on =>
+      on.hold === 'USAGE_LIMIT' ||
+      on.hold === 'CREDENTIALS' ||
+      on.hold === 'MACHINE',
+  )
+
+/**
+ * The providers the run's holds hold (§14.2, §14.6): a usage limit's and a refused credential's. The
+ * proxy grants their calls no permit.
+ */
+export const heldProviders = (
+  snapshot: HoldsSnapshot,
+): ReadonlySet<ProviderName> =>
+  new Set(
+    snapshot.on.flatMap(on =>
+      on.hold === 'USAGE_LIMIT' || on.hold === 'CREDENTIALS'
+        ? Option.toArray(on.provider)
+        : [],
+    ),
+  )
 
 /** The run's stopping, as the holds have it: the hold that gave up, if one did. */
 export const stopping = (snapshot: HoldsSnapshot): Option.Option<GaveUp> =>

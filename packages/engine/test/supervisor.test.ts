@@ -382,7 +382,10 @@ describe("a worker's supervision", () => {
               Effect.gen(function* () {
                 yield* kit.starts(attempt, n)
                 yield* kit.proxy(
-                  Refusal.CredentialRefused({ reason: 'HTTP 401' }),
+                  Refusal.CredentialRefused({
+                    reason: 'HTTP 401',
+                    account: Option.none(),
+                  }),
                 )
                 return WorkerEnd.Unfinished()
               }),

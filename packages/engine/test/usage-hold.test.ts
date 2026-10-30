@@ -75,6 +75,7 @@ const recorded429 = (reset: number = anthropicUsageLimit.reset): Refusal =>
         'anthropic-ratelimit-unified-reset': String(reset),
       },
       wentThrough: true,
+      account: Option.none(),
     }),
   )
 
