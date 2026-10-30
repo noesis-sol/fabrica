@@ -22,13 +22,13 @@ import { stepWords } from './stats'
 // The console's In progress column (spec §18.3, H45, H80; Appendix A.2): the run's Current (working,
 // verifying, waiting to merge, merging, a hand-back) as the handoff's cards. Each card has its ID and
 // title; the phase bar, a segment for each of working, verifying, waiting to merge and merging, those
-// passed filled, the current one in its project's colour, a hand-back striped on merging; and the step
-// with the elapsed time on the right: the engine's step for the ticket, else its worker's latest action
-// (the tool and its main argument), else its place in the queue, else its phase in words. No
-// percentage: Fabrica has no honest one. Every card is one height, whether or not its worker has an
-// action yet, so the column doesn't jump (tutti-pgl6). Clicking a card opens its worker view. Under
-// All projects the column holds every project's run going, in the sidebar's order, each card in its
-// own project's colour and marked with its project's chip (§18.3).
+// passed filled, the current one in its project's colour and twice as tall, a hand-back striped on
+// merging; and the step with the elapsed time on the right: the engine's step for the ticket, else its
+// worker's latest action (the tool and its main argument), else its place in the queue, else its phase
+// in words. No percentage: Fabrica has no honest one. Every card is one height, whether or not its
+// worker has an action yet, so the column doesn't jump (tutti-pgl6). Clicking a card opens its worker
+// view. Under All projects the column holds every project's run going, in the sidebar's order, each
+// card in its own project's colour and marked with its project's chip (§18.3).
 
 export const Model = Schema.Struct({})
 export type Model = typeof Model.Type
@@ -263,6 +263,10 @@ const roleBackground: Record<Role, string> = {
 const handBackStripes =
   'repeating-linear-gradient(-45deg, transparent 0 3px, var(--bg) 3px 5px)'
 
+/** The bar's height, and its current segment's: twice the rest, so it reads without its colour (§18.2). */
+export const barHeight = '4px'
+export const currentSegmentHeight = '8px'
+
 const segmentView = <Message>(
   segment: BarSegment,
   bar: OnBar,
@@ -278,7 +282,10 @@ const segmentView = <Message>(
     h.Class(
       `flex-1 ${state === 'current' ? roleBackground[role] : state === 'passed' ? 'bg-muted' : 'bg-line'}`,
     ),
-    h.Style(handBack ? { backgroundImage: handBackStripes } : {}),
+    h.Style({
+      height: state === 'current' ? currentSegmentHeight : barHeight,
+      ...(handBack ? { backgroundImage: handBackStripes } : {}),
+    }),
   ])
 }
 
@@ -294,8 +301,8 @@ const barView = <Message>(
         `Phase: ${segmentTitle[bar.segment]}${bar.handBack ? ', handed back' : ''}`,
       ),
       h.DataAttribute('phase-bar', ''),
-      h.Class('flex'),
-      h.Style({ height: '4px', gap: '2px' }),
+      h.Class('flex items-center'),
+      h.Style({ height: barHeight, gap: '2px' }),
     ],
     BarSegment.literals.map(segment => segmentView(segment, bar, role, h)),
   )
