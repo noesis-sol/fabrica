@@ -37,7 +37,9 @@ import {
 //   folder (packaged-app.ts), so they all run from there.
 // - A macOS zip is unpacked there; Squirrel.Mac fetches the update electron-updater downloaded only
 //   after electron-updater says it is downloaded, so the test waits for Squirrel.Mac's own word before it
-//   quits the app, then for its ShipIt to put the new release's bundle in place. Squirrel.Mac updates
+//   quits the app, then for its ShipIt to put the new release's bundle in place. The app says Ready only
+//   on Squirrel.Mac's word since fab-mgi.107, but the earlier app may be a release from before it, which
+//   says Ready on electron-updater's: the test's own wait goes once no earlier app is. Squirrel.Mac updates
 //   only a signed app, to one signed by the same team: the workflow runs it only on signed releases.
 
 declare module 'vitest' {

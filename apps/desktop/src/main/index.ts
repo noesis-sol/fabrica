@@ -9,6 +9,7 @@ import {
   type OpenDialogOptions,
   type WebContents,
   app,
+  autoUpdater,
   dialog,
   ipcMain,
   safeStorage,
@@ -70,6 +71,7 @@ import {
   followUpdates,
   fromAppUpdater,
   noUpdateCheck,
+  readyWithSquirrel,
   updateChannel,
 } from './updates'
 import {
@@ -325,7 +327,13 @@ const makeUpdater = (): Option.Option<Updater> =>
       checksOff: app.commandLine.hasSwitch(noUpdateCheck),
     }),
     {
-      Mac: () => Option.some(fromAppUpdater(new MacUpdater())),
+      Mac: () =>
+        Option.some(
+          readyWithSquirrel(fromAppUpdater(new MacUpdater()), {
+            onDownloaded: listener =>
+              autoUpdater.on('update-downloaded', listener),
+          }),
+        ),
       Nsis: () => Option.some(fromAppUpdater(new NsisUpdater())),
       AppImage: () => Option.some(fromAppUpdater(new AppImageUpdater())),
       None: () => Option.none(),

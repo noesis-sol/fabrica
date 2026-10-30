@@ -97,6 +97,39 @@ export const fromAppUpdater = (updater: AppUpdater): Updater => {
   }
 }
 
+/** Squirrel.Mac, Electron's own `autoUpdater`, as the macOS app follows it. */
+export interface Squirrel {
+  /** Calls `listener` each time Squirrel.Mac has fetched an update and staged it to install. */
+  readonly onDownloaded: (listener: () => void) => void
+}
+
+/**
+ * The macOS updater, whose update is ready only once Squirrel.Mac has it: electron-updater's MacUpdater
+ * says its update is downloaded once it has the zip, and only then has Squirrel.Mac fetch it from its
+ * local proxy; an app quit before Squirrel.Mac has it installs nothing. Until then the download shows
+ * whole. Squirrel.Mac's errors are MacUpdater's own `error` events already.
+ */
+export const readyWithSquirrel = (
+  updater: Updater,
+  squirrel: Squirrel,
+): Updater => ({
+  listen: listeners => {
+    // What electron-updater said of the update it downloaded, which Squirrel.Mac's event doesn't name.
+    let downloaded: Option.Option<unknown> = Option.none()
+    squirrel.onDownloaded(() => {
+      Option.map(downloaded, listeners.downloaded)
+    })
+    updater.listen({
+      ...listeners,
+      downloaded: info => {
+        downloaded = Option.some(info)
+        listeners.progress({ percent: 100 })
+      },
+    })
+  },
+  checkForUpdates: updater.checkForUpdates,
+})
+
 const decodeVersion = Schema.decodeUnknownOption(ReleaseVersion)
 
 const UpdateInfo = Schema.Struct({ version: Schema.String })
