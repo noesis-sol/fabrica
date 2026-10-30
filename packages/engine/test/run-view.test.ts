@@ -31,6 +31,7 @@ import {
 } from '@fabrica/contracts'
 
 import type { Agent } from '../src/agent'
+import type { RunSnapshot, RunStateShape } from '../src/run'
 import {
   Delivered,
   type RunViewItem,
@@ -114,6 +115,7 @@ const viewIn = Effect.fn(function* (
   scope: Scope.Scope,
   given?: ReturnType<typeof graphOf>,
   every = interval,
+  needsYou: (count: number) => Effect.Effect<void> = () => Effect.void,
 ) {
   const graph = given ?? graphOf(yield* Ref.make(0), yield* Ref.make(0))
   const view = yield* makeRunView({
@@ -121,6 +123,7 @@ const viewIn = Effect.fn(function* (
     interval: every,
     flush: interval,
     graph,
+    needsYou,
     scope,
   }).pipe(
     Effect.provideService(DateTime.CurrentTimeZone, DateTime.zoneMakeOffset(0)),
@@ -399,6 +402,68 @@ describe('the run view', () => {
 
         yield* Fiber.interrupt(fiber)
         expect(yield* steps.current).toEqual([])
+      }),
+  )
+
+  it.effect(
+    "shows the run's tickets once it has them, and tells the project's row how many need the maintainer",
+    () =>
+      Effect.gen(function* () {
+        const scope = yield* Scope.make()
+        const told = yield* Ref.make<ReadonlyArray<number>>([])
+        const { view, taken } = yield* viewIn(
+          scope,
+          undefined,
+          interval,
+          count => Ref.update(told, all => [...all, count]),
+        )
+        const phase = yield* Ref.make<Phase>(
+          Phase.cases.asked.make({ question: second }),
+        )
+        const snapshotOf = (now: Phase): RunSnapshot => ({
+          tickets: new Map([
+            [
+              first,
+              {
+                ticket: first,
+                title: 'Add the page',
+                phase: now,
+                n: Option.some(1),
+                since: { startNanos: BigInt(0) },
+              },
+            ],
+          ]),
+          dispatched: 1,
+          ending: false,
+        })
+        const state: RunStateShape = {
+          current: Effect.map(Ref.get(phase), snapshotOf),
+          enter: () => Effect.succeed(false),
+          dispatch: () => Effect.succeed(Option.none()),
+          move: () => Effect.succeed(Option.none()),
+          end: Effect.map(Ref.get(phase), snapshotOf),
+          endLeft: Effect.void,
+        }
+        yield* view.sources.attach({
+          state,
+          line: Effect.succeed({ merging: Option.none(), waiting: [] }),
+          slots: 3,
+        })
+        yield* TestClock.adjust(interval)
+        const [patch] = patchesOf(yield* taken)
+        expect(patch?.value.totals).toMatchObject({
+          slots: 3,
+          counts: { needs_you: 1 },
+        })
+        expect(patch?.value.tickets?.upsert.map(row => row.ticket)).toEqual([
+          first,
+        ])
+        expect(yield* Ref.get(told)).toEqual([1])
+
+        yield* Ref.set(phase, Phase.cases.working.make({}))
+        yield* TestClock.adjust(interval)
+        yield* TestClock.adjust(Duration.seconds(1))
+        expect(yield* Ref.get(told)).toEqual([1, 0])
       }),
   )
 

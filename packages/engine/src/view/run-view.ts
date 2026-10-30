@@ -141,13 +141,15 @@ const untilMidnight = Effect.map(DateTime.nowInCurrentZone, now =>
 
 /**
  * The run's view, in the scope: its header read from `header`, written at most every `interval`
- * (`view_interval`), Done today read from `graph`, transcripts crossing once per `flush`.
+ * (`view_interval`), Done today read from `graph`, transcripts crossing once per `flush`; `needsYou`
+ * is told how many of its tickets need the maintainer as that changes (the project's row, §18.3).
  */
 export const makeRunView = Effect.fn('RunView.make')(function* (options: {
   readonly header: Effect.Effect<RunHeader>
   readonly interval: Duration.Duration
   readonly flush: Duration.Duration
   readonly graph: Pick<WorkGraphShape, 'doneSince' | 'changes'>
+  readonly needsYou: (count: number) => Effect.Effect<void>
   readonly scope: Scope.Scope
 }) {
   const { sources, attached, facts } = yield* makeRunViewSources({
@@ -244,12 +246,22 @@ export const makeRunView = Effect.fn('RunView.make')(function* (options: {
   })
 
   const feed = yield* makeViewFeed(projectView(yield* inputs, Option.none()))
+  // The tickets that need the maintainer, told as their count changes.
+  const told = yield* Ref.make(0)
+  const tell = Effect.gen(function* () {
+    const count = (yield* feed.current).totals.counts.needs_you
+    if ((yield* Ref.getAndSet(told, count)) !== count)
+      yield* options.needsYou(count)
+  })
   yield* Effect.forkIn(
     Effect.forever(
       Effect.gen(function* () {
         yield* Effect.sleep(options.interval)
         const read = yield* inputs
-        yield* feed.publish(projectView(read, Option.some(yield* feed.current)))
+        const changed = yield* feed.publish(
+          projectView(read, Option.some(yield* feed.current)),
+        )
+        if (changed) yield* tell
       }),
     ),
     options.scope,

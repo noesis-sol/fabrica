@@ -334,6 +334,24 @@ export const make = Effect.gen(function* () {
           interval: intervals.view_interval,
           flush: intervals.stream_flush,
           graph,
+          // The project's row waits on the maintainer while a ticket of the run needs them.
+          needsYou: count =>
+            Effect.ignore(
+              projects.setRun({
+                project,
+                run:
+                  count > 0
+                    ? ProjectRunState.cases.waiting.make({
+                        run,
+                        overnight: input.mode._tag === 'overnight',
+                        needsYou: count,
+                      })
+                    : ProjectRunState.cases.running.make({
+                        run,
+                        overnight: input.mode._tag === 'overnight',
+                      }),
+              }),
+            ),
           scope: viewScope,
         }).pipe(Effect.provideContext(services))
         const config: RunConfig = {
