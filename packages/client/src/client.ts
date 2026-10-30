@@ -12,7 +12,7 @@ import {
   SubscriptionRef,
 } from 'effect'
 import { RpcClient, RpcClientError, RpcSerialization } from 'effect/rpc'
-import type { Socket } from 'effect/socket'
+import { Socket } from 'effect/socket'
 
 import {
   ClientHello,
@@ -36,8 +36,11 @@ import { Reconnect, type StreamItem, isDefect, resumable } from './resume'
 // the app's connection process each run one per engine, over the transport that reaches it. A request
 // or stream the engine answers with a defect (one it doesn't serve yet answers `NotImplemented`) fails
 // with an `RpcClientError` whose reason is an `RpcClientDefect`, a failure every caller catches; a
-// stream `watch` follows ends with it rather than waiting for a reconnect that won't mend it. A
-// `reconnect` schedule that ends leaves the link `Lost`, and the streams `watch` follows end then.
+// stream `watch` follows ends with it rather than waiting for a reconnect that won't mend it. One the
+// engine interrupts as it stops (a graceful stop: its RPC server interrupts every request in flight
+// and answers each with the interrupt before it closes the connection) fails as the connection's loss
+// does, and a stream `watch` follows resumes after the reconnect. A `reconnect` schedule that ends
+// leaves the link `Lost`, and the streams `watch` follows end then.
 
 /** The client's link to its engine. `connection` counts the connections the transport has opened. */
 export type Link = Data.TaggedEnum<{
@@ -122,6 +125,18 @@ const defectFailure = (tag: string, defect: unknown) =>
     }),
   })
 
+/**
+ * The failure the engine's interrupt of request or stream `tag` comes to: the engine closing the
+ * connection as it stops, a loss the next connection mends.
+ */
+const stoppedFailure = (tag: string) =>
+  new RpcClientError.RpcClientError({
+    reason: new Socket.SocketCloseError({
+      code: 1001,
+      closeReason: `the engine stopped before ${tag} ended`,
+    }),
+  })
+
 /** A client error in words: the defect it carries, or the connection's loss. */
 export const clientErrorWords = (
   error: RpcClientError.RpcClientError,
@@ -130,13 +145,17 @@ export const clientErrorWords = (
 
 /**
  * `rpc`, its requests and streams failing with `defectFailure` where they would die: the engine's
- * defect, carried by the protocol as one, reaches the caller as a failure it catches. (A stream taken
- * `asQueue` keeps its defects; the client takes none so.) Each is made once `settled`, so that a
- * protocol error failing the requests in flight fails none made after it (`protocol-errors.ts`).
+ * defect, carried by the protocol as one, reaches the caller as a failure it catches. Those the engine
+ * interrupts fail with `stoppedFailure`, unless the client is `closing`: Effect's client then
+ * interrupts its own in flight, and they stay interrupted. (A caller's own interruption is never
+ * caught.) A stream taken `asQueue` keeps its defects and interrupts; the client takes none so. Each
+ * is made once `settled`, so that a protocol error failing the requests in flight fails none made
+ * after it (`protocol-errors.ts`).
  */
 const failingOnDefects = (
   rpc: FabricaClient,
   settled: Effect.Effect<void>,
+  closing: Ref.Ref<boolean>,
 ): FabricaClient =>
   new Proxy(rpc, {
     get: (target, tag, receiver) => {
@@ -144,14 +163,26 @@ const failingOnDefects = (
       if (typeof tag !== 'string' || typeof call !== 'function') {
         return call
       }
+      /** The failure `cause` comes to: `stoppedFailure` where the engine interrupted the call. */
+      const stopped = (
+        cause: Cause.Cause<unknown>,
+      ): Effect.Effect<never, unknown> =>
+        Effect.flatMap(Ref.get(closing), closed =>
+          !closed && Cause.hasInterruptsOnly(cause)
+            ? Effect.fail(stoppedFailure(tag))
+            : Effect.failCause(cause),
+        )
       return (...args: ReadonlyArray<unknown>) => {
         const answer: unknown = Reflect.apply(call, target, args)
         if (Stream.isStream(answer)) {
           return Stream.unwrap(
             Effect.as(
               settled,
-              Stream.catchDefect(answer, defect =>
-                Stream.fail(defectFailure(tag, defect)),
+              answer.pipe(
+                Stream.catchCause(cause => Stream.fromEffect(stopped(cause))),
+                Stream.catchDefect(defect =>
+                  Stream.fail(defectFailure(tag, defect)),
+                ),
               ),
             ),
           )
@@ -159,8 +190,11 @@ const failingOnDefects = (
         if (Effect.isEffect(answer)) {
           return Effect.andThen(
             settled,
-            Effect.catchDefect(answer, defect =>
-              Effect.fail(defectFailure(tag, defect)),
+            answer.pipe(
+              Effect.catchCause(stopped),
+              Effect.catchDefect(defect =>
+                Effect.fail(defectFailure(tag, defect)),
+              ),
             ),
           )
         }
@@ -244,12 +278,13 @@ export const make = Effect.fn('EngineClient.make')(function* (
     Effect.provideService(RpcSerialization.RpcSerialization, ndjson),
   )
   const errors = yield* interruptingOnProtocolErrors(protocol)
-  const rpc = failingOnDefects(
-    yield* RpcClient.make(FabricaRpcs).pipe(
-      Effect.provideService(RpcClient.Protocol, errors.protocol),
-    ),
-    errors.settled,
+  const client = yield* RpcClient.make(FabricaRpcs).pipe(
+    Effect.provideService(RpcClient.Protocol, errors.protocol),
   )
+  // Added after Effect's client, so run before it interrupts the requests in flight as it closes.
+  const closing = yield* Ref.make(false)
+  yield* Effect.addFinalizer(() => Ref.set(closing, true))
+  const rpc = failingOnDefects(client, errors.settled, closing)
   const sayHello = rpc['engine.connect'](hello)
 
   const first = yield* sayHello
