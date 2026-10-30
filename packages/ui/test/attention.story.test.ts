@@ -808,7 +808,8 @@ describe('reviews and tasks', () => {
       ).toHaveText('Its merge check failed'),
       click(within(card('Review fa-11'), role('button', { name: 'Review' }))),
       expectScene(role('heading', { name: 'Review' })).toExist(),
-      // It opens on the ticket's branch diff, beside its project's report and log (review.story.test.ts).
+      // It opens on the ticket's branch diff and notes, beside its project's runs, report and log
+      // (review.story.test.ts, review-notes-runs.story.test.ts).
       Command.expectExact(
         Review.LoadDiff({
           subject: Review.Subject.Ticket({
@@ -816,7 +817,9 @@ describe('reviews and tasks', () => {
             ticket: TicketId.make('fa-11'),
           }),
         }),
-        Review.LoadReport({ project: scoped }),
+        Review.LoadTicket({ project: scoped, ticket: TicketId.make('fa-11') }),
+        Review.LoadRuns({ project: scoped }),
+        Review.LoadReport({ project: scoped, run: Option.none() }),
         Review.LoadLog({ project: scoped }),
       ),
       Command.resolveAll(
@@ -831,9 +834,25 @@ describe('reviews and tasks', () => {
           }),
         ],
         [
+          Review.LoadTicket,
+          Review.Message.FailedLoadTicket({
+            project: scoped,
+            ticket: TicketId.make('fa-11'),
+            reason: 'the engine is not connected',
+          }),
+        ],
+        [
+          Review.LoadRuns,
+          Review.Message.FailedLoadRuns({
+            project: scoped,
+            reason: 'the engine is not connected',
+          }),
+        ],
+        [
           Review.LoadReport,
           Review.Message.FailedLoadReport({
             project: scoped,
+            run: Option.none(),
             reason: 'the engine is not connected',
           }),
         ],

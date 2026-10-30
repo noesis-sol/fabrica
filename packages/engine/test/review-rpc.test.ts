@@ -472,6 +472,66 @@ describe('diff.run', () => {
   )
 })
 
+describe('report.list', () => {
+  it.effect('lists the runs the stream started, newest first, each once', () =>
+    Effect.gen(function* () {
+      const { checkout, first } = repository()
+      const later = LocalTime.make('2026-10-29T22:30:00.000+02:00')
+      writeEvents(checkout, [
+        ...runRecords(RunId.make('run-1'), first, []),
+        ...runRecords(RunId.make('run-2'), first, []).map(record =>
+          record.kind === 'start' ? { ...record, time: later } : record,
+        ),
+        // A second start record of a run names it once, at its first.
+        ...runRecords(RunId.make('run-1'), first, []),
+      ])
+      const client = yield* clientFor(checkout)
+      const runs = yield* client['report.list']({ project })
+      expect(
+        runs.map(({ run, startedAt }) => [
+          run,
+          DateTime.toEpochMillis(startedAt),
+        ]),
+      ).toEqual([
+        ['run-2', Date.parse('2026-10-29T20:30:00.000Z')],
+        ['run-1', Date.parse('2026-10-29T08:15:00.000Z')],
+      ])
+    }),
+  )
+
+  it.effect('leaves out a run whose report would be in another folder', () =>
+    Effect.gen(function* () {
+      const { checkout, first } = repository()
+      writeEvents(checkout, [
+        ...runRecords(RunId.make('run-1'), first, []),
+        ...runRecords(RunId.make('../../README'), first, []),
+      ])
+      const client = yield* clientFor(checkout)
+      const runs = yield* client['report.list']({ project })
+      expect(runs.map(({ run }) => run)).toEqual(['run-1'])
+    }),
+  )
+
+  it.effect('lists none for a project that has never run', () =>
+    Effect.gen(function* () {
+      const { checkout } = repository()
+      const client = yield* clientFor(checkout)
+      expect(yield* client['report.list']({ project })).toEqual([])
+    }),
+  )
+
+  it.effect('answers ProjectNotFound for a project the engine lacks', () =>
+    Effect.gen(function* () {
+      const { checkout } = repository()
+      const client = yield* clientFor(checkout)
+      const other = ProjectId.make('elsewhere')
+      expect(
+        yield* Effect.flip(client['report.list']({ project: other })),
+      ).toEqual(new ProjectNotFound({ project: other }))
+    }),
+  )
+})
+
 describe('report.get', () => {
   /** A checkout whose stream has runs `run-1` then `run-2`, and `run-1`'s report. */
   const withReports = () => {

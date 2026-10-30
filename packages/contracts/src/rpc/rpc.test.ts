@@ -921,6 +921,11 @@ const samples: Record<string, Samples> = {
     success: [{ base: commit, head: commit, files: [] }],
     error: [{ _tag: 'RunNotFound', project, run }],
   },
+  'report.list': {
+    payload: [{ project }],
+    success: [[], [{ run, startedAt: at }]],
+    error: [notFound],
+  },
   'report.get': {
     payload: [{ project }, { project, run }],
     success: [{ run, markdown: '# Run r-1\n', writtenAt: at }],
@@ -1115,6 +1120,7 @@ describe('the protocol’s groups', () => {
       'talk.close',
       'diff.ticket',
       'diff.run',
+      'report.list',
       'report.get',
       'log.tail',
       'insights.summary',

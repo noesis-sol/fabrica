@@ -7,8 +7,8 @@ import { Moment, Ordinal, optional } from './common'
 import { ProjectNotFound, TicketNotFound } from './errors'
 import { NoRun, RunNotFound } from './runs'
 
-// The Review group (spec §8.1, §18.4): a ticket's branch diff, a run's merged diff, run reports and the
-// human log's tail.
+// The Review group (spec §8.1, §18.4): a ticket's branch diff, a run's merged diff, the project's runs,
+// their reports and the human log's tail.
 
 /** How a file changed. */
 export const FileChange = Schema.Literals([
@@ -42,6 +42,12 @@ export class Report extends Schema.Class<Report>('Report')({
   writtenAt: Moment,
 }) {}
 
+/** One of a project's runs, as the event stream started it: a report to ask for by its ID. */
+export class RunEntry extends Schema.Class<RunEntry>('RunEntry')({
+  run: RunId,
+  startedAt: Moment,
+}) {}
+
 /** The ticket has no branch to diff: never dispatched, or its worktree gone. */
 export class NoBranch extends Schema.TaggedError<NoBranch>()('NoBranch', {
   project: ProjectId,
@@ -64,6 +70,12 @@ export const ReviewRpcs = RpcGroup.make(
     payload: { project: ProjectId, run: RunId },
     success: Diff,
     error: Schema.Union([ProjectNotFound, RunNotFound]),
+  }),
+  /** The project's runs, newest first: none for a project that has never run. */
+  Rpc.make('report.list', {
+    payload: { project: ProjectId },
+    success: Schema.Array(RunEntry),
+    error: ProjectNotFound,
   }),
   /** A run's report: the last run's when none is named. */
   Rpc.make('report.get', {

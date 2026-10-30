@@ -163,7 +163,9 @@ describe("a set-aside ticket's diff", () => {
       expectScene(role('heading', { name: 'Review', level: 1 })).toExist(),
       SceneCommand.expectExact(
         Review.LoadDiff({ subject: ticketSubject }),
-        Review.LoadReport({ project: scoped }),
+        Review.LoadTicket({ project: scoped, ticket }),
+        Review.LoadRuns({ project: scoped }),
+        Review.LoadReport({ project: scoped, run: Option.none() }),
         Review.LoadLog({ project: scoped }),
       ),
       expectScene(text('Reading the diff…')).toExist(),
@@ -176,8 +178,24 @@ describe("a set-aside ticket's diff", () => {
           }),
         ],
         [
+          Review.LoadTicket,
+          Review.Message.FailedLoadTicket({
+            project: scoped,
+            ticket,
+            reason: 'not served',
+          }),
+        ],
+        [
+          Review.LoadRuns,
+          Review.Message.SucceededLoadRuns({ project: scoped, runs: [] }),
+        ],
+        [
           Review.LoadReport,
-          Review.Message.SucceededLoadReport({ project: scoped, report }),
+          Review.Message.SucceededLoadReport({
+            project: scoped,
+            run: Option.none(),
+            report,
+          }),
         ],
         [
           Review.LoadLog,
@@ -291,7 +309,8 @@ describe('reports and the log', () => {
       click(role('button', { name: /^Search tickets and sessions/u })),
       click(role('button', { name: /^Go to Review/u })),
       SceneCommand.expectExact(
-        Review.LoadReport({ project: scoped }),
+        Review.LoadRuns({ project: scoped }),
+        Review.LoadReport({ project: scoped, run: Option.none() }),
         Review.LoadLog({ project: scoped }),
       ),
       expectScene(
@@ -299,8 +318,16 @@ describe('reports and the log', () => {
       ).toExist(),
       SceneCommand.resolveAll(
         [
+          Review.LoadRuns,
+          Review.Message.SucceededLoadRuns({ project: scoped, runs: [] }),
+        ],
+        [
           Review.LoadReport,
-          Review.Message.SucceededLoadReport({ project: scoped, report }),
+          Review.Message.SucceededLoadReport({
+            project: scoped,
+            run: Option.none(),
+            report,
+          }),
         ],
         [
           Review.LoadLog,
@@ -366,6 +393,7 @@ describe('reports and the log', () => {
       message(
         Review.Message.FailedLoadReport({
           project: scoped,
+          run: Option.none(),
           reason: 'The project has had no run yet.',
         }),
       ),
@@ -373,6 +401,7 @@ describe('reports and the log', () => {
       message(
         Review.Message.SucceededLoadReport({
           project: { ...scoped, project: ProjectId.make('p-2') },
+          run: Option.none(),
           report,
         }),
       ),

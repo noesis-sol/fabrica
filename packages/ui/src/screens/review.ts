@@ -1,4 +1,4 @@
-import { Array, Effect, Option, Schema } from 'effect'
+import { Array, DateTime, Effect, Equal, Option, Schema } from 'effect'
 import { Command, Mount, type Update } from 'foldkit'
 import * as AsyncData from 'foldkit/asyncData'
 import type { Html, HtmlBuilder } from 'foldkit/html'
@@ -8,14 +8,19 @@ import { modifyFields } from 'foldkit/struct'
 import { defineView } from 'foldkit/submodel'
 
 import {
+  type Actor,
   Diff,
   type FileDiff,
+  type Note,
   Report,
+  RunEntry,
   RunId,
   Text,
+  TicketDetail,
   TicketId,
 } from '@fabrica/contracts'
 
+import { sayMoment } from '../app/clock'
 import { EngineProject, sameProject } from '../app/engine-project'
 import { type EngineServices, requestProject } from '../app/engine-route'
 import { sidesOf } from '../mounts/diff'
@@ -23,10 +28,12 @@ import { showDiff } from '../mounts/monaco'
 
 // The Review screen (spec §18.4): a ticket's branch diff and a run's merged diff, each file in Monaco's
 // diff view, the project's run reports, and the tail of its human log, all read from the Review group
-// (§8.1). A set-aside ticket's Review button (§18.3) opens its branch diff; reached from navigation, the
-// screen shows the scoped project's last report and its log, and the run going, where one is, as its
-// diff. A report offers its run's merged diff. Answers that arrive for a diff or a project no longer
-// shown are dropped, so a slow answer never replaces a newer choice.
+// (§8.1). A set-aside ticket's Review button (§18.3) opens its branch diff with the ticket's notes
+// beside it, where the worker, the verifier or triage said why it was set aside; reached from
+// navigation, the screen shows the scoped project's last report and its log, and the run going, where
+// one is, as its diff. The Report view lists the project's runs, newest first, to read any one's report,
+// and a report offers its run's merged diff. Answers that arrive for a diff, a ticket, a report or a
+// project no longer shown are dropped, so a slow answer never replaces a newer choice.
 
 /** What the screen shows: a diff, the report, or the log. */
 export const Tab = Schema.Literals(['diff', 'report', 'log'])
@@ -51,6 +58,12 @@ export const Model = Schema.Struct({
   file: Schema.Option(Text),
   /** What the diff view said where Monaco couldn't draw the file: its patch is shown as text instead. */
   viewProblem: Schema.Option(Schema.String),
+  /** A ticket's diff's ticket whole, for its notes; idle for a run's diff. */
+  ticket: AsyncData.Schema(TicketDetail, Schema.String).schema,
+  /** The project's runs, newest first, a report to read chosen from them. */
+  runs: AsyncData.Schema(Schema.Array(RunEntry), Schema.String).schema,
+  /** The run whose report is shown, as chosen; none: the last run's. */
+  reportRun: Schema.Option(RunId),
   report: AsyncData.Schema(Report, Schema.String).schema,
   log: AsyncData.Schema(Schema.Array(Schema.String), Schema.String).schema,
 })
@@ -63,6 +76,9 @@ export const init = (): Model => ({
   diff: AsyncData.Idle(),
   file: Option.none(),
   viewProblem: Option.none(),
+  ticket: AsyncData.Idle(),
+  runs: AsyncData.Idle(),
+  reportRun: Option.none(),
   report: AsyncData.Idle(),
   log: AsyncData.Idle(),
 })
@@ -70,12 +86,34 @@ export const init = (): Model => ({
 export const Message = defineMessageUnion({
   SelectedTab: { tab: Tab },
   SelectedFile: { path: Text },
+  SelectedRun: { run: RunId },
   RequestedRunDiff: { project: EngineProject, run: RunId },
   RequestedLog: {},
   SucceededLoadDiff: { subject: Subject, diff: Diff },
   FailedLoadDiff: { subject: Subject, reason: Schema.String },
-  SucceededLoadReport: { project: EngineProject, report: Report },
-  FailedLoadReport: { project: EngineProject, reason: Schema.String },
+  SucceededLoadTicket: {
+    project: EngineProject,
+    ticket: TicketId,
+    detail: TicketDetail,
+  },
+  FailedLoadTicket: {
+    project: EngineProject,
+    ticket: TicketId,
+    reason: Schema.String,
+  },
+  SucceededLoadRuns: { project: EngineProject, runs: Schema.Array(RunEntry) },
+  FailedLoadRuns: { project: EngineProject, reason: Schema.String },
+  /** `run` is the run asked for: none for the last run's. */
+  SucceededLoadReport: {
+    project: EngineProject,
+    run: Schema.Option(RunId),
+    report: Report,
+  },
+  FailedLoadReport: {
+    project: EngineProject,
+    run: Schema.Option(RunId),
+    reason: Schema.String,
+  },
   SucceededLoadLog: {
     project: EngineProject,
     lines: Schema.Array(Schema.String),
@@ -117,26 +155,61 @@ export const LoadDiff = Command.define('LoadDiff', {
     ),
 })
 
-/** The project's last run's report. */
-export const LoadReport = Command.define('LoadReport', {
+/** A ticket's diff's ticket whole: its notes say why it was set aside. */
+export const LoadTicket = Command.define('LoadTicket', {
+  args: { project: EngineProject, ticket: TicketId },
+  messages: [Message.SucceededLoadTicket, Message.FailedLoadTicket],
+  execute: ({ project, ticket }) =>
+    requestProject(project, client =>
+      client.rpc['tickets.show']({ project: project.project, ticket }),
+    ).pipe(
+      Effect.map(detail =>
+        Message.SucceededLoadTicket({ project, ticket, detail }),
+      ),
+      Effect.catch(reason =>
+        Effect.succeed(Message.FailedLoadTicket({ project, ticket, reason })),
+      ),
+    ),
+})
+
+/** The project's runs, newest first. */
+export const LoadRuns = Command.define('LoadRuns', {
   args: { project: EngineProject },
-  messages: [Message.SucceededLoadReport, Message.FailedLoadReport],
+  messages: [Message.SucceededLoadRuns, Message.FailedLoadRuns],
   execute: ({ project }) =>
     requestProject(project, client =>
-      client.rpc['report.get']({
-        project: project.project,
-        run: Option.none(),
-      }).pipe(
+      client.rpc['report.list']({ project: project.project }),
+    ).pipe(
+      Effect.map(runs => Message.SucceededLoadRuns({ project, runs })),
+      Effect.catch(reason =>
+        Effect.succeed(Message.FailedLoadRuns({ project, reason })),
+      ),
+    ),
+})
+
+/** A run's report: `run`'s, or the project's last run's. */
+export const LoadReport = Command.define('LoadReport', {
+  args: { project: EngineProject, run: Schema.Option(RunId) },
+  messages: [Message.SucceededLoadReport, Message.FailedLoadReport],
+  execute: ({ project, run }) =>
+    requestProject(project, client =>
+      client.rpc['report.get']({ project: project.project, run }).pipe(
         Effect.catchTags({
           NoRun: () => Effect.fail('The project has had no run yet.'),
-          NoReport: () =>
-            Effect.fail("The last run hasn't written its report yet."),
+          NoReport: ({ run: unwritten }) =>
+            Effect.fail(
+              Option.isNone(run)
+                ? "The last run hasn't written its report yet."
+                : `Run ${unwritten} hasn't written its report yet.`,
+            ),
         }),
       ),
     ).pipe(
-      Effect.map(report => Message.SucceededLoadReport({ project, report })),
+      Effect.map(report =>
+        Message.SucceededLoadReport({ project, run, report }),
+      ),
       Effect.catch(reason =>
-        Effect.succeed(Message.FailedLoadReport({ project, reason })),
+        Effect.succeed(Message.FailedLoadReport({ project, run, reason })),
       ),
     ),
 })
@@ -184,9 +257,17 @@ const reload = <A>(
 ): AsyncData.AsyncData<A, string> =>
   Option.getOrElse(AsyncData.revalidateOrLoad(data), () => data)
 
+/** The ticket whose notes a subject shows: a ticket's diff's. */
+const ticketOf = (subject: Subject): Option.Option<TicketId> =>
+  Subject.match(subject, {
+    Ticket: ({ ticket }) => Option.some(ticket),
+    Run: () => Option.none(),
+  })
+
 /**
- * Shows `project`'s report and log and `subject`'s diff on `tab`: those already shown asked for again,
- * what they showed kept meanwhile; another project's or another subject's asked for anew.
+ * Shows `project`'s runs, report and log and `subject`'s diff, and its ticket where it is a ticket's, on
+ * `tab`: those already shown asked for again, what they showed kept meanwhile, the report of the run
+ * chosen kept; another project's or another subject's asked for anew.
  */
 const show = (
   model: Model,
@@ -207,6 +288,8 @@ const show = (
     onNone: () => Option.isNone(model.subject) && Option.isNone(subject),
     onSome: ([shown, chosen]) => sameSubject(shown, chosen),
   })
+  const reportRun = keptProject ? model.reportRun : Option.none()
+  const runs = keptProject ? reload(model.runs) : AsyncData.Loading()
   const report = keptProject ? reload(model.report) : AsyncData.Loading()
   const log = keptProject ? reload(model.log) : AsyncData.Loading()
   const diff = Option.isNone(subject)
@@ -214,6 +297,7 @@ const show = (
     : keptSubject
       ? reload(model.diff)
       : AsyncData.Loading()
+  const ticket = Option.flatMap(subject, ticketOf)
   return {
     model: modifyFields(model, {
       project: () => Option.some(project),
@@ -222,6 +306,14 @@ const show = (
       diff: () => diff,
       file: file => (keptSubject ? file : Option.none()),
       viewProblem: problem => (keptSubject ? problem : Option.none()),
+      ticket: detail =>
+        Option.isNone(ticket)
+          ? AsyncData.Idle()
+          : keptSubject
+            ? reload(detail)
+            : AsyncData.Loading(),
+      runs: () => runs,
+      reportRun: () => reportRun,
       report: () => report,
       log: () => log,
     }),
@@ -230,13 +322,18 @@ const show = (
         onNone: () => [],
         onSome: chosen => [LoadDiff({ subject: chosen })],
       }),
-      LoadReport({ project }),
+      ...Option.match(ticket, {
+        onNone: () => [],
+        onSome: shown => [LoadTicket({ project, ticket: shown })],
+      }),
+      LoadRuns({ project }),
+      LoadReport({ project, run: reportRun }),
       LoadLog({ project }),
     ],
   }
 }
 
-/** A set-aside ticket's Review (§18.3): its branch diff, beside its project's report and log. */
+/** A set-aside ticket's Review (§18.3): its branch diff and notes, beside its project's reports and log. */
 export const openTicket = (
   model: Model,
   {
@@ -289,6 +386,14 @@ export const opened = (
 const showsSubject = (model: Model, subject: Subject): boolean =>
   Option.exists(model.subject, shown => sameSubject(shown, subject))
 
+/** Whether an answer about `project`'s report of `run` (none: the last run's) is for the report shown. */
+const showsReport = (
+  model: Model,
+  project: EngineProject,
+  run: Option.Option<RunId>,
+): boolean =>
+  Option.contains(model.project, project) && Equal.equals(model.reportRun, run)
+
 /** Shows the view `tab`, as its button or its key chooses it. */
 export const selectTab = (model: Model, tab: Tab): Model =>
   model.tab === tab ? model : modifyFields(model, { tab: () => tab })
@@ -302,6 +407,21 @@ export const update = (model: Model, message: Message): Return =>
         viewProblem: () => Option.none(),
       }),
     }),
+    // Another run's report, of the project shown.
+    SelectedRun: ({ run }) =>
+      Option.match(model.project, {
+        onNone: () => ({ model }),
+        onSome: project =>
+          Option.contains(model.reportRun, run)
+            ? { model }
+            : {
+                model: modifyFields(model, {
+                  reportRun: () => Option.some(run),
+                  report: () => AsyncData.Loading(),
+                }),
+                commands: [LoadReport({ project, run: Option.some(run) })],
+              },
+      }),
     // A report's run diff: its project's report and log are those shown already.
     RequestedRunDiff: ({ project, run }) => {
       const subject = Subject.Run({ project, run })
@@ -314,6 +434,7 @@ export const update = (model: Model, message: Message): Return =>
               diff: () => AsyncData.Loading(),
               file: () => Option.none(),
               viewProblem: () => Option.none(),
+              ticket: () => AsyncData.Idle(),
             }),
             commands: [LoadDiff({ subject })],
           }
@@ -336,13 +457,33 @@ export const update = (model: Model, message: Message): Return =>
         ? modifyFields(model, { diff: () => AsyncData.fail(reason) })
         : model,
     }),
-    SucceededLoadReport: ({ project, report }) => ({
+    SucceededLoadTicket: ({ project, ticket, detail }) => ({
+      model: showsSubject(model, Subject.Ticket({ project, ticket }))
+        ? modifyFields(model, { ticket: () => AsyncData.succeed(detail) })
+        : model,
+    }),
+    FailedLoadTicket: ({ project, ticket, reason }) => ({
+      model: showsSubject(model, Subject.Ticket({ project, ticket }))
+        ? modifyFields(model, { ticket: () => AsyncData.fail(reason) })
+        : model,
+    }),
+    SucceededLoadRuns: ({ project, runs }) => ({
       model: Option.contains(model.project, project)
+        ? modifyFields(model, { runs: () => AsyncData.succeed(runs) })
+        : model,
+    }),
+    FailedLoadRuns: ({ project, reason }) => ({
+      model: Option.contains(model.project, project)
+        ? modifyFields(model, { runs: () => AsyncData.fail(reason) })
+        : model,
+    }),
+    SucceededLoadReport: ({ project, run, report }) => ({
+      model: showsReport(model, project, run)
         ? modifyFields(model, { report: () => AsyncData.succeed(report) })
         : model,
     }),
-    FailedLoadReport: ({ project, reason }) => ({
-      model: Option.contains(model.project, project)
+    FailedLoadReport: ({ project, run, reason }) => ({
+      model: showsReport(model, project, run)
         ? modifyFields(model, { report: () => AsyncData.fail(reason) })
         : model,
     }),
@@ -381,6 +522,12 @@ export const shownFile = (model: Model, diff: Diff): Option.Option<FileDiff> =>
 
 // The view.
 
+/** What the view reads beyond its Model. */
+export interface ViewInputs {
+  /** The time now in the viewer's zone, for the moments notes and runs name. */
+  readonly today: Option.Option<DateTime.Zoned>
+}
+
 const tabTitle: Record<Tab, string> = {
   diff: 'Diff',
   report: 'Report',
@@ -402,6 +549,32 @@ const note = (text: string, h: HtmlBuilder<Message>): Html =>
 
 const problemLine = (text: string, h: HtmlBuilder<Message>): Html =>
   h.p([h.Role('alert'), h.Class('text-xs text-c3')], [text])
+
+/** A moment as the screen says it: as the console does, once the viewer's day is known. */
+const sayAt = (
+  at: DateTime.DateTime,
+  today: Option.Option<DateTime.Zoned>,
+): string =>
+  Option.match(today, {
+    onNone: () => DateTime.formatIso(at).slice(0, 16).replace('T', ' '),
+    onSome: now => sayMoment(at, now),
+  })
+
+/** Who wrote a note, in words. */
+const authorWords = (author: Actor): string => {
+  switch (author._tag) {
+    case 'maintainer':
+      return 'You'
+    case 'worker':
+      return 'Worker'
+    case 'talk':
+      return 'A talk'
+    case 'organ':
+      return author.organ.charAt(0).toUpperCase() + author.organ.slice(1)
+    case 'engine':
+      return 'Engine'
+  }
+}
 
 /** A commit as the screen names it: its first 7 characters, as git abbreviates it. */
 const shortCommit = (commit: string): string => commit.slice(0, 7)
@@ -441,7 +614,8 @@ const fileList = (diff: Diff, shown: FileDiff, h: HtmlBuilder<Message>): Html =>
   h.nav(
     [
       h.AriaLabel('Changed files'),
-      h.Class('flex w-260 shrink-0 flex-col gap-4 overflow-auto'),
+      h.Class('flex shrink-0 flex-col gap-4 overflow-auto'),
+      h.Style({ width: '260px' }),
     ],
     diff.files.map(file =>
       h.button(
@@ -519,7 +693,66 @@ const fileView = (
     },
   )
 
-const diffView = (model: Model, h: HtmlBuilder<Message>): Html =>
+const noteView = (
+  each: Note,
+  inputs: ViewInputs,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.keyed('li')(
+    each.id,
+    [h.Class('flex flex-col gap-2')],
+    [
+      h.p(
+        [h.Class('text-muted')],
+        [`${authorWords(each.author)} · ${sayAt(each.at, inputs.today)}`],
+      ),
+      h.p([h.Class('whitespace-pre-wrap break-words')], [each.body]),
+    ],
+  )
+
+/** A ticket's diff's ticket: its title and its notes, which say why it was set aside. */
+const notesView = (
+  model: Model,
+  ticket: TicketId,
+  inputs: ViewInputs,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.aside(
+    [
+      h.AriaLabel(`Notes on ${ticket}`),
+      h.Class(
+        'flex shrink-0 flex-col gap-8 overflow-auto rounded-card bg-panel p-12 text-xs',
+      ),
+      h.Style({ width: '320px' }),
+    ],
+    [
+      h.h3([h.Class('text-sm font-extrabold')], ['Notes']),
+      AsyncData.matchData(model.ticket, {
+        onEmpty: () => note('Reading the ticket…', h),
+        onFailure: reason =>
+          problemLine(`The ticket couldn't be read: ${reason}`, h),
+        onData: detail =>
+          h.div(
+            [h.Class('flex flex-col gap-8')],
+            [
+              h.p([h.Class('font-bold')], [detail.ticket.title]),
+              detail.notes.length === 0
+                ? note('The ticket has no notes.', h)
+                : h.ul(
+                    [h.Class('flex flex-col gap-10')],
+                    detail.notes.map(each => noteView(each, inputs, h)),
+                  ),
+            ],
+          ),
+      }),
+    ],
+  )
+
+const diffView = (
+  model: Model,
+  inputs: ViewInputs,
+  h: HtmlBuilder<Message>,
+): Html =>
   Option.match(model.subject, {
     onNone: () =>
       note(
@@ -534,39 +767,128 @@ const diffView = (model: Model, h: HtmlBuilder<Message>): Html =>
         ],
         [
           h.h3([h.Class('text-sm font-extrabold')], [subjectTitle(subject)]),
-          AsyncData.matchData(model.diff, {
-            onEmpty: () => note('Reading the diff…', h),
-            onFailure: reason =>
-              problemLine(`The diff couldn't be read: ${reason}`, h),
-            onData: diff =>
-              Option.match(shownFile(model, diff), {
-                onNone: () => note('No file changed.', h),
-                onSome: shown =>
-                  h.div(
-                    [h.Class('flex min-h-0 flex-1 flex-col gap-8')],
-                    [
-                      note(
-                        `${diff.files.length === 1 ? '1 file' : `${diff.files.length} files`} · ${shortCommit(diff.base)} → ${shortCommit(diff.head)}`,
-                        h,
-                      ),
-                      h.div(
-                        [h.Class('flex min-h-0 flex-1 gap-12')],
-                        [
-                          fileList(diff, shown, h),
-                          fileView(model, subject, shown, h),
-                        ],
-                      ),
-                    ],
-                  ),
+          h.div(
+            [h.Class('flex min-h-0 flex-1 gap-12')],
+            [
+              diffBody(model, subject, h),
+              ...Option.match(ticketOf(subject), {
+                onNone: () => [],
+                onSome: ticket => [notesView(model, ticket, inputs, h)],
               }),
-          }),
+            ],
+          ),
         ],
       ),
   })
 
-const reportView = (model: Model, h: HtmlBuilder<Message>): Html =>
+/** The diff itself: its files, the one shown in the diff view. */
+const diffBody = (
+  model: Model,
+  subject: Subject,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.div(
+    [h.Class('flex min-h-0 min-w-0 flex-1 flex-col gap-8')],
+    [
+      AsyncData.matchData(model.diff, {
+        onEmpty: () => note('Reading the diff…', h),
+        onFailure: reason =>
+          problemLine(`The diff couldn't be read: ${reason}`, h),
+        onData: diff =>
+          Option.match(shownFile(model, diff), {
+            onNone: () => note('No file changed.', h),
+            onSome: shown =>
+              h.div(
+                [h.Class('flex min-h-0 flex-1 flex-col gap-8')],
+                [
+                  note(
+                    `${diff.files.length === 1 ? '1 file' : `${diff.files.length} files`} · ${shortCommit(diff.base)} → ${shortCommit(diff.head)}`,
+                    h,
+                  ),
+                  h.div(
+                    [h.Class('flex min-h-0 flex-1 gap-12')],
+                    [
+                      fileList(diff, shown, h),
+                      fileView(model, subject, shown, h),
+                    ],
+                  ),
+                ],
+              ),
+          }),
+      }),
+    ],
+  )
+
+/** The project's runs, newest first: choosing one shows its report. */
+const runList = (
+  model: Model,
+  inputs: ViewInputs,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.nav(
+    [
+      h.AriaLabel('Runs'),
+      h.Class('flex shrink-0 flex-col gap-4 overflow-auto'),
+      h.Style({ width: '200px' }),
+    ],
+    AsyncData.matchData(model.runs, {
+      onEmpty: () => [note('Reading the runs…', h)],
+      onFailure: reason => [
+        problemLine(`The runs couldn't be listed: ${reason}`, h),
+      ],
+      onData: runs => {
+        // The run whose report is shown: the one chosen, or the last run's report as it came.
+        const shown = Option.orElse(model.reportRun, () =>
+          Option.map(AsyncData.getData(model.report), ({ run }) => run),
+        )
+        return runs.length === 0
+          ? [note('No run yet.', h)]
+          : runs.map(entry =>
+              h.keyed('button')(
+                entry.run,
+                [
+                  h.Type('button'),
+                  h.AriaPressed(
+                    Option.contains(shown, entry.run) ? 'true' : 'false',
+                  ),
+                  h.OnClick(Message.SelectedRun({ run: entry.run })),
+                  h.Class(
+                    `flex flex-col items-start rounded-button px-8 py-4 text-left text-xs hover:brightness-108 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-c1 ${Option.contains(shown, entry.run) ? 'bg-panel font-bold text-fg' : 'text-muted'}`,
+                  ),
+                ],
+                [
+                  h.span([h.Class('font-mono')], [entry.run]),
+                  h.span(
+                    [h.Class('text-muted')],
+                    [sayAt(entry.startedAt, inputs.today)],
+                  ),
+                ],
+              ),
+            )
+      },
+    }),
+  )
+
+const reportView = (
+  model: Model,
+  inputs: ViewInputs,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.div(
+    [h.Class('flex min-h-0 flex-1 gap-12')],
+    [runList(model, inputs, h), reportText(model, h)],
+  )
+
+const reportText = (model: Model, h: HtmlBuilder<Message>): Html =>
   AsyncData.matchData(model.report, {
-    onEmpty: () => note('Reading the last report…', h),
+    onEmpty: () =>
+      note(
+        Option.match(model.reportRun, {
+          onNone: () => 'Reading the last report…',
+          onSome: run => `Reading run ${run}'s report…`,
+        }),
+        h,
+      ),
     onFailure: reason => problemLine(reason, h),
     onData: report =>
       h.article(
@@ -648,7 +970,7 @@ const logView = (model: Model, h: HtmlBuilder<Message>): Html =>
     ],
   )
 
-export const view = defineView<Model, Message>((model, h) =>
+export const view = defineView<Model, Message, ViewInputs>((model, inputs, h) =>
   h.div(
     [h.Class('flex min-h-0 flex-1 flex-col gap-12')],
     Option.match(model.project, {
@@ -661,8 +983,8 @@ export const view = defineView<Model, Message>((model, h) =>
       onSome: () => [
         tabs(model, h),
         {
-          diff: () => diffView(model, h),
-          report: () => reportView(model, h),
+          diff: () => diffView(model, inputs, h),
+          report: () => reportView(model, inputs, h),
           log: () => logView(model, h),
         }[model.tab](),
       ],

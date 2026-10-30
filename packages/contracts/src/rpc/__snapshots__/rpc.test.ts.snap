@@ -3198,6 +3198,23 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
       ],
       "type": "object",
     },
+    "RunEntryEncoded": {
+      "additionalProperties": true,
+      "properties": {
+        "run": {
+          "pattern": "^\\S+$",
+          "type": "string",
+        },
+        "startedAt": {
+          "type": "integer",
+        },
+      },
+      "required": [
+        "run",
+        "startedAt",
+      ],
+      "type": "object",
+    },
     "RunEvents": {
       "items": {
         "anyOf": [
@@ -11299,6 +11316,33 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         "$ref": "#/$defs/DiffEncoded",
       },
       "tag": "diff.run",
+    },
+    {
+      "error": {
+        "$ref": "#/$defs/ProjectNotFoundEncoded",
+      },
+      "group": "review",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "project": {
+            "pattern": "^\\S+$",
+            "type": "string",
+          },
+        },
+        "required": [
+          "project",
+        ],
+        "type": "object",
+      },
+      "stream": false,
+      "success": {
+        "items": {
+          "$ref": "#/$defs/RunEntryEncoded",
+        },
+        "type": "array",
+      },
+      "tag": "report.list",
     },
     {
       "error": {

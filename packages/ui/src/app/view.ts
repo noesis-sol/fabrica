@@ -615,6 +615,7 @@ const screenView = (model: Model, h: HtmlBuilder<Message>): Html =>
         slotId: 'review',
         view: Review.view,
         model: model.screens.review,
+        viewInputs: { today: model.today },
         toParentMessage: message => Message.GotReviewMessage({ message }),
       }),
     Insights: () =>

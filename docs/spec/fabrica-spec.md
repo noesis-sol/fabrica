@@ -334,7 +334,7 @@ The engine samples its host's load every few seconds for the console's system st
 | Workers | `worker.message`, `worker.interrupt`, `worker.release` | a worker's transcript |
 | Attention | `attention.list`, `attention.answer` | open requests |
 | Talks | `talk.open` (mode, context), `talk.send`, `talk.close` | a talk's transcript |
-| Review | `diff.ticket`, `diff.run`, `report.get`, `log.tail` | |
+| Review | `diff.ticket`, `diff.run`, `report.list`, `report.get`, `log.tail` | |
 | Insights | `insights.summary`, `insights.query` (a named query with its parameters; no SQL from clients), `insights.export` (the recorded rows as Parquet files in a folder on the engine's host, §21) | |
 
 ### 8.2 Transports
