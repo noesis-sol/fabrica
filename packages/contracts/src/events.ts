@@ -15,7 +15,9 @@ import { OrganName } from './ticket'
 // JSON object a line. orchestra's record kinds keep their names and fields (its `docs/events.md`), and
 // its analysis fields theirs (H65: `check`, `phases`, `hand_backs`, `carried`, `tokens`, `organs`), so
 // one set of queries reads orchestra's, tutti's and Fabrica's streams; `model`, `tokens`, `cost_usd`
-// and `engine` are added, and the records since. A field without a value is left out, never `null`.
+// and `engine` are added, and the records since. `cost_usd` is money, the API-key calls priced at
+// their model's price; `equivalent_usd` a subscription's calls, counted in tokens, at the API price
+// they would have cost, shown as such (§14.4). A field without a value is left out, never `null`.
 // Kinds and fields may be added, never renamed: a reader decodes the kinds it knows and skips the rest
 // (`decodeEventLine`).
 
@@ -219,6 +221,7 @@ const spent = {
   carried: optional(Schema.Literal(true)),
   tokens: optional(TokensByModel),
   cost_usd: optional(Usd),
+  equivalent_usd: optional(Usd),
 }
 
 /** What the queue holds, on `queue` and `dispatch`. */
@@ -478,6 +481,7 @@ export const EndEvent = record('end', {
   /** Its workers' tokens, by model. */
   tokens: optional(TokensByModel),
   cost_usd: optional(Usd),
+  equivalent_usd: optional(Usd),
   organs: optional(OrganTotals),
 })
 
@@ -657,6 +661,7 @@ export const TurnEvent = record('turn', {
   model: ModelName,
   tokens: optional(TokensByModel),
   cost_usd: optional(Usd),
+  equivalent_usd: optional(Usd),
   /** Its model round-trips. */
   turns: Count,
   duration_ms: Count,

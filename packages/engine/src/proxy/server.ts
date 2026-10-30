@@ -1,6 +1,8 @@
 import {
+  Clock,
   Context,
   Data,
+  Duration,
   Effect,
   FiberSet,
   Layer,
@@ -58,11 +60,15 @@ import { usageReader } from './usage'
 
 /** What the proxy saw of a model call, for telemetry (§14.4, §21) and the holds (§14.2, §14.6). */
 export type ProxyEvent = Data.TaggedEnum<{
-  /** The call's tokens, as its response reported them. */
+  /** The call's tokens, as its response reported them, and how long it took. */
   Used: {
     readonly provider: ProviderName
     readonly caller: Caller
     readonly tokens: Tokens
+    /** From the request sent to the provider until its response ended. */
+    readonly latency: Duration.Duration
+    /** From the request sent until its response's first byte, where its body had one. */
+    readonly firstToken: Option.Option<Duration.Duration>
   }
   /** The call was refused: a usage limit, a rate limit, a credential. */
   Refused: {
@@ -118,10 +124,11 @@ export interface ProxyConfig {
 
 /** How the proxy's exchange with a provider went. */
 type Exchanged = Data.TaggedEnum<{
-  /** The provider answered, or refused: its response, unread. */
+  /** The provider answered, or refused: its response, unread, and when the request was sent (epoch milliseconds). */
   Answered: {
     readonly upstream: IncomingMessage
     readonly refusal: Option.Option<Refusal>
+    readonly sentAt: number
   }
   /** The engine has no credential to send: missing, or its store or command failed. */
   NoCredential: { readonly refusal: Refusal; readonly reason: string }
@@ -288,6 +295,13 @@ const send = (options: {
     else options.body.pipe(request)
   })
 
+/** What the proxy read of a response as it passed: its tokens, and when it began and ended (epoch milliseconds). */
+interface Relayed {
+  readonly tokens: Option.Option<Tokens>
+  readonly firstAt: Option.Option<number>
+  readonly endedAt: number
+}
+
 /**
  * Passes the provider's response on to `sink` as it comes (or reads it through, for a probe), and
  * reads its usage on the way; ends with the tokens read when the response ends or either side goes.
@@ -296,16 +310,28 @@ const relay = (options: {
   readonly upstream: IncomingMessage
   readonly api: Option.Option<ModelApi>
   readonly sink: Option.Option<ServerResponse>
+  readonly clock: Clock.Clock
 }) =>
-  Effect.callback<Option.Option<Tokens>>(resume => {
-    const { upstream } = options
+  Effect.callback<Relayed>(resume => {
+    const { upstream, clock } = options
     const contentType = upstream.headers['content-type'] ?? ''
     const reader = Option.map(options.api, api => usageReader(api, contentType))
+    let firstAt: Option.Option<number> = Option.none()
+    upstream.once('data', () => {
+      firstAt = Option.some(clock.currentTimeMillisUnsafe())
+    })
     let finished = false
     const finish = () => {
       if (finished) return
       finished = true
-      resume(Effect.sync(() => Option.flatMap(reader, read => read.finish())))
+      const endedAt = clock.currentTimeMillisUnsafe()
+      resume(
+        Effect.sync(() => ({
+          tokens: Option.flatMap(reader, read => read.finish()),
+          firstAt,
+          endedAt,
+        })),
+      )
     }
     upstream.on('error', finish)
     upstream.on('close', () => {
@@ -355,6 +381,7 @@ export const make = Effect.fn('ModelProxy.make')(function* (
 ) {
   const secrets = yield* Secrets
   const permits = yield* Permits
+  const clock = yield* Clock.Clock
   const published = yield* PubSub.unbounded<ProxyEvent>()
   const routes = new Map(config.routes.map(route => [route.provider, route]))
   /** The callers granted a token, by the token's digest. */
@@ -398,6 +425,7 @@ export const make = Effect.fn('ModelProxy.make')(function* (
       yield* refused(refusal)
       return Exchanged.NoCredential({ refusal, reason })
     }
+    const sentAt = clock.currentTimeMillisUnsafe()
     const sent = yield* Effect.result(
       send({
         url: upstreamUrl(route, call.path),
@@ -425,15 +453,16 @@ export const make = Effect.fn('ModelProxy.make')(function* (
       wentThrough.set(caller.run, providers.add(route.provider))
     }
     if (Option.isSome(refusal)) yield* refused(refusal.value)
-    return Exchanged.Answered({ upstream, refusal })
+    return Exchanged.Answered({ upstream, refusal, sentAt })
   })
 
-  /** Passes the answer on and publishes the tokens it reports. */
+  /** Passes the answer on and publishes the tokens it reports, with how long the call took. */
   const answer = (options: {
     readonly route: ProviderRoute
     readonly caller: Caller
     readonly path: string
     readonly upstream: IncomingMessage
+    readonly sentAt: number
     readonly sink: Option.Option<ServerResponse>
   }) =>
     Effect.flatMap(
@@ -441,19 +470,26 @@ export const make = Effect.fn('ModelProxy.make')(function* (
         upstream: options.upstream,
         api: apiOf(options.path),
         sink: options.sink,
+        clock,
       }),
-      Option.match({
-        onNone: () => Effect.void,
-        onSome: tokens =>
-          PubSub.publish(
-            published,
-            ProxyEvent.Used({
-              provider: options.route.provider,
-              caller: options.caller,
-              tokens,
-            }),
-          ).pipe(Effect.asVoid),
-      }),
+      relayed => {
+        const since = (at: number) =>
+          Duration.millis(Math.max(0, at - options.sentAt))
+        return Option.match(relayed.tokens, {
+          onNone: () => Effect.void,
+          onSome: tokens =>
+            PubSub.publish(
+              published,
+              ProxyEvent.Used({
+                provider: options.route.provider,
+                caller: options.caller,
+                tokens,
+                latency: since(relayed.endedAt),
+                firstToken: Option.map(relayed.firstAt, since),
+              }),
+            ).pipe(Effect.asVoid),
+        })
+      },
     )
 
   const handle = (request: IncomingMessage, response: ServerResponse) =>
@@ -494,12 +530,13 @@ export const make = Effect.fn('ModelProxy.make')(function* (
             502,
             `${route.provider} couldn't be reached: ${reason}`,
           ),
-        Answered: ({ upstream }) =>
+        Answered: ({ upstream, sentAt }) =>
           answer({
             route,
             caller,
             path: target.value.path,
             upstream,
+            sentAt,
             sink: Option.some(response),
           }),
       })
@@ -579,13 +616,14 @@ export const make = Effect.fn('ModelProxy.make')(function* (
             reason: `${route.provider} couldn't be reached: ${reason}`,
           }),
         ),
-      Answered: ({ upstream, refusal }) =>
+      Answered: ({ upstream, refusal, sentAt }) =>
         Effect.as(
           answer({
             route,
             caller,
             path: request.path,
             upstream,
+            sentAt,
             sink: Option.none(),
           }),
           Option.match(refusal, {

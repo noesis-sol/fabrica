@@ -7,7 +7,7 @@ import {
 import { gzipSync } from 'node:zlib'
 
 import { describe, expect, it } from '@effect/vitest'
-import { RunId, SessionId, TicketId } from '@fabrica/contracts'
+import { RunId, SessionId, TicketId, type Tokens } from '@fabrica/contracts'
 
 import {
   Authentication,
@@ -228,9 +228,23 @@ const streamed = (recorded: RecordedStream) => () => ({
   body: recorded.body,
 })
 
-/** The next `n` events. */
+/** A call's tokens as `next` gives them, its timing left out. */
+const used = (fields: {
+  readonly provider: string
+  readonly caller: Caller
+  readonly tokens: Tokens
+}) => ({ _tag: 'Used' as const, ...fields })
+
+/** The next `n` events, a call's timing left out (cost.test.ts reads it). */
 const next = (events: Stream.Stream<ProxyEvent>, n: number) =>
-  Effect.map(Stream.runCollect(Stream.take(events, n)), chunk => [...chunk])
+  Effect.map(Stream.runCollect(Stream.take(events, n)), chunk =>
+    [...chunk].map(event =>
+      ProxyEvent.$match(event, {
+        Used: ({ latency: _latency, firstToken: _firstToken, ...used }) => used,
+        Refused: refused => refused,
+      }),
+    ),
+  )
 
 const bearer = (token: Redacted.Redacted<string>) => ({
   authorization: `Bearer ${Redacted.value(token)}`,
@@ -325,7 +339,7 @@ describe('model proxy', () => {
         )
 
         expect(yield* next(events, 1)).toEqual([
-          ProxyEvent.Used({ provider, caller, tokens: recorded.tokens }),
+          used({ provider, caller, tokens: recorded.tokens }),
         ])
       }).pipe(Effect.scoped),
     )
@@ -352,7 +366,7 @@ describe('model proxy', () => {
         expect(got.headers['content-encoding']).toBe('gzip')
         expect(got.body.equals(gzipped)).toBe(true)
         expect(yield* next(events, 1)).toEqual([
-          ProxyEvent.Used({
+          used({
             provider: 'anthropic',
             caller,
             tokens: anthropicAnswer.tokens,
@@ -471,7 +485,7 @@ describe('model proxy', () => {
             caller: first,
             refusal: Refusal.StartFailed({ reason }),
           }),
-          ProxyEvent.Used({
+          used({
             provider: 'anthropic',
             caller: first,
             tokens: anthropicAnswer.tokens,
@@ -520,7 +534,7 @@ describe('model proxy', () => {
           headers: { 'x-api-key': Redacted.value(agent.token) },
         })
         expect(yield* next(events, 1)).toEqual([
-          ProxyEvent.Used({
+          used({
             provider: 'anthropic',
             caller,
             tokens: anthropicMessages.tokens,
@@ -575,7 +589,7 @@ describe('model proxy', () => {
         max_tokens: 1,
       })
       expect(yield* next(events, 1)).toEqual([
-        ProxyEvent.Used({
+        used({
           provider: 'anthropic',
           caller: {
             run,

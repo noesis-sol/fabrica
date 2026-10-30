@@ -3359,6 +3359,10 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
               "detail": {
                 "type": "string",
               },
+              "equivalent_usd": {
+                "minimum": 0,
+                "type": "number",
+              },
               "hand_backs": {
                 "additionalProperties": true,
                 "properties": {
@@ -4317,6 +4321,10 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
                 "minimum": 0,
                 "type": "number",
               },
+              "equivalent_usd": {
+                "minimum": 0,
+                "type": "number",
+              },
               "kind": {
                 "enum": [
                   "end",
@@ -4736,6 +4744,10 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
               "detail": {
                 "type": "string",
               },
+              "equivalent_usd": {
+                "minimum": 0,
+                "type": "number",
+              },
               "hand_backs": {
                 "additionalProperties": true,
                 "properties": {
@@ -4845,6 +4857,10 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
               },
               "detail": {
                 "type": "string",
+              },
+              "equivalent_usd": {
+                "minimum": 0,
+                "type": "number",
               },
               "hand_backs": {
                 "additionalProperties": true,
@@ -5381,6 +5397,10 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
                 "minimum": 0,
                 "type": "number",
               },
+              "equivalent_usd": {
+                "minimum": 0,
+                "type": "number",
+              },
               "hand_backs": {
                 "additionalProperties": true,
                 "properties": {
@@ -5619,6 +5639,10 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
               "duration_ms": {
                 "minimum": 0,
                 "type": "integer",
+              },
+              "equivalent_usd": {
+                "minimum": 0,
+                "type": "number",
               },
               "error": {
                 "type": "string",

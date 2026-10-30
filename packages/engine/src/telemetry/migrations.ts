@@ -53,7 +53,14 @@ const rows = statements(
   `CREATE INDEX daily_day ON daily (day, kind)`,
 )
 
+// A subscription's model calls are priced apart from money, as their API-price equivalent (§14.4).
+const equivalents = statements(
+  `ALTER TABLE model_calls ADD COLUMN equivalent_usd REAL`,
+  `ALTER TABLE daily ADD COLUMN equivalent_usd REAL`,
+)
+
 /** The telemetry store's migrations, in order. */
 export const telemetryMigrations: Migrations = {
   '0001_telemetry': rows,
+  '0002_model_call_equivalents': equivalents,
 }

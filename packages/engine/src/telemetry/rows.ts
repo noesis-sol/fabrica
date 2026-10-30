@@ -46,7 +46,10 @@ export type TelemetryRow = Data.TaggedEnum<{
     readonly provider: ProviderName
     readonly model: ModelName
     readonly tokens: Tokens
+    /** Its price in money: an API-key call's. */
     readonly costUsd?: number | undefined
+    /** A subscription's call's API-price equivalent, shown as such (§14.4). */
+    readonly equivalentUsd?: number | undefined
     readonly latency: Duration.Duration
     readonly firstToken?: Duration.Duration | undefined
     readonly outcome: ModelCallOutcome
@@ -167,6 +170,7 @@ export const columnsOf = (row: TelemetryRow, at: number): Columns =>
       cache_write: call.tokens.cache_write,
       cache_read: call.tokens.cache_read,
       cost_usd: orNull(call.costUsd),
+      equivalent_usd: orNull(call.equivalentUsd),
       latency_ms: millis(call.latency),
       first_token_ms: optionalMillis(call.firstToken),
       outcome: call.outcome,

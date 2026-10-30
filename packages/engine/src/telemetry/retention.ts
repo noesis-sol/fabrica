@@ -23,6 +23,8 @@ interface Rollup {
   readonly duration: string
   readonly tokens: boolean
   readonly cost: string
+  /** A subscription's API-price equivalent (§14.4). */
+  readonly equivalent: string
   /** A measure summed and maxed: a sample's value. */
   readonly value: string
 }
@@ -33,6 +35,7 @@ const rollup = (fields: Partial<Rollup>): Rollup => ({
   duration: 'NULL',
   tokens: false,
   cost: 'NULL',
+  equivalent: 'NULL',
   value: 'NULL',
   ...fields,
 })
@@ -44,6 +47,7 @@ const rollups: { readonly [K in RowKind]: Rollup } = {
     duration: 'latency_ms',
     tokens: true,
     cost: 'cost_usd',
+    equivalent: 'equivalent_usd',
   }),
   ToolCall: rollup({
     key: 'tool',
@@ -92,7 +96,8 @@ export const cutoffOf = (
 
 const rollupStatement = (kind: RowKind): string => {
   const table = rowTables[kind]
-  const { key, outcome, duration, tokens, cost, value } = rollups[kind]
+  const { key, outcome, duration, tokens, cost, equivalent, value } =
+    rollups[kind]
   const project = kind === 'HostSample' ? 'NULL' : 'project'
   const day = `strftime('%Y-%m-%d', at / 1000, 'unixepoch')`
   const sum = (column: string) =>
@@ -101,9 +106,9 @@ const rollupStatement = (kind: RowKind): string => {
     ? 'sum(input), sum(output), sum(cache_write), sum(cache_read)'
     : 'NULL, NULL, NULL, NULL'
   return `INSERT INTO daily (day, kind, project, key, outcome, count, duration_ms,
-      input, output, cache_write, cache_read, cost_usd, value_sum, value_max)
+      input, output, cache_write, cache_read, cost_usd, equivalent_usd, value_sum, value_max)
     SELECT ${day}, '${kind}', ${project}, ${key}, ${outcome}, count(*), ${sum(duration)},
-      ${tokenSums}, ${sum(cost)}, ${sum(value)}, ${value === 'NULL' ? 'NULL' : `max(${value})`}
+      ${tokenSums}, ${sum(cost)}, ${sum(equivalent)}, ${sum(value)}, ${value === 'NULL' ? 'NULL' : `max(${value})`}
     FROM ${table} WHERE at < ?
     GROUP BY 1, 3, 4, 5`
 }
