@@ -530,6 +530,60 @@ describe('a ticket merged by hand', () => {
   )
 })
 
+describe('a waiting ticket merged by hand', () => {
+  it.effect('is noticed as Base moves, and never dispatched again', () => {
+    const fixture = project({ ...settings, concurrent: 1 })
+    const go = `${fixture.data}-go`
+    return withRuns(
+      fixture,
+      Effect.gen(function* () {
+        const graph = yield* WorkGraph
+        const other = (yield* file('Other', `wait ${go}`)).id
+        const waiter = (yield* file('Waiter', `wait_for ${other}`, {
+          priority: 1,
+        })).id
+        const { records, running } = yield* startRun(fixture)
+        yield* until(records, isDispatchOf(other))
+        // The maintainer finishes the waiting ticket by hand and merges its branch into Base.
+        const worktree = worktreePath({
+          home: besideCheckout(fixture.checkout),
+          ticket: waiter,
+        })
+        commit(worktree, 'Waiter by hand', { 'waiter.txt': 'by hand\n' })
+        git(
+          fixture.checkout,
+          'merge',
+          '--quiet',
+          '--ff-only',
+          `fabrica/${waiter}`,
+        )
+        const merged = git(fixture.checkout, 'rev-parse', 'HEAD')
+        writeFileSync(go, '')
+        expect((yield* Fiber.join(running)).kind).toBe('READY_EMPTY')
+
+        const events = yield* eventsOf(fixture)
+        expect(ofKind(events, 'dispatch').map(({ ticket }) => ticket)).toEqual([
+          waiter,
+          other,
+        ])
+        expect(
+          ofKind(events, 'closed').map(({ ticket, detail }) => [
+            ticket,
+            detail,
+          ]),
+        ).toEqual(
+          expect.arrayContaining([
+            [waiter, `${merged.slice(0, 7)} merged by hand into main`],
+          ]),
+        )
+        const shown = (yield* graph.show(waiter)).ticket
+        expect(shown.status).toBe('closed')
+        expect(Option.getOrUndefined(shown.mergedCommit)).toBe(merged)
+      }),
+    )
+  })
+})
+
 describe('a resume in the same run', () => {
   it.effect(
     'gives an undeferred ticket its session back once a slot is free',

@@ -62,6 +62,8 @@ export const SessionLeft = Schema.TaggedUnion({
   finished: {},
   /** Its worker asked `question` about it. */
   asked: { question: TicketId },
+  /** It waits for another ticket to merge: it starts afresh then, in its worktree rebased onto Base. */
+  waits: {},
   /** It was set aside: deferred, or left for review. */
   set_aside: {},
 })

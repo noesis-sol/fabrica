@@ -612,8 +612,12 @@ const runStarted = Effect.fn('Run.started')(function* (
         WaitsFor: ({ ticket: other, needs }) =>
           Effect.gen(function* () {
             yield* settled(ticket, 'wait_for', `waits for ${other} to merge`)
-            // It starts afresh once the other merges, in its worktree rebased onto Base.
-            yield* sessions.drop(ticket)
+            // It starts afresh once the other merges, in its worktree rebased onto Base; kept till
+            // then, so a hand merge of its branch is noticed.
+            yield* sessions.left({
+              ticket,
+              left: SessionLeft.cases.waits.make({}),
+            })
             yield* tracked(graph.release({ id: ticket, actor }))
             yield* state.move({
               ticket,
@@ -1061,6 +1065,10 @@ const runStarted = Effect.fn('Run.started')(function* (
     Effect.gen(function* () {
       const saved = yield* sessions.saved(ticket)
       if (Option.isNone(saved)) return WorkerTurn.First()
+      if (saved.value.left._tag === 'waits') {
+        yield* sessions.drop(ticket)
+        return WorkerTurn.First()
+      }
       const why = yield* whyResumed(saved.value)
       return WorkerTurn.Resume({ saved: saved.value, why })
     })
@@ -1069,6 +1077,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     SessionLeft.match(saved.left, {
       working: () => Effect.succeed<ResumeWhy>(ResumeWhy.Carried()),
       finished: () => Effect.succeed<ResumeWhy>(ResumeWhy.Carried()),
+      waits: () => Effect.succeed<ResumeWhy>(ResumeWhy.Carried()),
       set_aside: () => Effect.succeed<ResumeWhy>(ResumeWhy.Undeferred()),
       asked: ({ question }) =>
         graph.show(question).pipe(
