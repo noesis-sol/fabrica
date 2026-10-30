@@ -23,6 +23,7 @@ import * as Palette from '../screens/palette'
 import * as Review from '../screens/review'
 import * as Settings from '../screens/settings'
 import * as Talks from '../screens/talks'
+import * as Worker from '../screens/worker'
 import { themeTitle, themes } from '../theme/theme'
 import { dayOf, sameDay } from './clock'
 import { Connection, isLive, retryAfter } from './connection'
@@ -216,6 +217,27 @@ const stepTalks = (
   }
 }
 
+const writeWorker = (model: Model, worker: Worker.Model): Model =>
+  modifyFields(model, {
+    screens: screens => modifyFields(screens, { worker: () => worker }),
+  })
+
+/** The Worker view's own Model changed, and its Commands lifted, by `step`. */
+const stepWorker = (
+  model: Model,
+  step: (
+    worker: Worker.Model,
+  ) => Update.Return<Worker.Model, Worker.Message, EngineServices>,
+): Return => {
+  const stepped = step(model.screens.worker)
+  return {
+    model: writeWorker(model, stepped.model),
+    commands: Command.mapMessages(stepped.commands, message =>
+      Message.GotWorkerMessage({ message }),
+    ),
+  }
+}
+
 /** `first`, then `next` on its model, their commands together. */
 const andThen = (first: Return, next: (model: Model) => Return): Return => {
   const second = next(first.model)
@@ -260,9 +282,8 @@ const foldAttention = Update.foldChild({
         stepReview(showScreen(model, Screen.Review()), review =>
           Review.openTicket(review, { project, ticket }),
         ),
-      OpenedSession: ({ ticket }) => ({
-        model: showScreen(model, Screen.Worker({ ticket })),
-      }),
+      OpenedSession: ({ project, ticket }) =>
+        enterScreen(model, Screen.Worker({ project, ticket })),
     }),
 })
 
@@ -304,9 +325,12 @@ export const modelCommands = (model: Model) =>
     offers: runOffers(model),
   })
 
-/** Opens a ticket's worker view: made once, so the In progress column's memo holds across renders. */
+/**
+ * Opens the worker view of a ticket of the scoped run: made once, so the In progress column's memo
+ * holds across renders.
+ */
 export const openWorker = (ticket: TicketId): Message =>
-  Message.RequestedScreen({ screen: Screen.Worker({ ticket }) })
+  Message.RequestedWorker({ ticket })
 
 /**
  * The palette's entries (§18.5): the screen's own command list as it is with no overlay open, but the
@@ -638,8 +662,27 @@ const enterScreen = (model: Model, screen: Screen): Return => {
           : Screen.guards.Backlog(screen) &&
               !Screen.guards.Backlog(model.screen)
             ? { model: openBacklog(shown) }
-            : { model: shown }
+            : Screen.guards.Worker(screen) && shown !== model
+              ? stepWorker(shown, worker =>
+                  Worker.opened(worker, workerOf(screen)),
+                )
+              : { model: shown }
 }
+
+/** The worker a Worker screen shows. */
+const workerOf = ({
+  project,
+  ticket,
+}: {
+  readonly project: EngineProject
+  readonly ticket: TicketId
+}): Worker.Shown => ({ project, ticket })
+
+/** The worker view shown reads its ticket again; another screen asks nothing. */
+const reopenWorker = (model: Model, screen: Screen): Return =>
+  Screen.guards.Worker(screen)
+    ? stepWorker(model, worker => Worker.opened(worker, workerOf(screen)))
+    : { model }
 
 /** What the screen shown asks again of the engine just reached, or of the scope just chosen. */
 const reopenScreen = (model: Model): Return =>
@@ -651,7 +694,7 @@ const reopenScreen = (model: Model): Return =>
         ? openInsights(model)
         : Screen.guards.Review(model.screen)
           ? reviewScope(model)
-          : { model }
+          : reopenWorker(model, model.screen)
 
 /**
  * The scope's attention requests now `engineAttention`, each engine's kept apart: the column shows them
@@ -703,6 +746,26 @@ const receive = (model: Model, message: Message): Return =>
         onSome: command => update(model, command.message),
       }),
     RequestedScreen: ({ screen }) => enterScreen(model, screen),
+    RequestedWorker: ({ ticket }) =>
+      Option.match(model.scope, {
+        onNone: () => ({ model }),
+        onSome: project =>
+          enterScreen(model, Screen.Worker({ project, ticket })),
+      }),
+    GotWorkerMessage: ({ message }) =>
+      stepWorker(model, worker => Worker.update(worker, message)),
+    PressedWorkerKey: ({ key }) =>
+      stepWorker(model, worker => Worker.pressedKey(worker, key)),
+    ReceivedWorkerTranscript: ({ worker, items }) =>
+      stepWorker(model, shown =>
+        Worker.receivedTranscript(shown, worker, items),
+      ),
+    EndedWorkerTranscript: ({ worker }) =>
+      stepWorker(model, shown => Worker.endedTranscript(shown, worker)),
+    FailedWorkerTranscript: ({ worker, reason }) =>
+      stepWorker(model, shown =>
+        Worker.failedTranscript(shown, worker, reason),
+      ),
     RequestedPalette: () => ({
       model: writePalette(
         modifyFields(model, { overlay: () => Overlay.Palette() }),

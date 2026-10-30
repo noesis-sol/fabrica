@@ -167,7 +167,7 @@ export const Message = defineMessageUnion({
     ticket: TicketId,
   },
   ClickedReview: { project: EngineProject, ticket: TicketId },
-  ClickedOpenSession: { ticket: TicketId },
+  ClickedOpenSession: { project: EngineProject, ticket: TicketId },
 
   SucceededAnswer: { key: Schema.String },
   FailedAnswer: { key: Schema.String, reason: Schema.String },
@@ -181,8 +181,8 @@ export const OutMessage = defineMessageUnion({
   OpenedAnswerTalk: { project: EngineProject, ticket: TicketId },
   /** The Review screen, for a set-aside ticket. */
   OpenedReview: { project: EngineProject, ticket: TicketId },
-  /** The worker view of a ticket's session. */
-  OpenedSession: { ticket: TicketId },
+  /** The worker view of a ticket's session, on its project. */
+  OpenedSession: { project: EngineProject, ticket: TicketId },
 })
 export type OutMessage = typeof OutMessage.Type
 
@@ -546,9 +546,9 @@ export const update = (model: Model, message: Message): Return =>
       model,
       outMessage: OutMessage.OpenedReview({ project, ticket }),
     }),
-    ClickedOpenSession: ({ ticket }) => ({
+    ClickedOpenSession: ({ project, ticket }) => ({
       model,
-      outMessage: OutMessage.OpenedSession({ ticket }),
+      outMessage: OutMessage.OpenedSession({ project, ticket }),
     }),
 
     SucceededAnswer: ({ key }) => ({
@@ -881,6 +881,7 @@ const failure = (model: Model, key: string, h: HtmlBuilder<Message>): Html =>
     : h.empty
 
 const openSession = (
+  engine: string,
   request: AttentionRequest,
   h: HtmlBuilder<Message>,
 ): Html =>
@@ -890,7 +891,12 @@ const openSession = (
       h.button(
         [
           h.Type('button'),
-          h.OnClick(Message.ClickedOpenSession({ ticket })),
+          h.OnClick(
+            Message.ClickedOpenSession({
+              project: { engine, project: request.project },
+              ticket,
+            }),
+          ),
           h.Class(ghostButton),
         ],
         ['Open session'],
@@ -1069,7 +1075,7 @@ const approvalBody = (
               ],
               ['▾'],
             ),
-            openSession(request, h),
+            openSession(engine, request, h),
             menuOpen ? decisionMenu({ key, engine }, request, h) : h.empty,
           ],
           h,
@@ -1248,7 +1254,7 @@ const questionBody = (
           ],
           ['Answer'],
         ),
-        openSession(request, h),
+        openSession(engine, request, h),
       ],
       h,
     ),
@@ -1283,7 +1289,7 @@ const reviewBody = (
         ],
         ['Review'],
       ),
-      openSession(request, h),
+      openSession(engine, request, h),
     ],
     h,
   ),

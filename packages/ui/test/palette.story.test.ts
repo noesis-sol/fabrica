@@ -49,6 +49,7 @@ import { paletteEntries, runOffers, update } from '../src/app/update'
 import { view } from '../src/app/view'
 import * as Insights from '../src/screens/insights'
 import * as Palette from '../src/screens/palette'
+import * as Worker from '../src/screens/worker'
 
 // The command palette (spec §18.5, §18.3's title bar): ⌘K opens it over any screen, listing exactly
 // the screen's bound commands, from its one command list, with their keys, then the projects, the
@@ -192,7 +193,10 @@ const entries = all.selector('#palette-entries button')
 
 const allScreens: ReadonlyArray<Screen> = [
   Screen.Console(),
-  Screen.Worker({ ticket: TicketId.make('fa-1') }),
+  Screen.Worker({
+    project: { engine: localEngineName, project: fabrica },
+    ticket: TicketId.make('fa-1'),
+  }),
   Screen.Talks(),
   Screen.Backlog(),
   Screen.Review(),
@@ -413,6 +417,21 @@ describe('running a command', () => {
         within(palette, role('button', { name: 'fa-2 Draw the phase bar' })),
       ),
       expectScene(palette).toBeAbsent(),
+      SceneCommand.resolve(
+        Worker.LoadTicket({
+          worker: {
+            project: { engine: localEngineName, project: fabrica },
+            ticket: TicketId.make('fa-2'),
+          },
+        }),
+        Worker.Message.FailedLoadTicket({
+          worker: {
+            project: { engine: localEngineName, project: fabrica },
+            ticket: TicketId.make('fa-2'),
+          },
+          reason: 'not served',
+        }),
+      ),
       expectScene(role('heading', { name: 'Worker fa-2', level: 1 })).toExist(),
     )
   })

@@ -268,6 +268,7 @@ const transcript = [
   { _tag: 'message', id: 'm-1', role: 'assistant', text: '', at },
   { _tag: 'text', message: 'm-1', delta: 'Running the checks.' },
   { _tag: 'thinking', message: 'm-1', delta: 'The tests first.' },
+  { _tag: 'tool_input', id: 'call-1', tool: 'bash', delta: '{"command":' },
   {
     _tag: 'tool_call',
     id: 'call-1',

@@ -7,8 +7,9 @@ import { Moment } from './common'
 import { streamItem } from './stream'
 
 // A session's transcript, a worker's or a talk's (spec §8.3, §18.4), as it happens: messages, streamed
-// text and thinking, tool calls and their output. Tokens and tool output are batched before they
-// cross, one flush per `stream_flush`; a snapshot holds the entries so far, a patch those since.
+// text and thinking, tool calls (their input streamed, then whole) and their output. Tokens and tool
+// output are batched before they cross, one flush per `stream_flush`; a snapshot holds the entries so
+// far, a patch those since.
 
 /** Who wrote a message. */
 export const MessageRole = Schema.Literals(['user', 'assistant', 'engine'])
@@ -27,6 +28,11 @@ export const TranscriptEntry = Schema.TaggedUnion({
   text: { message: MessageId, delta: Schema.String },
   /** More of a message's thinking. */
   thinking: { message: MessageId, delta: Schema.String },
+  /**
+   * More of a tool call's input, as the model streams it: never drawn (§18.5), the call shown by its
+   * tool alone until its `tool_call` brings the input whole.
+   */
+  tool_input: { id: ToolCallId, tool: Text, delta: Schema.String },
   /** A tool call, its input whole (§18.5: never drawn until it is). */
   tool_call: { id: ToolCallId, tool: Text, input: Schema.Json, at: Moment },
   /** More of a tool call's output. */

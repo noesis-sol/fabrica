@@ -103,6 +103,7 @@ const applyEntry = (
       ),
     }),
     thinking: () => conversation,
+    tool_input: () => conversation,
     tool_call: ({ id, tool }) => ({
       ...conversation,
       lines: [

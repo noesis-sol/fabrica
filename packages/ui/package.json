@@ -26,6 +26,8 @@
     "@fabrica/client": "workspace:*",
     "@fabrica/contracts": "workspace:*",
     "@foldkit/ui": "0.169.0",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
     "cytoscape": "3.34.4",
     "cytoscape-dagre": "4.0.1",
     "effect": "4.0.0",

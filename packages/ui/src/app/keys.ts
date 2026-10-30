@@ -5,6 +5,7 @@ import type { Platform } from '@fabrica/contracts'
 import * as Attention from '../console/attention'
 import * as Stats from '../console/stats'
 import * as Review from '../screens/review'
+import * as Worker from '../screens/worker'
 import { Message } from './message'
 import { Screen, screenTitle } from './screen'
 
@@ -165,6 +166,25 @@ const reviewKeys: ReadonlyArray<KeyCommand> = (
   message: Message.PressedReviewTab({ tab }),
 }))
 
+/** The Worker view's keys (§18.4, §18.5): the whole ticket, and interrupting or releasing the worker. */
+const workerKeys: ReadonlyArray<KeyCommand> = (
+  [
+    { action: 'ticket', key: 't', title: 'Show or hide the whole ticket' },
+    { action: 'interrupt', key: 'i', title: 'Interrupt the worker' },
+    { action: 'release', key: 'r', title: 'Release the worker' },
+  ] satisfies ReadonlyArray<{
+    readonly action: Worker.Key
+    readonly key: string
+    readonly title: string
+  }>
+).map(({ action, key, title }) => ({
+  id: `worker.${action}`,
+  title,
+  chord: plain(key),
+  hint: true,
+  message: Message.PressedWorkerKey({ key: action }),
+}))
+
 /** Each screen's own commands; the screens' tickets add theirs here. */
 const ofScreen = (
   screen: Screen,
@@ -173,7 +193,7 @@ const ofScreen = (
 ): ReadonlyArray<KeyCommand> =>
   Screen.match(screen, {
     Console: () => [...answerKeys(options), answerTalk, ...runKeys(offers)],
-    Worker: () => [backToConsole],
+    Worker: () => [...workerKeys, backToConsole],
     Talks: () => [backToConsole],
     Backlog: () => [backToConsole],
     Review: () => [...reviewKeys, backToConsole],

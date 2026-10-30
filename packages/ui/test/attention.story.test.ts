@@ -47,6 +47,7 @@ import { view } from '../src/app/view'
 import * as Attention from '../src/console/attention'
 import * as TalkPanel from '../src/console/talk-panel'
 import * as Review from '../src/screens/review'
+import * as Worker from '../src/screens/worker'
 
 // The console's Needs your attention column (spec §15.1, §18.3, H62, H92; Appendix A.2), from fixture
 // requests: each kind's card with its tag and waiting time, a permission request's input shown whole
@@ -780,6 +781,15 @@ describe('an approval', () => {
       { update, view },
       given(withRequests([permission])),
       click(role('button', { name: 'Open session' })),
+      Command.resolve(
+        Worker.LoadTicket({
+          worker: { project: scoped, ticket: TicketId.make('fa-7') },
+        }),
+        Worker.Message.FailedLoadTicket({
+          worker: { project: scoped, ticket: TicketId.make('fa-7') },
+          reason: 'not served',
+        }),
+      ),
       expectScene(role('heading', { name: 'Worker fa-7' })).toExist(),
     )
   })

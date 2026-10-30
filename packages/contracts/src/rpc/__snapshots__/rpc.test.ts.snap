@@ -7068,6 +7068,35 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
           "properties": {
             "_tag": {
               "enum": [
+                "tool_input",
+              ],
+              "type": "string",
+            },
+            "delta": {
+              "type": "string",
+            },
+            "id": {
+              "pattern": "^\\S+$",
+              "type": "string",
+            },
+            "tool": {
+              "pattern": "\\S",
+              "type": "string",
+            },
+          },
+          "required": [
+            "_tag",
+            "id",
+            "tool",
+            "delta",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": true,
+          "properties": {
+            "_tag": {
+              "enum": [
                 "tool_call",
               ],
               "type": "string",

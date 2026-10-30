@@ -1,4 +1,12 @@
-import { Array, type DateTime, Effect, Option, Schema, Stream } from 'effect'
+import {
+  Array,
+  type DateTime,
+  Effect,
+  Option,
+  Predicate,
+  Schema,
+  Stream,
+} from 'effect'
 import { Subscription } from 'foldkit'
 
 import { type EngineClientShape, Link, SshPromptEvent } from '@fabrica/client'
@@ -23,6 +31,7 @@ import {
 import * as Sidebar from '../console/sidebar'
 import * as TalkPanel from '../console/talk-panel'
 import * as Talks from '../screens/talks'
+import * as Worker from '../screens/worker'
 import {
   type EngineSession,
   clientName,
@@ -265,6 +274,53 @@ export const transcriptMessages = (
     Stream.catch(() => Stream.empty),
     Stream.concat(Stream.make(Message.EndedTranscript({ talk }))),
   )
+
+/**
+ * The worker's transcript, a frame's entries at a time; its end, when the worker has finished (its
+ * watch ends, or the engine no longer has it), or why it couldn't be read.
+ */
+export const workerTranscriptMessages = (
+  client: EngineClientShape,
+  worker: Worker.Shown,
+  nextFrame: Effect.Effect<void>,
+): Stream.Stream<Message> =>
+  watchOf<ReadonlyArray<TranscriptEntry>, ReadonlyArray<TranscriptEntry>>(
+    client,
+  )(resume =>
+    client.rpc['worker.watchTranscript']({
+      project: worker.project.project,
+      ticket: worker.ticket,
+      resume,
+    }),
+  ).pipe(
+    perFrame(nextFrame),
+    Stream.map(items => Message.ReceivedWorkerTranscript({ worker, items })),
+    Stream.concat(Stream.make(Message.EndedWorkerTranscript({ worker }))),
+    Stream.catch(error =>
+      Stream.make(
+        Predicate.isTagged(error, 'WorkerNotFound')
+          ? Message.EndedWorkerTranscript({ worker })
+          : Message.FailedWorkerTranscript({
+              worker,
+              reason: reasonOf(error),
+            }),
+      ),
+    ),
+  )
+
+/** The worker whose view is shown, where one is, and whether its engine is connected. */
+const shownWorker = (
+  model: Model,
+): { readonly worker: Option.Option<Worker.Shown>; readonly live: boolean } =>
+  Screen.guards.Worker(model.screen)
+    ? {
+        worker: Option.some({
+          project: model.screen.project,
+          ticket: model.screen.ticket,
+        }),
+        live: RemoteEngines.isEngineLive(model, model.screen.project.engine),
+      }
+    : { worker: Option.none(), live: false }
 
 /** The talks the app holds, the console's and the Talks screen's, each once, with its project's engine, while it is connected. */
 const heldTalks = (
@@ -649,6 +705,23 @@ export const makeSubscriptions = ({
             ),
             { concurrency: 'unbounded' },
           ),
+      },
+    ),
+    // Only the worker shown has its transcript watched: an inactive worker costs nothing (§18.5).
+    workerTranscript: entry(
+      { worker: Schema.Option(Worker.Shown), live: Schema.Boolean },
+      {
+        modelToDependencies: shownWorker,
+        dependenciesToStream: ({ worker, live }) =>
+          Option.match(worker, {
+            onNone: () => Stream.empty,
+            onSome: shown =>
+              live
+                ? withEngineClient(shown.project.engine, client =>
+                    workerTranscriptMessages(client, shown, nextFrame),
+                  )
+                : Stream.empty,
+          }),
       },
     ),
     sshPrompts: Subscription.persistentEntry(

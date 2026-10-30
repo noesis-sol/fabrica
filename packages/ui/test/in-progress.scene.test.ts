@@ -1,5 +1,6 @@
 import { DateTime, Option, Schema } from 'effect'
 import {
+  Command,
   all,
   click,
   expectAll,
@@ -22,6 +23,7 @@ import {
   RunId,
   RunView,
   StreamEpoch,
+  TicketId,
   WorkerAction,
   phaseFacts,
   protocolVersion,
@@ -34,6 +36,7 @@ import { type Model, initialModel } from '../src/app/model'
 import { update } from '../src/app/update'
 import { view } from '../src/app/view'
 import * as InProgress from '../src/console/in-progress'
+import * as Worker from '../src/screens/worker'
 
 // The console's In progress column (spec §18.3, H45, H80; Appendix A.2), drawn from a fixture run
 // view with a ticket in each phase in progress: the cards and their phase bars, passed segments
@@ -222,6 +225,15 @@ describe('the cards', () => {
       { update, view },
       given(withRun),
       click(card('fa-3')),
+      Command.resolve(
+        Worker.LoadTicket({
+          worker: { project: scoped, ticket: TicketId.make('fa-3') },
+        }),
+        Worker.Message.FailedLoadTicket({
+          worker: { project: scoped, ticket: TicketId.make('fa-3') },
+          reason: 'not served',
+        }),
+      ),
       expectScene(role('heading', { name: 'Worker fa-3' })).toExist(),
     )
   })

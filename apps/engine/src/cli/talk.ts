@@ -121,6 +121,7 @@ const makePrinter = Effect.fn('Cli.talkPrinter')(function* (
         })
       }),
     thinking: () => Effect.void,
+    tool_input: () => Effect.void,
     tool_call: ({ id, tool, input }) =>
       Effect.andThen(
         Effect.andThen(
@@ -152,6 +153,7 @@ const makePrinter = Effect.fn('Cli.talkPrinter')(function* (
       })),
     text: () => Effect.void,
     thinking: () => Effect.void,
+    tool_input: () => Effect.void,
     tool_call: () => Effect.void,
     tool_output: () => Effect.void,
     tool_end: () => Effect.void,

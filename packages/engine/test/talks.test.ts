@@ -303,6 +303,7 @@ const line: (entry: TranscriptEntry) => string = TranscriptEntry.match({
   message: ({ role, text }) => `${role}: ${text}`,
   text: ({ delta }) => `text ${delta}`,
   thinking: ({ delta }) => `thinking ${delta}`,
+  tool_input: ({ id, delta }) => `input ${id} ${delta}`,
   tool_call: ({ id, tool, input }) =>
     `call ${id} ${tool} ${JSON.stringify(input)}`,
   tool_output: ({ id, chunk }) => `output ${id} ${chunk}`,

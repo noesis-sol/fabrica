@@ -51,6 +51,7 @@ import { WaitToReconnect, update } from '../src/app/update'
 import { layout, view } from '../src/app/view'
 import * as Insights from '../src/screens/insights'
 import * as Settings from '../src/screens/settings'
+import * as Worker from '../src/screens/worker'
 
 // The UI root (spec §18.1, §18.3, §18.5, Appendix A.1): routing between the screens, the keys drawn
 // from each screen's command list into the key help, the engine's frames decoded into the Model, and
@@ -124,14 +125,21 @@ describe('routing', () => {
     )
   })
 
-  test('a worker view is routed to by its ticket', () => {
-    const ticket = TicketId.make('fa-a1b2')
+  test('a worker view is routed to by its project and its ticket', () => {
+    const worker = {
+      project: { engine: localEngineName, project: ProjectId.make('p-1') },
+      ticket: TicketId.make('fa-a1b2'),
+    }
     story(
       update,
       given(start),
-      message(Message.RequestedScreen({ screen: Screen.Worker({ ticket }) })),
+      message(Message.RequestedScreen({ screen: Screen.Worker(worker) })),
+      Command.resolve(
+        Worker.LoadTicket({ worker }),
+        Worker.Message.FailedLoadTicket({ worker, reason: 'not served' }),
+      ),
       model(shown => {
-        expect(shown.screen).toEqual(Screen.Worker({ ticket }))
+        expect(shown.screen).toEqual(Screen.Worker(worker))
       }),
     )
   })
@@ -248,7 +256,10 @@ describe('the connection', () => {
 
 const allScreens: ReadonlyArray<Screen> = [
   Screen.Console(),
-  Screen.Worker({ ticket: TicketId.make('fa-a1b2') }),
+  Screen.Worker({
+    project: { engine: localEngineName, project: ProjectId.make('p-1') },
+    ticket: TicketId.make('fa-a1b2'),
+  }),
   Screen.Talks(),
   Screen.Backlog(),
   Screen.Review(),

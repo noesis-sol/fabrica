@@ -1,4 +1,4 @@
-import { Option } from 'effect'
+import { Array, Option } from 'effect'
 import {
   type Document,
   type Html,
@@ -32,6 +32,7 @@ import * as Worker from '../screens/worker'
 import type { Theme } from '../theme/theme'
 import { Connection, isLive } from './connection'
 import { dialog } from './dialog'
+import { sameProject } from './engine-project'
 import {
   type KeyCommand,
   hints,
@@ -42,6 +43,7 @@ import {
 } from './keys'
 import { Message } from './message'
 import { type Model, Overlay } from './model'
+import * as RemoteEngines from './remote-engines'
 import { Screen, screenTitle } from './screen'
 import * as SshPrompts from './ssh-prompts'
 import { modelCommands, openWorker, paletteEntries } from './update'
@@ -395,10 +397,40 @@ const hintButton = (
 /** Chooses a theme: made once, as the palette's theme commands do too. */
 const chooseTheme = (theme: Theme): Message => Message.ChoseTheme({ theme })
 
+/**
+ * What the worker view draws beside its own Model: its engine's connection, the clock, and, where its
+ * project is the scope's, its row in the run view, the run's spending and the usage windows.
+ */
+const workerInputs = (
+  model: Model,
+  worker: Worker.Shown,
+): Worker.ViewInputs => {
+  const scoped = Option.exists(model.scope, scope =>
+    sameProject(scope, worker.project),
+  )
+  const run = scoped ? model.runView : Option.none()
+  return {
+    live: RemoteEngines.isEngineLive(model, worker.project.engine),
+    now: model.now,
+    row: Option.flatMap(run, view =>
+      Array.findFirst(view.workers, row => row.ticket === worker.ticket),
+    ),
+    usage: scoped ? model.usage : Option.none(),
+    runTokens: Option.map(run, view => view.totals.tokens),
+  }
+}
+
 const screenView = (model: Model, h: HtmlBuilder<Message>): Html =>
   Screen.match(model.screen, {
     Console: () => consoleView(model, h),
-    Worker: ({ ticket }) => Worker.view(model.screens.worker, ticket, h),
+    Worker: worker =>
+      h.submodel({
+        slotId: 'worker',
+        view: Worker.view,
+        model: model.screens.worker,
+        viewInputs: workerInputs(model, worker),
+        toParentMessage: message => Message.GotWorkerMessage({ message }),
+      }),
     Talks: () =>
       h.submodel({
         slotId: 'talks',

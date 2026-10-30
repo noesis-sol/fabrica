@@ -15,6 +15,7 @@ import {
   ReleaseVersion,
   RunId,
   TalkId,
+  TicketId,
   TranscriptItem,
   UpdateSide,
 } from '@fabrica/contracts'
@@ -30,6 +31,7 @@ import * as Palette from '../screens/palette'
 import * as Review from '../screens/review'
 import * as Settings from '../screens/settings'
 import * as Talks from '../screens/talks'
+import * as Worker from '../screens/worker'
 import { Theme } from '../theme/theme'
 import { EngineProject } from './engine-project'
 import { NotificationTarget } from './notify'
@@ -60,6 +62,12 @@ export const Message = defineMessageUnion({
     inField: Schema.Boolean,
   },
   RequestedScreen: { screen: Screen },
+  /** The worker view of a ticket of the scoped run: on the scoped project. */
+  RequestedWorker: { ticket: TicketId },
+  /** A Message of the Worker view's. */
+  GotWorkerMessage: { message: Worker.Message },
+  /** A Worker view's key (§18.5). */
+  PressedWorkerKey: { key: Worker.Key },
   RequestedPalette: {},
   /** A Message of the command palette's: its query changed. */
   GotPaletteMessage: { message: Palette.Message },
@@ -181,6 +189,15 @@ export const Message = defineMessageUnion({
   ReceivedTranscript: { talk: TalkId, items: itemsOf(TranscriptItem) },
   /** A talk's transcript ended: the engine no longer has the talk. */
   EndedTranscript: { talk: TalkId },
+  /** A frame of the shown worker's transcript (§18.4). */
+  ReceivedWorkerTranscript: {
+    worker: Worker.Shown,
+    items: itemsOf(TranscriptItem),
+  },
+  /** The worker's transcript ended: the worker has finished. */
+  EndedWorkerTranscript: { worker: Worker.Shown },
+  /** The worker's transcript couldn't be read. */
+  FailedWorkerTranscript: { worker: Worker.Shown, reason: Schema.String },
 
   /** Every project's attention requests on the engine named `engine`, read for those to notify (§18.5). */
   ReceivedAttentionToNotify: {
