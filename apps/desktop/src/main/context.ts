@@ -234,7 +234,9 @@ const pairings = makePairings({ state: appState, read: fingerprintDesk.read })
 const brokeredPage = (
   contents: WebContents,
 ): BrokeredPage<MessagePortMain> => ({
+  id: contents.id,
   onLoad: listener => contents.on('did-finish-load', listener),
+  onNavigate: listener => contents.on('did-navigate', () => listener()),
   onGone: listener => contents.once('destroyed', listener),
   send: port => sendEnginePort(contents, port),
 })

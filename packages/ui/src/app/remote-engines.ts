@@ -45,7 +45,8 @@ import { Message } from './message'
 // The app's known engines on other hosts (spec §9.1), each reached through its own connection: the
 // app's state keeps them (a name, how to reach it, the engine's ID and protocol version), and an engine
 // Add engine installed, or found up to date, joins them, kept once its first hello comes. Each is
-// connected to over a port of its own, asked of main at each attempt; an attempt that fails is tried
+// connected to over a port of its own, asked of main at each attempt, the attempt taken up again over
+// the port main hands over for it when the connection process starts anew (§8.2); an attempt that fails is tried
 // again after a pause, inside the engine's stream, and each engine's stream runs in a fiber of its own,
 // so another engine's attempts, or its joining, leave its connection be.
 // One refused (its protocol too old or too new) or stopped (ssh refused its host) waits for the user:
@@ -397,10 +398,13 @@ const waitsForUser = (message: Message): boolean =>
   Predicate.isTagged(message, 'RefusedByRemote') ||
   Predicate.isTagged(message, 'StoppedConnectingRemote')
 
-/** What an engine's connection needs: its port, at each attempt, and the hello's facts. */
+/**
+ * What an engine's connection needs: its ports, asked for at each attempt, the first and each main hands
+ * over again for it, and the hello's facts.
+ */
 export interface RemoteConnection {
   readonly name: EngineName
-  readonly port: Effect.Effect<MessagePort>
+  readonly ports: Stream.Stream<MessagePort>
   readonly client: ClientOptions
   /** The engine's own streams while it is connected: its project rows, for the sidebar. */
   readonly streams: (session: EngineSession) => Stream.Stream<Message>
@@ -411,18 +415,15 @@ export interface RemoteConnection {
 }
 
 /**
- * One attempt: the client over a new port, its session held as the engine's, its link's changes and its
- * streams, until its link ends.
+ * The client over `port`, its session held as the engine's, its link's changes and its streams, until
+ * its link ends.
  */
-const attemptMessages = ({
-  name,
-  port,
-  client,
-  streams,
-  keep,
-}: RemoteConnection): Stream.Stream<Message> =>
+const portMessages = (
+  { name, client, streams, keep }: RemoteConnection,
+  port: MessagePort,
+): Stream.Stream<Message> =>
   Stream.unwrap(
-    connect({ enginePort: port, client }).pipe(
+    connect({ enginePort: Effect.succeed(port), client }).pipe(
       Effect.tap(keep),
       Effect.map(session =>
         Stream.merge(
@@ -458,6 +459,25 @@ const attemptMessages = ({
         ),
       ),
     ),
+  )
+
+/**
+ * One attempt: over the newest of its ports, each that comes after the first (the connection process
+ * started anew, the port before dead with it) taking the attempt up again over it, until the link
+ * over the newest ends.
+ */
+const attemptMessages = (
+  connection: RemoteConnection,
+): Stream.Stream<Message> =>
+  connection.ports.pipe(
+    Stream.switchMap(port =>
+      portMessages(connection, port).pipe(
+        Stream.map(Option.some),
+        Stream.concat(Stream.make(Option.none<Message>())),
+      ),
+    ),
+    Stream.takeWhile(Option.isSome),
+    Stream.map(message => message.value),
   )
 
 /**

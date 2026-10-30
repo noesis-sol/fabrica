@@ -329,7 +329,7 @@ describe('a known engine’s project', () => {
                 }),
               ),
             ),
-            enginePort: Option.some(() => Effect.succeed(boxPort)),
+            enginePorts: Option.some(() => Stream.make(boxPort)),
           },
           sshPrompts: noSshPromptHost,
           themeHost: themeHostOf(window),

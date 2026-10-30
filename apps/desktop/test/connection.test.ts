@@ -546,7 +546,9 @@ const fakePage = () => {
   const gone: Array<() => void> = []
   const received: Array<string> = []
   const page: BrokeredPage<string> = {
+    id: 1,
     onLoad: listener => loads.push(listener),
+    onNavigate: () => undefined,
     onGone: listener => gone.push(listener),
     send: port => received.push(port),
   }

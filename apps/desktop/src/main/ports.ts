@@ -15,7 +15,9 @@ import { ConnectionTarget } from '../connection/target'
 // that exits is started again after a pause, and every page it served gets a new port; so does every
 // page when the app's engine changes (the Windows app's in WSL2, once Add engine has installed it). A
 // known engine on another host (§9.1) has a connection of its own, whose port the page asks for at
-// each attempt.
+// each attempt; main keeps the newest it relayed for each page and engine, and relays it again, handed
+// to the page under the same request, when the connection process starts anew, the old one dead with
+// the process that relayed it.
 
 /** The engine the app reaches on this machine: its local socket, where the engine runs here (§4). */
 export const localTarget = (host: HostPlaces): ConnectionTarget =>
@@ -46,6 +48,15 @@ export const knownTarget = (
       ConnectionTarget.cases.Refused.make({ reason: unpaired(endpoint) }),
   })
 
+/** A known engine's address as the broker keys the ports it relays to it: one per way of reaching it. */
+export const addressKey = (address: EngineAddress): string =>
+  EngineAddress.match(address, {
+    Local: () => 'local',
+    Ssh: ({ destination }) => `ssh ${destination}`,
+    Wsl: ({ distro }) => `wsl ${distro}`,
+    Tls: ({ host, port, fingerprint }) => `tls ${host}:${port} ${fingerprint}`,
+  })
+
 /** The connection process, as main reaches it. */
 export interface ConnectionProcess<Port> {
   /** Hands it one end of a page's port, with the engine to relay it to. */
@@ -56,8 +67,12 @@ export interface ConnectionProcess<Port> {
 
 /** A page, as the broker sees it. */
 export interface BrokeredPage<Port> {
+  /** The page's ID, which a known engine's port names the page by. */
+  readonly id: number
   /** Calls `listener` at each load of the page, its first included. */
   readonly onLoad: (listener: () => void) => void
+  /** Calls `listener` as the page moves to a new document, a reload's included, before its scripts run. */
+  readonly onNavigate: (listener: () => void) => void
   /** Calls `listener` once the page has gone for good. */
   readonly onGone: (listener: () => void) => void
   /** Hands the page its end of a port. */
@@ -76,15 +91,40 @@ export interface BrokerHost<Port> {
   readonly target: ConnectionTarget
 }
 
+/** A port to a known engine a page asked for (§9.1). */
+export interface KnownConnection<Port> {
+  /** The page that asked, by its ID. */
+  readonly page: number
+  /** The engine's address, as `addressKey` keys it: the newest port for each page and engine is kept. */
+  readonly engine: string
+  /** The engine to relay it to. */
+  readonly target: ConnectionTarget
+  /** Hands the page its end, under the request it answers. */
+  readonly send: (port: Port) => void
+}
+
 /**
  * The broker: `attach` gives a page a port at each of its loads, until it has gone; `connect` relays a
- * port to a known engine's target for the page that asked; `post` reaches the connection process
- * running, `ask` the one running or started for it; `retarget` gives every page a port to another engine.
+ * port to a known engine's target for the page that asked, and again after each restart of the
+ * connection process, until the page asks for another to the engine, moves to a new document or goes;
+ * `post` reaches the connection process running, `ask` the one running or started for it; `retarget`
+ * gives every page a port to another engine.
  */
 export const makeBroker = <Port>(host: BrokerHost<Port>) => {
   let child: Option.Option<ConnectionProcess<Port>> = Option.none()
   let target = host.target
   const pages = new Set<BrokeredPage<Port>>()
+  // Each page's known engines' newest ports, by engine, with the connection process each went through.
+  const known = new Map<
+    number,
+    Map<
+      string,
+      {
+        readonly connection: KnownConnection<Port>
+        through: ConnectionProcess<Port>
+      }
+    >
+  >()
 
   const connection = (): ConnectionProcess<Port> =>
     Option.getOrElse(child, () => {
@@ -94,20 +134,42 @@ export const makeBroker = <Port>(host: BrokerHost<Port>) => {
           for (const page of pages) {
             broker(page)
           }
+          // Those relayed since the exit went through the process started for them, alive still.
+          for (const engines of known.values()) {
+            for (const kept of engines.values()) {
+              if (kept.through === started) {
+                kept.through = relay(
+                  kept.connection.target,
+                  kept.connection.send,
+                )
+              }
+            }
+          }
         })
       })
       child = Option.some(started)
       return started
     })
 
-  /** A new port pair: one end relayed to `to`, the other handed to `send`. */
-  const connect = (to: ConnectionTarget, send: (port: Port) => void): void => {
-    const { page: pageEnd, relay } = host.channel()
-    connection().relay(to, relay)
+  /** A new port pair: one end relayed to `to`, the other handed to `send`; the process it went through. */
+  const relay = (
+    to: ConnectionTarget,
+    send: (port: Port) => void,
+  ): ConnectionProcess<Port> => {
+    const { page: pageEnd, relay: relayEnd } = host.channel()
+    const through = connection()
+    through.relay(to, relayEnd)
     send(pageEnd)
+    return through
   }
 
-  const broker = (page: BrokeredPage<Port>): void => connect(target, page.send)
+  const broker = (page: BrokeredPage<Port>): void => {
+    relay(target, page.send)
+  }
+
+  const forget = (page: BrokeredPage<Port>): void => {
+    known.delete(page.id)
+  }
 
   return {
     /** Hands the connection process `message` while it runs; nothing once it has exited. */
@@ -116,7 +178,12 @@ export const makeBroker = <Port>(host: BrokerHost<Port>) => {
     },
     /** Hands the connection process `message`, starting it where it isn't running. */
     ask: (message: unknown): void => connection().post(message),
-    connect,
+    connect: (asked: KnownConnection<Port>): void => {
+      const through = relay(asked.target, asked.send)
+      const engines = known.get(asked.page) ?? new Map()
+      engines.set(asked.engine, { connection: asked, through })
+      known.set(asked.page, engines)
+    },
     /** Has every page reach `next` from now on, each through a new port. */
     retarget: (next: ConnectionTarget): void => {
       target = next
@@ -129,7 +196,11 @@ export const makeBroker = <Port>(host: BrokerHost<Port>) => {
         pages.add(page)
         broker(page)
       })
-      page.onGone(() => pages.delete(page))
+      page.onNavigate(() => forget(page))
+      page.onGone(() => {
+        pages.delete(page)
+        forget(page)
+      })
     },
   }
 }

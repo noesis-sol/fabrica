@@ -1,4 +1,4 @@
-import { Context, Effect, Option, Schema } from 'effect'
+import { Context, Effect, Option, Queue, Schema, Stream } from 'effect'
 
 import {
   CheckAnswer,
@@ -63,9 +63,12 @@ export interface AppHostShape {
   readonly keepEngine: Option.Option<
     (engine: KnownEngine) => Effect.Effect<KeepAnswer>
   >
-  /** A new port to the known engine at an address, through the connection process: none where no app is around. */
-  readonly enginePort: Option.Option<
-    (address: EngineAddress) => Effect.Effect<MessagePort>
+  /**
+   * A new port to the known engine at an address, through the connection process, then each port main
+   * hands over again for it as the connection process starts anew: none where no app is around.
+   */
+  readonly enginePorts: Option.Option<
+    (address: EngineAddress) => Stream.Stream<MessagePort>
   >
   /** The fingerprint the engine at an endpoint presents over TLS: none where no app is around. */
   readonly readFingerprint: Option.Option<
@@ -90,7 +93,7 @@ export const noAppHost: AppHostShape = {
   installUbuntu: Option.none(),
   knownEngines: Option.none(),
   keepEngine: Option.none(),
-  enginePort: Option.none(),
+  enginePorts: Option.none(),
   readFingerprint: Option.none(),
   pairEngine: Option.none(),
 }
@@ -163,27 +166,32 @@ const methodOf = <A>(
 }
 
 /**
- * A new port to the known engine at an address, through `connect` (the preload's method): each request
- * numbered, its port taken from `ports` as the message carrying its number comes.
+ * The ports to the known engine at an address, through `connect` (the preload's method): each request
+ * numbered, its ports taken from `ports` as the messages carrying its number come, the first and those
+ * main hands over again for it, until the stream's reader stops.
  */
-const enginePortOf = (
+const enginePortsOf = (
   connect: (request: EnginePortRequest) => void,
   ports: RemoteEnginePorts,
 ) => {
   let requests = 0
-  return (address: EngineAddress): Effect.Effect<MessagePort> =>
-    Effect.callback<MessagePort>(resume => {
-      requests += 1
-      const asked = requests
-      const stop = ports((request, port) => {
-        if (request === asked) {
-          stop()
-          resume(Effect.succeed(port))
-        }
-      })
-      connect({ request: asked, address })
-      return Effect.sync(stop)
-    })
+  return (address: EngineAddress): Stream.Stream<MessagePort> =>
+    Stream.callback<MessagePort>(queue =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          requests += 1
+          const asked = requests
+          const stop = ports((request, port) => {
+            if (request === asked) {
+              Queue.offerUnsafe(queue, port)
+            }
+          })
+          connect({ request: asked, address })
+          return stop
+        }),
+        stop => Effect.sync(stop),
+      ),
+    )
 }
 
 /**
@@ -294,10 +302,10 @@ export const appHostOf = (
           ),
         ),
     ),
-    enginePort: Option.flatMap(ports, listen =>
+    enginePorts: Option.flatMap(ports, listen =>
       typeof connect === 'function'
         ? Option.some(
-            enginePortOf(
+            enginePortsOf(
               request => Reflect.apply(connect, api, [request]),
               listen,
             ),

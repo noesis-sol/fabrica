@@ -566,7 +566,7 @@ const servedPort = (answer: Effect.Effect<EngineHello, VersionMismatch>) =>
 
 const connection = (port: MessagePort): RemoteEngines.RemoteConnection => ({
   name: 'build-box',
-  port: Effect.succeed(port),
+  ports: Stream.make(port),
   client: { name: clientName, kind: 'app', release: '0.2.0' },
   streams: session => projectMessages(session, 'build-box', Effect.void),
   keep: () => Effect.void,

@@ -132,7 +132,7 @@ export const remoteConnection =
     readonly nextFrame: SubscriptionEnvironment['nextFrame']
   }) =>
   ({ name, address }: RemoteEngines.Attempt): Stream.Stream<Message> =>
-    Option.match(host.enginePort, {
+    Option.match(host.enginePorts, {
       onNone: () =>
         Stream.make(
           Message.StoppedConnectingRemote({
@@ -140,10 +140,10 @@ export const remoteConnection =
             reason: noAppToReachEngines,
           }),
         ),
-      onSome: port =>
+      onSome: ports =>
         RemoteEngines.remoteEngineMessages({
           name,
-          port: port(address),
+          ports: ports(address),
           client: { name: clientName, kind: 'app', release },
           streams: session => projectMessages(session, name, nextFrame),
           keep: session => sessions.keep(name, session),

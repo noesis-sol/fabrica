@@ -1,4 +1,4 @@
-import { Effect, Option } from 'effect'
+import { Effect, Option, Stream } from 'effect'
 import { writeFile } from 'node:fs/promises'
 import * as NodePath from 'node:path'
 
@@ -23,6 +23,7 @@ import { makeIpcRegistrar } from '../src/main/ipc'
 import { keepEngineIn, knownEnginesOf } from '../src/main/known-engines'
 import {
   type ConnectionProcess,
+  addressKey,
   knownTarget,
   makeBroker,
 } from '../src/main/ports'
@@ -312,8 +313,14 @@ describe('a known engine’s port', () => {
     })
     const handed: Array<string> = []
     const target = knownTarget(server.address, local)
-    broker.connect(target, port => handed.push(port))
-    broker.connect(target, port => handed.push(port))
+    const asked = {
+      page: 1,
+      engine: addressKey(server.address),
+      target,
+      send: (port: string) => handed.push(port),
+    }
+    broker.connect(asked)
+    broker.connect(asked)
     expect(spawns).toBe(1)
     expect(relayed).toEqual([
       [target, 'relay-1'],
@@ -347,12 +354,14 @@ describe('a known engine’s port', () => {
             return () => listeners.delete(listener)
           }),
         )
-        const port = Option.getOrThrow(host.enginePort)
-        expect(yield* port(server.address)).toBe(port1)
+        const ports = Option.getOrThrow(host.enginePorts)
+        expect(
+          yield* Stream.runCollect(Stream.take(ports(server.address), 1)),
+        ).toEqual([port1])
         expect(asked).toEqual([{ request: 1, address: server.address }])
         expect(listeners.size).toBe(0)
         expect(
-          Option.isNone(appHostOf({ fabrica: {} }, Option.none()).enginePort),
+          Option.isNone(appHostOf({ fabrica: {} }, Option.none()).enginePorts),
         ).toBe(true)
         port1.close()
         port2.close()

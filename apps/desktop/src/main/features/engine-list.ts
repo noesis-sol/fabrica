@@ -12,10 +12,12 @@ import { channels } from '../../preload/api'
 import type { MainContext } from '../context'
 import type { IpcRegistrar } from '../ipc'
 import { knownEnginesOf } from '../known-engines'
+import { addressKey } from '../ports'
 
 // The engines the app knows (spec §9.1), as the page asks for them: read from the app's state, one
 // kept there, and a port to each, relayed to its target through the connection process and handed
-// back with the number of the page's request.
+// back with the number of the page's request; again, under that number, when the connection process
+// starts anew (./ports).
 
 /** What main does with the app's known engines. */
 export interface EngineListActions {
@@ -66,9 +68,13 @@ export const registerEngineList = (
     connectEngine: ({ request, address }) => {
       void Effect.runPromise(pairings.target(address, target)).then(to =>
         Option.map(Option.fromUndefinedOr(appWindow.current()), window =>
-          broker.connect(to, port =>
-            sendRemoteEnginePort(window.webContents, { request, port }),
-          ),
+          broker.connect({
+            page: window.webContents.id,
+            engine: addressKey(address),
+            target: to,
+            send: port =>
+              sendRemoteEnginePort(window.webContents, { request, port }),
+          }),
         ),
       )
     },
