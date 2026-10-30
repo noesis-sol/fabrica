@@ -226,6 +226,7 @@ const oneProject = (checkout: string, settings: ProjectSettings) => {
         ? Effect.succeed(record(checkout))
         : Effect.fail(new ProjectNotFound({ project: id })),
     setTrusted: () => unused,
+    setRun: () => unused,
     worktreeHome: () => unused,
     settings: id =>
       id === project

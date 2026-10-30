@@ -103,24 +103,31 @@ export const engineIdentity = Effect.fn('EngineDatabase.identity')(
   },
 )
 
+/** The engine's settings as stored, undecoded: `{}` where it has none, as a run's settings resolve them. */
+export const storedSettingsDocument = Effect.fn(
+  'EngineDatabase.settingsDocument',
+)(function* () {
+  const sql = yield* SqlClient.SqlClient
+  const rows = yield* sql<{
+    readonly document: string
+  }>`SELECT document FROM settings`
+  return yield* Option.match(Option.fromUndefinedOr(rows[0]), {
+    onNone: () => Effect.succeed<unknown>({}),
+    onSome: ({ document }) =>
+      Effect.try({
+        try: (): unknown => JSON.parse(document),
+        catch: error =>
+          new StoredSettingsInvalid({
+            reason: error instanceof Error ? error.message : String(error),
+          }),
+      }),
+  })
+})
+
 /** The engine's settings as stored, decoded, every key not stored at its default. */
 export const storedEngineSettings = Effect.fn('EngineDatabase.settings')(
   function* () {
-    const sql = yield* SqlClient.SqlClient
-    const rows = yield* sql<{
-      readonly document: string
-    }>`SELECT document FROM settings`
-    const document = yield* Option.match(Option.fromUndefinedOr(rows[0]), {
-      onNone: () => Effect.succeed<unknown>({}),
-      onSome: ({ document }) =>
-        Effect.try({
-          try: (): unknown => JSON.parse(document),
-          catch: error =>
-            new StoredSettingsInvalid({
-              reason: error instanceof Error ? error.message : String(error),
-            }),
-        }),
-    })
+    const document = yield* storedSettingsDocument()
     return yield* decodeEngineSettings(document).pipe(
       Effect.mapError(
         error => new StoredSettingsInvalid({ reason: error.message }),

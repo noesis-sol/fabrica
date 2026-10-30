@@ -1053,6 +1053,7 @@ describe('the Insights group', () => {
           ? Effect.succeed({ ...info, trusted: false })
           : Effect.fail(new ProjectNotFound({ project: id })),
       setTrusted: unused,
+      setRun: unused,
       worktreeHome: unused,
       settings: unused,
       setSettings: unused,

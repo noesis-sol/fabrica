@@ -1,6 +1,7 @@
 import {
   Cause,
   Data,
+  Deferred,
   Effect,
   Exit,
   FiberSet,
@@ -45,6 +46,7 @@ import { WorkGraph } from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
 import { carriedOver } from './carryover'
 import { type RunConfig, RunMode } from './config'
+import { type RunControl, makeRunControl } from './control'
 import { endSteps } from './end'
 import { type Gated, type Taken, makeFootprintsGate } from './footprints-gate'
 import { MayTake, mayTake } from './holds'
@@ -60,7 +62,7 @@ import {
 } from './state'
 import { makeSupervision } from './supervisor'
 import { Verdict, verifyFinished } from './verify'
-import { WakeReason, makeWakes, readsReady } from './wakes'
+import { WakeReason, readsReady } from './wakes'
 import { type WorkerContext, WorkerEnd, dispatchWorker } from './worker'
 
 // The run loop (spec §13, §13.1, §13.2, §13.5, §13.9, H58): one run of a project. Its start checks
@@ -69,7 +71,9 @@ import { type WorkerContext, WorkerEnd, dispatchWorker } from './worker'
 // the queue until another merges, waiting on a question), and each merge's; and when nothing is in
 // progress and nothing more can be dispatched, it ends: supervision stopped first, sessions closed all
 // at once, its end line, and its exit code. The run's state has one owner (`state.ts`); the loop is
-// one fiber, woken by the workers, the merge queue and the work graph.
+// one fiber, woken by the workers, the merge queue, the work graph and its control (`control.ts`): a
+// stop ends it `INTERRUPTED`; a drain dispatches nothing more, and the run ends `DRAINED` once nothing
+// is in progress.
 
 /** How a run ended, and the exit code the CLI exits with (§13.11). */
 export interface RunEnd {
@@ -153,13 +157,19 @@ const heldIn = (gated: Gated) => {
 /** The words of a merge's step on its phase record. */
 const stepCause = (step: MergeStep): string => `merge: ${step}`
 
-/** Runs the project's run to its end, its records written through the RunLog. */
+/**
+ * Runs the project's run to its end, its records written through the RunLog; `control` stops or
+ * drains it from outside, and hears its start checks' answer.
+ */
 export const runProject = Effect.fn('Run.project')(function* (
   config: RunConfig,
+  given?: RunControl,
 ) {
   const log = yield* RunLog
   const run = log.run
+  const control = given ?? (yield* makeRunControl)
   const checked = yield* runStartChecks({ config, run, log })
+  yield* Deferred.succeed(control.checked, checked)
   if (StartChecked.$is('Problems')(checked)) {
     // Every problem together, then the stop: exit 2 (§13.1).
     yield* Effect.forEach(
@@ -181,13 +191,14 @@ export const runProject = Effect.fn('Run.project')(function* (
     yield* record(log, { kind: 'end', code })
     return { kind: 'SETUP', code } satisfies RunEnd
   }
-  return yield* Effect.scoped(runStarted(config, checked.started))
+  return yield* Effect.scoped(runStarted(config, checked.started, control))
 })
 
 /** The run once its start checks passed: until it ends, within its scope. */
 const runStarted = Effect.fn('Run.started')(function* (
   config: RunConfig,
   started: Started,
+  control: RunControl,
 ) {
   const log = yield* RunLog
   const graph = yield* WorkGraph
@@ -251,7 +262,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     checks: [project.check_own, project.check_fast, project.check_full],
     sharedFiles: project.shared_files,
   })
-  const wakes = yield* makeWakes
+  const wakes = control.wakes
   const supervision = yield* makeSupervision
   const workers = yield* FiberSet.make<void>()
   const context: WorkerContext = {
@@ -752,10 +763,28 @@ const runStarted = Effect.fn('Run.started')(function* (
       )
     })
 
+  /** A drain asked or taken back, as its record says it (§13.10). */
+  const drainSaid = (reason: WakeReason) =>
+    WakeReason.$is('Drain')(reason)
+      ? record(
+          log,
+          reason.draining
+            ? {
+                kind: 'drain',
+                text: 'DRAIN: no new tickets; the running ones finish and merge',
+              }
+            : {
+                kind: 'resume',
+                text: 'the drain was taken back: tickets start again',
+              },
+        )
+      : Effect.void
+
   /** One look: the ready set where its reasons can have moved it, the free slots filled; whether the run ends. */
   let ready: ReadonlyArray<Ticket> = []
   const look = (reasons: ReadonlyArray<WakeReason>) =>
     Effect.gen(function* () {
+      yield* Effect.forEach(reasons, drainSaid, { discard: true })
       if (readsReady(reasons)) ready = yield* readReady(yield* state.current)
       if (reasons.some(reason => WakeReason.$is('Started')(reason)))
         yield* record(log, {
@@ -778,12 +807,14 @@ const runStarted = Effect.fn('Run.started')(function* (
           })
       }
       const may = yield* mayTake(before)
+      const draining = yield* control.draining
       const gated = yield* footprints.gate({
         ready: candidates,
         snapshot: before,
-        free: MayTake.$is('Yes')(may)
-          ? project.concurrent - slotsTaken(before)
-          : 0,
+        free:
+          MayTake.$is('Yes')(may) && !draining
+            ? project.concurrent - slotsTaken(before)
+            : 0,
       })
       yield* keepHeld(candidates, gated)
       const dispatched = new Set<TicketId>()
@@ -811,7 +842,13 @@ const runStarted = Effect.fn('Run.started')(function* (
         most => after.dispatched >= most,
       )
       return Option.some(
-        Ending.Done({ kind: limitReached ? 'LIMIT_REACHED' : 'READY_EMPTY' }),
+        Ending.Done({
+          kind: limitReached
+            ? 'LIMIT_REACHED'
+            : draining
+              ? 'DRAINED'
+              : 'READY_EMPTY',
+        }),
       )
     })
 

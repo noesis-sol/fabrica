@@ -104,6 +104,11 @@ export interface ProjectsShape {
     readonly project: ProjectId
     readonly trusted: boolean
   }) => Effect.Effect<void, ProjectNotFound>
+  /** Keeps the project's run as its row says it (§18.3), and sends the row again with it. */
+  readonly setRun: (options: {
+    readonly project: ProjectId
+    readonly run: ProjectRunState
+  }) => Effect.Effect<void, ProjectNotFound>
   /** Where the project's worktrees go (§10.2). */
   readonly worktreeHome: (
     project: ProjectId,
@@ -165,6 +170,10 @@ export const make = Effect.gen(function* () {
   const opened = yield* Ref.make<ReadonlyMap<ProjectId, Opened>>(new Map())
   const openLock = yield* Semaphore.make(1)
   const addLock = yield* Semaphore.make(1)
+  /** Each project's run, as the runs say it; idle where none is kept. */
+  const runs = yield* Ref.make<ReadonlyMap<ProjectId, ProjectRunState>>(
+    new Map(),
+  )
 
   const find = (project: ProjectId) =>
     withSql(findRecord(project)).pipe(
@@ -266,9 +275,12 @@ export const make = Effect.gen(function* () {
       }),
     )
 
-  /** The project's row: no run yet (the run loop's tickets give it one), its ready tickets. */
+  /** The project's row: its run as the runs say it, its ready tickets. */
   const statusOf = (record: ProjectRecord): Effect.Effect<ProjectStatus> =>
     Effect.gen(function* () {
+      const run =
+        (yield* Ref.get(runs)).get(record.id) ??
+        ProjectRunState.cases.idle.make({})
       const [setUp, ready] = yield* Effect.all(
         [
           settingsExist(record.path),
@@ -295,7 +307,7 @@ export const make = Effect.gen(function* () {
         base: record.base,
         setUp,
         trusted: record.trusted,
-        run: ProjectRunState.cases.idle.make({}),
+        run,
         ready,
       })
     })
@@ -448,6 +460,17 @@ export const make = Effect.gen(function* () {
     yield* refresh({ ...record, trusted: options.trusted })
   })
 
+  const setRun = Effect.fn('Projects.setRun')(function* (options: {
+    readonly project: ProjectId
+    readonly run: ProjectRunState
+  }) {
+    const record = yield* find(options.project)
+    yield* Ref.update(runs, map =>
+      new Map(map).set(options.project, options.run),
+    )
+    yield* refresh(record)
+  })
+
   const settings = Effect.fn('Projects.settings')(function* (
     project: ProjectId,
   ) {
@@ -480,6 +503,7 @@ export const make = Effect.gen(function* () {
     remove,
     find,
     setTrusted,
+    setRun,
     worktreeHome: project =>
       Effect.map(find(project), record =>
         worktreeHome({

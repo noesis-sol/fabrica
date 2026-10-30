@@ -21,6 +21,7 @@ import {
   readCertificate,
 } from '../rpc/certificate'
 import { localRpcServer, removeStaleSocket } from '../rpc/server'
+import { RunHosting, refusingRuns } from '../run/hosting'
 import { listenTls } from '../rpc/tls'
 import { PairingTokens, pairingTokensLayer } from '../rpc/tokens'
 import {
@@ -60,7 +61,7 @@ import { Engine, type EngineFacts, engineLayer } from './service'
  * service layers it provides itself: the Engine, its lifetimes (a run's resources go in
  * `EngineScopes.runs`), its host's facts (`Host`: its home folder), its files, engine.db (`SqlClient`), whose tables their groups' handlers
  * read and write, its Git, its projects with their work graphs, its Updater, its talks' agents
- * and modes, and its Telemetry, which records rows, with the store they are recorded in
+ * and modes, what its runs run on (`RunHosting`), and its Telemetry, which records rows, with the store they are recorded in
  * (`TelemetryStore`) for what reads them. A handler file that needs another service provides it in
  * its own file.
  */
@@ -77,6 +78,7 @@ export type DaemonServices =
   | PairingTokens
   | TalkAgents
   | TalkModes
+  | RunHosting
   | Telemetry
   | TelemetryStore
 
@@ -110,6 +112,11 @@ export interface ServeOptions extends EngineFacts {
    * are refused until the model proxy can give them their credentials.
    */
   readonly talks?: Layer.Layer<TalkAgents | TalkModes>
+  /**
+   * What the engine's runs run on (§12, §13): its agents, the model proxy, the checks; where none is
+   * given, the engine refuses every run, saying why.
+   */
+  readonly runs?: Layer.Layer<RunHosting>
 }
 
 /** The engine's settings as it starts: as stored, or its defaults where they don't decode, saying so. */
@@ -163,6 +170,11 @@ const talksRefused = Layer.merge(
   refusingTalkAgents(
     "this engine can't start a talk's agent yet: talks reach their model through the model proxy, which it doesn't have",
   ),
+)
+
+/** The runs' hosting where none is given: a run's workers reach their models only through the model proxy. */
+const runsRefused = refusingRuns(
+  "this engine can't run a project yet: its workers reach their models through the model proxy, which it doesn't have",
 )
 
 /** Starts the engine in the current scope and returns it once its socket takes connections. */
@@ -222,6 +234,7 @@ export const startEngine = Effect.fn('Engine.start')(function* (
       layerRefusing('this engine was started with nowhere to install updates'),
   )
   const talks = yield* Layer.build(options.talks ?? talksRefused)
+  const runs = yield* Layer.build(options.runs ?? runsRefused)
   const facts = yield* Layer.build(options.facts ?? layerNodeHost)
   const services: Context.Context<DaemonServices> = Context.mergeAll(
     database,
@@ -234,6 +247,7 @@ export const startEngine = Effect.fn('Engine.start')(function* (
     updater,
     tokens,
     talks,
+    runs,
     telemetry,
     exported,
   )

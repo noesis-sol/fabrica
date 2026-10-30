@@ -134,6 +134,10 @@ export const RunEvents = Schema.Array(RunEvent).annotate({
   identifier: 'RunEvents',
 })
 
+/** The run events stream's items: the records so far, then each record as it is written. */
+export const RunEventsItem = streamItem(RunEvents, RunEvents)
+export type RunEventsItem = typeof RunEventsItem.Type
+
 export const RunRpcs = RpcGroup.make(
   Rpc.make('run.start', {
     payload: { project: ProjectId, mode: RunMode, flags: RunFlags },
@@ -165,7 +169,7 @@ export const RunRpcs = RpcGroup.make(
   /** The run's events: the run going, or an earlier one by its ID. */
   Rpc.make('run.watchEvents', {
     payload: { project: ProjectId, run: optional(RunId), resume },
-    success: streamItem(RunEvents, RunEvents),
+    success: RunEventsItem,
     error: Schema.Union([ProjectNotFound, NoRun, RunNotFound]),
     stream: true,
   }),

@@ -19,6 +19,8 @@ export type WakeReason = Data.TaggedEnum<{
   MergeEnded: { readonly ticket: TicketId }
   /** The work graph changed by another's hand than the run's. */
   TicketsChanged: {}
+  /** The run was asked to drain (no new tickets), or the drain was taken back (§13.10). */
+  Drain: { readonly draining: boolean }
   /** Something stops the run: merging stopped, the work graph or git failed under it, a defect. */
   Stopped: {
     readonly kind: StopKind
@@ -37,6 +39,7 @@ export const readsReady = (reasons: ReadonlyArray<WakeReason>): boolean =>
       Requeued: () => true,
       MergeEnded: () => true,
       TicketsChanged: () => true,
+      Drain: () => false,
       Stopped: () => false,
     }),
   )

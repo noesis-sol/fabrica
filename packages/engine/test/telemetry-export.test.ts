@@ -267,6 +267,7 @@ describe('the export on demand', () => {
         remove: unused,
         find: id => Effect.fail(new ProjectNotFound({ project: id })),
         setTrusted: unused,
+        setRun: unused,
         worktreeHome: unused,
         settings: unused,
         setSettings: unused,

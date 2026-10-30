@@ -1,5 +1,6 @@
 // The run (spec §13): one run of a project, from its start checks to its end line and exit code.
 export * from './config'
+export { type RunControl, makeRunControl } from './control'
 export { type RunEnd, runProject } from './loop'
 export {
   type CitedSpec,

@@ -272,12 +272,6 @@ describe('the command line', () => {
     ['credentials', 'remove'],
     ['credentials', 'login'],
     ['init'],
-    ['run'],
-    ['run', 'status'],
-    ['run', 'drain'],
-    ['run', 'undrain'],
-    ['run', 'stop'],
-    ['follow'],
     ['answer'],
     ['requires'],
     ['report'],
@@ -312,11 +306,6 @@ describe('the command line', () => {
 
   /** Stubs given the flags §19 writes for them, and the command each names. */
   const withFlags: ReadonlyArray<readonly [line: string, command: string]> = [
-    ['run --tickets', 'run'],
-    ['run --ticket fab-1 --limit 3 --concurrent 2 --model m --wait', 'run'],
-    ['run --spec docs/spec.md --refine --auto-answer', 'run'],
-    ['run --feature add-x --auto-answer=30m --offline', 'run'],
-    ['run --overnight --auto-answer --json', 'run'],
     ['requires --markdown', 'requires'],
   ]
 

@@ -1,5 +1,5 @@
 import { Data, Effect } from 'effect'
-import { Argument, CliError, Command, Flag, Param, Primitive } from 'effect/cli'
+import { Argument, CliError, Command, Flag, Param } from 'effect/cli'
 
 import { versionLine } from '../version'
 
@@ -29,25 +29,6 @@ export const switchFlag = (name: string) => stubFlag(Flag.Boolean(name))
 
 /** A flag that takes a value: `--ticket <id>`, `--ticket=<id>`. */
 export const valueFlag = (name: string) => stubFlag(Flag.String(name))
-
-/**
- * Any value, read as the parser reads a switch's (`Boolean` is the tag it goes by): given inline
- * (`--flag=<value>`) or not at all, never taken from the next word.
- */
-const optionalValue: Primitive.Primitive<string> = Object.assign(
-  Object.create(Object.getPrototypeOf(Primitive.String)),
-  { _tag: 'Boolean', parse: (value: string) => Effect.succeed(value) },
-)
-
-/** A flag whose value may be left out: `--auto-answer[=<duration>]`. */
-export const optionalValueFlag = (name: string) =>
-  stubFlag(
-    Param.makeSingle({
-      name,
-      primitiveType: optionalValue,
-      kind: Param.flagKind,
-    }),
-  )
 
 /** The command `name` under `group`, which only says it isn't built yet. */
 export const notYet = (options: {

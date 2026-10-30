@@ -138,6 +138,7 @@ const oneProject = (checkout: string, graph: WorkGraphShape) =>
       remove: () => unused,
       find: id => ours(id, record),
       setTrusted: () => unused,
+      setRun: () => unused,
       worktreeHome: () => unused,
       settings: id => ours(id, settings),
       setSettings: () => unused,

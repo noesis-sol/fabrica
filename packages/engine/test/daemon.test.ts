@@ -44,7 +44,6 @@ import {
 } from '../src/engine'
 import {
   attentionHandlers,
-  runsHandlers,
   secretsHandlers,
   workersHandlers,
 } from '../src/rpc'
@@ -146,10 +145,17 @@ const modeOf = (path: string) =>
   Effect.promise(() => lstat(path)).pipe(Effect.map(info => info.mode & 0o777))
 
 /** Whether an exit is a defect named `NotImplemented`, as the protocol carries it. */
-/** The groups whose handlers answer `NotImplemented`: every one but those built (Engine, Tokens, Review, Projects, Backlog, Talks, Insights). */
+/** The groups whose handlers answer `NotImplemented`: every one but those built (Engine, Tokens, Review, Projects, Backlog, Talks, Insights, Runs). */
 type Unfilled = Exclude<
   ProtocolGroupName,
-  'engine' | 'tokens' | 'review' | 'projects' | 'backlog' | 'talks' | 'insights'
+  | 'engine'
+  | 'tokens'
+  | 'review'
+  | 'projects'
+  | 'backlog'
+  | 'talks'
+  | 'insights'
+  | 'runs'
 >
 const unfilled = ProtocolGroupName.literals.filter(
   (group): group is Unfilled =>
@@ -159,7 +165,8 @@ const unfilled = ProtocolGroupName.literals.filter(
     group !== 'projects' &&
     group !== 'backlog' &&
     group !== 'talks' &&
-    group !== 'insights',
+    group !== 'insights' &&
+    group !== 'runs',
 )
 
 /** Whether a handler's answer is an effect: the handlers built here need no service. */
@@ -426,7 +433,6 @@ describe('the groups not served yet', () => {
         const ticket = TicketId.make('fa-a1b2')
         const calls: Record<Unfilled, Effect.Effect<unknown, unknown>> = {
           secrets: client['credentials.list'](),
-          runs: client['run.status']({ project }),
           workers: client['worker.release']({ project, ticket }),
           attention: client['attention.list']({ project: Option.none() }),
         }
@@ -442,7 +448,6 @@ describe('the groups not served yet', () => {
     Effect.gen(function* () {
       const layers: Record<Unfilled, Layer.Layer<never>> = {
         secrets: secretsHandlers,
-        runs: runsHandlers,
         workers: workersHandlers,
         attention: attentionHandlers,
       }
