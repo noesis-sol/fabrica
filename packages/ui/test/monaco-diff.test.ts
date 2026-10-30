@@ -81,7 +81,8 @@ beforeAll(async () => {
   await page.goto(pathToFileURL(`${outDir}/${pagePath}`).href)
 }, 120_000)
 
-// Electron's quit, as its start, can take longer than Vitest's 10 s for a hook on a loaded machine.
+// Electron's end waits on its exit, which can take longer than Vitest's 10 s for a hook on a loaded
+// machine, as its start can.
 afterAll(() => quit(), 60_000)
 
 describe('the diff view, loaded from a file', () => {

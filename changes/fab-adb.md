@@ -7,3 +7,6 @@
   windows' quit has a minute, as their start has two.
 - The look test's and the Monaco diff test's Electron runs on a profile folder of its own in the temp folder,
   removed at its quit, rather than Electron's default in the home folder that every test's Electron shared.
+- The window tests end their Electron by its process rather than Playwright's close, which waits on Electron's
+  quit with no limit, and the merge queue's tests of the files a merge wrote have 30 s each, as the WSL install
+  tests have.

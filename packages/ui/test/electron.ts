@@ -1,3 +1,4 @@
+import { once } from 'node:events'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -13,7 +14,10 @@ import { type ElectronApplication, _electron } from 'playwright-core'
 //
 // Each Electron runs on a profile folder of its own (its user data, Chromium's --user-data-dir), not
 // Electron's default in the home folder, which every test's Electron in every worktree shared, with
-// the locks Chromium holds on its stores there.
+// the locks Chromium holds on its stores there. And it is ended, not asked to quit: Playwright's close
+// waits on Electron's app.quit() with no limit, and a quit that takes 0.3 s at a load of 100 now and
+// then never ended, failing the file's afterAll outside its tests (fab-adb). The tests need nothing of
+// a graceful quit, their profile is thrown away, and Chromium's helper processes end with it.
 
 /** Where Electron's binary is: what its package gives Node, installing it where it isn't yet. */
 export const electronBinary = (): string => {
@@ -24,7 +28,7 @@ export const electronBinary = (): string => {
   return path
 }
 
-/** An Electron started, and its quit: the app's close, then its profile folder's removal. */
+/** An Electron started, and its quit: its process killed, then its profile folder removed. */
 export interface Launched {
   readonly app: ElectronApplication
   readonly quit: () => Promise<void>
@@ -44,7 +48,12 @@ export const launchElectron = async (
     return {
       app,
       quit: async () => {
-        await app.close()
+        const child = app.process()
+        if (child.exitCode === null && child.signalCode === null) {
+          const exited = once(child, 'exit')
+          child.kill('SIGKILL')
+          await exited
+        }
         removeProfile()
       },
     }

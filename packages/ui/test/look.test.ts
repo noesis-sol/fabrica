@@ -602,7 +602,8 @@ beforeAll(async () => {
   mkdirSync(capturesRoot, { recursive: true })
 }, 120_000)
 
-// Electron's quit, as its start, can take longer than Vitest's 10 s for a hook on a loaded machine.
+// Electron's end waits on its exit, which can take longer than Vitest's 10 s for a hook on a loaded
+// machine, as its start can.
 afterAll(() => quit(), 60_000)
 
 const contentTypeOf = (path: string): string =>
