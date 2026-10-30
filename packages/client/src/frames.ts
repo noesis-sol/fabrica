@@ -41,7 +41,8 @@ const joined = (
 
 /**
  * `serialization`, its parser given a transport's reads only once one ends a frame or they pass
- * `limit` (its own limit, so that it still fails on an overlong frame as soon as it would).
+ * `limit` (its own limit, so that it still fails on an overlong frame: as soon as it would, or, where
+ * it holds the frame's start from the read that ended the one before, at most `limit` later).
  */
 export const wholeFrames = (
   serialization: RpcSerialization.RpcSerialization['Service'],
