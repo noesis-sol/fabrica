@@ -105,14 +105,13 @@ describe('the engine in WSL2 kept among the known engines', () => {
           KeepAnswer.cases.Kept.make({}),
         )
         const restarted = yield* makeAppState({ folder, secrets })
-        const known = yield* restarted.engines
-        expect(known).toEqual([updated])
+        expect(yield* restarted.engines).toEqual([updated])
         expect(
           launchDistro({
             local: ConnectionTarget.cases.Unavailable.make({
               reason: 'no local engine on Windows',
             }),
-            known,
+            kept: yield* restarted.keptWslDistro,
           }),
         ).toEqual(Option.some('Ubuntu'))
       }),

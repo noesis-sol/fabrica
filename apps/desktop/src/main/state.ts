@@ -9,22 +9,32 @@ import {
   Semaphore,
 } from 'effect'
 
-import { EngineName, KnownEngine } from '@fabrica/client'
+import {
+  EngineAddress,
+  EngineName,
+  KnownEngine,
+  type WslDistro,
+} from '@fabrica/client'
 import { readFileText, writeFileWhole } from '@fabrica/engine/files'
 
 // The app's own state (spec §5, §9.1): the engines it knows (a name, how to reach it, the engine's ID
 // and protocol version), and the pairing tokens of those reached over TLS, encrypted with Electron's
 // safeStorage (the Keychain, DPAPI, or the Linux keyring). It is one file in the app's data folder,
 // written whole through the engine's writer, so a crash leaves the old state or the new one. The
-// known engines' schemas are the client's, which the renderer decodes them with too.
+// known engines' schemas are the client's, which the renderer decodes them with too. Of the engines in
+// WSL2, it names the one kept last, which the Windows app reaches at launch (fab-mgi.108).
 
 export { EngineAddress, EngineName, KnownEngine } from '@fabrica/client'
 
-/** The state file: the known engines, and each paired engine's token, encrypted, as base64. */
+/**
+ * The state file: the known engines, each paired engine's token, encrypted, as base64, and the name of
+ * the engine in WSL2 kept last, which a file written before it was kept lacks.
+ */
 const StateFile = Schema.Struct({
   version: Schema.Literal(1),
   engines: Schema.Array(KnownEngine),
   tokens: Schema.Record(EngineName, Schema.String),
+  wsl: Schema.optionalKey(EngineName),
 })
 type StateFile = typeof StateFile.Type
 
@@ -39,6 +49,19 @@ export const stateFileName = 'state.json'
 const stateFileMaxBytes = 1024 * 1024
 
 const emptyState: StateFile = { version: 1, engines: [], tokens: {} }
+
+/**
+ * The distribution of the engine in WSL2 kept last: the known one `state` names, or, where it names
+ * none it knows (a file from before it named one), the last in WSL2 among the known engines.
+ */
+const keptWslDistro = (state: StateFile): Option.Option<WslDistro> => {
+  const inWsl = state.engines.flatMap(({ name, address }) =>
+    EngineAddress.guards.Wsl(address) ? [{ name, distro: address.distro }] : [],
+  )
+  return Option.fromUndefinedOr(
+    (inWsl.find(({ name }) => name === state.wsl) ?? inWsl.at(-1))?.distro,
+  )
+}
 
 /** The state file couldn't be read or written, or isn't the app's. */
 export class AppStateFailed extends Data.TaggedError('AppStateFailed')<{
@@ -102,7 +125,12 @@ export const safeStorageBox = (
 export interface AppStateShape {
   /** The known engines, in the order they were added. */
   readonly engines: Effect.Effect<ReadonlyArray<KnownEngine>, AppStateFailed>
-  /** Adds `engine`, or replaces the one of its name. */
+  /** The distribution of the engine in WSL2 kept last, if one is known. */
+  readonly keptWslDistro: Effect.Effect<
+    Option.Option<WslDistro>,
+    AppStateFailed
+  >
+  /** Adds `engine`, or replaces the one of its name; one in WSL2 is then the one kept last. */
   readonly saveEngine: (
     engine: KnownEngine,
   ) => Effect.Effect<void, AppStateFailed>
@@ -182,6 +210,8 @@ export const makeAppState = Effect.fn('AppState.make')(function* ({
 
   const engines = read.pipe(Effect.map(state => state.engines))
 
+  const keptWsl = read.pipe(Effect.map(keptWslDistro))
+
   const saveEngine = Effect.fn('AppState.saveEngine')(function* (
     engine: KnownEngine,
   ) {
@@ -193,6 +223,9 @@ export const makeAppState = Effect.fn('AppState.make')(function* ({
               known.name === engine.name ? engine : known,
             )
           : [...state.engines, engine],
+        ...(EngineAddress.guards.Wsl(engine.address)
+          ? { wsl: engine.name }
+          : {}),
       }),
     )
   })
@@ -200,9 +233,10 @@ export const makeAppState = Effect.fn('AppState.make')(function* ({
   const removeEngine = Effect.fn('AppState.removeEngine')(function* (
     name: EngineName,
   ) {
-    yield* update(state =>
+    yield* update(({ wsl, ...state }) =>
       Effect.succeed({
         ...state,
+        ...(wsl === undefined || wsl === name ? {} : { wsl }),
         engines: state.engines.filter(known => known.name !== name),
         tokens: Object.fromEntries(
           Object.entries(state.tokens).filter(([engine]) => engine !== name),
@@ -256,6 +290,7 @@ export const makeAppState = Effect.fn('AppState.make')(function* ({
 
   return AppState.of({
     engines,
+    keptWslDistro: keptWsl,
     saveEngine,
     removeEngine,
     saveToken,

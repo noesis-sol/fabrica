@@ -185,10 +185,10 @@ const appState = Effect.runSync(
   }),
 )
 
-/** The app's engine in WSL2 at launch, where this machine runs none: the first known one. */
-const reachKnownWslEngine = appState.engines.pipe(
-  Effect.flatMap(known =>
-    Option.match(launchDistro({ local: target, known }), {
+/** The app's engine in WSL2 at launch, where this machine runs none: the known one kept last. */
+const reachKnownWslEngine = appState.keptWslDistro.pipe(
+  Effect.flatMap(kept =>
+    Option.match(launchDistro({ local: target, kept }), {
       onNone: () => Effect.void,
       onSome: reachWsl,
     }),

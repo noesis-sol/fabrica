@@ -12,7 +12,6 @@ import {
   installedDistro,
 } from '@fabrica/client'
 import { DistributionSource } from '@fabrica/client/install'
-import { EngineId } from '@fabrica/contracts'
 import { RELEASE_KEYS } from '@fabrica/engine/update'
 import { Toolbox, layerToolbox, shStub, tempFolder } from '@fabrica/testkit'
 
@@ -28,15 +27,14 @@ import {
   type ConnectionProcess,
   makeBroker,
 } from '../src/main/ports'
-import { EngineAddress, KnownEngine } from '../src/main/state'
 import { launchDistro } from '../src/main/wsl'
 import { type PreloadIpc, channels, makeApi } from '../src/preload/api'
 
 // Adding and reaching an engine in WSL2 from the Windows app (spec §7.6, H31): the search for a
 // distribution and Ubuntu's install asked through the preload and main, their answers decoded on the
 // way; the engine checked and installed in the distribution through `wsl.exe -d <distro> --exec`, its
-// login service only where systemd runs there; and the engine the app reaches, the first known one in
-// WSL2 at launch where this machine runs none, and the one Add engine installed, every page given a
+// login service only where systemd runs there; and the engine the app reaches, the known one in WSL2
+// kept last at launch where this machine runs none, and the one Add engine installed, every page given a
 // new port to it.
 
 const found = WslSearch.cases.Found.make({ distro: 'Ubuntu' })
@@ -179,25 +177,6 @@ describe('main’s WSL2 search and Ubuntu install', () => {
 })
 
 describe('the engine the app reaches in WSL2', () => {
-  const known = (name: string, address: EngineAddress) =>
-    KnownEngine.make({
-      name,
-      address,
-      engine: EngineId.make(`engine-${name}`),
-      protocol: 1,
-    })
-  const server = known(
-    'server-1',
-    EngineAddress.cases.Ssh.make({ destination: 'me@server-1' }),
-  )
-  const debian = known(
-    'debian',
-    EngineAddress.cases.Wsl.make({ distro: 'Debian' }),
-  )
-  const ubuntuEngine = known(
-    'ubuntu',
-    EngineAddress.cases.Wsl.make({ distro: 'Ubuntu' }),
-  )
   const unavailable = ConnectionTarget.cases.Unavailable.make({
     reason: 'no local engine on Windows',
   })
@@ -205,19 +184,16 @@ describe('the engine the app reaches in WSL2', () => {
     path: '/home/ada/.local/share/fabrica/engine.sock',
   })
 
-  it('is at launch the first known one in WSL2, only where this machine runs no engine', () => {
+  it('is at launch the known one in WSL2 kept last, only where this machine runs no engine', () => {
     expect(
-      launchDistro({
-        local: unavailable,
-        known: [server, debian, ubuntuEngine],
-      }),
+      launchDistro({ local: unavailable, kept: Option.some('Debian') }),
     ).toEqual(Option.some('Debian'))
-    expect(launchDistro({ local: unavailable, known: [server] })).toEqual(
+    expect(launchDistro({ local: unavailable, kept: Option.none() })).toEqual(
       Option.none(),
     )
-    expect(launchDistro({ local: socket, known: [debian] })).toEqual(
-      Option.none(),
-    )
+    expect(
+      launchDistro({ local: socket, kept: Option.some('Debian') }),
+    ).toEqual(Option.none())
   })
 
   it('is the one Add engine installed in a distribution, and no other host’s', () => {

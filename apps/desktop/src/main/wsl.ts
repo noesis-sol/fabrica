@@ -12,7 +12,6 @@ import {
 } from '@fabrica/client/node'
 
 import { ConnectionTarget } from '../connection/target'
-import { EngineAddress, type KnownEngine } from './state'
 
 // The Windows app's engine in WSL2 (spec §7.6, H31), one more host: the distribution found, or Ubuntu
 // installed where there is none, in a console window of its own, where WSL asks for the new user's
@@ -22,8 +21,8 @@ import { EngineAddress, type KnownEngine } from './state'
 // `wsl.exe -d <distro> -- fabrica bridge` in the connection process, while a detached wsl.exe holds the
 // distribution for as long as the engine answers, since WSL shuts down a distribution no Windows
 // process holds (fab-mgi.16). The app reaches it where this machine runs no engine of its own: at
-// launch, the first known engine in WSL2, and once Add engine has installed one, or found one up to
-// date, that one, which the page keeps among the known engines at its first hello.
+// launch, the known engine in WSL2 kept last, and once Add engine has installed one, or found one up
+// to date, that one, which the page keeps among the known engines at its first hello.
 
 /** How `wsl.exe --install` ended: its exit code, or the reason it didn't run. */
 type Ended = Data.TaggedEnum<{
@@ -103,18 +102,14 @@ export const reachWslEngine = Effect.fn('Wsl.reachEngine')(function* (
 
 /**
  * The distribution whose engine the app reaches at launch: where this machine runs no engine the app
- * can reach (`local` is Unavailable, as on Windows), the first known engine in WSL2.
+ * can reach (`local` is Unavailable, as on Windows), the known engine in WSL2 kept last (`kept`, the
+ * app state's `keptWslDistro`).
  */
 export const launchDistro = ({
   local,
-  known,
+  kept,
 }: {
   readonly local: ConnectionTarget
-  readonly known: ReadonlyArray<KnownEngine>
+  readonly kept: Option.Option<WslDistro>
 }): Option.Option<WslDistro> =>
-  ConnectionTarget.guards.Unavailable(local)
-    ? Option.fromUndefinedOr(
-        known.map(({ address }) => address).find(EngineAddress.guards.Wsl)
-          ?.distro,
-      )
-    : Option.none()
+  ConnectionTarget.guards.Unavailable(local) ? kept : Option.none()
