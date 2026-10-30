@@ -27,6 +27,7 @@ import {
   PageSignal,
   RelaySignal,
   type StreamItem,
+  connectionFailed,
   make,
   portServer,
   portSocket,
@@ -255,6 +256,12 @@ const pageClient = (pageEnd: MessagePort) =>
     make(clientOptions).pipe(Effect.provideService(Socket.Socket, socket)),
   )
 
+/** Why the relay said the page's connection failed, where the client's error carries it. */
+const failedReason = (error: unknown): Option.Option<string> =>
+  error instanceof RpcClientError.RpcClientError
+    ? Option.map(connectionFailed(error), ({ reason }) => reason)
+    : Option.none()
+
 /** The client's status stream, its items taken into a queue as they come. */
 const watchStatus = (client: EngineClientShape) =>
   Effect.gen(function* () {
@@ -361,6 +368,12 @@ describe('the connection process’s relay', () => {
       )
       const error = yield* Effect.flip(pageClient(channel.port1))
       expect(error).toBeInstanceOf(RpcClientError.RpcClientError)
+      // Said in the socket's words, which name the path it couldn't connect to.
+      expect(
+        Option.map(failedReason(error), reason =>
+          reason.includes('engine.sock'),
+        ),
+      ).toEqual(Option.some(true))
     }),
   )
 
@@ -372,7 +385,7 @@ describe('the connection process’s relay', () => {
         ConnectionTarget.cases.Unavailable.make({ reason: 'not here' }),
       )
       const error = yield* Effect.flip(pageClient(channel.port1))
-      expect(error).toBeInstanceOf(RpcClientError.RpcClientError)
+      expect(failedReason(error)).toEqual(Option.some('not here'))
     }),
   )
 

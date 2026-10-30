@@ -23,7 +23,8 @@ import { Socket, SocketServer } from 'effect/socket'
 // is about: the page opens a connection and closes it; the relay says it took one, whose frames
 // follow, and that one ended, or was refused (ssh refused the engine's host, say) in a way another
 // connection wouldn't mend, or failed in words a connection could mend (the local engine couldn't be
-// started); the page's client stops reconnecting at either, and its next attempt says why. Each open of the page's socket is a new connection, so a connection the
+// started, ssh's link timed out, there was no ssh to run); the page's client stops reconnecting at
+// either, and its next attempt says why. Each open of the page's socket is a new connection, so a connection the
 // engine dropped reaches the page's client, which reconnects and resumes its streams as over any
 // other transport; and a connection never reads frames its predecessor was sent.
 //
@@ -65,7 +66,7 @@ export class ConnectionRefused extends Data.TaggedError('ConnectionRefused')<{
 
 /**
  * A connection the relay couldn't make, in words a later one may not end with (the local engine
- * couldn't be started): the failure a relay's handler ends with to say so, and the cause of the page's
+ * couldn't be started, ssh's link timed out, a TLS engine didn't answer): the failure a relay's handler ends with to say so, and the cause of the page's
  * socket error for it.
  */
 export class ConnectionFailed extends Data.TaggedError('ConnectionFailed')<{

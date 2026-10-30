@@ -121,7 +121,7 @@ export const engineSocket = (
     Refused: ({ reason }) => failing(new TargetRefused({ reason })),
   })
 
-/** The cause a connection's error carries, where it is one of main's: a refused target, a local engine down. */
+/** The cause a connection's error carries, where it is one of main's: a refused target. */
 const mainsCause = <Cause>(
   error: Socket.SocketError,
   is: (cause: unknown) => cause is Cause,
@@ -153,15 +153,23 @@ export const refusalOf = (error: Socket.SocketError): Option.Option<string> =>
     ),
   ])
 
+/** A connection's error in words: its cause's message, where it has one, else its own. */
+const wordsOf = (error: Socket.SocketError): string => {
+  const { reason } = error
+  return Predicate.hasProperty(reason, 'cause') &&
+    reason.cause instanceof Error &&
+    reason.cause.message !== ''
+    ? reason.cause.message
+    : error.message
+}
+
 /**
- * What the relay says of a connection's failure: a refusal (`refusalOf`), or why the local engine
- * couldn't be started, which a later connection may mend; nothing for any other.
+ * What the relay says of a connection it couldn't open: a refusal (`refusalOf`), or else a failure a
+ * later connection may mend, in its words (why the local engine couldn't be started, ssh's lost link,
+ * a command that couldn't run, a TLS connection's error, why no engine is reachable here).
  */
 export const saidOf: Said = error =>
-  Option.firstSomeOf([
-    Option.map(refusalOf(error), reason => new ConnectionRefused({ reason })),
-    Option.map(
-      mainsCause(error, cause => cause instanceof LocalEngineDown),
-      ({ reason }) => new ConnectionFailed({ reason }),
-    ),
-  ])
+  Option.match(refusalOf(error), {
+    onSome: reason => new ConnectionRefused({ reason }),
+    onNone: () => new ConnectionFailed({ reason: wordsOf(error) }),
+  })

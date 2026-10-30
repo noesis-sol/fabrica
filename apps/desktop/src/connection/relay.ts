@@ -1,4 +1,4 @@
-import { Effect, Option } from 'effect'
+import { Effect } from 'effect'
 import type { Socket } from 'effect/socket'
 
 import {
@@ -15,23 +15,30 @@ import type { EngineSocket } from './transports'
 // RPC frames, as bytes, between each connection the page opens on its port and a connection of its
 // own to the engine. It reads nothing in them: the page runs the engine client, which says hello and
 // resumes its streams after each reconnect. A connection the engine drops is closed to the page, and
-// the page's client opens the next, for which the relay opens a new engine connection; one refused, in a
-// way trying again won't mend (ssh refused the host's key), is said to the page as refused, in words, so
-// its client stops reconnecting and the app shows why; one that failed in words (the local engine
-// couldn't be started) is said as failed, and the app shows why as it tries again.
+// the page's client opens the next, for which the relay opens a new engine connection. One the relay
+// couldn't open is said to the page in words: as refused where trying again won't mend it (ssh
+// refused the host's key), so its client stops reconnecting and the app shows why; as failed where a
+// later one may open (the local engine couldn't be started, ssh's link timed out, there is no ssh to
+// run, no engine is reachable here), and the app shows why as it tries again.
 
 /** Copies `from`'s frames to `to` until `from` ends. */
 const copy = (from: Socket.Reader, to: Socket.Writer) =>
   Effect.forever(Effect.flatMap(from.pull, frames => to.writeAll(frames)))
 
-/** What the relay says of an engine connection's failure: a refusal or a failure in words, or nothing. */
+/** What the relay says of an engine connection it couldn't open: a refusal or a failure, in words. */
 export type Said = (
   error: Socket.SocketError,
-) => Option.Option<ConnectionRefused | ConnectionFailed>
+) => ConnectionRefused | ConnectionFailed
+
+/** The engine's socket and its connection's reader, opened; one that couldn't be is said. */
+const openEngine = (engine: EngineSocket, said: Said) =>
+  Effect.flatMap(engine, socket =>
+    Effect.map(socket.reader, reader => ({ socket, reader })),
+  ).pipe(Effect.catchTag('SocketError', error => Effect.fail(said(error))))
 
 /**
- * Joins one connection of the page's to a new one to the engine, until either ends; a refusal or a
- * failure in words is said.
+ * Joins one connection of the page's to a new one to the engine, until either ends; one to the engine
+ * that couldn't be opened is said.
  * The page's connection is read only once the engine's is open, so the page's opens only then (H61):
  * while ssh asks for what it needs, or a cold engine starts, the page's client waits on its open.
  */
@@ -41,30 +48,16 @@ const join = Effect.fn('ConnectionRelay.join')(function* (
   said: Said,
 ) {
   return yield* Effect.gen(function* () {
-    const socket = yield* engine
-    const fromEngine = yield* socket.reader
-    const toEngine = yield* socket.writer
+    const opened = yield* openEngine(engine, said)
+    const toEngine = yield* opened.socket.writer
     // The page's connection opens here, as it is first read.
     const fromPage = yield* page.reader
     const toPage = yield* page.writer
     return yield* Effect.raceFirst(
-      copy(fromEngine, toPage),
+      copy(opened.reader, toPage),
       copy(fromPage, toEngine),
     )
-  }).pipe(
-    Effect.scoped,
-    Effect.catchTag('SocketError', error =>
-      Effect.fail(
-        Option.match(said(error), {
-          onNone: ():
-            | Socket.SocketError
-            | ConnectionRefused
-            | ConnectionFailed => error,
-          onSome: words => words,
-        }),
-      ),
-    ),
-  )
+  }).pipe(Effect.scoped)
 })
 
 /** Relays the page's connections on `port` to the engine until the port closes. */
