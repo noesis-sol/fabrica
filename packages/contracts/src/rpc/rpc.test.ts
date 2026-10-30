@@ -948,6 +948,13 @@ const samples: Record<string, Samples> = {
     ],
     error: [notFound],
   },
+  'insights.export': {
+    payload: [{ folder: '/srv/exports/2026-10-30' }],
+    success: [{ files: ['/srv/exports/2026-10-30/checks.parquet'] }],
+    error: [
+      { _tag: 'ExportFailed', reason: 'the folder must be an absolute path' },
+    ],
+  },
 }
 
 /** Messages whose encoding adds the defaults the sample leaves out. */
@@ -1087,6 +1094,7 @@ describe('the protocol’s groups', () => {
       'log.tail',
       'insights.summary',
       'insights.query',
+      'insights.export',
     ]) {
       expect(tags.has(tag), tag).toBe(true)
     }

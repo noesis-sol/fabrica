@@ -333,7 +333,7 @@ The engine samples its host's load every few seconds for the console's system st
 | Attention | `attention.list`, `attention.answer` | open requests |
 | Talks | `talk.open` (mode, context), `talk.send`, `talk.close` | a talk's transcript |
 | Review | `diff.ticket`, `diff.run`, `report.get`, `log.tail` | |
-| Insights | `insights.summary`, `insights.query` (a named query with its parameters; no SQL from clients) | |
+| Insights | `insights.summary`, `insights.query` (a named query with its parameters; no SQL from clients), `insights.export` (the recorded rows as Parquet files in a folder on the engine's host, §21) | |
 
 ### 8.2 Transports
 
@@ -986,6 +986,7 @@ Each screen's keys are one list of commands, from which its bindings, its hints,
 | `fabrica requires [--markdown]` | The requirements' state |
 | `fabrica report [<run>]` | A run's report |
 | `fabrica insights [<query>]` | Telemetry summaries and the named queries (§21) |
+| `fabrica insights export <folder>` | The recorded rows, metadata only, as Parquet files on the engine's host (§21) |
 
 Every command has `--json` for scripts and agents. Flags take two dashes; one-letter shorthands one (orchestra-6rdu). What the CLI prints is sanitised for the terminal, `--json` included: escape and control sequences, C1 controls, bidi overrides and isolates and line separators are shown as escapes, since ticket titles, IDs and tool inputs come from agents (tutti-rq4j, -4zs).
 
@@ -1038,7 +1039,7 @@ Exact pins and a committed lockfile; CI verifies the checksums of every download
 - **Reads in place:** the event stream (`events.jsonl`) and Pi's session files are queried where they lie, and the work graph is attached read-only for joins with tickets \[VERIFY that the `json` and `sqlite` extensions can be bundled with the engine rather than downloaded at run time, and that DuckDB reads the work graph safely while the engine writes it\].
 - **Retention:** raw rows for 90 days, daily aggregates kept (engine settings).
 - **Uses:** the cost figures (§14.4), the run report (§16), the app's Insights screen (§18.4), `fabrica insights`. The named queries include where a ticket's time goes (phases, waiting by reason, the merge queue, checks by suite, hand-backs, waiting on the maintainer), the waits of questions and permission requests, check durations and flaky tests by test, and cost per merged ticket by run. tutti's queries over its event stream (`docs/analytics.md`) drove three speed scans that took a ticket from ready to merged from a median 90 minutes to 21 (2026-10-25 to 27).
-- **Export**, optional and off by default: Parquet files on demand, or OTLP to an endpoint the user configures (an OpenTelemetry Collector, ClickHouse or another store behind it), carrying Effect's spans and metrics (`@effect/opentelemetry`) and the recorded rows. Exports carry metadata only (counts, durations, model IDs, token totals, cost, error tags), never prompts, code, file contents, secrets or absolute paths. Content capture, were it ever offered, would be a separate explicit setting, with a redaction step before anything is written. No Fabrica-hosted telemetry service in v1.
+- **Export**, optional and off by default: Parquet files on demand (`fabrica insights export <folder>`, one file per recorded table, written on the engine's host), or OTLP/HTTP to the endpoint the engine's `telemetry.otlp_endpoint` names (an OpenTelemetry Collector, ClickHouse or another store behind it; read as the engine starts), carrying Effect's spans and metrics (`effect/observability`'s OTLP exporters, @effect/opentelemetry's as Effect 4 ships them) and the recorded rows, one log record each. Exports carry metadata only (counts, durations, model IDs, token totals, cost, error tags), never prompts, code, file contents, secrets or absolute paths: one module decides it for both, keeping numbers and flags, and text only where its name isn't content's and it is short and names no place; a span's status message and an exception's message and stack never leave. Content capture, were it ever offered, would be a separate explicit setting, with a redaction step before anything is written. No Fabrica-hosted telemetry service in v1.
 
 ## 22. Packaging, signing and distribution
 

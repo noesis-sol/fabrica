@@ -72,6 +72,7 @@ const enginePaths = [
   'listen_key',
   'telemetry.retention.raw',
   'telemetry.retention.daily',
+  'telemetry.otlp_endpoint',
 ]
 
 /** The flag that sets the setting at `path`: `--verifier-rounds`. */

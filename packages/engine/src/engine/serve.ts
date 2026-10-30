@@ -1,4 +1,5 @@
 import { Context, Effect, Layer, Option, Scope } from 'effect'
+import { FetchHttpClient } from 'effect/http'
 import type { SqlClient } from 'effect/sql'
 import * as NodePath from 'node:path'
 
@@ -28,7 +29,12 @@ import {
   refusingTalkAgents,
   registeredModes,
 } from '../talks'
-import { Telemetry, TelemetryStore, telemetryLayer } from '../telemetry'
+import {
+  Telemetry,
+  TelemetryStore,
+  otlpExportLayer,
+  telemetryLayer,
+} from '../telemetry'
 import { Updater, layerRefusing } from '../update/service'
 import { engineDatabaseLayer, storedEngineSettings } from './database'
 import { acquireEngineLock } from './lock'
@@ -45,7 +51,9 @@ import { Engine, type EngineFacts, engineLayer } from './service'
 // then the database, and the lock goes last. Asked to restart into an update, it says so as it returns, for its caller to start
 // the new engine once the lock is released (§9.2). Where `fabrica serve --listen` or the engine's
 // `listen` setting gives an address, it listens there over TLS too (§9.3), with the certificate they
-// give or its own, the flags over the settings.
+// give or its own, the flags over the settings. Where the engine's `telemetry.otlp_endpoint` names
+// an endpoint, its spans, metrics and recorded rows are sent there, metadata only (§21); the setting
+// is read as the engine starts.
 
 /**
  * The daemon's services, which every group's handler file may use as it builds its handlers and the
@@ -176,6 +184,13 @@ export const startEngine = Effect.fn('Engine.start')(function* (
       retention: settings.telemetry.retention,
     }),
   )
+  // Its Telemetry sends each row too, and its Tracer traces the handlers, where an export is set.
+  const exported = yield* Layer.build(
+    otlpExportLayer({
+      endpoint: settings.telemetry.otlp_endpoint,
+      version: options.release,
+    }).pipe(Layer.provide(FetchHttpClient.layer)),
+  ).pipe(Effect.provide(telemetry))
   const git = yield* Layer.build(options.git ?? hostGitLayer)
   // Built before the scopes, so the work graphs close after the runs, the agents and the servers.
   const projects = yield* Layer.build(projectsLayer).pipe(
@@ -220,6 +235,7 @@ export const startEngine = Effect.fn('Engine.start')(function* (
     tokens,
     talks,
     telemetry,
+    exported,
   )
   yield* Layer.buildWithScope(
     localRpcServer(

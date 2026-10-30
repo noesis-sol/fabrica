@@ -1,7 +1,14 @@
 import { Context, Effect, Layer, Option, Semaphore } from 'effect'
 import { SqlClient } from 'effect/sql'
+import { mkdir } from 'node:fs/promises'
+import * as NodePath from 'node:path'
 
-import { InsightsRpcs, type ProjectId } from '@fabrica/contracts'
+import {
+  ExportFailed,
+  InsightsExported,
+  InsightsRpcs,
+  type ProjectId,
+} from '@fabrica/contracts'
 
 import { EngineFiles, type EnginePaths } from '../engine/paths'
 import { Projects } from '../projects/service'
@@ -23,7 +30,9 @@ import { TelemetryStore } from '../telemetry/store'
 // kept to that request. A request reads the files of its project, or of every project where it names
 // none: each event stream and Pi's session files, found where they lie; it refreshes the copies of the
 // recorded rows and of those projects' tickets, then runs, one request at a time on the database. A
-// project whose work graph won't open is queried without its tickets.
+// project whose work graph won't open is queried without its tickets. An export (§21, on demand)
+// refreshes the copies of every project's and writes them, metadata only, as Parquet files in a
+// folder on the engine's host, made where it isn't there; its failure is the request's answer.
 
 /** A project as a request reads it: its ID and its checkout. */
 interface Place {
@@ -106,7 +115,7 @@ export const insightsHandlersOn = <E, R>(
           { concurrency: 'unbounded' },
         ).pipe(Effect.map(found => found.flat()))
 
-      /** Answers `ask` over the project's files, or every project's, once the copies are fresh. */
+      /** Answers `ask` over the project's files, or every project's, once the copies are fresh; a refresh that fails dies. */
       const answer = <A, E2>(
         project: Option.Option<ProjectId>,
         ask: (sources: Sources) => Effect.Effect<A, E2, TelemetryDb>,
@@ -120,20 +129,49 @@ export const insightsHandlersOn = <E, R>(
           const db = yield* Effect.orDie(opened)
           return yield* oneAtATime
             .withPermits(1)(
-              db.refresh(tickets).pipe(Effect.andThen(ask(sources))),
+              Effect.orDie(db.refresh(tickets)).pipe(
+                Effect.andThen(ask(sources)),
+              ),
             )
-            .pipe(Effect.provideService(TelemetryDb, db), Effect.orDie)
+            .pipe(Effect.provideService(TelemetryDb, db))
+        })
+
+      /** Writes the copies as Parquet files in `folder`, made where it isn't there. */
+      const exportTo = (folder: string) =>
+        Effect.gen(function* () {
+          if (!NodePath.isAbsolute(folder))
+            return yield* new ExportFailed({
+              reason: `the folder must be an absolute path on the engine's host, not ${folder}`,
+            })
+          yield* Effect.tryPromise({
+            try: () => mkdir(folder, { recursive: true }),
+            catch: cause =>
+              new ExportFailed({
+                reason: `${folder} can't be made: ${cause instanceof Error ? cause.message : String(cause)}`,
+              }),
+          })
+          const db = yield* TelemetryDb
+          const files = yield* db
+            .exportParquet(folder)
+            .pipe(Effect.mapError(({ reason }) => new ExportFailed({ reason })))
+          return new InsightsExported({ files })
         })
 
       return InsightsRpcs.of({
         'insights.summary': ({ project, since }) =>
           answer(project, sources =>
-            readSummary({ project, since }, sources),
+            Effect.orDie(readSummary({ project, since }, sources)),
           ).pipe(Effect.withSpan('Insights.summaryRequest')),
         'insights.query': ({ query }) =>
           answer(projectOf(query), sources =>
-            runNamedQuery(query, sources),
+            Effect.orDie(runNamedQuery(query, sources)),
           ).pipe(Effect.withSpan('Insights.queryRequest')),
+        'insights.export': ({ folder }) =>
+          answer(Option.none(), () => exportTo(folder)).pipe(
+            // Every project's: no project is named, so none can be missing.
+            Effect.catchTag('ProjectNotFound', Effect.die),
+            Effect.withSpan('Insights.exportRequest'),
+          ),
       })
     }),
   )

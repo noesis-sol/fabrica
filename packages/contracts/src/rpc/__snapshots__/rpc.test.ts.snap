@@ -846,6 +846,26 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
       ],
       "type": "object",
     },
+    "ExportFailedEncoded": {
+      "additionalProperties": true,
+      "properties": {
+        "_tag": {
+          "enum": [
+            "ExportFailed",
+          ],
+          "type": "string",
+        },
+        "reason": {
+          "pattern": "\\S",
+          "type": "string",
+        },
+      },
+      "required": [
+        "_tag",
+        "reason",
+      ],
+      "type": "object",
+    },
     "FileDiffEncoded": {
       "additionalProperties": true,
       "properties": {
@@ -1256,6 +1276,22 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
       "required": [
         "name",
         "unit",
+      ],
+      "type": "object",
+    },
+    "InsightsExportedEncoded": {
+      "additionalProperties": true,
+      "properties": {
+        "files": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string",
+          },
+          "type": "array",
+        },
+      },
+      "required": [
+        "files",
       ],
       "type": "object",
     },
@@ -7478,6 +7514,9 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
           "telemetry": {
             "additionalProperties": true,
             "properties": {
+              "otlp_endpoint": {
+                "type": "string",
+              },
               "retention": {
                 "additionalProperties": true,
                 "properties": {
@@ -11407,6 +11446,30 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         "$ref": "#/$defs/InsightsTableEncoded",
       },
       "tag": "insights.query",
+    },
+    {
+      "error": {
+        "$ref": "#/$defs/ExportFailedEncoded",
+      },
+      "group": "insights",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "folder": {
+            "pattern": "\\S",
+            "type": "string",
+          },
+        },
+        "required": [
+          "folder",
+        ],
+        "type": "object",
+      },
+      "stream": false,
+      "success": {
+        "$ref": "#/$defs/InsightsExportedEncoded",
+      },
+      "tag": "insights.export",
     },
   ],
 }

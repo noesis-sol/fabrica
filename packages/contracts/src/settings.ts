@@ -773,6 +773,19 @@ export const ListenAddressText = Schema.String.check(
   ),
 )
 
+/**
+ * Where telemetry's OTLP export goes (spec §21): an OpenTelemetry Collector's OTLP/HTTP endpoint,
+ * `http://` or `https://`, below which `/v1/traces`, `/v1/metrics` and `/v1/logs` are posted.
+ */
+export const OtlpEndpoint = Schema.String.check(
+  Schema.makeFilter(
+    text =>
+      /^https?:\/\/[^\s/?#]+(?:\/[^\s?#]*)?$/u.test(text) ||
+      `Expected an OTLP/HTTP endpoint such as "http://localhost:4318", got ${JSON.stringify(text)}`,
+    { expected: 'an endpoint such as "http://localhost:4318"' },
+  ),
+)
+
 /** `machine_workers` where the engine's settings give none: half the cores, at least 2 (H35). */
 export const defaultMachineWorkers = (cores: number): number =>
   Math.max(2, Math.floor(cores / 2))
@@ -806,6 +819,8 @@ export const EngineSettings = Schema.Struct({
       raw: retention.pipe(withDefault('90d')),
       daily: retention.pipe(withDefault('forever')),
     }).pipe(withDefault({})),
+    /** Where the recorded rows, spans and metrics are sent over OTLP, metadata only; none: nowhere (spec §21). */
+    otlp_endpoint: Schema.OptionFromOptionalKey(OtlpEndpoint),
   }).pipe(withDefault({})),
 })
 export type EngineSettings = typeof EngineSettings.Type

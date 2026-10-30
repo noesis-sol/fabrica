@@ -1,5 +1,5 @@
 // Telemetry (spec §21, H65): typed rows recorded in the engine's own SQLite store, and its metrics;
-// DuckDB the query layer over them, with the named queries.
+// DuckDB the query layer over them, with the named queries; their export, metadata only.
 export { batchesWritten, observe, prunesRun, rowsLost } from './metrics'
 export {
   QueryLayerFailed,
@@ -8,7 +8,9 @@ export {
   makeTelemetryDb,
   telemetryDbLayer,
 } from './duckdb'
+export { metadataSerialization } from './metadata'
 export { telemetryMigrations } from './migrations'
+export { type OtlpExportOptions, otlpExportLayer } from './otlp'
 export {
   type Sources,
   findEventStream,

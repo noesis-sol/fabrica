@@ -7,9 +7,9 @@ import { Text } from '../ticket'
 import { Count, Millis, Moment, Usd, optional } from './common'
 import { ProjectNotFound } from './errors'
 
-// The Insights group (spec §8.1, §21): the engine's telemetry, summarised, and its named queries. A
-// client names a query and gives its parameters; no SQL crosses, so the store behind them (SQLite
-// now, DuckDB later) changes without a client knowing.
+// The Insights group (spec §8.1, §21): the engine's telemetry, summarised, its named queries, and its
+// export on demand. A client names a query and gives its parameters; no SQL crosses, so the store
+// behind them (SQLite now, DuckDB later) changes without a client knowing.
 
 /** The time a query looks at: from `since` (all time when left out) to now. */
 const since = optional(Moment)
@@ -104,6 +104,19 @@ export class InsightsSummary extends Schema.Class<InsightsSummary>(
   readyToMerged: Schema.OptionFromNullOr(Millis),
 }) {}
 
+/** What an export wrote: one Parquet file per recorded table, each an absolute path on the engine's host. */
+export class InsightsExported extends Schema.Class<InsightsExported>(
+  'InsightsExported',
+)({
+  files: Schema.Array(Text),
+}) {}
+
+/** The export couldn't be written: the folder isn't absolute or can't be made, or a table failed. */
+export class ExportFailed extends Schema.TaggedError<ExportFailed>()(
+  'ExportFailed',
+  { reason: Text },
+) {}
+
 export const InsightsRpcs = RpcGroup.make(
   Rpc.make('insights.summary', {
     payload: { project, since },
@@ -114,5 +127,11 @@ export const InsightsRpcs = RpcGroup.make(
     payload: { query: InsightsQuery },
     success: InsightsTable,
     error: ProjectNotFound,
+  }),
+  /** Writes the recorded rows, metadata only, as Parquet files in `folder` on the engine's host (§21). */
+  Rpc.make('insights.export', {
+    payload: { folder: Text },
+    success: InsightsExported,
+    error: ExportFailed,
   }),
 )

@@ -7,6 +7,7 @@ import {
   CheckSuite,
   type ColumnUnit,
   type InsightsCell,
+  InsightsExported,
   InsightsQuery,
   type InsightsQueryName,
   InsightsSummary,
@@ -26,7 +27,9 @@ import { projectHolding } from './tickets-project'
 // queries as a table. A query is about `--project <id>`, or every project where none is given; where
 // a ticket's time goes is about one project, the one whose checkout holds this folder where none is
 // given. `--since <time>` leaves out what came before it. No SQL is sent: the engine runs the query
-// named. Values the engine sends are sanitised for the terminal.
+// named. `fabrica insights export <folder>` has the engine write the recorded rows, metadata only, as
+// Parquet files in that folder on the engine's host (a relative one is taken from where the command
+// runs), and lists them. Values the engine sends are sanitised for the terminal.
 
 /** The engine refused what the command asked, or the command can't tell what it was asked. */
 export class InsightsRefused extends Data.TaggedError('InsightsRefused')<{
@@ -226,6 +229,37 @@ const queryOf = (
   }
 }
 
+/** `fabrica insights export <folder>`: the recorded rows as Parquet files, written on the engine's host. */
+const insightsExport = Command.make(
+  'export',
+  {
+    folder: Argument.String('folder').pipe(
+      Argument.withDescription(
+        "The folder on the engine's host the files are written to, made where it isn't there",
+      ),
+    ),
+  },
+  ({ folder }) =>
+    withEngine(client =>
+      client.rpc['insights.export']({ folder: NodePath.resolve(folder) }),
+    ).pipe(
+      Effect.catchTag('ExportFailed', ({ reason }) =>
+        Effect.fail(refused(`the export failed: ${sanitiseLine(reason)}`)),
+      ),
+      Effect.flatMap(value =>
+        printAnswer({
+          schema: InsightsExported,
+          value,
+          text: ({ files }) => files.map(sanitiseLine).join('\n'),
+        }),
+      ),
+    ),
+).pipe(
+  Command.withDescription(
+    "Writes the recorded rows, metadata only, as Parquet files on the engine's host",
+  ),
+)
+
 export const insights = Command.make(
   'insights',
   {
@@ -309,4 +343,9 @@ export const insights = Command.make(
         ),
       )
     }),
-).pipe(Command.withDescription('Telemetry summaries and the named queries'))
+).pipe(
+  Command.withDescription(
+    'Telemetry summaries, the named queries and the export',
+  ),
+  Command.withSubcommands([insightsExport]),
+)

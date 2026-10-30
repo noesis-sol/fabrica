@@ -22,6 +22,7 @@
           "effect/cli",
           "effect/http",
           "effect/net",
+          "effect/observability",
           "effect/reactivity",
           "effect/rpc",
           "effect/socket",

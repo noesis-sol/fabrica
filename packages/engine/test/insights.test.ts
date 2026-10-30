@@ -44,10 +44,10 @@ import {
 import {
   QueryLayerFailed,
   TelemetryDb,
-  contentFields,
   copiedTables,
   telemetryDbLayer,
 } from '../src/telemetry/duckdb'
+import { isMetadataName } from '../src/telemetry/metadata'
 import {
   type Sources,
   findEventStream,
@@ -998,18 +998,21 @@ describe('an export', () => {
       )
       for (const file of files) {
         const columns = yield* db.rows(
-          `SELECT name FROM parquet_schema($file) WHERE num_children IS NULL`,
+          `SELECT name, type FROM parquet_schema($file) WHERE num_children IS NULL`,
           { file },
         )
         const names = columns.map(({ name }) => String(name))
         expect(names).not.toContain('source_row')
-        for (const name of names) expect(contentFields.has(name)).toBe(false)
+        // Text is never named as content; a number named so is a count (a model call's tokens out).
+        for (const { name, type } of columns)
+          if (type === 'BYTE_ARRAY')
+            expect(isMetadataName(String(name))).toBe(true)
       }
       const [calls] = yield* db.rows(
-        `SELECT count(*) AS count, max(error) AS error FROM read_parquet($file)`,
+        `SELECT count(*) AS count, max(error) AS error, sum(output) AS output FROM read_parquet($file)`,
         { file: NodePath.join(folder, 'model_calls.parquet') },
       )
-      expect(calls).toEqual({ count: 1, error: 'Overloaded' })
+      expect(calls).toEqual({ count: 1, error: 'Overloaded', output: 50 })
       // The tickets' text never reaches an export, nor do the session files' prompts.
       for (const file of files) {
         const exported = yield* db.rows(`SELECT * FROM read_parquet($file)`, {

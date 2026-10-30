@@ -9,6 +9,7 @@ import type {
 } from '@duckdb/node-api'
 import type { ProjectId, Ticket } from '@fabrica/contracts'
 
+import { isMetadataName } from './metadata'
 import { rowTables } from './rows'
 
 // The telemetry query layer's database (spec §21, H65): DuckDB (`@duckdb/node-api`, pinned to 1.5.x,
@@ -70,7 +71,10 @@ export interface TelemetryDbShape {
   readonly refresh: (
     tickets: ReadonlyArray<ProjectTickets>,
   ) => Effect.Effect<void, QueryLayerFailed>
-  /** Writes the recorded rows, metadata only, as one Parquet file per table in `folder`; answers the files. */
+  /**
+   * Writes the recorded rows, metadata only (no text column named as content, `isMetadataName`), as
+   * one Parquet file per table in `folder`; answers the files.
+   */
   readonly exportParquet: (
     folder: string,
   ) => Effect.Effect<ReadonlyArray<string>, QueryLayerFailed>
@@ -106,27 +110,6 @@ const ticketColumns: ReadonlyArray<Column> = [
 
 /** The copy's column holding a row's SQLite rowid. */
 const sourceRow = 'source_row'
-
-/**
- * Fields that carry content, never metadata (§21): an export leaves out any column named so, should a
- * table ever gain one.
- */
-export const contentFields: ReadonlySet<string> = new Set([
-  'title',
-  'description',
-  'design',
-  'acceptance',
-  'text',
-  'detail',
-  'prompt',
-  'message',
-  'content',
-  'output',
-  'command',
-  'path',
-  'question',
-  'notes',
-])
 
 /** The most rows a refresh reads from SQLite at a time. */
 const readBatch = 10_000
@@ -407,7 +390,8 @@ export const makeTelemetryDb = Effect.fn('TelemetryDb.make')(function* (
     const files: Array<string> = []
     for (const table of copiedTables) {
       const columns = (columnsByTable.get(table) ?? []).filter(
-        ({ name }) => name !== sourceRow && !contentFields.has(name),
+        ({ name, type }) =>
+          name !== sourceRow && (type !== 'VARCHAR' || isMetadataName(name)),
       )
       const file = `${folder}/${table}.parquet`
       yield* run(
