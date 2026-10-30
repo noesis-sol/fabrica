@@ -118,6 +118,29 @@ export const wroteLine = (wrote: {
   )
 
 /**
+ * `<checkout> has uncommitted changes to a, b and untracked files in the fast-forward's way: c` (H72):
+ * what Base's checkout has that holds its fast-forward, its tracked files changed and the untracked files
+ * the fast-forward would overwrite, each named where there are any.
+ */
+export const checkoutWaitText = (wait: {
+  readonly checkout: string
+  readonly files: ReadonlyArray<string>
+  readonly inTheWay: ReadonlyArray<string>
+}): string => {
+  const changed =
+    wait.files.length > 0
+      ? [`uncommitted changes to ${wait.files.join(', ')}`]
+      : []
+  const untracked =
+    wait.inTheWay.length > 0
+      ? [
+          `untracked files in the fast-forward's way: ${wait.inTheWay.join(', ')}`,
+        ]
+      : []
+  return `${wait.checkout} has ${[...changed, ...untracked].join(' and ')}`
+}
+
+/**
  * `  MERGES_WAIT: <checkout> has uncommitted changes to a, b; fa-a1b2 merges once it is clean` (H72):
  * the fast-forward waits on Base's checkout.
  */
@@ -125,11 +148,12 @@ export const mergesWaitLine = (wait: {
   readonly ticket: TicketId
   readonly checkout: string
   readonly files: ReadonlyArray<string>
+  readonly inTheWay: ReadonlyArray<string>
 }): string =>
   warningLine({
     tag: 'MERGES_WAIT',
     about: 'ticket',
-    text: `${wait.checkout} has uncommitted changes to ${wait.files.join(', ')}; ${wait.ticket} merges once it is clean`,
+    text: `${checkoutWaitText(wait)}; ${wait.ticket} merges once it is clean`,
   })
 
 /** How long a span is, as the log says it: `42s` under a minute, `34m` under an hour, else `2h05m`. */

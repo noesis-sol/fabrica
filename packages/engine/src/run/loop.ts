@@ -1240,14 +1240,14 @@ const runStarted = Effect.fn('Run.started')(function* (
             ticket,
             text: wroteLine({ ticket, by, files }),
           }),
-        MergesWait: ({ checkout, files, detail }) =>
+        MergesWait: ({ checkout, files, inTheWay, detail }) =>
           Effect.andThen(
             Ref.set(mergesWait, Option.some({ ticket, detail })),
             record(log, {
               kind: 'warn',
               ticket,
               detail,
-              text: mergesWaitLine({ ticket, checkout, files }),
+              text: mergesWaitLine({ ticket, checkout, files, inTheWay }),
             }),
           ),
         // Its worker has it, in a slot of the run's (§13.7): the queue goes on meanwhile.

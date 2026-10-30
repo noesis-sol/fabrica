@@ -48,11 +48,15 @@ export type MergeUpdate = Data.TaggedEnum<{
     readonly for: RequeuedFor
     readonly detail: string
   }
-  /** The fast-forward waits on `checkout`'s uncommitted changes to `files` (`MERGES_WAIT`, H72), until it is clean. */
+  /**
+   * The fast-forward waits on `checkout`'s uncommitted changes to `files`, and its untracked files the
+   * fast-forward would overwrite, `inTheWay` (`MERGES_WAIT`, H72), until it is clear of both.
+   */
   MergesWait: {
     readonly ticket: TicketId
     readonly checkout: string
     readonly files: ReadonlyArray<string>
+    readonly inTheWay: ReadonlyArray<string>
     readonly detail: string
   }
   /** Base was fast-forwarded to `commit`, the commit its merge check passed on; unchecked under `check_fast: none`. */

@@ -475,7 +475,11 @@ export const makeMachine = Effect.fnUntraced(function* (
     ): Effect.Effect<Option.Option<Step>, CantTell | GitFailed> =>
       Effect.gen(function* () {
         yield* Effect.interruptible(
-          Effect.provideService(checkoutReady(turn), Git, git),
+          Effect.provideService(
+            checkoutReady({ turn, onto, checked }),
+            Git,
+            git,
+          ),
         )
         const outcome = yield* git.fastForward({
           checkout: turn.config.home.checkout,

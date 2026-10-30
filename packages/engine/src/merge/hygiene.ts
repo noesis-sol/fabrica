@@ -24,6 +24,7 @@ import {
   type WorktreeHome,
   Worktrees,
 } from '../git'
+import { checkoutWaitText } from '../runlog'
 import { type LeftBy, type MergeStopKind, MergeUpdate } from './outcome'
 import { dropRecord, readRecord, writeRecord } from './records'
 import type { MergeTurn } from './turn'
@@ -31,7 +32,7 @@ import type { MergeTurn } from './turn'
 // Merge hygiene (spec §13.7, H71, H72): a refused fast-forward diagnosed and tried again, a merge
 // turn's budget of rechecks, what a setup or check leaves in the worktree and the record of the files
 // it wrote and changed, merged worktrees cleaned up out of the queue, and fast-forwards waiting on a
-// dirty checkout.
+// dirty checkout or untracked files in their way.
 
 /** Why a ticket is set aside, and its detail in words. */
 export interface Aside {
@@ -274,7 +275,7 @@ const watching = Effect.fnUntraced(function* (folders: ReadonlyArray<string>) {
   return Deferred.await(seen)
 })
 
-/** The folders whose changes can clean the checkout: its root, its git folder, and each changed file's. */
+/** The folders whose changes can clean the checkout: its root, its git folder, and each named file's. */
 const watchedFolders = (
   checkout: string,
   files: ReadonlyArray<string>,
@@ -287,45 +288,81 @@ const watchedFolders = (
 ]
 
 /**
- * Waits until Base's checkout has no uncommitted changes to tracked files (H72): meanwhile the merge
- * waits, `MERGES_WAIT` naming them, watched with a poll beside the file watch, as a watch alone goes
- * silent on macOS when its folder is removed (tutti-rvzn.26). Untracked files don't hold it.
+ * Whether the untracked file `file` is in the way of a fast-forward that changes `path`: git won't
+ * overwrite it, put a folder where it is, or remove a folder it is in to put a file there.
  */
-export const checkoutReady = Effect.fn('MergeQueue.checkoutReady')(function* (
-  turn: MergeTurn,
-) {
+const inTheWayOf = (file: string, path: string): boolean =>
+  file === path || file.startsWith(`${path}/`) || path.startsWith(`${file}/`)
+
+/** What holds the fast-forward: the checkout's tracked files changed, and its untracked files in the way. */
+interface Holding {
+  readonly files: ReadonlyArray<string>
+  readonly inTheWay: ReadonlyArray<string>
+}
+
+/**
+ * Waits until Base's checkout has no uncommitted changes to tracked files and no untracked files the
+ * fast-forward from `onto` to `checked` would overwrite, which git refuses (H72): meanwhile the merge
+ * waits, `MERGES_WAIT` naming them, watched with a poll beside the file watch, as a watch alone goes
+ * silent on macOS when its folder is removed (tutti-rvzn.26). Other untracked files don't hold it.
+ */
+export const checkoutReady = Effect.fn('MergeQueue.checkoutReady')(function* ({
+  turn,
+  onto,
+  checked,
+}: {
+  readonly turn: MergeTurn
+  readonly onto: CommitHash
+  readonly checked: CommitHash
+}) {
   const git = yield* Git
   const { poll } = yield* MergeWaits
   const { checkout } = turn.config.home
-  const changed = Effect.map(
+  const changes = yield* git.changedFiles({
+    repo: checkout,
+    branch: checked,
+    base: onto,
+  })
+  const holding = Effect.map(
     git.status({ worktree: checkout }),
-    status => status.uncommitted,
+    (status): Holding => ({
+      files: status.uncommitted,
+      inTheWay: status.untracked.filter(file =>
+        changes.some(path => inTheWayOf(file, path)),
+      ),
+    }),
   )
-  const same = (one: ReadonlyArray<string>, other: ReadonlyArray<string>) =>
-    one.join('\0') === other.join('\0')
-  let files = yield* changed
-  let named: ReadonlyArray<string> = []
-  while (files.length > 0) {
-    if (!same(files, named)) {
-      named = files
+  const held = ({ files, inTheWay }: Holding) =>
+    files.length > 0 || inTheWay.length > 0
+  const same = (one: Holding, other: Holding) =>
+    one.files.join('\0') === other.files.join('\0') &&
+    one.inTheWay.join('\0') === other.inTheWay.join('\0')
+  let now = yield* holding
+  let named: Holding = { files: [], inTheWay: [] }
+  while (held(now)) {
+    if (!same(now, named)) {
+      named = now
       yield* turn.publish(
         MergeUpdate.MergesWait({
           ticket: turn.worktree.ticket,
           checkout,
-          files,
-          detail: `MERGES_WAIT: ${checkout} has uncommitted changes to ${files.join(', ')}`,
+          files: now.files,
+          inTheWay: now.inTheWay,
+          detail: `MERGES_WAIT: ${checkoutWaitText({ checkout, ...now })}`,
         }),
       )
     }
-    const waited = files
-    files = yield* Effect.scoped(
+    const waited = now
+    now = yield* Effect.scoped(
       Effect.gen(function* () {
         // Watched first, then read: a change made before the watch began shows in the read.
-        const change = yield* watching(watchedFolders(checkout, waited))
-        const now = yield* changed
-        if (!same(now, waited)) return now
+        const change = yield* watching(
+          watchedFolders(checkout, [...waited.files, ...waited.inTheWay]),
+        )
+        const read = yield* holding
+        if (!same(read, waited)) return read
         yield* Effect.raceFirst(change, poll)
-        return yield* changed
+        return yield* holding
       }),
     )
   }
