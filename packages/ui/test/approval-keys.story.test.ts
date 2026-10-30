@@ -1,10 +1,12 @@
 import { DateTime, Effect, Fiber, Option, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import {
+  Subscription,
   expect as expectScene,
   given,
   role,
   scene,
+  text,
   within,
 } from 'foldkit/scene'
 
@@ -22,11 +24,16 @@ import {
 
 import { Connection, localEngineName } from '../src/app/connection'
 import type { EngineProject } from '../src/app/engine-project'
-import { chordLabel } from '../src/app/keys'
+import { chordLabel, keyHelp } from '../src/app/keys'
 import { Message } from '../src/app/message'
 import { type Model, Overlay, initialModel } from '../src/app/model'
 import type { AttentionItem } from '../src/app/streams'
-import { modelCommands, paletteEntries, update } from '../src/app/update'
+import {
+  keyHelpCommands,
+  modelCommands,
+  paletteEntries,
+  update,
+} from '../src/app/update'
 import { view } from '../src/app/view'
 import * as Attention from '../src/console/attention'
 
@@ -360,6 +367,36 @@ describe('the approval keys', () => {
       Attention.Guard.Off(),
     )
     expect(commandsOf(sent(none.model, key('y')))).toEqual([])
+  })
+
+  test('the key help the ? key opens names them, though its overlay holds their bindings back', () => {
+    const drawn = sent(connected, received([permission])).model
+    const helpKeys = (shown: Model) =>
+      keyHelp(keyHelpCommands(shown))
+        .filter(command => command.id.startsWith('approval.'))
+        .map(command => command.title)
+    expect(helpKeys({ ...drawn, overlay: Overlay.KeyHelp() })).toEqual([
+      'Approve: bash',
+      'Allow for this run: bash',
+      'Refuse: bash',
+    ])
+    scene(
+      { update, view },
+      given(drawn),
+      Subscription.emit(key('?')),
+      expectScene(
+        within(role('dialog', { name: 'Keys' }), text('Approve: bash')),
+      ).toExist(),
+      expectScene(
+        within(
+          role('dialog', { name: 'Keys' }),
+          text('Allow for this run: bash'),
+        ),
+      ).toExist(),
+      expectScene(
+        within(role('dialog', { name: 'Keys' }), text('Refuse: bash')),
+      ).toExist(),
+    )
   })
 
   test('the keyed card’s buttons carry the keys’ caps; another card’s carry none', () => {

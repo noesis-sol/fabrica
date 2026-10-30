@@ -288,6 +288,9 @@ export const paletteOverlayKeys: ReadonlyArray<KeyCommand> = [
   closeOverlay,
 ]
 
+/** The key help's own key: Escape, closing it. */
+export const keyHelpOverlayKeys: ReadonlyArray<KeyCommand> = [closeOverlay]
+
 /** The screen's command list: an open overlay's commands first, so its keys win, then the screen's, then everyone's. */
 export const commandsFor = (options: {
   readonly screen: Screen

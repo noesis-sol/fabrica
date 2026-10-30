@@ -48,7 +48,12 @@ import * as RemoteEngines from './remote-engines'
 import { Screen, screenTitle } from './screen'
 import * as SshPrompts from './ssh-prompts'
 import type { ProjectRunView } from './streams'
-import { modelCommands, openWorker, paletteEntries } from './update'
+import {
+  keyHelpCommands,
+  modelCommands,
+  openWorker,
+  paletteEntries,
+} from './update'
 
 // The app's frame (spec §18.3, Appendix A.1), at the handoff's 1280 × 800 reference window: a 38px
 // title bar over a grid of the 260px sidebar and the main column (padded 20 × 24 px, its parts 16px
@@ -738,7 +743,7 @@ const keyHelpView = (model: Model, h: HtmlBuilder<Message>): Html =>
       h.h2([h.Class('px-12 text-sm font-extrabold')], ['Keys']),
       h.ul(
         [h.Class('flex flex-col')],
-        keyHelp(modelCommands(model)).map(command =>
+        keyHelp(keyHelpCommands(model)).map(command =>
           h.keyed('li')(
             command.id,
             [h.Class('flex items-center gap-12 px-12 py-4 text-sm')],

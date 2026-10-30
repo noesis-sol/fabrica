@@ -34,7 +34,14 @@ import {
   sameProject,
 } from './engine-project'
 import { type EngineServices, scopeEngine } from './engine-route'
-import { commandFor, commandsFor, keyLabel, paletteCommands } from './keys'
+import {
+  type KeyCommand,
+  commandFor,
+  commandsFor,
+  keyHelpOverlayKeys,
+  keyLabel,
+  paletteCommands,
+} from './keys'
 import { Message } from './message'
 import { type Model, Overlay } from './model'
 import { type Notifier, ShowNotification } from './notifier'
@@ -347,6 +354,25 @@ export const modelCommands = (model: Model) =>
     offers: runOffers(model),
   })
 
+/** The screen's command list as it stands with no overlay open: what the palette runs and the key help names. */
+const screenCommands = (model: Model) =>
+  commandsFor({
+    screen: model.screen,
+    overlayOpen: false,
+    options: Attention.keyedOptions(model.console.attention),
+    approval: Attention.keyedApproval(model.console.attention),
+    offers: runOffers(model),
+  })
+
+/**
+ * The key help's list (§18.5): Escape closing it, then the screen's commands as they stand beneath
+ * it, so the help names the keys the screen answers once it is closed, the attention column's too.
+ */
+export const keyHelpCommands = (model: Model): ReadonlyArray<KeyCommand> => [
+  ...keyHelpOverlayKeys,
+  ...screenCommands(model),
+]
+
 /**
  * Opens the worker view of a ticket of a run in the scope, on its project: made once, so the In
  * progress column's memo holds across renders.
@@ -362,21 +388,15 @@ export const openWorker = (project: EngineProject, ticket: TicketId): Message =>
 export const paletteEntries = (
   model: Model,
 ): ReadonlyArray<Palette.Entry<Message>> => {
-  const commands = paletteCommands(
-    commandsFor({
-      screen: model.screen,
-      overlayOpen: false,
-      options: Attention.keyedOptions(model.console.attention),
-      approval: Attention.keyedApproval(model.console.attention),
-      offers: runOffers(model),
+  const commands = paletteCommands(screenCommands(model)).map(
+    (command): Palette.Entry<Message> => ({
+      id: command.id,
+      group: 'command',
+      title: command.title,
+      key: keyLabel(command, model.platform),
+      run: command.message,
     }),
-  ).map((command): Palette.Entry<Message> => ({
-    id: command.id,
-    group: 'command',
-    title: command.title,
-    key: keyLabel(command, model.platform),
-    run: command.message,
-  }))
+  )
   const enginesKnown = model.console.sidebar.engines.length
   const projects: ReadonlyArray<Palette.Entry<Message>> = [
     {
