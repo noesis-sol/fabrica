@@ -346,7 +346,7 @@ The engine samples its host's load every few seconds for the console's system st
 | WSL2 (H31) | The same bridge, run as `wsl.exe -d <distro> -- fabrica bridge`, with the same fallback to `~/.local/bin/fabrica` (run through `--exec sh -c`, so that wsl.exe hands the fallback to sh as it is) |
 | Remote, option | WebSocket over TLS on a configured address (`RpcServer.makeProtocolWebsocket`), authenticated with a pairing token (§9.3) |
 
-In the app, the connection process (a `utilityProcess`) owns every transport (it runs `ssh` and `wsl.exe` as its children) and relays frames to the renderer over a `MessageChannelMain` port that main brokers once; main then leaves the data path \[VERIFY M0: Effect RPC over a child process's stdio and over a MessagePort relay\]. The CLI uses the same client package directly.
+In the app, the connection process (a `utilityProcess`) owns every transport (it runs `ssh` and `wsl.exe` as its children) and relays frames to the renderer over a `MessageChannelMain` port that main brokers at each load of a page, and again to every page when it starts the connection process anew; the renderer reacquires its connection over the newest port, and main otherwise leaves the data path \[VERIFY M0: Effect RPC over a child process's stdio and over a MessagePort relay\]. The CLI uses the same client package directly.
 
 ### 8.3 Streams and the run view
 

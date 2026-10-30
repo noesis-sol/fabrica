@@ -15,7 +15,8 @@ import type { RpcClientError } from 'effect/rpc'
 import { Socket, SocketServer } from 'effect/socket'
 
 // The MessagePort transport (spec §8.2): in the app, the page's engine client and the connection
-// process's relay share one port, which main brokers once. The page's end is a `Socket`, the relay's
+// process's relay share a port, which main brokers at each load of the page and again when the
+// connection process starts anew, the page taking the newest. The page's end is a `Socket`, the relay's
 // a `SocketServer`, so the RPC runs over the port as it does over the local socket. The RPC's NDJSON
 // frames cross as they are, bytes or text; beside them a few signals, each naming the connection it
 // is about: the page opens a connection and closes it; the relay says it took one, whose frames
