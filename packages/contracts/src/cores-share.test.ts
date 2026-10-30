@@ -7,14 +7,17 @@ import { coresShare, decodeEngineSettings, machineWorkersOf } from './settings'
 // The machine budget's share of the cores (spec §7.3): the workers live across every run, the
 // engine's `machine_workers` or half the cores, and each worker's and check's share of the cores.
 
+/** Engine settings, the host's cores, and the workers and each one's share of the cores they give. */
+const budgets: ReadonlyArray<readonly [object, number, number, number]> = [
+  [{}, 10, 5, 2],
+  [{}, 3, 2, 1],
+  [{ machine_workers: 3 }, 10, 3, 3],
+  [{ machine_workers: 16 }, 8, 16, 1],
+  [{ machine_workers: 1 }, 1, 1, 1],
+]
+
 describe('the machine budget', () => {
-  it.effect.each([
-    [{}, 10, 5, 2],
-    [{}, 3, 2, 1],
-    [{ machine_workers: 3 }, 10, 3, 3],
-    [{ machine_workers: 16 }, 8, 16, 1],
-    [{ machine_workers: 1 }, 1, 1, 1],
-  ])(
+  it.effect.each(budgets)(
     'settings %j on %d cores: %d workers, each with %d cores',
     ([settings, cores, workers, share]) =>
       Effect.gen(function* () {
