@@ -13,6 +13,7 @@ import type {
   Assignee,
   CommitHash,
   Edge,
+  FiledItem,
   LabelName,
   ModelOverride,
   Note,
@@ -57,6 +58,20 @@ export interface NewTicket {
   readonly labels?: ReadonlyArray<LabelName>
   /** Its parent: the ticket is filed as the parent's next child, `<parent>.<n>`, with a `parent` edge. */
   readonly parent?: TicketId
+}
+
+/** A ticket of a tree filed whole (`fileTickets`): its key in the tree, and its parent's key. */
+export interface KeyedTicket {
+  readonly key: string
+  readonly ticket: Omit<NewTicket, 'parent'>
+  /** The key of its parent, a ticket filed before it in the same call. */
+  readonly parent: Option.Option<string>
+}
+
+/** A wait between two tickets of a tree, by key: `waiting` waits on `waited`, a `blocks` edge from it. */
+export interface KeyedWait {
+  readonly waited: string
+  readonly waiting: string
 }
 
 /** The plain fields an update changes; a field left out stays, `Option.none()` empties it. */
@@ -176,6 +191,17 @@ export interface WorkGraphShape {
     readonly ticket: NewTicket
     readonly actor: Actor
   }) => Changed<Ticket, EdgeCycle>
+  /**
+   * Files tickets that go together (a talk's tree, §15.4) in one transaction: each, in the order
+   * given, as a ticket under its parent's, then each wait as a `blocks` link. A key given twice, or a
+   * parent or wait naming a key not filed before it, refuses the whole and files nothing. Returns each
+   * key's ticket, in the order filed.
+   */
+  readonly fileTickets: (options: {
+    readonly tickets: ReadonlyArray<KeyedTicket>
+    readonly waits: ReadonlyArray<KeyedWait>
+    readonly actor: Actor
+  }) => Changed<ReadonlyArray<FiledItem>, EdgeCycle>
   readonly update: (options: {
     readonly id: TicketId
     readonly changes: TicketUpdate

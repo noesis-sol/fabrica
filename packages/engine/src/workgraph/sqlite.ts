@@ -16,6 +16,7 @@ import { SqliteClient } from '@effect/sql-sqlite-node'
 import {
   type Actor,
   Edge,
+  FiledItem,
   type LabelName,
   Note,
   Question,
@@ -855,6 +856,58 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
     )
   })
 
+  const fileTickets: WorkGraphShape['fileTickets'] = Effect.fn(
+    'WorkGraph.fileTickets',
+  )(function* ({ tickets, waits, actor }) {
+    return yield* mutate(
+      'fileTickets',
+      Effect.gen(function* () {
+        const ids = new Map<string, TicketId>()
+        /** The ticket filed for the key so far; the whole refused, `why` the reason, when there is none. */
+        const filedAs = (key: string, why: string) =>
+          Option.match(Option.fromUndefinedOr(ids.get(key)), {
+            onNone: () => Effect.fail(new InvalidTicket({ issue: why })),
+            onSome: Effect.succeed,
+          })
+        const filed: Array<FiledItem> = []
+        for (const { key, ticket, parent } of tickets) {
+          if (ids.has(key))
+            return yield* new InvalidTicket({
+              issue: `the key ${key} is given twice`,
+            })
+          const parentId = yield* Effect.transposeOption(
+            Option.map(parent, parent =>
+              filedAs(
+                parent,
+                `${key}'s parent ${parent} isn't filed before it`,
+              ),
+            ),
+          )
+          const created = yield* fileTicket(
+            Option.match(parentId, {
+              onNone: () => ticket,
+              onSome: id => ({ ...ticket, parent: id }),
+            }),
+            actor,
+          )
+          ids.set(key, created.id)
+          filed.push(new FiledItem({ key, id: created.id }))
+        }
+        const at = yield* now
+        for (const { waited, waiting } of waits) {
+          const why = (key: string) =>
+            `${waiting} waits on ${waited}: ${key} isn't filed`
+          const [from, to] = yield* Effect.all([
+            filedAs(waited, why(waited)),
+            filedAs(waiting, why(waiting)),
+          ])
+          yield* link(yield* makeEdge({ from, to, kind: 'blocks' }), actor, at)
+        }
+        return filed
+      }),
+    )
+  })
+
   const ask: WorkGraphShape['ask'] = Effect.fn('WorkGraph.ask')(function* ({
     question,
     actor,
@@ -1269,6 +1322,7 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
     unlabel,
     note,
     fileDiscovered,
+    fileTickets,
     ask,
     answer,
     importTickets,

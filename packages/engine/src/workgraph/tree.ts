@@ -2,23 +2,21 @@ import { Data, Effect, Option, Schema } from 'effect'
 
 import {
   type Actor,
-  Edge,
-  FiledItem,
   FiledTree,
-  type TicketId,
   TicketMetadata,
   type TreeItem,
 } from '@fabrica/contracts'
 
 import { InvalidTicket } from './errors'
-import type { WorkGraphShape } from './service'
+import type { KeyedTicket, KeyedWait, WorkGraphShape } from './service'
 
 // A tree of tickets filed at once (spec §15.4, §15.5): the refine and feature talks' `file_tree`.
 // The tree is checked whole before anything is filed: its keys, its one root epic, the parents and
 // the items each waits on, the files each ticket names, and cycles among parents and waits together
 // (an epic waits on the tickets under it, so a ticket waiting on its own epic is a cycle). Every
 // reason is given at once, so the tree comes back corrected in one go. A tree that passes is filed
-// parents first, each ticket as its parent's next child, then its waits as `blocks` links.
+// in one transaction (§11.2): parents first, each ticket as its parent's next child, then its waits
+// as `blocks` links.
 
 /** The tree was refused, with every reason. */
 export class TreeRefused extends Data.TaggedError('TreeRefused')<{
@@ -152,8 +150,9 @@ const parentsFirst = (items: ReadonlyArray<TreeItem>) => {
 }
 
 /**
- * Files the tree, once it is checked whole: each item as a ticket, under its parent's, carrying
- * `spec` where it is given; then each wait as a `blocks` link from the ticket waited on.
+ * Files the tree, once it is checked whole, in one transaction: each item as a ticket, under its
+ * parent's, carrying `spec` where it is given; then each wait as a `blocks` link from the ticket
+ * waited on.
  */
 export const fileTree = Effect.fn('WorkGraph.fileTree')(function* (options: {
   readonly graph: WorkGraphShape
@@ -166,66 +165,57 @@ export const fileTree = Effect.fn('WorkGraph.fileTree')(function* (options: {
   const problems = treeProblems(items)
   if (problems.length > 0) return yield* new TreeRefused({ problems })
 
-  const ids = new Map<string, TicketId>()
-  const filed: Array<FiledItem> = []
-  for (const item of parentsFirst(items)) {
-    const metadata = yield* Schema.decodeUnknownEffect(TicketMetadata)({
-      ...Option.match(item.files, {
-        onNone: () => ({}),
-        onSome: files => (files === 'unknown' ? {} : { files }),
+  const tickets = yield* Effect.forEach(parentsFirst(items), item =>
+    Effect.map(
+      Schema.decodeUnknownEffect(TicketMetadata)({
+        ...Option.match(item.files, {
+          onNone: () => ({}),
+          onSome: files => (files === 'unknown' ? {} : { files }),
+        }),
+        ...Option.match(options.spec, {
+          onNone: () => ({}),
+          onSome: spec => ({ spec }),
+        }),
+      }).pipe(
+        Effect.mapError(issue => new InvalidTicket({ issue: issue.message })),
+      ),
+      (metadata): KeyedTicket => ({
+        key: item.key,
+        parent: item.parent,
+        ticket: {
+          type: item.type,
+          title: item.title,
+          description: item.description,
+          ...Option.match(item.design, {
+            onNone: () => ({}),
+            onSome: design => ({ design }),
+          }),
+          ...Option.match(item.acceptance, {
+            onNone: () => ({}),
+            onSome: acceptance => ({ acceptance }),
+          }),
+          ...Option.match(item.priority, {
+            onNone: () => ({}),
+            onSome: priority => ({ priority }),
+          }),
+          ...Option.match(item.labels, {
+            onNone: () => ({}),
+            onSome: labels => ({ labels }),
+          }),
+          metadata,
+        },
       }),
-      ...Option.match(options.spec, {
-        onNone: () => ({}),
-        onSome: spec => ({ spec }),
-      }),
-    }).pipe(
-      Effect.mapError(issue => new InvalidTicket({ issue: issue.message })),
-    )
-    const parent = Option.flatMap(item.parent, key =>
-      Option.fromUndefinedOr(ids.get(key)),
-    )
-    const ticket = yield* graph.create({
-      ticket: {
-        type: item.type,
-        title: item.title,
-        description: item.description,
-        ...Option.match(item.design, {
-          onNone: () => ({}),
-          onSome: design => ({ design }),
-        }),
-        ...Option.match(item.acceptance, {
-          onNone: () => ({}),
-          onSome: acceptance => ({ acceptance }),
-        }),
-        ...Option.match(item.priority, {
-          onNone: () => ({}),
-          onSome: priority => ({ priority }),
-        }),
-        ...Option.match(item.labels, {
-          onNone: () => ({}),
-          onSome: labels => ({ labels }),
-        }),
-        ...Option.match(parent, {
-          onNone: () => ({}),
-          onSome: id => ({ parent: id }),
-        }),
-        metadata,
-      },
-      actor,
-    })
-    ids.set(item.key, ticket.id)
-    filed.push(new FiledItem({ key: item.key, id: ticket.id }))
-  }
-
-  for (const item of items)
-    for (const waited of Option.getOrElse(item.waitsOn, () => [])) {
-      const [from, to] = [ids.get(waited), ids.get(item.key)]
-      if (from !== undefined && to !== undefined)
-        yield* graph.addDependency({
-          edge: new Edge({ from, to, kind: 'blocks' }),
-          actor,
-        })
-    }
+    ),
+  )
+  const waits = items.flatMap(item =>
+    Option.getOrElse(item.waitsOn, () => []).map((waited): KeyedWait => ({
+      waited,
+      waiting: item.key,
+    })),
+  )
+  // Filed in one transaction, so a running run's `ready` never sees part of the tree, nor its
+  // tickets before their waits, and a failure midway files nothing.
+  const filed = yield* graph.fileTickets({ tickets, waits, actor })
 
   const [root] = filed
   if (root === undefined)
