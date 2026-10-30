@@ -1,4 +1,12 @@
-import { Array, type DateTime, Effect, Match, Option, Schema } from 'effect'
+import {
+  Array,
+  type DateTime,
+  Effect,
+  Match,
+  Number,
+  Option,
+  Schema,
+} from 'effect'
 import type { RpcClientError } from 'effect/rpc'
 import { Command, type Update } from 'foldkit'
 import type { Html, HtmlBuilder } from 'foldkit/html'
@@ -49,6 +57,8 @@ import { waitingWords } from './waiting'
 // the answer talk; the fixes chosen go with the start, so a checklist cancelled changes nothing.
 // Above the row, a strip of the run's holds and banners (`c2` for a hold, `c3` for a stop) with when
 // each lifts, the engine's run-wide steps with their elapsed time, and a request the engine refused.
+// Under All projects the row's figures are summed over every project's run going (§18.3), with no
+// controls: a run is started, drained or stopped from its project's own scope.
 // A Submodel: the root folds its Messages and gives it the run, the scope and the time.
 
 /** The modes Start run offers (§13.1), in the menu's order. */
@@ -724,6 +734,36 @@ export const waitingOf = (run: RunView): ReadonlyArray<Waiting> =>
     ),
   )
 
+/** The row's figures: one run's, or summed over the runs of the scope. */
+export interface Figures {
+  readonly live: number
+  readonly slots: number
+  readonly doneToday: number
+  readonly setAside: number
+  readonly needsYou: number
+  readonly inQueue: number
+  /** All the runs' tokens, their caches' included. */
+  readonly tokens: number
+  /** The waiting tickets, run after run, each run's in its view's order. */
+  readonly waiting: ReadonlyArray<Waiting>
+}
+
+/** The figures of `runs`, each summed over them. */
+export const figuresOf = (runs: ReadonlyArray<RunView>): Figures => {
+  const sum = (of: (run: RunView) => number): number =>
+    Number.sumAll(runs.map(of))
+  return {
+    live: sum(run => run.totals.live),
+    slots: sum(run => run.totals.slots),
+    doneToday: sum(run => run.totals.doneToday),
+    setAside: sum(run => run.totals.counts.set_aside),
+    needsYou: sum(run => run.totals.counts.needs_you),
+    inQueue: sum(run => run.totals.counts.in_queue),
+    tokens: sum(run => tokenTotal(run.totals.tokens)),
+    waiting: runs.flatMap(waitingOf),
+  }
+}
+
 // The strip above the row.
 
 /** A notice's tone: its colour and the word said beside it, never the colour alone (§18.2). */
@@ -815,8 +855,10 @@ export const questionsLeft = (
     },
   })
 
-/** What the frame gives the row: what its controls are given, and the time. */
+/** What the frame gives the row: what its controls are given, every project's runs, and the time. */
 export interface ViewInputs extends ControlInputs {
+  /** Under All projects, every project's run going, whose figures the row sums; none in a project's scope. */
+  readonly runs: ReadonlyArray<RunView>
   /** The time now, in the viewer's zone. */
   readonly now: Option.Option<DateTime.Zoned>
   /** The scope's open attention requests, whose questions the pre-flight waits on. */
@@ -1063,16 +1105,15 @@ const item = (
   )
 
 const figures = (
-  run: RunView,
+  shown: Figures,
   h: HtmlBuilder<Message>,
 ): ReadonlyArray<Html> => {
-  const { totals } = run
-  const waiting = waitingOf(run)
+  const { waiting } = shown
   return [
     item(
       {
         name: 'live',
-        value: `${totals.live} of ${totals.slots}`,
+        value: `${shown.live} of ${shown.slots}`,
         label: 'Workers live',
         role: 'c1',
       },
@@ -1081,7 +1122,7 @@ const figures = (
     item(
       {
         name: 'done',
-        value: String(totals.doneToday),
+        value: String(shown.doneToday),
         label: 'Done today',
         role: 'c4',
       },
@@ -1090,7 +1131,7 @@ const figures = (
     item(
       {
         name: 'set-aside',
-        value: String(totals.counts.set_aside),
+        value: String(shown.setAside),
         label: 'Set aside',
         role: 'c3',
       },
@@ -1099,7 +1140,7 @@ const figures = (
     item(
       {
         name: 'needs-you',
-        value: String(totals.counts.needs_you),
+        value: String(shown.needsYou),
         label: 'Needs you',
         role: 'c2',
       },
@@ -1108,7 +1149,7 @@ const figures = (
     item(
       {
         name: 'in-queue',
-        value: String(totals.counts.in_queue),
+        value: String(shown.inQueue),
         label: 'In queue',
         role: 'c5',
         after:
@@ -1137,7 +1178,7 @@ const figures = (
     item(
       {
         name: 'tokens',
-        value: sayTokens(tokenTotal(totals.tokens)),
+        value: sayTokens(shown.tokens),
         label: 'Tokens',
         role: 'c5',
       },
@@ -1392,6 +1433,16 @@ const controls = (
       ),
   })
 
+/** The runs the row's figures are of: the scoped project's, or under All projects every one going; none without. */
+const scopeRuns = (
+  inputs: ViewInputs,
+): Option.Option<Array.NonEmptyReadonlyArray<RunView>> =>
+  Option.isSome(inputs.project)
+    ? Option.map(inputs.run, run => Array.of(run))
+    : Array.isReadonlyArrayNonEmpty(inputs.runs)
+      ? Option.some(inputs.runs)
+      : Option.none()
+
 const row = (model: Model, inputs: ViewInputs, h: HtmlBuilder<Message>): Html =>
   h.div(
     [
@@ -1401,18 +1452,14 @@ const row = (model: Model, inputs: ViewInputs, h: HtmlBuilder<Message>): Html =>
       ),
     ],
     [
-      ...Option.match(inputs.run, {
+      ...Option.match(scopeRuns(inputs), {
         onNone: () => [
           h.span(
             [h.Class('text-sm text-muted'), h.Style({ padding: '10px 18px' })],
-            [
-              Option.isSome(inputs.project)
-                ? 'No run'
-                : 'Choose a project for its run',
-            ],
+            [Option.isSome(inputs.project) ? 'No run' : 'No run going'],
           ),
         ],
-        onSome: run => figures(run, h),
+        onSome: runs => figures(figuresOf(runs), h),
       }),
       controls(model, inputs, h),
     ],

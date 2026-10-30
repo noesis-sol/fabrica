@@ -47,6 +47,7 @@ import {
   applyEngineAttention,
   applyLoad,
   applyProjectEvents,
+  applyProjectRunView,
   applyRunView,
   joinedAttention,
 } from './streams'
@@ -303,6 +304,25 @@ const foldAnswerKey = Update.foldChild({
   toParentMessage: toAttentionMessage,
 })
 
+/** Whether `project`'s run view is one All projects watches: the scope is every project, and its row shows a run going. */
+const watchedUnderAll = (model: Model, project: EngineProject): boolean =>
+  Option.isNone(model.scope) &&
+  Option.isSome(Sidebar.goingRun(model.console.sidebar, project))
+
+/**
+ * Under All projects, the run views of runs the sidebar's rows still show going, each run's own: a run
+ * ended, or followed by another, drops its view. The same list where every one is kept.
+ */
+const goingRunViews = (
+  runViews: Model['runViews'],
+  sidebar: Sidebar.Model,
+): Model['runViews'] => {
+  const kept = runViews.filter(({ project, view }) =>
+    Option.contains(Sidebar.goingRun(sidebar, project), view.header.run),
+  )
+  return kept.length === runViews.length ? runViews : kept
+}
+
 /** Whether the Model's overlay is open. */
 export const isOverlayOpen = (model: Model): boolean =>
   !Overlay.guards.Closed(model.overlay)
@@ -326,16 +346,16 @@ export const modelCommands = (model: Model) =>
   })
 
 /**
- * Opens the worker view of a ticket of the scoped run: made once, so the In progress column's memo
- * holds across renders.
+ * Opens the worker view of a ticket of a run in the scope, on its project: made once, so the In
+ * progress column's memo holds across renders.
  */
-export const openWorker = (ticket: TicketId): Message =>
-  Message.RequestedWorker({ ticket })
+export const openWorker = (project: EngineProject, ticket: TicketId): Message =>
+  Message.RequestedWorker({ project, ticket })
 
 /**
  * The palette's entries (§18.5): the screen's own command list as it is with no overlay open, but the
  * palette's own command; then every project, the scoped run's tickets (and the Backlog's, while it
- * shows them) and its workers, each opening its worker view; then the themes.
+ * shows them) and its workers, each opening its worker view on the scoped project; then the themes.
  */
 export const paletteEntries = (
   model: Model,
@@ -382,6 +402,11 @@ export const paletteEntries = (
     onNone: () => [],
     onSome: run => run.tickets,
   })
+  const openScoped = (ticket: TicketId): ReadonlyArray<Message> =>
+    Option.match(model.scope, {
+      onNone: () => [],
+      onSome: project => [openWorker(project, ticket)],
+    })
   const known: ReadonlyArray<{
     readonly ticket: TicketId
     readonly title: string
@@ -396,29 +421,33 @@ export const paletteEntries = (
   const tickets = Array.dedupeWith(
     known,
     (first, second) => first.ticket === second.ticket,
-  ).map(({ ticket, title }): Palette.Entry<Message> => ({
-    id: `ticket.${ticket}`,
-    group: 'ticket',
-    title: `${ticket} ${title}`,
-    key: Option.none(),
-    run: openWorker(ticket),
-  }))
+  ).flatMap(({ ticket, title }) =>
+    openScoped(ticket).map((run): Palette.Entry<Message> => ({
+      id: `ticket.${ticket}`,
+      group: 'ticket',
+      title: `${ticket} ${title}`,
+      key: Option.none(),
+      run,
+    })),
+  )
   const workers = Option.match(model.runView, {
     onNone: () => [],
     onSome: run => run.workers,
-  }).map((worker): Palette.Entry<Message> => ({
-    id: `worker.${worker.ticket}`,
-    group: 'worker',
-    title: Option.match(
-      Array.findFirst(runTickets, row => row.ticket === worker.ticket),
-      {
-        onNone: () => `${worker.ticket} · ${worker.model}`,
-        onSome: row => `${worker.ticket} ${row.title} · ${worker.model}`,
-      },
-    ),
-    key: Option.none(),
-    run: openWorker(worker.ticket),
-  }))
+  }).flatMap(worker =>
+    openScoped(worker.ticket).map((run): Palette.Entry<Message> => ({
+      id: `worker.${worker.ticket}`,
+      group: 'worker',
+      title: Option.match(
+        Array.findFirst(runTickets, row => row.ticket === worker.ticket),
+        {
+          onNone: () => `${worker.ticket} · ${worker.model}`,
+          onSome: row => `${worker.ticket} ${row.title} · ${worker.model}`,
+        },
+      ),
+      key: Option.none(),
+      run,
+    })),
+  )
   const themeEntries = themes.map((theme): Palette.Entry<Message> => ({
     id: `theme.${theme}`,
     group: 'theme',
@@ -746,12 +775,8 @@ const receive = (model: Model, message: Message): Return =>
         onSome: command => update(model, command.message),
       }),
     RequestedScreen: ({ screen }) => enterScreen(model, screen),
-    RequestedWorker: ({ ticket }) =>
-      Option.match(model.scope, {
-        onNone: () => ({ model }),
-        onSome: project =>
-          enterScreen(model, Screen.Worker({ project, ticket })),
-      }),
+    RequestedWorker: ({ project, ticket }) =>
+      enterScreen(model, Screen.Worker({ project, ticket })),
     GotWorkerMessage: ({ message }) =>
       stepWorker(model, worker => Worker.update(worker, message)),
     PressedWorkerKey: ({ key }) =>
@@ -822,6 +847,7 @@ const receive = (model: Model, message: Message): Return =>
         modifyFields(openBacklog(model), {
           scope: () => project,
           runView: () => Option.none(),
+          runViews: () => [],
           events: () => [],
           attention: () => Option.none(),
           engineAttention: () => [],
@@ -965,6 +991,7 @@ const receive = (model: Model, message: Message): Return =>
       foldRequests(
         modifyFields(openBacklog(model), {
           runView: () => Option.none(),
+          runViews: () => [],
           events: () => [],
           attention: () => Option.none(),
           engineAttention: () => [],
@@ -1132,12 +1159,25 @@ const receive = (model: Model, message: Message): Return =>
               runView: runView => applyRunView(runView, items),
             }),
           }
-        : { model },
+        : watchedUnderAll(model, project)
+          ? {
+              model: modifyFields(model, {
+                runViews: runViews =>
+                  applyProjectRunView(runViews, project, items),
+              }),
+            }
+          : { model },
     EndedRunView: ({ project, reason }) => {
-      if (!Option.contains(model.scope, project)) {
+      const scoped = Option.contains(model.scope, project)
+      if (!scoped && !watchedUnderAll(model, project)) {
         return { model }
       }
-      const ended = modifyFields(model, { runView: () => Option.none() })
+      const ended = scoped
+        ? modifyFields(model, { runView: () => Option.none() })
+        : modifyFields(model, {
+            runViews: runViews =>
+              runViews.filter(entry => !sameProject(entry.project, project)),
+          })
       const going =
         reason === ('NoRun' satisfies NoRun['_tag'])
           ? Sidebar.goingRun(model.console.sidebar, project)
@@ -1152,12 +1192,14 @@ const receive = (model: Model, message: Message): Return =>
     },
     WaitedToRewatchRunView: ({ project, run }) => ({
       model:
-        Option.contains(model.scope, project) &&
         Option.contains(
           Sidebar.goingRun(model.console.sidebar, project),
           run,
         ) &&
-        Option.isNone(model.runView)
+        (Option.contains(model.scope, project)
+          ? Option.isNone(model.runView)
+          : Option.isNone(model.scope) &&
+            !model.runViews.some(entry => sameProject(entry.project, project)))
           ? modifyFields(model, { runWatch: watch => watch + 1 })
           : model,
     }),
@@ -1207,6 +1249,7 @@ const receive = (model: Model, message: Message): Return =>
       return {
         model: modifyFields(model, {
           console: parts => modifyFields(parts, { sidebar: () => sidebar }),
+          runViews: runViews => goingRunViews(runViews, sidebar),
           notify: notify =>
             Notify.receivedRuns(
               notify,

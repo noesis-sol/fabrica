@@ -62,8 +62,8 @@ export const Message = defineMessageUnion({
     inField: Schema.Boolean,
   },
   RequestedScreen: { screen: Screen },
-  /** The worker view of a ticket of the scoped run: on the scoped project. */
-  RequestedWorker: { ticket: TicketId },
+  /** The worker view of a ticket of a run in the scope, on its project: under All projects, one of many. */
+  RequestedWorker: { project: EngineProject, ticket: TicketId },
   /** A Message of the Worker view's. */
   GotWorkerMessage: { message: Worker.Message },
   /** A Worker view's key (§18.5). */

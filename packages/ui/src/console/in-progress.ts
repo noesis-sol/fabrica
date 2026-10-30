@@ -15,7 +15,8 @@ import {
 } from '@fabrica/contracts'
 
 import { sayElapsed } from '../app/clock'
-import type { Role } from './sidebar'
+import { type EngineProject, projectKey } from '../app/engine-project'
+import { type Chip, type Role, chipView } from './sidebar'
 import { stepWords } from './stats'
 
 // The console's In progress column (spec §18.3, H45, H80; Appendix A.2): the run's Current (working,
@@ -25,7 +26,9 @@ import { stepWords } from './stats'
 // with the elapsed time on the right: the engine's step for the ticket, else its worker's latest action
 // (the tool and its main argument), else its place in the queue, else its phase in words. No
 // percentage: Fabrica has no honest one. Every card is one height, whether or not its worker has an
-// action yet, so the column doesn't jump (tutti-pgl6). Clicking a card opens its worker view.
+// action yet, so the column doesn't jump (tutti-pgl6). Clicking a card opens its worker view. Under
+// All projects the column holds every project's run going, in the sidebar's order, each card in its
+// own project's colour and marked with its project's chip (§18.3).
 
 export const Model = Schema.Struct({})
 export type Model = typeof Model.Type
@@ -40,13 +43,22 @@ export interface Slices {
   readonly steps: ReadonlyArray<EngineStep>
 }
 
-/** What the frame gives the column: the run's slices, the time now, the colour and the open Message. */
-export interface Config<Message> extends Slices {
-  readonly now: Option.Option<DateTime.Zoned>
+/** A run the column shows: its slices, its project, and that project's colour and chip. */
+export interface Run extends Slices {
+  readonly project: EngineProject
   /** The run's project's colour, its sidebar chip's (§18.3). */
   readonly role: Role
-  /** Opens a ticket's worker view: made once, so the frame's memo of the column holds. */
-  readonly open: (ticket: TicketId) => Message
+  /** The chip its cards carry: none in a project's own scope (§18.3). */
+  readonly chip: Option.Option<Chip>
+}
+
+/** What the frame gives the column: the scope's runs, the time now and the open Message. */
+export interface Config<Message> {
+  /** The scoped project's run, or under All projects every project's run going; none without. */
+  readonly runs: ReadonlyArray<Run>
+  readonly now: Option.Option<DateTime.Zoned>
+  /** Opens a ticket's worker view on its project: made once, so the frame's memo of the column holds. */
+  readonly open: (project: EngineProject, ticket: TicketId) => Message
 }
 
 /** A card's height: its three rows and padding, whether or not its worker has an action (H80). */
@@ -208,6 +220,15 @@ export interface Card {
   readonly step: Step
 }
 
+/** A card of one of the column's runs, with the run it is in. */
+export interface RunCard extends Card {
+  readonly run: Run
+}
+
+/** Every run's cards, run after run, each run's in its view's order. */
+export const runCards = (runs: ReadonlyArray<Run>): ReadonlyArray<RunCard> =>
+  runs.flatMap(run => cardsOf(run).map(card => ({ ...card, run })))
+
 /** The run's Current, in the view's order, each with its place on the bar and its step. */
 export const cardsOf = (config: Slices): ReadonlyArray<Card> =>
   Array.getSomes(
@@ -280,17 +301,18 @@ const barView = <Message>(
   )
 
 const cardView = <Message>(
-  card: Card,
+  card: RunCard,
   config: Config<Message>,
   h: HtmlBuilder<Message>,
 ): Html => {
-  const { row, bar, step } = card
+  const { row, bar, step, run } = card
   return h.keyed('button')(
-    row.ticket,
+    `${projectKey(run.project)}/${row.ticket}`,
     [
       h.Type('button'),
       h.DataAttribute('ticket', row.ticket),
-      h.OnClick(config.open(row.ticket)),
+      h.DataAttribute('project', projectKey(run.project)),
+      h.OnClick(config.open(run.project, row.ticket)),
       h.Class(
         'flex flex-none flex-col justify-between rounded-card border border-line bg-panel text-left hover:border-muted',
       ),
@@ -300,6 +322,11 @@ const cardView = <Message>(
       h.span(
         [h.Class('flex min-w-0 items-baseline gap-8')],
         [
+          Option.match(run.chip, {
+            onNone: () => h.empty,
+            onSome: chip =>
+              h.span([h.Class('flex-none self-center')], [chipView(chip, h)]),
+          }),
           h.span(
             [h.Class('flex-none font-mono text-xs text-muted')],
             [row.ticket],
@@ -310,7 +337,7 @@ const cardView = <Message>(
           ),
         ],
       ),
-      barView(bar, config.role, h),
+      barView(bar, run.role, h),
       h.span(
         [h.Class('flex min-w-0 items-baseline gap-8 text-xs text-muted')],
         [
@@ -339,7 +366,7 @@ export const view = <Message>(
   config: Config<Message>,
   h: HtmlBuilder<Message>,
 ): Html => {
-  const cards = cardsOf(config)
+  const cards = runCards(config.runs)
   return h.div(
     [h.Class('flex flex-col gap-8')],
     [

@@ -224,7 +224,7 @@ const detail = decodeDetail({
 /** fa-7's worker view, opened from its card, its ticket read. */
 const opened: Model = received(
   scoped,
-  Message.RequestedWorker({ ticket: fa7 }),
+  Message.RequestedWorker({ project: authHere, ticket: fa7 }),
   workerMessage(Worker.Message.SucceededLoadTicket({ worker, detail })),
 )
 
@@ -255,11 +255,11 @@ const said = (id: string, text: string) => ({
 const blocksOf = (shown: Model) => shown.screens.worker.transcript.blocks
 
 describe('opening a worker view', () => {
-  test("a card's worker opens on the scoped project, its ticket read", () => {
+  test("a card's worker opens on its project, its ticket read", () => {
     story(
       update,
       given(scoped),
-      message(Message.RequestedWorker({ ticket: fa7 })),
+      message(Message.RequestedWorker({ project: authHere, ticket: fa7 })),
       Command.resolve(
         Worker.LoadTicket({ worker }),
         Worker.Message.SucceededLoadTicket({ worker, detail }),

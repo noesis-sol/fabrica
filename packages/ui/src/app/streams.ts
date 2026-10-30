@@ -183,6 +183,41 @@ export const ProjectEvents = Schema.Struct({
 export type ProjectEvents = typeof ProjectEvents.Type
 
 /**
+ * The list of `current` with `project`'s entry's value `applied`: its entry takes the value's place,
+ * or joins the list at its end; a value still none (a patch before the first snapshot) changes
+ * nothing, and the other entries keep their identity.
+ */
+const applyProjectEntry = <
+  Entry extends { readonly project: EngineProject },
+  V,
+>(
+  current: ReadonlyArray<Entry>,
+  project: EngineProject,
+  {
+    read,
+    applied,
+    make,
+  }: {
+    readonly read: (entry: Entry) => V
+    readonly applied: (value: Option.Option<V>) => Option.Option<V>
+    readonly make: (value: V) => Entry
+  },
+): ReadonlyArray<Entry> => {
+  const known = Array.findFirst(current, entry =>
+    sameProject(entry.project, project),
+  )
+  return Option.match(applied(Option.map(known, read)), {
+    onNone: () => current,
+    onSome: value =>
+      Option.isSome(known)
+        ? current.map(entry =>
+            sameProject(entry.project, project) ? make(value) : entry,
+          )
+        : [...current, make(value)],
+  })
+}
+
+/**
  * `project`'s events with `items` applied (`applyEvents`): its entry takes their place, or joins the
  * list at its end; a patch before its first snapshot changes nothing, and the other entries keep their
  * identity.
@@ -191,26 +226,35 @@ export const applyProjectEvents = (
   current: ReadonlyArray<ProjectEvents>,
   project: EngineProject,
   items: Array.NonEmptyReadonlyArray<typeof EventsItem.Type>,
-): ReadonlyArray<ProjectEvents> => {
-  const known = Array.findFirst(current, entry =>
-    sameProject(entry.project, project),
-  )
-  return Option.match(
-    applyEvents(
-      Option.map(known, entry => entry.events),
-      items,
-    ),
-    {
-      onNone: () => current,
-      onSome: events =>
-        Option.isSome(known)
-          ? current.map(entry =>
-              sameProject(entry.project, project) ? { project, events } : entry,
-            )
-          : [...current, { project, events }],
-    },
-  )
-}
+): ReadonlyArray<ProjectEvents> =>
+  applyProjectEntry(current, project, {
+    read: entry => entry.events,
+    applied: events => applyEvents(events, items),
+    make: events => ({ project, events }),
+  })
+
+/** One project's run view, from its stream's first snapshot, the project named with its engine. */
+export const ProjectRunView = Schema.Struct({
+  project: EngineProject,
+  view: RunView,
+})
+export type ProjectRunView = typeof ProjectRunView.Type
+
+/**
+ * `project`'s run view with `items` applied (`applyRunView`): its entry takes its place, or joins the
+ * list at its end; a patch before its first snapshot changes nothing, and the other entries keep their
+ * identity.
+ */
+export const applyProjectRunView = (
+  current: ReadonlyArray<ProjectRunView>,
+  project: EngineProject,
+  items: Array.NonEmptyReadonlyArray<typeof RunViewItem.Type>,
+): ReadonlyArray<ProjectRunView> =>
+  applyProjectEntry(current, project, {
+    read: entry => entry.view,
+    applied: view => applyRunView(view, items),
+    make: view => ({ project, view }),
+  })
 
 /** A load sample replaces the one before. */
 export const applyLoad = (

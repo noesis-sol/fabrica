@@ -32,7 +32,7 @@ import * as Worker from '../screens/worker'
 import type { Theme } from '../theme/theme'
 import { Connection, isLive } from './connection'
 import { dialog } from './dialog'
-import { sameProject } from './engine-project'
+import { type EngineProject, sameProject } from './engine-project'
 import {
   type KeyCommand,
   hints,
@@ -46,6 +46,7 @@ import { type Model, Overlay } from './model'
 import * as RemoteEngines from './remote-engines'
 import { Screen, screenTitle } from './screen'
 import * as SshPrompts from './ssh-prompts'
+import type { ProjectRunView } from './streams'
 import { modelCommands, openWorker, paletteEntries } from './update'
 
 // The app's frame (spec §18.3, Appendix A.1), at the handoff's 1280 × 800 reference window: a 38px
@@ -80,7 +81,10 @@ const sidebarView = (
 ): Html => Sidebar.view(sidebar, { scope, messages: sidebarMessages }, h)
 const lazyStats = createLazy()
 
-/** The stats row, a Submodel: given the scope, the connection, the scoped run, the time and the requests. */
+/**
+ * The stats row, a Submodel: given the scope, the connection, the scoped run (under All projects every
+ * project's run going), the time and the requests.
+ */
 const statsPart = (
   stats: Stats.Model,
   inputs: Stats.ViewInputs,
@@ -99,10 +103,23 @@ const lazyStatsPart = (
   project: Model['scope'],
   live: boolean,
   run: Model['runView'],
+  runViews: Model['runViews'],
   now: Model['now'],
   attention: Model['attention'],
   h: HtmlBuilder<Message>,
-): Html => statsPart(stats, { project, live, run, now, attention }, h)
+): Html =>
+  statsPart(
+    stats,
+    {
+      project,
+      live,
+      run,
+      runs: runViews.map(({ view }) => view),
+      now,
+      attention,
+    },
+    h,
+  )
 const lazyTalkPanel = createLazy()
 
 /** The talk panel, a Submodel: given the scope, the connection and the projects by name. */
@@ -123,6 +140,7 @@ const talkPanelPart = (
 
 const lazyHistory = createLazy()
 const lazyInProgress = createLazy()
+const lazyAllInProgress = createLazy()
 
 /** The In progress column's slices of the scoped run, the same values while no run is shown. */
 const noRun: InProgress.Slices = {
@@ -136,9 +154,13 @@ const noRun: InProgress.Slices = {
   steps: [],
 }
 
-/** The In progress column, from the scoped run's tickets, workers, queue and steps, in its project's colour. */
+/**
+ * The In progress column of a project's scope, from its run's tickets, workers, queue and steps, in its
+ * project's colour, its cards unmarked.
+ */
 const inProgressView = (
   inProgress: InProgress.Model,
+  project: EngineProject,
   tickets: InProgress.Slices['tickets'],
   workers: InProgress.Slices['workers'],
   queue: InProgress.Slices['queue'],
@@ -149,7 +171,50 @@ const inProgressView = (
 ): Html =>
   InProgress.view(
     inProgress,
-    { tickets, workers, queue, steps, now, role, open: openWorker },
+    {
+      runs: [
+        {
+          project,
+          tickets,
+          workers,
+          queue,
+          steps,
+          role,
+          chip: Option.none(),
+        },
+      ],
+      now,
+      open: openWorker,
+    },
+    h,
+  )
+
+/**
+ * The In progress column under All projects (§18.3): every project's run going, each card in its
+ * project's colour and with its chip.
+ */
+const allInProgressView = (
+  inProgress: InProgress.Model,
+  runViews: Model['runViews'],
+  sidebar: Sidebar.Model,
+  now: Model['now'],
+  h: HtmlBuilder<Message>,
+): Html =>
+  InProgress.view(
+    inProgress,
+    {
+      runs: allRuns(runViews, sidebar).map(({ project, view, chip }) => ({
+        project,
+        tickets: view.tickets,
+        workers: view.workers,
+        queue: view.queue,
+        steps: view.steps,
+        role: chip.role,
+        chip: Option.some(chip),
+      })),
+      now,
+      open: openWorker,
+    },
     h,
   )
 
@@ -161,6 +226,25 @@ const runRole = (model: Model): Sidebar.Role =>
     ),
     { onNone: () => 'c1', onSome: chip => chip.role },
   )
+
+/**
+ * Under All projects, every project's run going in the sidebar's order, each with its project's chip
+ * (§18.3): the views are of the projects its rows show going.
+ */
+const allRuns = (
+  runViews: Model['runViews'],
+  sidebar: Sidebar.Model,
+): ReadonlyArray<ProjectRunView & { readonly chip: Sidebar.Chip }> =>
+  Sidebar.rows(sidebar).flatMap(row => {
+    const project = Sidebar.rowProject(row)
+    return Option.match(
+      Array.findFirst(runViews, entry => sameProject(entry.project, project)),
+      {
+        onNone: () => [],
+        onSome: entry => [{ ...entry, chip: Sidebar.chipOf(row.index) }],
+      },
+    )
+  })
 const lazyAttention = createLazy()
 
 /**
@@ -194,16 +278,46 @@ const attentionPart = (
     toParentMessage: message => Message.GotAttentionMessage({ message }),
   })
 const lazyUpNext = createLazy()
+const lazyAllUpNext = createLazy()
 
 const noRequests: ReadonlyArray<AttentionRequest> = []
 
-/** Up next, memoised on the run view's ticket rows and attention requests, each the same value while unchanged. */
+/**
+ * Up next in a project's scope, memoised on its run view's ticket rows and attention requests, each the
+ * same value while unchanged; its entries unmarked.
+ */
 const upNextView = (
   upNext: UpNext.Model,
+  project: EngineProject,
   tickets: ReadonlyArray<TicketRow>,
   attention: ReadonlyArray<AttentionRequest>,
   h: HtmlBuilder<Message>,
-): Html => UpNext.view(upNext, { tickets, attention }, h)
+): Html =>
+  UpNext.view(
+    upNext,
+    { runs: [{ project, tickets, attention, chip: Option.none() }] },
+    h,
+  )
+
+/** Up next under All projects (§18.3): every project's run going's queue, each entry with its chip. */
+const allUpNextView = (
+  upNext: UpNext.Model,
+  runViews: Model['runViews'],
+  sidebar: Sidebar.Model,
+  h: HtmlBuilder<Message>,
+): Html =>
+  UpNext.view(
+    upNext,
+    {
+      runs: allRuns(runViews, sidebar).map(({ project, view, chip }) => ({
+        project,
+        tickets: view.tickets,
+        attention: view.attention,
+        chip: Option.some(chip),
+      })),
+    },
+    h,
+  )
 
 const panel =
   'flex flex-col overflow-hidden rounded-card border border-line bg-panel'
@@ -255,6 +369,7 @@ const consoleView = (model: Model, h: HtmlBuilder<Message>): Html => {
             model.scope,
             isLive(model.connection),
             model.runView,
+            model.runViews,
             model.now,
             model.attention,
             h,
@@ -308,16 +423,28 @@ const consoleView = (model: Model, h: HtmlBuilder<Message>): Html => {
           h.section(
             [h.AriaLabel('In progress'), h.Class(column)],
             [
-              lazyInProgress(inProgressView, [
-                parts.inProgress,
-                run.tickets,
-                run.workers,
-                run.queue,
-                run.steps,
-                runRole(model),
-                model.now,
-                h,
-              ]),
+              Option.match(model.scope, {
+                onSome: project =>
+                  lazyInProgress(inProgressView, [
+                    parts.inProgress,
+                    project,
+                    run.tickets,
+                    run.workers,
+                    run.queue,
+                    run.steps,
+                    runRole(model),
+                    model.now,
+                    h,
+                  ]),
+                onNone: () =>
+                  lazyAllInProgress(allInProgressView, [
+                    parts.inProgress,
+                    model.runViews,
+                    parts.sidebar,
+                    model.now,
+                    h,
+                  ]),
+              }),
             ],
           ),
           needsYou(model)
@@ -339,15 +466,26 @@ const consoleView = (model: Model, h: HtmlBuilder<Message>): Html => {
             : h.section(
                 [h.AriaLabel('Up next'), h.Class(column)],
                 [
-                  lazyUpNext(upNextView, [
-                    parts.upNext,
-                    run.tickets,
-                    Option.match(model.runView, {
-                      onNone: () => noRequests,
-                      onSome: runView => runView.attention,
-                    }),
-                    h,
-                  ]),
+                  Option.match(model.scope, {
+                    onSome: project =>
+                      lazyUpNext(upNextView, [
+                        parts.upNext,
+                        project,
+                        run.tickets,
+                        Option.match(model.runView, {
+                          onNone: () => noRequests,
+                          onSome: runView => runView.attention,
+                        }),
+                        h,
+                      ]),
+                    onNone: () =>
+                      lazyAllUpNext(allUpNextView, [
+                        parts.upNext,
+                        model.runViews,
+                        parts.sidebar,
+                        h,
+                      ]),
+                  }),
                 ],
               ),
         ],
@@ -398,8 +536,9 @@ const hintButton = (
 const chooseTheme = (theme: Theme): Message => Message.ChoseTheme({ theme })
 
 /**
- * What the worker view draws beside its own Model: its engine's connection, the clock, and, where its
- * project is the scope's, its row in the run view, the run's spending and the usage windows.
+ * What the worker view draws beside its own Model: its engine's connection, the clock, its row in its
+ * project's run view and the run's spending, the scoped project's or under All projects its own, and,
+ * where its project is the scope's, the usage windows.
  */
 const workerInputs = (
   model: Model,
@@ -408,7 +547,16 @@ const workerInputs = (
   const scoped = Option.exists(model.scope, scope =>
     sameProject(scope, worker.project),
   )
-  const run = scoped ? model.runView : Option.none()
+  const run = scoped
+    ? model.runView
+    : Option.isNone(model.scope)
+      ? Option.map(
+          Array.findFirst(model.runViews, entry =>
+            sameProject(entry.project, worker.project),
+          ),
+          ({ view }) => view,
+        )
+      : Option.none()
   return {
     live: RemoteEngines.isEngineLive(model, worker.project.engine),
     now: model.now,

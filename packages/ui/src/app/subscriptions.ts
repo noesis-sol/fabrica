@@ -61,8 +61,9 @@ import { watchOf } from './streams'
 
 // The streams the app listens to (spec §18.1, §18.5): the keys, the engine ports that replace the
 // connection's, the client's link, and the engine's streams, each subscribed only while a part that
-// draws it is shown: the run view and attention for the console's scope (under All projects, every
-// connected engine's attention), History's events (under All projects, every project's run going), the
+// draws it is shown: the run view and attention for the console's scope (under All projects, the run
+// view of every project's run going and every connected engine's attention), History's events (under
+// All projects, every project's run going), the
 // backlog while its screen is open, the host's load while connected. Each project's streams go through
 // the engine holding it, which the project names, while that engine is connected (engine-route.ts),
 // and the load is the scoped project's engine's. Each stream's items go on once per animation frame,
@@ -407,6 +408,18 @@ const historyRuns = (model: Model): ReadonlyArray<typeof EngineRun.Type> =>
   )
 
 /**
+ * The runs whose views the console shows under All projects (§18.3): every run going that the
+ * sidebar's rows show, each on its engine; none in a project's own scope, whose run `runView` follows.
+ */
+const allProjectsRuns = (model: Model): ReadonlyArray<typeof EngineRun.Type> =>
+  Option.isNone(model.scope)
+    ? onLiveEngines(
+        model,
+        liveRuns(Sidebar.engineStatuses(model.console.sidebar)),
+      )
+    : []
+
+/**
  * The engines whose attention requests the console shows: the scoped project's, or under All projects
  * every one connected now.
  */
@@ -511,6 +524,25 @@ export const makeSubscriptions = ({
                 runViewMessages(client, project, nextFrame),
               ),
           }),
+      },
+    ),
+    // Under All projects, the view of every project's run going, each through its engine.
+    runViews: entry(
+      { runs: Schema.Array(EngineRun), watch: Schema.Int },
+      {
+        modelToDependencies: model => ({
+          runs: allProjectsRuns(model),
+          watch: model.runWatch,
+        }),
+        dependenciesToStream: ({ runs }) =>
+          Stream.mergeAll(
+            runs.map(({ engine, project }) =>
+              withEngineClient(engine, client =>
+                runViewMessages(client, { engine, project }, nextFrame),
+              ),
+            ),
+            { concurrency: 'unbounded' },
+          ),
       },
     ),
     events: entry(

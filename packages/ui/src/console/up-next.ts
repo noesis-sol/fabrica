@@ -9,6 +9,8 @@ import {
   factsOf,
 } from '@fabrica/contracts'
 
+import { type EngineProject, projectKey } from '../app/engine-project'
+import { type Chip, chipView } from './sidebar'
 import { waitingWords } from './waiting'
 
 // The console's Up next column (spec §18.3, H81): while nothing needs the maintainer, the queue takes
@@ -16,7 +18,8 @@ import { waitingWords } from './waiting'
 // the log says them (`waits for fa-12 to merge`, `touches src/auth/refresh.ts, like running fa-7`,
 // `waits for the solo ticket fa-9`), a ticket waiting on a question showing the question, then
 // `+N more`. A ready ticket is tagged Ready and a waiting one Waiting, so neither rests on colour
-// alone (§18.2).
+// alone (§18.2). Under All projects the queues of every project's run going are merged, every ready
+// ticket first, in the sidebar's order, each entry marked with its project's chip (§18.3).
 
 export const Model = Schema.Struct({})
 export type Model = typeof Model.Type
@@ -88,17 +91,51 @@ export const queue = (
       onSome: place => [{ row, place }],
     }),
   )
-  const isReady = (entry: Entry) => Place.$is('Ready')(entry.place)
+  return readyFirst(entries)
+}
+
+/** Entries the ready ones first, then the waiting ones, each in the order they came. */
+const readyFirst = <E extends Entry>(
+  entries: ReadonlyArray<E>,
+): ReadonlyArray<E> => {
+  const isReady = (entry: E) => Place.$is('Ready')(entry.place)
   return [
     ...entries.filter(isReady),
     ...entries.filter(entry => !isReady(entry)),
   ]
 }
 
-/** What the frame gives Up next, from the scoped run's view (none without a run): its ticket rows, and its attention requests, for questions' titles. */
-export interface Config {
+/**
+ * A run whose queue Up next shows: its project, its view's ticket rows and its attention requests (for
+ * questions' titles), and the chip its entries carry, none in a project's own scope (§18.3).
+ */
+export interface Run {
+  readonly project: EngineProject
   readonly tickets: ReadonlyArray<TicketRow>
   readonly attention: ReadonlyArray<AttentionRequest>
+  readonly chip: Option.Option<Chip>
+}
+
+/** A ticket in a run's queue, with the run's project and chip. */
+export interface RunEntry extends Entry {
+  readonly project: EngineProject
+  readonly chip: Option.Option<Chip>
+}
+
+/** Every run's queue in one: the ready tickets first, then the waiting ones, each in its run's order. */
+export const runsQueue = (
+  runs: ReadonlyArray<Run>,
+): ReadonlyArray<RunEntry> => {
+  return readyFirst(
+    runs.flatMap(({ project, tickets, attention, chip }) =>
+      queue(tickets, attention).map(entry => ({ ...entry, project, chip })),
+    ),
+  )
+}
+
+/** What the frame gives Up next: the scoped project's run, or under All projects every project's run going; none without. */
+export interface Config {
+  readonly runs: ReadonlyArray<Run>
 }
 
 const tag = <Message>(place: Place, h: HtmlBuilder<Message>): Html =>
@@ -117,11 +154,12 @@ const tag = <Message>(place: Place, h: HtmlBuilder<Message>): Html =>
     [place._tag],
   )
 
-const entryView = <Message>(entry: Entry, h: HtmlBuilder<Message>): Html =>
+const entryView = <Message>(entry: RunEntry, h: HtmlBuilder<Message>): Html =>
   h.keyed('li')(
-    entry.row.ticket,
+    `${projectKey(entry.project)}/${entry.row.ticket}`,
     [
       h.DataAttribute('entry', entry.row.ticket),
+      h.DataAttribute('project', projectKey(entry.project)),
       h.Class('flex flex-col border border-line bg-panel'),
       h.Style({ padding: '10px 14px', gap: '6px' }),
     ],
@@ -129,6 +167,10 @@ const entryView = <Message>(entry: Entry, h: HtmlBuilder<Message>): Html =>
       h.div(
         [h.Class('flex items-center gap-8')],
         [
+          Option.match(entry.chip, {
+            onNone: () => h.empty,
+            onSome: chip => chipView(chip, h),
+          }),
           tag(entry.place, h),
           h.span(
             [h.Class('font-mono text-muted'), h.Style({ fontSize: '12px' })],
@@ -160,7 +202,7 @@ export const view = <Message>(
   config: Config,
   h: HtmlBuilder<Message>,
 ): Html => {
-  const entries = queue(config.tickets, config.attention)
+  const entries = runsQueue(config.runs)
   const more = entries.length - shownAtMost
   return h.div(
     [h.Class('flex flex-col gap-8')],

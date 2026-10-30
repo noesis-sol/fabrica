@@ -34,7 +34,7 @@ import * as Notify from './notify'
 import * as RemoteEngines from './remote-engines'
 import { Screen } from './screen'
 import * as SshPrompts from './ssh-prompts'
-import { EngineAttention, ProjectEvents } from './streams'
+import { EngineAttention, ProjectEvents, ProjectRunView } from './streams'
 
 // The root Model (spec §18.1): the screen shown and any overlay over it, the scope the sidebar chose,
 // the connection, the known engines on other hosts with theirs (§9.1), each stream's latest value, and
@@ -103,6 +103,11 @@ export const Model = Schema.Struct({
   /** The scoped project's run view, while it has a run. */
   runView: Schema.Option(RunView),
   /**
+   * Under All projects, the run view of each project whose row shows a run going, each from its
+   * stream's first snapshot (§18.3); none in a project's own scope, whose run is `runView`.
+   */
+  runViews: Schema.Array(ProjectRunView),
+  /**
    * The events History shows, each project's newest first, from its stream's first snapshot: the
    * scoped project's run's, or under All projects every project's run going (§18.3).
    */
@@ -132,8 +137,9 @@ export const Model = Schema.Struct({
   /** The start of the viewer's day, from the same ticks: kept until the day changes (§7.7). */
   today: Schema.Option(Schema.DateTimeZoned),
   /**
-   * Bumped to watch the scoped project's run view afresh: a run started from the app, or a watch that
-   * ended NoRun while the project's row showed a run going, tried again after a pause.
+   * Bumped to watch the scoped project's run view afresh (under All projects, every project's): a run
+   * started from the app, or a watch that ended NoRun while the project's row showed a run going, tried
+   * again after a pause.
    */
   runWatch: Schema.Int,
   console: ConsoleParts,
@@ -153,6 +159,7 @@ export const initialModel = (flags: Flags): Model => ({
   overlay: Overlay.Closed(),
   scope: Option.none(),
   runView: Option.none(),
+  runViews: [],
   events: [],
   attention: Option.none(),
   engineAttention: [],
