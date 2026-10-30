@@ -11,7 +11,8 @@
   "scripts": {
     "typecheck": "effect-tsgo tsc --noEmit -p tsconfig.json",
     "typecheck:tsc": "tsc --noEmit -p tsconfig.json",
-    "build": "tsgo -p tsconfig.build.json"
+    "build": "tsgo -p tsconfig.build.json",
+    "test:contract": "vitest run test/contract.test.ts"
   },
   "dependencies": {
     "@effect/platform-node-shared": "4.0.0",
@@ -21,6 +22,7 @@
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "1.4.0",
+    "@fabrica/engine": "workspace:*",
     "@fabrica/testkit": "workspace:*"
   }
 }

@@ -247,6 +247,13 @@ git subtree pull --prefix=repos/effect https://github.com/Effect-TS/effect.git e
 git subtree pull --prefix=repos/pi https://github.com/earendil-works/pi.git v<version> --squash
 ```
 
+A Pi upgrade also runs the Pi contract suite (spec §24), the real Pi in RPC mode with the first-party extension
+against a stub model provider; it runs with every package's tests too:
+
+```bash
+pnpm --filter @fabrica/pi-extension test:contract
+```
+
 ## Conventions & Patterns
 
 Code rules (spec §6):
