@@ -1,10 +1,4 @@
-import {
-  Data,
-  Duration,
-  Effect,
-  Option,
-  Schema,
-} from 'effect'
+import { Data, Duration, Effect, Option, Schema } from 'effect'
 import { RpcClientError } from 'effect/rpc'
 import { Socket } from 'effect/socket'
 import { ManagedResource } from 'foldkit'
