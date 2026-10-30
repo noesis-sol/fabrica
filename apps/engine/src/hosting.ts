@@ -2,19 +2,13 @@ import { DateTime, Duration, Effect, Layer, Option } from 'effect'
 import { access, constants } from 'node:fs/promises'
 import * as NodePath from 'node:path'
 
-import {
-  PermissionDecision,
-  type Permissions,
-  coresShare,
-} from '@fabrica/contracts'
+import { coresShare } from '@fabrica/contracts'
 import {
   Agent,
   Checks,
-  Control,
   Daemon,
   Git,
   Process,
-  Projects,
   Proxy,
   Run,
   Secrets,
@@ -158,48 +152,6 @@ export const onHost = (options: {
   zone: DateTime.layerCurrentZoneLocal,
 })
 
-/** The level a permission request is answered by, and how. */
-const decisionAt = (level: Permissions, tool: string): PermissionDecision =>
-  level === 'full'
-    ? PermissionDecision.cases.allow_once.make({})
-    : PermissionDecision.cases.refuse.make({
-        note: Option.some(
-          `permissions: ${level} asks the maintainer about this ${tool} call, and this engine can't ask yet: it refuses what it would ask about`,
-        ),
-      })
-
-/**
- * The gate's permission requests, until the maintainer answers them (fab-mgi.4.16): each answered as
- * its project's `permissions` says. `full` allows the call; `workspace` and `ask`, which would ask the
- * maintainer, refuse it, as they do where the project's settings can't be read.
- */
-export const permissionsAttention: Layer.Layer<
-  Control.Attention,
-  never,
-  Projects.Projects
-> = Layer.effect(
-  Control.Attention,
-  Effect.map(Projects.Projects, projects =>
-    Control.Attention.of({
-      permission: request =>
-        projects.settings(request.project).pipe(
-          Effect.map(settings =>
-            decisionAt(settings.permissions, request.tool),
-          ),
-          Effect.catch(error =>
-            Effect.succeed(
-              PermissionDecision.cases.refuse.make({
-                note: Option.some(
-                  `the project's permissions couldn't be read, so this engine refuses what it would ask the maintainer about: ${error._tag === 'ProjectNotFound' ? 'the project is gone' : error.message}`,
-                ),
-              }),
-            ),
-          ),
-        ),
-    }),
-  ),
-)
-
 /** How often a worker's reaper lists its tree, and how long a terminated tree has before it is killed. */
 const REAPER_POLL = Duration.seconds(1)
 const REAPER_GRACE = Duration.seconds(5)
@@ -237,7 +189,6 @@ export const runHosting = (
         Layer.mergeAll(
           Checks.layer,
           Git.worktreesLayer,
-          permissionsAttention,
           Agent.layer({
             ...config.agents,
             data: config.paths.data,

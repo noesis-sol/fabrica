@@ -28,6 +28,7 @@ import {
   type TicketStatus,
 } from '@fabrica/contracts'
 
+import { isConsequential } from '../attention/consequential'
 import {
   EdgeCycle,
   InvalidTicket,
@@ -830,9 +831,14 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
         yield* Effect.forEach(blocked, requireTicket, { discard: true })
         const id = yield* freeTicketId
         const at = yield* now
+        const choices = Option.fromUndefinedOr(question.choices)
         const asked = yield* Question.makeEffect({
-          choices: Option.fromUndefinedOr(question.choices),
-          consequential: question.consequential,
+          choices,
+          // Marked from its options too, whatever its asker said (§15.2, H53).
+          consequential: isConsequential({
+            consequential: question.consequential,
+            choices,
+          }),
           maintainerOnly: question.maintainerOnly,
           answer: Option.none(),
         }).pipe(Effect.mapError(invalid))

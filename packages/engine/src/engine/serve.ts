@@ -12,6 +12,10 @@ import {
   formatListenAddress,
 } from '@fabrica/contracts'
 
+import {
+  AttentionRequests,
+  layer as attentionLayer,
+} from '../attention/service'
 import { Git, hostLayer as hostGitLayer } from '../git'
 import { layerNodeHost } from '../host'
 import { Projects, layer as projectsLayer } from '../projects/service'
@@ -66,6 +70,7 @@ import { Engine, type EngineFacts, engineLayer } from './service'
  * its own file.
  */
 export type DaemonServices =
+  | AttentionRequests
   | Engine
   | EngineScopes
   | Host
@@ -218,6 +223,10 @@ export const startEngine = Effect.fn('Engine.start')(function* (
   const projects = yield* Layer.build(projectsLayer).pipe(
     Effect.provide(Context.mergeAll(database, files, git)),
   )
+  // Built beside the projects, so the clients and the runs share its requests.
+  const attention = yield* Layer.build(attentionLayer).pipe(
+    Effect.provide(projects),
+  )
   const runs = yield* Layer.build(options.runs ?? runsRefused).pipe(
     Effect.provide(
       Context.add(
@@ -255,6 +264,7 @@ export const startEngine = Effect.fn('Engine.start')(function* (
   const talks = yield* Layer.build(options.talks ?? talksRefused)
   const facts = yield* Layer.build(options.facts ?? layerNodeHost)
   const services: Context.Context<DaemonServices> = Context.mergeAll(
+    attention,
     database,
     scopes,
     engine,

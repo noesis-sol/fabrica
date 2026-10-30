@@ -42,7 +42,7 @@ import {
   runBridge,
   startEngine,
 } from '../src/engine'
-import { attentionHandlers, secretsHandlers, workersHandlers } from '../src/rpc'
+import { secretsHandlers, workersHandlers } from '../src/rpc'
 
 // The engine daemon (spec §7.1, §7.2, §8.1, §8.2, §20.2): an engine started in a temporary data folder,
 // called over a real socket and through the bridge's stdio.
@@ -141,7 +141,7 @@ const modeOf = (path: string) =>
   Effect.promise(() => lstat(path)).pipe(Effect.map(info => info.mode & 0o777))
 
 /** Whether an exit is a defect named `NotImplemented`, as the protocol carries it. */
-/** The groups whose handlers answer `NotImplemented`: every one but those built (Engine, Tokens, Review, Projects, Backlog, Talks, Insights, Runs). */
+/** The groups whose handlers answer `NotImplemented`: every one but those built (Engine, Tokens, Review, Projects, Backlog, Talks, Insights, Runs, Attention). */
 type Unfilled = Exclude<
   ProtocolGroupName,
   | 'engine'
@@ -152,6 +152,7 @@ type Unfilled = Exclude<
   | 'talks'
   | 'insights'
   | 'runs'
+  | 'attention'
 >
 const unfilled = ProtocolGroupName.literals.filter(
   (group): group is Unfilled =>
@@ -162,7 +163,8 @@ const unfilled = ProtocolGroupName.literals.filter(
     group !== 'backlog' &&
     group !== 'talks' &&
     group !== 'insights' &&
-    group !== 'runs',
+    group !== 'runs' &&
+    group !== 'attention',
 )
 
 /** Whether a handler's answer is an effect: the handlers built here need no service. */
@@ -430,7 +432,6 @@ describe('the groups not served yet', () => {
         const calls: Record<Unfilled, Effect.Effect<unknown, unknown>> = {
           secrets: client['credentials.list'](),
           workers: client['worker.release']({ project, ticket }),
-          attention: client['attention.list']({ project: Option.none() }),
         }
         for (const group of unfilled) {
           const exit = yield* Effect.exit(calls[group])
@@ -445,7 +446,6 @@ describe('the groups not served yet', () => {
       const layers: Record<Unfilled, Layer.Layer<never>> = {
         secrets: secretsHandlers,
         workers: workersHandlers,
-        attention: attentionHandlers,
       }
       for (const group of unfilled) {
         const handlers = yield* Layer.build(layers[group])

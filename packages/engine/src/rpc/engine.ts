@@ -13,6 +13,7 @@ import {
 import { Engine } from '../engine/service'
 import { UpdateFailure, updateFailed } from '../update/failure'
 import { Updater } from '../update/service'
+import { nameClient } from './clients'
 import { notImplemented } from './not-implemented'
 
 // The Engine group's handlers (spec §8.1, §8.4, §7.1, §9.2): the handshake, the engine's version,
@@ -61,10 +62,12 @@ export const engineHandlers = EngineRpcs.toLayer(
         )
 
     return EngineRpcs.of({
-      'engine.connect': hello =>
+      'engine.connect': (hello, { client }) =>
         Effect.fromResult(
           negotiate({ client: hello.protocol, engine: protocolVersion }),
         ).pipe(
+          // Its name, kept on its connection, says who answered first (§8.5).
+          Effect.tap(() => Effect.sync(() => nameClient(client, hello))),
           Effect.map(
             protocol =>
               new EngineHello({

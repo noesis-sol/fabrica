@@ -36,7 +36,12 @@ import {
   planResume,
 } from '@fabrica/contracts'
 
-import { checkOwnPassesLayer, layer as controlLayer } from '../control'
+import { AttentionRequests } from '../attention/service'
+import {
+  Attention,
+  checkOwnPassesLayer,
+  layer as controlLayer,
+} from '../control'
 import { storedSettingsDocument } from '../engine/database'
 import { EngineScopes } from '../engine/scopes'
 import { Engine } from '../engine/service'
@@ -189,6 +194,7 @@ export const make = Effect.gen(function* () {
   const engine = yield* Engine
   const scopes = yield* EngineScopes
   const hosting = yield* RunHosting
+  const attention = yield* AttentionRequests
   const sql = yield* SqlClient.SqlClient
   const going = yield* Ref.make<ReadonlyMap<ProjectId, Going>>(new Map())
   const startLock = yield* Semaphore.make(1)
@@ -336,7 +342,11 @@ export const make = Effect.gen(function* () {
           Effect.provide(
             Layer.merge(
               keptLog,
-              controlLayer.pipe(Layer.provideMerge(checkOwnPassesLayer)),
+              controlLayer.pipe(
+                Layer.provideMerge(checkOwnPassesLayer),
+                // Its own side of the attention requests: its allow-for-this-run rules end with it.
+                Layer.provideMerge(Layer.effect(Attention, attention.forRun)),
+              ),
             ),
           ),
           Effect.provideService(WorkGraph, graph),

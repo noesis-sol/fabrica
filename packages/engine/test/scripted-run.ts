@@ -11,11 +11,8 @@ import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-import { PermissionDecision } from '@fabrica/contracts'
-
 import { layer as agentLayer } from '../src/agent'
 import { layer as checksLayer } from '../src/checks'
-import { Attention } from '../src/control'
 import {
   type Git,
   type GitConfig,
@@ -320,14 +317,6 @@ export const routesAt = (url: string): ReadonlyArray<ProviderRoute> => [
   },
 ]
 
-/** Every permission a worker asks for is allowed. */
-const allowing = Layer.succeed(Attention)(
-  Attention.of({
-    permission: () =>
-      Effect.succeed(PermissionDecision.cases.allow_run.make({})),
-  }),
-)
-
 /** The run hosting of a test engine whose agents are the scripted Pi, its data in `data`. */
 export const scriptedHosting = (
   places: ScriptedPlaces,
@@ -357,7 +346,6 @@ export const scriptedHosting = (
         Layer.mergeAll(
           checksLayer,
           Layer.provide(layerWake, noSleepCauses),
-          allowing,
           Layer.succeed(MergeWaits, {
             beforeRetry: Effect.sleep('3 seconds'),
             poll: Effect.sleep('2 seconds'),

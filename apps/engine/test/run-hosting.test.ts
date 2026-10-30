@@ -13,18 +13,8 @@ import * as NodePath from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { beforeAll, describe, expect, it } from '@effect/vitest'
+import { EngineHost, decodeEngineSettings } from '@fabrica/contracts'
 import {
-  EngineHost,
-  PermissionDecision,
-  PermissionShown,
-  ProjectSource,
-  SessionId,
-  TicketId,
-  ToolCallId,
-  decodeEngineSettings,
-} from '@fabrica/contracts'
-import {
-  Control,
   Daemon,
   Process,
   Projects,
@@ -41,24 +31,17 @@ import {
   makeScriptedPlaces,
   routesAt,
   runnerConfig,
-  scriptedSettings,
   takingProvider,
   testSecrets,
 } from '../../../packages/engine/test/scripted-run'
-import {
-  type HostingConfig,
-  agentPlaces,
-  permissionsAttention,
-  runHosting,
-} from '../src/hosting'
+import { type HostingConfig, agentPlaces, runHosting } from '../src/hosting'
 import { DISTRIBUTION_LAYOUT } from '../src/layout'
 import { fabrica } from './tickets-engine'
 
 // `fabrica serve`'s run hosting (spec §7.3, §12, §13): the agents' parts found in the distribution or a
 // dev checkout; a run through it to its merge, its Pi the scripted stub and its provider a loopback
 // server; runs refused, saying why, where an agent's part is missing or the secret store can't open;
-// each worker's share of the cores and its nice value from the engine's settings; and the gate's
-// permission requests answered as the project's `permissions` says.
+// and each worker's share of the cores and its nice value from the engine's settings.
 
 let places: ScriptedPlaces
 
@@ -147,20 +130,6 @@ const hostingNeeds = (paths: Daemon.EnginePaths, settings: object) =>
       Layer.merge(Layer.succeed(Daemon.StartingSettings)(starting)),
     )
   })
-
-/** A permission request from the project's worker, for a command. */
-const requestFor = (project: Control.PermissionRequest['project']) => ({
-  project,
-  ticket: TicketId.make('work-1'),
-  session: SessionId.make('worker-1'),
-  toolCall: ToolCallId.make('call-1'),
-  tool: 'bash',
-  input: { command: 'curl https://example.com' },
-  shown: PermissionShown.cases.command.make({
-    lines: ['curl https://example.com'],
-  }),
-  why: 'a network-reaching command not on the list',
-})
 
 describe('agentPlaces', () => {
   it('finds the agents’ parts in the distribution the engine runs from', () => {
@@ -284,48 +253,6 @@ describe('the run hosting', () => {
           expect(hosting.nice).toStrictEqual(Option.some(nice))
           expect(hosting.sockets).toBe(NodePath.join(paths.socketFolder, 'c'))
         }
-      }).pipe(Effect.scoped),
-  )
-})
-
-describe('permissionsAttention', () => {
-  it.live(
-    'allows a call under permissions: full and refuses one where the level would ask the maintainer',
-    () =>
-      Effect.gen(function* () {
-        const paths = yield* newPaths
-        const services = yield* Layer.build(
-          Layer.provideMerge(
-            permissionsAttention,
-            yield* hostingNeeds(paths, {}),
-          ),
-        )
-        const projects = Context.get(services, Projects.Projects)
-        const attention = Context.get(services, Control.Attention)
-        const decisionFor = (settings: object) =>
-          Effect.gen(function* () {
-            const added = yield* projects.add({
-              source: ProjectSource.cases.path.make({
-                path: makeCheckout(places, settings),
-              }),
-              name: Option.none(),
-            })
-            return yield* attention.permission(requestFor(added.id))
-          })
-
-        expect(
-          yield* decisionFor({ ...scriptedSettings, permissions: 'full' }),
-        ).toStrictEqual(PermissionDecision.cases.allow_once.make({}))
-        for (const level of ['workspace', 'ask'])
-          expect(
-            yield* decisionFor({ ...scriptedSettings, permissions: level }),
-          ).toStrictEqual(
-            PermissionDecision.cases.refuse.make({
-              note: Option.some(
-                `permissions: ${level} asks the maintainer about this bash call, and this engine can't ask yet: it refuses what it would ask about`,
-              ),
-            }),
-          )
       }).pipe(Effect.scoped),
   )
 })
