@@ -493,6 +493,7 @@ const runStarted = Effect.fn('Run.started')(function* (
       Option.map(({ detail }) => detail),
     ),
     slots: project.concurrent,
+    spent: cost.spent,
   })
   // The carried tickets that had finished go back in line to merge, taking no slot (§13.7).
   yield* Effect.forEach(

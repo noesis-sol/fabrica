@@ -7510,6 +7510,34 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
           "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)+(?:\\.[1-9][0-9]*)*$",
           "type": "string",
         },
+        "tokens": {
+          "additionalProperties": true,
+          "properties": {
+            "cache_read": {
+              "minimum": 0,
+              "type": "integer",
+            },
+            "cache_write": {
+              "minimum": 0,
+              "type": "integer",
+            },
+            "input": {
+              "minimum": 0,
+              "type": "integer",
+            },
+            "output": {
+              "minimum": 0,
+              "type": "integer",
+            },
+          },
+          "required": [
+            "input",
+            "output",
+            "cache_write",
+            "cache_read",
+          ],
+          "type": "object",
+        },
       },
       "required": [
         "ticket",
@@ -7518,6 +7546,7 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         "startedAt",
         "action",
         "context",
+        "tokens",
         "steered",
       ],
       "type": "object",

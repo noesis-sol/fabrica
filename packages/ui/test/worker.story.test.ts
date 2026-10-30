@@ -35,6 +35,7 @@ import type { EngineProject } from '../src/app/engine-project'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { Screen } from '../src/app/screen'
+import { RunViewItem } from '../src/app/streams'
 import { makeSubscriptions } from '../src/app/subscriptions'
 import { update } from '../src/app/update'
 import { view } from '../src/app/view'
@@ -86,8 +87,22 @@ const projects = Message.ReceivedProjects({
 
 const decodeRunView = Schema.decodeUnknownSync(Schema.toCodecJson(RunView))
 
-/** The auth project's run: fa-7's worker, 3m 05s in, 42k of a 200k window, the run's 100k tokens spent. */
-const runView = decodeRunView({
+const workerJson = {
+  ticket: fa7,
+  session: 's-7',
+  model: 'claude-opus-5-5',
+  startedAt: at,
+  action: null,
+  context: { used: 42_000, window: 200_000 },
+  tokens: { input: 20_000, output: 5_000, cache_write: 0, cache_read: 0 },
+  steered: false,
+}
+
+/**
+ * The auth project's run: fa-7's worker, 3m 05s in, 42k of a 200k window, 25k of the run's 100k tokens
+ * spent.
+ */
+const runViewJson = {
   header: {
     run: 'r-1',
     project: auth,
@@ -120,24 +135,19 @@ const runView = decodeRunView({
     costUsd: null,
   },
   tickets: [],
-  workers: [
-    {
-      ticket: fa7,
-      session: 's-7',
-      model: 'claude-opus-5-5',
-      startedAt: at,
-      action: null,
-      context: { used: 42_000, window: 200_000 },
-      steered: false,
-    },
-  ],
+  workers: [workerJson],
   queue: { merging: null, train: null, waiting: [] },
   holds: [],
   banners: [],
   attention: [],
   load: null,
   steps: [],
-})
+}
+const runView = decodeRunView(runViewJson)
+
+const decodeRunViewItem = Schema.decodeUnknownSync(
+  Schema.toCodecJson(RunViewItem),
+)
 
 const now = DateTime.makeZonedUnsafe(at + 185_000, { timeZone: 'UTC' })
 
@@ -366,24 +376,9 @@ describe('the ticket on top', () => {
 
 describe('the figures', () => {
   test('its time, its context against the window, and its share of the usage window, an estimate', () => {
-    const spent = received(
-      opened,
-      frame(
-        snapshot({
-          _tag: 'turn_end',
-          at,
-          tokens: {
-            input: 20_000,
-            output: 5_000,
-            cache_write: 0,
-            cache_read: 0,
-          },
-        }),
-      ),
-    )
     scene(
       { update, view },
-      givenScene(spent),
+      givenScene(opened),
       expectScene(
         within(role('complementary', { name: 'Figures' }), text('3m 05s')),
       ).toExist(),
@@ -393,17 +388,56 @@ describe('the figures', () => {
     )
   })
 
-  test('move during a turn: the time with the clock, the context with the run view', () => {
+  test('move during a turn: the time with the clock, the context and the usage share with the run view', () => {
+    // A call of the worker's, counted by the model proxy mid-turn: its row and the run's total move,
+    // with no turn's end in the transcript.
     const later = received(
       opened,
       Message.Ticked({
         now: DateTime.makeZonedUnsafe(at + 245_000, { timeZone: 'UTC' }),
+      }),
+      Message.ReceivedRunView({
+        project: authHere,
+        items: [
+          decodeRunViewItem({
+            _tag: 'patch',
+            seq: 1,
+            value: {
+              totals: {
+                ...runViewJson.totals,
+                tokens: {
+                  input: 75_000,
+                  output: 25_000,
+                  cache_write: 0,
+                  cache_read: 50_000,
+                },
+              },
+              workers: {
+                upsert: [
+                  {
+                    ...workerJson,
+                    context: { used: 64_000, window: 200_000 },
+                    tokens: {
+                      input: 45_000,
+                      output: 15_000,
+                      cache_write: 0,
+                      cache_read: 0,
+                    },
+                  },
+                ],
+                remove: [],
+              },
+            },
+          }),
+        ],
       }),
     )
     scene(
       { update, view },
       givenScene(later),
       expectScene(text('4m 05s')).toExist(),
+      expectScene(text('64k of 200k · 32%')).toExist(),
+      expectScene(text('≈ 16% of Current usage')).toExist(),
     )
   })
 })

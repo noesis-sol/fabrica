@@ -115,6 +115,7 @@ const worker = (ticket: string, action: unknown) => ({
   startedAt: at - 600_000,
   action,
   context: null,
+  tokens: { input: 0, output: 0, cache_write: 0, cache_read: 0 },
   steered: false,
 })
 

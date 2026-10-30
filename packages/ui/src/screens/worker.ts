@@ -92,8 +92,6 @@ export type Draw = typeof Draw.Type
 /** The worker's transcript: what is drawn, what waits for the next draw, and whether it ended. */
 export const Transcript = Schema.Struct({
   blocks: Schema.Array(Block),
-  /** What the worker's ended turns spent, summed; none before one has ended. */
-  spent: Schema.Option(Tokens),
   /** Frames that arrived during a draw's wait, in order. */
   waiting: Schema.Array(TranscriptItem),
   draw: Draw,
@@ -106,7 +104,6 @@ export type Transcript = typeof Transcript.Type
 
 const emptyTranscript: Transcript = {
   blocks: [],
-  spent: Option.none(),
   waiting: [],
   draw: 'Idle',
   ended: false,
@@ -356,17 +353,6 @@ const isTool =
   (block: Block): boolean =>
     block._tag === 'tool' && block.id === id
 
-const addTokens = (sum: Option.Option<Tokens>, more: Tokens): Tokens =>
-  Option.match(sum, {
-    onNone: () => more,
-    onSome: before => ({
-      input: before.input + more.input,
-      output: before.output + more.output,
-      cache_write: before.cache_write + more.cache_write,
-      cache_read: before.cache_read + more.cache_read,
-    }),
-  })
-
 /** The transcript with one entry drawn. A tool call's streamed input only makes its block: it waits whole. */
 const applyEntry = (
   transcript: Transcript,
@@ -447,18 +433,6 @@ const entryBlocks = (
   })
 }
 
-/** What a turn's end adds to the worker's spending; nothing for any other entry. */
-const applySpent = (
-  transcript: Transcript,
-  entry: TranscriptEntry,
-): Transcript =>
-  entry._tag === 'turn_end' && Option.isSome(entry.tokens)
-    ? {
-        ...transcript,
-        spent: Option.some(addTokens(transcript.spent, entry.tokens.value)),
-      }
-    : transcript
-
 /**
  * The transcript with frames' items drawn: a snapshot is the transcript so far, which takes the blocks'
  * place; a patch holds the entries since, which go on after them.
@@ -470,10 +444,8 @@ export const drawItems = (
   Array.reduce(items, transcript, (current, item) =>
     Array.reduce(
       item.value,
-      item._tag === 'snapshot'
-        ? { ...current, blocks: [], spent: Option.none() }
-        : current,
-      (drawn, entry) => applySpent(applyEntry(drawn, entry), entry),
+      item._tag === 'snapshot' ? { ...current, blocks: [] } : current,
+      applyEntry,
     ),
   )
 
@@ -778,7 +750,8 @@ export const startOf = (description: string): string => {
 
 /**
  * The worker's share of the provider's usage window, estimated: the tighter window's use, in the part
- * the worker's spending is of its run's. None where either is unknown or the run has spent nothing.
+ * the worker's spending is of its run's, both as the model proxy counts each call, so that it moves
+ * during a turn (H91). None where either is unknown or the run has spent nothing.
  */
 export const usageShare = (
   spent: Option.Option<Tokens>,
@@ -1072,7 +1045,11 @@ const figuresView = (
     },
   )
   const usage = Option.match(
-    usageShare(model.transcript.spent, inputs.runTokens, inputs.usage),
+    usageShare(
+      Option.map(inputs.row, row => row.tokens),
+      inputs.runTokens,
+      inputs.usage,
+    ),
     {
       onNone: () => '—',
       onSome: ({ share, window }) => `≈ ${percent(share)} of ${window}`,

@@ -30,6 +30,18 @@ const addTokens = (a: Tokens, b: Tokens): Tokens => ({
   cache_read: a.cache_read + b.cache_read,
 })
 
+/** No tokens. */
+export const noTokens: Tokens = {
+  input: 0,
+  output: 0,
+  cache_write: 0,
+  cache_read: 0,
+}
+
+/** `spend`'s tokens, every model's together. */
+export const tokensOf = (spend: Spend): Tokens =>
+  Object.values(spend.tokens).reduce(addTokens, noTokens)
+
 const addUsd = (
   total: Option.Option<number>,
   usd: Option.Option<number>,

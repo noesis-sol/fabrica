@@ -198,6 +198,7 @@ const worker = {
   startedAt: at,
   action: { tool: 'bash', argument: 'scripts/check-own.sh', at },
   context: { used: 14_000, window: 200_000 },
+  tokens: { input: 5, output: 10, cache_write: 15, cache_read: 20 },
   steered: false,
 }
 

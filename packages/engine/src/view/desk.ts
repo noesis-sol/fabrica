@@ -17,7 +17,6 @@ import {
   type SessionId,
   Text,
   type TicketId,
-  type Tokens,
   TranscriptEntry,
   type TranscriptItem,
   WorkerAction,
@@ -104,8 +103,6 @@ export interface WorkerDesk {
   }) => Effect.Effect<void, AgentSendFailed, Scope.Scope>
   /** The workers, in the order dispatched. */
   readonly current: Effect.Effect<ReadonlyArray<WorkerLive>>
-  /** What every worker's turns have spent so far, as their turns' ends say. */
-  readonly tokens: Effect.Effect<Tokens>
   /** Messages the worker; `merging` (its ticket in the merge queue) holds it. None: no such worker. */
   readonly message: (input: {
     readonly ticket: TicketId
@@ -171,23 +168,12 @@ export const actionOf = (
       )
     : Option.none()
 
-const noTokens: Tokens = { input: 0, output: 0, cache_write: 0, cache_read: 0 }
-
-/** `sum` with `more` added. */
-const added = (sum: Tokens, more: Tokens): Tokens => ({
-  input: sum.input + more.input,
-  output: sum.output + more.output,
-  cache_write: sum.cache_write + more.cache_write,
-  cache_read: sum.cache_read + more.cache_read,
-})
-
 /** A run's workers, none yet; transcripts cross once per `flush` (`stream_flush`), waiting in `scope`. */
 export const makeWorkerDesk = Effect.fn('WorkerDesk.make')(function* (options: {
   readonly flush: Duration.Duration
   readonly scope: Scope.Scope
 }) {
   const slots = yield* Ref.make<ReadonlyMap<TicketId, Slot>>(new Map())
-  const spent = yield* Ref.make(noTokens)
 
   const slotOf = (ticket: TicketId) =>
     Effect.map(Ref.get(slots), all => Option.fromUndefinedOr(all.get(ticket)))
@@ -256,14 +242,6 @@ export const makeWorkerDesk = Effect.fn('WorkerDesk.make')(function* (options: {
                 live: { ...entry.live, action },
               }))
             const entries = yield* reader.read(event)
-            for (const entry of entries)
-              if (
-                TranscriptEntry.guards.turn_end(entry) &&
-                Option.isSome(entry.tokens)
-              ) {
-                const more = entry.tokens.value
-                yield* Ref.update(spent, sum => added(sum, more))
-              }
             yield* slot.feed.write(entries)
             if (entries.some(TranscriptEntry.guards.turn_end))
               yield* slot.feed.flush
@@ -416,7 +394,6 @@ export const makeWorkerDesk = Effect.fn('WorkerDesk.make')(function* (options: {
     enter,
     converse,
     current,
-    tokens: Ref.get(spent),
     message,
     interrupt,
     release,

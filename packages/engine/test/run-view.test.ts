@@ -31,6 +31,7 @@ import {
 } from '@fabrica/contracts'
 
 import type { Agent } from '../src/agent'
+import { noSpend } from '../src/cost'
 import type { RunSnapshot, RunStateShape } from '../src/run'
 import {
   Delivered,
@@ -94,6 +95,7 @@ const inputsOf = (overrides: Partial<ViewInputs> = {}): ViewInputs => ({
   workers: [],
   steps: [],
   doneToday: 0,
+  spent: new Map(),
   tokens: { input: 0, output: 0, cache_write: 0, cache_read: 0 },
   holds: [],
   attention: [],
@@ -450,6 +452,10 @@ describe('the run view', () => {
           line: Effect.succeed({ merging: Option.none(), waiting: [] }),
           mergesWait: Effect.succeed(Option.none()),
           slots: 3,
+          spent: Effect.succeed({
+            tickets: new Map(),
+            run: { workers: noSpend, untied: noSpend },
+          }),
         })
         yield* TestClock.adjust(interval)
         const [patch] = patchesOf(yield* taken)

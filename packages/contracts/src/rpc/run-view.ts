@@ -77,6 +77,7 @@ export class Totals extends Schema.Class<Totals>('Totals')({
    * whichever run did them (`counts.done` is this run's alone): the stats row's Done today.
    */
   doneToday: Count,
+  /** What the run's workers have spent, as the model proxy counts each call to a ticket (§12.9). */
   tokens: Tokens,
   costUsd: Schema.OptionFromNullOr(Usd),
 }) {}
@@ -114,6 +115,11 @@ export class WorkerRow extends Schema.Class<WorkerRow>('WorkerRow')({
   context: Schema.OptionFromNullOr(
     Schema.Struct({ used: Count, window: Ordinal }),
   ),
+  /**
+   * What its ticket's sessions have spent in the run so far, as the model proxy counts each call
+   * (§12.9): it moves during a turn, as the run's `Totals.tokens` does.
+   */
+  tokens: Tokens,
   /** Messaged by the maintainer: the engine sends it nothing until released (§18.4). */
   steered: Schema.Boolean,
 }) {}

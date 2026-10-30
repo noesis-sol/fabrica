@@ -115,6 +115,7 @@ const runView = decodeRunView({
       startedAt: at - 600_000,
       action: null,
       context: null,
+      tokens: { input: 0, output: 0, cache_write: 0, cache_read: 0 },
       steered: false,
     },
   ],

@@ -23,6 +23,7 @@ import {
   factsOf,
 } from '@fabrica/contracts'
 
+import { noTokens } from '../cost'
 import type { WorkerLive } from './desk'
 
 // The run view's projection (spec §8.3, §18.3): the console's parts of a run made from the plain values
@@ -67,6 +68,9 @@ export interface ViewInputs {
   readonly workers: ReadonlyArray<WorkerLive>
   readonly steps: ReadonlyArray<EngineStep>
   readonly doneToday: number
+  /** What each ticket's sessions spent in the run, as the model proxy counted their calls. */
+  readonly spent: ReadonlyMap<TicketId, Tokens>
+  /** What the run's workers spent, as the model proxy counted their calls. */
   readonly tokens: Tokens
   readonly holds: ReadonlyArray<Hold>
   readonly attention: ReadonlyArray<AttentionRequest>
@@ -257,6 +261,7 @@ export const projectView = (
           startedAt: worker.startedAt,
           action: worker.action,
           context: Option.none(),
+          tokens: inputs.spent.get(worker.ticket) ?? noTokens,
           steered: worker.steered,
         }),
     )

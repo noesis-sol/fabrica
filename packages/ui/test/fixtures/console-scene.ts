@@ -234,6 +234,7 @@ const workerRow = (ticket: string, tool: string, argument: string) => ({
   startedAt: at - minutes(30),
   action: { tool, argument, at: at - 5_000 },
   context: null,
+  tokens: { input: 0, output: 0, cache_write: 0, cache_read: 0 },
   steered: false,
 })
 

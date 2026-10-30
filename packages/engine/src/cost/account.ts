@@ -53,6 +53,14 @@ export interface CostAccount {
   readonly ticket: (ticket: TicketId) => Effect.Effect<Spend>
   /** What the run spent so far. */
   readonly run: Effect.Effect<RunSpend>
+  /** What each ticket and the run spent so far, read at once: the run view's figures (§18.3, §18.4). */
+  readonly spent: Effect.Effect<Spent>
+}
+
+/** What each ticket and the run spent so far. */
+export interface Spent {
+  readonly tickets: ReadonlyMap<TicketId, Spend>
+  readonly run: RunSpend
 }
 
 interface State {
@@ -144,6 +152,7 @@ export const makeCostAccount = Effect.fn('CostAccount.make')(function* (
         current => current.tickets.get(ticket) ?? noSpend,
       ),
     run: Effect.map(Ref.get(state), current => current.run),
+    spent: Effect.map(Ref.get(state), ({ tickets, run }) => ({ tickets, run })),
   } satisfies CostAccount
 })
 

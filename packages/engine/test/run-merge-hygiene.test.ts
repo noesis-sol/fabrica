@@ -197,6 +197,7 @@ describe("the run view's banners", () => {
     tickets: [],
     facts: new Map(),
     slots: 2,
+    spent: new Map(),
     line: { merging: Option.none(), waiting: [] },
     mergesWait,
     workers: [],

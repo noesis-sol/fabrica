@@ -9,6 +9,7 @@ import {
   factsOf,
 } from '@fabrica/contracts'
 
+import { type Spent, noTokens, tokensOf } from '../cost'
 import type { MergeLine } from '../merge'
 import type { RunStateShape } from '../run/state'
 import { type WorkGraphShape, doneToday } from '../workgraph'
@@ -17,20 +18,21 @@ import { type RunViewItem, makeViewFeed } from './feed'
 import { type TicketFacts, type ViewInputs, projectView } from './project'
 import { type Steps, makeSteps } from './steps'
 
-// A run's view (spec §8.3, H40, H80): what the run writes into it (its state and merge line once its
-// start checks pass, the work graph's facts of the tickets it reads, its steps, its workers), and the
-// fiber that writes the view from them: each `view_interval`, it reads every input once, projects the
-// view keeping each part that says what it said, and publishes only a view that changed. Done today is
-// read from the work graph as the view starts, on each change of the work graph, and again as the
-// host's day changes, under its zone. The view lives in the scope it is made in, and ends with it.
+// A run's view (spec §8.3, H40, H80): what the run writes into it (its state, merge line and cost
+// account once its start checks pass, the work graph's facts of the tickets it reads, its steps, its
+// workers), and the fiber that writes the view from them: each `view_interval`, it reads every input
+// once, projects the view keeping each part that says what it said, and publishes only a view that
+// changed. Done today is read from the work graph as the view starts, on each change of the work
+// graph, and again as the host's day changes, under its zone. The view lives in the scope it is made
+// in, and ends with it.
 
 /** What a run writes into its view. */
 export interface RunViewSources {
   readonly steps: Steps
   readonly workers: WorkerDesk
   /**
-   * The run's state, its merge queue's line, why the ticket merging waits (`MERGES_WAIT`) and its
-   * slots, once its start checks pass.
+   * The run's state, its merge queue's line, why the ticket merging waits (`MERGES_WAIT`), its slots
+   * and what its tickets spent (its cost account's), once its start checks pass.
    */
   readonly attach: (parts: Attached) => Effect.Effect<void>
   /** The work graph's facts of tickets the run reads: their type, priority and whether solo. */
@@ -55,6 +57,7 @@ interface Attached {
   readonly line: Effect.Effect<MergeLine>
   readonly mergesWait: Effect.Effect<Option.Option<string>>
   readonly slots: number
+  readonly spent: Effect.Effect<Spent>
 }
 
 /** Sources nothing has written into yet, their transcripts crossing once per `flush`. */
@@ -201,6 +204,7 @@ export const makeRunView = Effect.fn('RunView.make')(function* (options: {
       steps,
       doneNow,
       known,
+      spent,
     ] = yield* Effect.all(
       [
         options.header,
@@ -225,6 +229,10 @@ export const makeRunView = Effect.fn('RunView.make')(function* (options: {
         sources.steps.current,
         Ref.get(done),
         Ref.get(facts),
+        Option.match(parts, {
+          onNone: () => Effect.succeed(Option.none<Spent>()),
+          onSome: ({ spent: read }) => Effect.map(read, Option.some),
+        }),
       ],
       { concurrency: 'unbounded' },
     )
@@ -251,7 +259,16 @@ export const makeRunView = Effect.fn('RunView.make')(function* (options: {
       workers,
       steps,
       doneToday: doneNow,
-      tokens: yield* sources.workers.tokens,
+      // Nothing is spent before the start checks pass: no session is granted a token before.
+      spent: Option.match(spent, {
+        onNone: () => new Map(),
+        onSome: ({ tickets }) =>
+          new Map([...tickets].map(([ticket, of]) => [ticket, tokensOf(of)])),
+      }),
+      tokens: Option.match(spent, {
+        onNone: () => noTokens,
+        onSome: ({ run }) => tokensOf(run.workers),
+      }),
       // The holds as one state, the attention requests and the host's load come with their services.
       holds: [],
       attention: [],
