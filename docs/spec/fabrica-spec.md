@@ -277,7 +277,7 @@ The engine's data folder (`<data>`): `~/Library/Application Support/fabrica/` on
 
 A project's own files are under `<repo>/.fabrica/` (§10.2).
 
-The app's own data (Chromium's storage, the theme its window opens in) is in Electron's userData, which a packaged app names after itself: `~/Library/Application Support/solutions.noesis.fabrica/` on macOS, after its ID, since `Fabrica` would be the engine's `fabrica` on a case-insensitive disk; `~/.config/Fabrica/` on Linux and `%APPDATA%\Fabrica\` on Windows. A development build keeps Electron's own, named after its package.
+The app's own data (Chromium's storage, the theme its window opens in) is in Electron's userData, which a packaged app names after itself: `~/Library/Application Support/solutions.noesis.fabrica/` on macOS, after its ID, since `Fabrica` would be the engine's `fabrica` on a case-insensitive disk; `~/.config/Fabrica/` on Linux and `%APPDATA%\Fabrica\` on Windows. A development build keeps Electron's own, named after its package. Either keeps the folder Chromium's `--user-data-dir` names, which is how the smoke tests keep the app under test from the user's own on macOS, where Electron's folder for applications' data ignores HOME (§22.3).
 
 ### 7.3 Projects and runs
 

@@ -14,6 +14,7 @@ describe('the app’s data folder', () => {
         platform: 'darwin',
         packaged: true,
         appData: '/Users/ada/Library/Application Support',
+        given: Option.none(),
       }),
     ).toEqual(
       Option.some(
@@ -28,6 +29,7 @@ describe('the app’s data folder', () => {
         platform: 'linux',
         packaged: true,
         appData: '/home/ada/.config',
+        given: Option.none(),
       }),
     ).toEqual(Option.some('/home/ada/.config/Fabrica'))
     expect(
@@ -35,6 +37,7 @@ describe('the app’s data folder', () => {
         platform: 'win32',
         packaged: true,
         appData: 'C:\\Users\\ada\\AppData\\Roaming',
+        given: Option.none(),
       }),
     ).toEqual(Option.some('C:\\Users\\ada\\AppData\\Roaming\\Fabrica'))
   })
@@ -45,6 +48,7 @@ describe('the app’s data folder', () => {
         platform: 'darwin',
         packaged: false,
         appData: '/Users/ada/Library/Application Support',
+        given: Option.none(),
       }),
     ).toEqual(Option.none())
   })

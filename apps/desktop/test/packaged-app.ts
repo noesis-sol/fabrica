@@ -8,10 +8,15 @@ import { _electron } from 'playwright-core'
 
 import { Toolbox, type Tools, layerToolbox } from '@fabrica/testkit'
 
+import { appId, userDataSwitch } from '../src/main/dataFolder'
+
 // What the packaged app's tests share (spec §22.3, §24): the smoke test (smoke.test.ts) and the update
 // test (update-smoke.test.ts) each launch a packaged app through Playwright's Electron support, in a home
 // folder of the test's, with the data folders under it, so it reaches no engine of the machine's and
-// leaves nothing behind; on POSIX its PATH is a toolbox holding git, which the engine runs.
+// leaves nothing behind; on POSIX its PATH is a toolbox holding git, which the engine runs. On macOS the
+// app's own data folder is named by `--user-data-dir` (dataFolderArgs): Electron's appData there is the
+// user's whatever HOME says, and an app of the user's running, or another test's, would hold the single-
+// instance lock in it, so the app under test quits at launch, or waits 20 s on a holder that doesn't answer.
 
 declare module 'vitest' {
   export interface ProvidedContext {
@@ -77,6 +82,17 @@ export const appEnv = (options: {
     }
   })
 
+/**
+ * The switches that keep the app's own data folder in `home` (src/main/dataFolder.ts): on macOS, the folder
+ * the app would have with `home` its user's; elsewhere none, appEnv's folders doing it.
+ */
+export const dataFolderArgs = (home: string): ReadonlyArray<string> =>
+  process.platform === 'darwin'
+    ? [
+        `--${userDataSwitch}=${NodePath.join(home, 'Library', 'Application Support', appId)}`,
+      ]
+    : []
+
 /** The packaged app `executable` launched with `args`, killed with the scope if the test didn't close it. */
 export const launch = (options: {
   readonly executable: string
@@ -105,7 +121,8 @@ export const launch = (options: {
 
 /**
  * `check`'s value once it holds, checked every 100 ms; after `within` (a step's time by default), its
- * value then, for the test to fail on.
+ * value then, for the test to fail on. On the live clock: under the TestClock `it.effect` gives by default,
+ * a check that doesn't hold at once is never checked again, and the test waits out its timeout.
  */
 export const eventually = <A>(
   check: Effect.Effect<A>,

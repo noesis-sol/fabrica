@@ -10,6 +10,7 @@ import { bundledLauncher } from '../src/main/local-engine'
 import { noUpdateCheck } from '../src/main/updates'
 import {
   appEnv,
+  dataFolderArgs,
   eventually,
   homeFolder,
   launch,
@@ -96,7 +97,8 @@ describe('the packaged app', () => {
     expect(app, 'FABRICA_SMOKE_APP names no app').not.toBe('')
   })
 
-  layer(toolbox)(it => {
+  // The app and its engine run on the live clock, which eventually's checks wait on.
+  layer(toolbox, { excludeTestServices: true })(it => {
     it.effect(
       'launches, reaches its engine and closes with no process left',
       () =>
@@ -106,7 +108,7 @@ describe('the packaged app', () => {
           const env = yield* appEnv({ tools, home, host })
           const { electron } = yield* launch({
             executable: app,
-            args: [`--${noUpdateCheck}`],
+            args: [`--${noUpdateCheck}`, ...dataFolderArgs(home)],
             env,
           })
           const page = yield* Effect.promise(() => electron.firstWindow())

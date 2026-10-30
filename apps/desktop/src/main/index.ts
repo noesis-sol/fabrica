@@ -43,7 +43,7 @@ import { askpassArguments } from '../connection/askpass'
 import { definedOf } from '../connection/env'
 import { ConnectionTarget, encodeTarget } from '../connection/target'
 import { FolderPick, UpdateStatus, channels } from '../preload/api'
-import { appDataFolder } from './dataFolder'
+import { appDataFolder, userDataSwitch } from './dataFolder'
 import { checkEngineOn, engineSource, installEngineOn } from './engine-install'
 import {
   type MainIpc,
@@ -102,6 +102,10 @@ Option.map(
     platform: process.platform,
     packaged: app.isPackaged,
     appData: app.getPath('appData'),
+    given: Option.liftPredicate(
+      app.commandLine.getSwitchValue(userDataSwitch),
+      folder => folder !== '',
+    ),
   }),
   folder => app.setPath('userData', folder),
 )

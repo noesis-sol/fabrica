@@ -314,7 +314,8 @@ describe('the published app', () => {
     expect(version, 'FABRICA_UPDATE_VERSION names no version').not.toBe('')
   })
 
-  layer(toolbox)(it => {
+  // The app and the update's download run on the live clock, which eventually's checks wait on.
+  layer(toolbox, { excludeTestServices: true })(it => {
     it.effect('updates itself to the release just published', () =>
       Effect.gen(function* () {
         const tools = yield* Toolbox
