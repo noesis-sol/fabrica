@@ -16,6 +16,7 @@ import {
   ModelOverride,
   type RunId,
   type SessionId,
+  type SetAsideReason,
   type Ticket,
   type TicketId,
 } from '@fabrica/contracts'
@@ -44,6 +45,7 @@ import {
 import { record } from './records'
 import { setUpWorktree } from './setup'
 import type { Started } from './start-checks'
+import type { Attempt } from './supervisor'
 
 // One dispatch of a ticket (spec §13.2, §12.1, §12.9): claimed, given a worktree from Base (created,
 // or reused and rebased), set up, and handed to a fresh worker, a Pi session of its own, with its
@@ -56,6 +58,8 @@ import type { Started } from './start-checks'
 export type WorkerTurn = Data.TaggedEnum<{
   /** The ticket's first: claimed, its worktree prepared and set up, a new session with the first prompt. */
   First: {}
+  /** Started again in its worktree as it is, a new session with the first prompt: another model's (§12.5). */
+  Again: { readonly worktree: Worktree }
   /** Handed back (§13.6): its worktree as it was, the session Pi kept resumed, with `prompt`. */
   HandBack: {
     readonly worktree: Worktree
@@ -86,6 +90,10 @@ export type WorkerEnd = Data.TaggedEnum<{
   ToolFailed: { readonly tool: string; readonly reason: string }
   /** Its worktree's setup failed (§13.8). */
   SetupFailed: { readonly detail: string }
+  /** Its agent didn't start: Pi's spawn or handshake (§12.8's `StartFailed`). */
+  NotStarted: { readonly reason: string }
+  /** Its supervision set it aside (§12.8, §14.5): past `ticket_limit`, stuck twice, over its budget. */
+  SetAside: { readonly reason: SetAsideReason; readonly note: string }
   /** It couldn't be dispatched or its worker didn't start: the claim, git, the control socket, Pi. */
   Failed: { readonly reason: string }
 }>
@@ -288,16 +296,18 @@ const firstWorktree = Effect.fn('Run.firstWorktree')(function* (
 })
 
 /**
- * Dispatches `ticket` under `session` for `turn`: its first claims it, prepares and sets up its
- * worktree; a hand-back takes its worktree as it was. Each opens its control channel and proxy token,
- * starts its agent (a hand-back resuming its session) with its prompt and waits for the turn to
- * settle. Its end is the first outcome its session published that ends a turn; none, it is unfinished.
+ * Dispatches `ticket` under `session` for its attempt's turn: its first claims it, prepares and sets
+ * up its worktree; another go or a hand-back takes its worktree as it is. Each opens its control
+ * channel and proxy token, starts its agent on the attempt's model (a hand-back resuming its session)
+ * with its prompt and waits for the turn to settle, telling its watcher its worktree, its session and
+ * its agent's events. Its end is the first outcome its session published that ends a turn; none, it is
+ * unfinished.
  */
 export const runWorker = Effect.fn('Run.worker')(function* (
   context: WorkerContext,
   ticket: TicketId,
   session: SessionId,
-  turn: WorkerTurn,
+  { turn, model, watcher }: Attempt,
 ) {
   const control = yield* ControlServer
   const proxy = yield* ModelProxy
@@ -307,22 +317,24 @@ export const runWorker = Effect.fn('Run.worker')(function* (
 
   const ready = yield* WorkerTurn.$match(turn, {
     First: () => firstWorktree(context, ticket, session),
+    Again: ({ worktree: kept }) => Effect.succeed(Result.succeed(kept)),
     HandBack: ({ worktree: kept }) => Effect.succeed(Result.succeed(kept)),
   })
   if (Result.isFailure(ready))
     return WorkerEnd.SetupFailed({ detail: ready.failure })
   const worktree = ready.success
+  yield* watcher.prepared(worktree)
 
-  const { ticket: shown, prompt: first } = yield* promptOf(ticket, worktree)
+  const { prompt: first } = yield* promptOf(ticket, worktree)
   const [prompt, resume] = WorkerTurn.$match(turn, {
     First: () => [first, Option.none<string>()] as const,
+    Again: () => [first, Option.none<string>()] as const,
     HandBack: ({ session: kept, prompt: handBack }) =>
       [
         Option.isSome(kept) ? handBack : `${first}\n\n${handBack}`,
         kept,
       ] as const,
   })
-  const model = modelOf(shown, started)
   const channel = yield* control.open({
     project: config.project,
     ticket,
@@ -380,6 +392,11 @@ export const runWorker = Effect.fn('Run.worker')(function* (
     projectTrusted: config.projectTrusted,
     nice: config.nice,
   })
+  yield* watcher.started(agent.session.file)
+  yield* (yield* agent.events).pipe(
+    Stream.runForEach(watcher.heard),
+    Effect.forkScoped,
+  )
   yield* agent.prompt(prompt)
   // The outcome is published before its tool answers, and the turn settles after: it is here.
   const outcome = yield* Deferred.poll(ended)
@@ -395,10 +412,13 @@ export const dispatchWorker = (
   context: WorkerContext,
   ticket: TicketId,
   session: SessionId,
-  turn: WorkerTurn,
+  attempt: Attempt,
 ) =>
-  runWorker(context, ticket, session, turn).pipe(
+  runWorker(context, ticket, session, attempt).pipe(
     Effect.scoped,
+    Effect.catchTag('AgentStartFailed', error =>
+      Effect.succeed(WorkerEnd.NotStarted({ reason: error.message })),
+    ),
     Effect.catch(error =>
       Effect.succeed(WorkerEnd.Failed({ reason: error.message })),
     ),

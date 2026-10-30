@@ -20,6 +20,7 @@ import {
   type MergeStep,
   Phase,
   SessionId,
+  type SetAsideReason,
   type StopKind,
   type Ticket,
   type TicketId,
@@ -36,6 +37,8 @@ import {
   MergeUpdate,
   make as makeMergeQueue,
 } from '../merge'
+import { HandBackClock } from '../merge/handbacks'
+import { ModelProxy } from '../proxy'
 import {
   RunLog,
   dispatchingLine,
@@ -71,7 +74,7 @@ import {
   makeRunState,
   slotsTaken,
 } from './state'
-import { makeSupervision } from './supervisor'
+import { makeSupervision, toolFollowUp, waitingHolds } from './supervisor'
 import {
   Verified,
   type VerifierRound,
@@ -85,6 +88,7 @@ import {
   WorkerEnd,
   WorkerTurn,
   dispatchWorker,
+  modelOf,
 } from './worker'
 
 // The run loop (spec §13, §13.1, §13.2, §13.5, §13.9, H58): one run of a project. Its start checks
@@ -305,7 +309,16 @@ const runStarted = Effect.fn('Run.started')(function* (
     sharedFiles: project.shared_files,
   })
   const wakes = control.wakes
-  const supervision = yield* makeSupervision
+  const supervision = yield* makeSupervision({
+    proxy: yield* (yield* ModelProxy).events,
+    holds: waitingHolds(project.usage_limit_retry),
+    clock: yield* HandBackClock,
+    ticketLimit: project.ticket_limit,
+    fallbacks: project.model_fallbacks.map(choice => ({
+      provider: choice.provider,
+      modelId: choice.model,
+    })),
+  })
   const workers = yield* FiberSet.make<void>()
   const context: WorkerContext = {
     config,
@@ -336,11 +349,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     snapshot.tickets.get(ticket)?.title ?? ticket
 
   /** Sets the ticket aside in the work graph with `note`, then in the run, as `reason`. */
-  const setAside = (
-    ticket: TicketId,
-    reason: 'UNFINISHED' | 'TOOL_DEFECT',
-    note: string,
-  ) =>
+  const setAside = (ticket: TicketId, reason: SetAsideReason, note: string) =>
     Effect.gen(function* () {
       yield* tracked(
         Effect.andThen(
@@ -563,19 +572,45 @@ const runStarted = Effect.fn('Run.started')(function* (
               'its worker settled with no outcome: no finish, defer, wait_for or ask_question',
             ),
           ),
+        // Set aside, with a follow-up filed about the tool (§12.8).
         ToolFailed: ({ tool, reason }) =>
-          Effect.andThen(
-            settled(ticket, 'none', `${tool} failed`),
-            setAside(
+          Effect.gen(function* () {
+            yield* settled(ticket, 'none', `${tool} failed`)
+            yield* tracked(
+              graph.fileDiscovered({
+                from: ticket,
+                link: 'discovered_from',
+                ticket: {
+                  type: 'bug',
+                  ...toolFollowUp({ ticket, tool, reason }),
+                },
+                actor,
+              }),
+            )
+            yield* setAside(
               ticket,
               'TOOL_DEFECT',
               `${tool} failed in the engine: ${reason}`,
-            ),
+            )
+          }),
+        SetAside: ({ reason, note }) =>
+          Effect.andThen(
+            settled(ticket, 'none', `set aside: ${reason}`),
+            setAside(ticket, reason, note),
           ),
         SetupFailed: ({ detail }) =>
           Effect.andThen(
             tracked(graph.release({ id: ticket, actor })),
             setupFailed(ticket, detail),
+          ),
+        NotStarted: ({ reason }) =>
+          Effect.andThen(
+            Effect.ignore(graph.release({ id: ticket, actor })),
+            setAside(
+              ticket,
+              'TOOL_DEFECT',
+              `its worker couldn't start: ${reason}`,
+            ),
           ),
         Failed: ({ reason }) =>
           Effect.andThen(
@@ -617,15 +652,19 @@ const runStarted = Effect.fn('Run.started')(function* (
    * last to the merge queue unverified; a disagreement handed back for the worker to ask the
    * maintainer. The verifier off, a finish goes to the merge queue as it is.
    */
-  const workOn = (ticket: TicketId, session: SessionId) =>
+  const workOn = (taken: Ticket, session: SessionId) =>
     Effect.gen(function* () {
+      const ticket = taken.id
       const rounds: Array<VerifierRound> = []
       let turn: WorkerTurn = WorkerTurn.First()
       while (true) {
-        const end = yield* supervision.watch(
+        const end = yield* supervision.watch({
           ticket,
-          dispatchWorker(context, ticket, session, turn),
-        )
+          session,
+          turn,
+          model: modelOf(taken, started),
+          run: attempt => dispatchWorker(context, ticket, session, attempt),
+        })
         if (!WorkerEnd.$is('Finished')(end))
           return yield* Effect.uninterruptible(workerEnded(ticket, end))
         yield* settled(ticket, 'finish', 'finished')
@@ -965,7 +1004,7 @@ const runStarted = Effect.fn('Run.started')(function* (
       const session = yield* drawSession
       yield* FiberSet.run(
         workers,
-        workOn(ticket.id, session).pipe(
+        workOn(ticket, session).pipe(
           Effect.catchCause(cause =>
             Cause.hasInterruptsOnly(cause)
               ? Effect.void
