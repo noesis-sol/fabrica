@@ -700,7 +700,7 @@ jobs:
           if [ "$OS" = macos ]; then
             ditto -x -k "$RUNNER_TEMP/earlier-app/$asset" "$RUNNER_TEMP/earlier-bundle"
             if ! codesign --verify --deep --strict \
-              -R='=anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' \
+              -R '=anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' \
               "$RUNNER_TEMP/earlier-bundle/Fabrica.app"; then
               skip "$tag's macOS app isn't signed with a Developer ID: Squirrel.Mac updates only a signed app"
             fi
