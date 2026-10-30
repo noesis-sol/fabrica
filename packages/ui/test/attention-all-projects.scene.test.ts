@@ -20,7 +20,7 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { update } from '../src/app/update'
@@ -82,10 +82,13 @@ const known: Model = update(
       protocol: protocolVersion,
     }),
     attention: Option.some([permission, task]),
+    engineAttention: [
+      { engine: localEngineName, requests: [permission, task] },
+    ],
   },
   Message.ReceivedProjects({
     engine,
-    name: 'local',
+    name: localEngineName,
     items: [
       {
         _tag: 'snapshot',
@@ -119,8 +122,9 @@ describe('Needs your attention under All projects', () => {
       { update, view },
       given({
         ...known,
-        scope: Option.some(alpha),
+        scope: Option.some({ engine: localEngineName, project: alpha }),
         attention: Option.some([permission]),
+        engineAttention: [{ engine: localEngineName, requests: [permission] }],
       }),
       expectScene(role('listitem', { name: 'Approval fa-7' })).toExist(),
       expectScene(cardChip('Approval fa-7')).toBeAbsent(),

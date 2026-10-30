@@ -226,9 +226,7 @@ export const RunQuery = Command.define('RunQuery', {
   },
   messages: [Message.SucceededQuery, Message.FailedQuery],
   execute: ({ panel, scope, query }) =>
-    requestScope(scope, client =>
-      client.rpc['insights.query']({ query }),
-    ).pipe(
+    requestScope(scope, client => client.rpc['insights.query']({ query })).pipe(
       Effect.map(table =>
         Message.SucceededQuery({ panel, scope, query, table }),
       ),
@@ -279,9 +277,7 @@ const asked = (model: Model, scope: Scope): Return => {
       ...Panel.literals.flatMap(panel =>
         Option.match(tables[panel].ask, {
           onNone: () => [],
-          onSome: query => [
-            RunQuery({ panel, scope: scope.project, query }),
-          ],
+          onSome: query => [RunQuery({ panel, scope: scope.project, query })],
         }),
       ),
     ],
@@ -292,8 +288,7 @@ const asked = (model: Model, scope: Scope): Return => {
 export const opened = (
   model: Model,
   scope: Option.Option<EngineProject>,
-): Return =>
-  asked(model, { project: scope, tokensBy: model.tokensBy })
+): Return => asked(model, { project: scope, tokensBy: model.tokensBy })
 
 /** Whether `query`, asked of `scope`'s engine, is still what `panel` shows. */
 const shown = (

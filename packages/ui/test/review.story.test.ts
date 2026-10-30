@@ -27,7 +27,8 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { type Model, initialModel } from '../src/app/model'
 import { update } from '../src/app/update'
 import { view } from '../src/app/view'
@@ -41,6 +42,9 @@ import themesCss from '../src/theme/themes.css?raw'
 // diff or a project no longer shown are dropped; a file Monaco can't draw is shown as its patch.
 
 const project = ProjectId.make('p-1')
+
+/** The project, named with this machine's engine, which holds it. */
+const scoped: EngineProject = { engine: localEngineName, project }
 const ticket = TicketId.make('fa-11')
 const run = RunId.make('r-7')
 
@@ -94,8 +98,8 @@ const report = Report.make({
   writtenAt: DateTime.makeUnsafe(at),
 })
 
-const ticketSubject = Review.Subject.Ticket({ project, ticket })
-const runSubject = Review.Subject.Run({ project, run })
+const ticketSubject = Review.Subject.Ticket({ project: scoped, ticket })
+const runSubject = Review.Subject.Run({ project: scoped, run })
 
 const connected: Model = {
   ...initialModel({ platform: 'darwin', release: '0.0.0' }),
@@ -104,7 +108,7 @@ const connected: Model = {
     release: '0.1.0',
     protocol: protocolVersion,
   }),
-  scope: Option.some(project),
+  scope: Option.some(scoped),
 }
 
 const reviewCard = Schema.decodeUnknownSync(
@@ -150,13 +154,17 @@ describe("a set-aside ticket's diff", () => {
   test("its card's Review opens its branch diff, each file in Monaco's diff view", () => {
     scene(
       { update, view },
-      givenScene({ ...connected, attention: Option.some([reviewCard]) }),
+      givenScene({
+        ...connected,
+        attention: Option.some([reviewCard]),
+        engineAttention: [{ engine: localEngineName, requests: [reviewCard] }],
+      }),
       click(role('button', { name: 'Review' })),
       expectScene(role('heading', { name: 'Review', level: 1 })).toExist(),
       SceneCommand.expectExact(
         Review.LoadDiff({ subject: ticketSubject }),
-        Review.LoadReport({ project }),
-        Review.LoadLog({ project }),
+        Review.LoadReport({ project: scoped }),
+        Review.LoadLog({ project: scoped }),
       ),
       expectScene(text('Reading the diff…')).toExist(),
       SceneCommand.resolveAll(
@@ -169,12 +177,12 @@ describe("a set-aside ticket's diff", () => {
         ],
         [
           Review.LoadReport,
-          Review.Message.SucceededLoadReport({ project, report }),
+          Review.Message.SucceededLoadReport({ project: scoped, report }),
         ],
         [
           Review.LoadLog,
           Review.Message.SucceededLoadLog({
-            project,
+            project: scoped,
             lines: ['12:00 dispatched fa-11', '12:20 set aside fa-11'],
           }),
         ],
@@ -206,7 +214,9 @@ describe("a set-aside ticket's diff", () => {
   test('a ticket with no branch says why; an answer for a diff no longer shown is dropped', () => {
     story(
       Review.update,
-      given(Review.openTicket(Review.init(), { project, ticket }).model),
+      given(
+        Review.openTicket(Review.init(), { project: scoped, ticket }).model,
+      ),
       message(
         Review.Message.FailedLoadDiff({
           subject: ticketSubject,
@@ -221,7 +231,7 @@ describe("a set-aside ticket's diff", () => {
           ),
         )
       }),
-      message(Review.Message.RequestedRunDiff({ project, run })),
+      message(Review.Message.RequestedRunDiff({ project: scoped, run })),
       Command.expectExact(Review.LoadDiff({ subject: runSubject })),
       // The ticket's diff, answering late, is not the run's.
       Command.resolve(
@@ -239,7 +249,10 @@ describe("a set-aside ticket's diff", () => {
   })
 
   test("a file Monaco can't draw is shown as its patch, with why", () => {
-    const opened = Review.openTicket(Review.init(), { project, ticket }).model
+    const opened = Review.openTicket(Review.init(), {
+      project: scoped,
+      ticket,
+    }).model
     story(
       Review.update,
       given(opened),
@@ -278,8 +291,8 @@ describe('reports and the log', () => {
       click(role('button', { name: /^Search tickets and sessions/u })),
       click(role('button', { name: /^Go to Review/u })),
       SceneCommand.expectExact(
-        Review.LoadReport({ project }),
-        Review.LoadLog({ project }),
+        Review.LoadReport({ project: scoped }),
+        Review.LoadLog({ project: scoped }),
       ),
       expectScene(
         text(/a set-aside ticket's Review opens its branch/u),
@@ -287,12 +300,12 @@ describe('reports and the log', () => {
       SceneCommand.resolveAll(
         [
           Review.LoadReport,
-          Review.Message.SucceededLoadReport({ project, report }),
+          Review.Message.SucceededLoadReport({ project: scoped, report }),
         ],
         [
           Review.LoadLog,
           Review.Message.SucceededLoadLog({
-            project,
+            project: scoped,
             lines: ['12:00 run r-7 started', '12:40 run r-7 ended'],
           }),
         ],
@@ -327,11 +340,11 @@ describe('reports and the log', () => {
       Mount.expectEnded(Review.ShowDiff),
       expectScene(text(/12:40 run r-7 ended/u)).toExist(),
       click(role('button', { name: 'Read again' })),
-      SceneCommand.expectExact(Review.LoadLog({ project })),
+      SceneCommand.expectExact(Review.LoadLog({ project: scoped })),
       SceneCommand.resolve(
         Review.LoadLog,
         Review.Message.FailedLoadLog({
-          project,
+          project: scoped,
           reason: 'the engine is not connected',
         }),
       ),
@@ -346,20 +359,20 @@ describe('reports and the log', () => {
       Review.update,
       given(
         Review.opened(Review.init(), {
-          project: Option.some(project),
+          project: Option.some(scoped),
           run: Option.none(),
         }).model,
       ),
       message(
         Review.Message.FailedLoadReport({
-          project,
+          project: scoped,
           reason: 'The project has had no run yet.',
         }),
       ),
       // Another project's answer, arriving late, changes nothing.
       message(
         Review.Message.SucceededLoadReport({
-          project: ProjectId.make('p-2'),
+          project: { ...scoped, project: ProjectId.make('p-2') },
           report,
         }),
       ),

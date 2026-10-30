@@ -31,7 +31,8 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { Connection, connect } from '../src/app/connection'
+import { Connection, connect, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { perFrame } from '../src/app/frame'
 import {
   type KeyCommand,
@@ -60,6 +61,7 @@ const flags: Flags = { platform: 'darwin', release: '0.0.0' }
 const start: Model = initialModel(flags)
 
 const project = ProjectId.make('p-1')
+const scoped: EngineProject = { engine: localEngineName, project }
 
 const connected: Model = {
   ...start,
@@ -68,7 +70,7 @@ const connected: Model = {
     release: '0.1.0',
     protocol: protocolVersion,
   }),
-  scope: Option.some(project),
+  scope: Option.some(scoped),
 }
 
 const key = (pressed: string, mod = false) =>
@@ -89,6 +91,7 @@ const insightsUnserved = [
         Insights.RunQuery,
         Insights.Message.FailedQuery({
           panel,
+          scope: Option.none(),
           query: InsightsQuery.cases.cost_per_merged_ticket.make({
             project: Option.none(),
             since: Option.none(),
@@ -523,7 +526,7 @@ describe('frames decoded into the Model', () => {
         expect(session.hello.engine).toBe('e-1')
 
         const messages = yield* Stream.runCollect(
-          runViewMessages(session.client, project, Effect.void),
+          runViewMessages(session.client, scoped, Effect.void),
         )
         const after = messages.reduce(
           (shown, received) => update(shown, received).model,

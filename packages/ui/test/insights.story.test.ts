@@ -24,7 +24,8 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { Screen } from '../src/app/screen'
@@ -39,6 +40,10 @@ import * as Insights from '../src/screens/insights'
 
 const project = ProjectId.make('p-1')
 const other = ProjectId.make('p-2')
+
+/** The projects, named with this machine's engine, which holds them. */
+const scoped: EngineProject = { engine: localEngineName, project }
+const otherScoped: EngineProject = { engine: localEngineName, project: other }
 const engine = EngineId.make('e-1')
 const flags = { platform: 'darwin' as const, release: '0.0.0' }
 
@@ -84,7 +89,7 @@ const connected = (): Model => {
   ).model
   return update(
     withProject,
-    Message.SelectedScope({ project: Option.some(project) }),
+    Message.SelectedScope({ project: Option.some(scoped) }),
   ).model
 }
 
@@ -190,16 +195,16 @@ const tables: Record<Insights.Panel, InsightsTable> = {
 }
 
 const scope = (
-  scoped: Option.Option<ProjectId>,
+  chosen: Option.Option<EngineProject>,
   tokensBy: Insights.TokensBy = 'run',
-) => ({ project: scoped, tokensBy })
+) => ({ project: chosen, tokensBy })
 
 const queryOf = (
   panel: Insights.Panel,
-  scoped: Option.Option<ProjectId> = Option.some(project),
+  chosen: Option.Option<EngineProject> = Option.some(scoped),
   tokensBy: Insights.TokensBy = 'run',
 ): InsightsQuery =>
-  Option.getOrThrow(Insights.queryOf(panel, scope(scoped, tokensBy)))
+  Option.getOrThrow(Insights.queryOf(panel, scope(chosen, tokensBy)))
 
 const insightsMessage = (message: Insights.Message): Message =>
   Message.GotInsightsMessage({ message })
@@ -213,6 +218,7 @@ const onScreen = (start: Model = connected()): Model =>
         insightsMessage(
           Insights.Message.SucceededQuery({
             panel,
+            scope: Option.some(scoped),
             query: queryOf(panel),
             table: tables[panel],
           }),
@@ -223,7 +229,7 @@ const onScreen = (start: Model = connected()): Model =>
         .model,
       insightsMessage(
         Insights.Message.SucceededLoadSummary({
-          project: Option.some(project),
+          project: Option.some(scoped),
           summary,
         }),
       ),
@@ -243,12 +249,12 @@ const panel = (name: Insights.Panel) =>
 
 describe('the queries asked of the engine', () => {
   test("as the screen opens: the scope's summary and every panel's named query", () => {
-    const opened = Insights.opened(Insights.init(), Option.some(project))
+    const opened = Insights.opened(Insights.init(), Option.some(scoped))
     expect(namesAndArgs(opened.commands)).toStrictEqual([
-      ['LoadSummary', { project: Option.some(project) }],
+      ['LoadSummary', { project: Option.some(scoped) }],
       ...Insights.Panel.literals.map(name => [
         'RunQuery',
-        { panel: name, query: queryOf(name) },
+        { panel: name, scope: Option.some(scoped), query: queryOf(name) },
       ]),
     ])
     expect(queryOf('tokens')).toStrictEqual(
@@ -303,17 +309,18 @@ describe('the queries asked of the engine', () => {
   test("an answer for another scope's query is dropped; the scope's own is shown", () => {
     story(
       Insights.update,
-      given(Insights.opened(Insights.init(), Option.some(project)).model),
+      given(Insights.opened(Insights.init(), Option.some(scoped)).model),
       message(
         Insights.Message.SucceededQuery({
           panel: 'checks',
-          query: queryOf('checks', Option.some(other)),
+          scope: Option.some(otherScoped),
+          query: queryOf('checks', Option.some(otherScoped)),
           table: tables.checks,
         }),
       ),
       message(
         Insights.Message.SucceededLoadSummary({
-          project: Option.some(other),
+          project: Option.some(otherScoped),
           summary,
         }),
       ),
@@ -324,6 +331,7 @@ describe('the queries asked of the engine', () => {
       message(
         Insights.Message.SucceededQuery({
           panel: 'checks',
+          scope: Option.some(scoped),
           query: queryOf('checks'),
           table: tables.checks,
         }),
@@ -339,10 +347,10 @@ describe('the queries asked of the engine', () => {
   test('another project chosen while the screen is shown: its telemetry asked afresh, nothing of the last kept', () => {
     const rescoped = update(
       onScreen(),
-      Message.SelectedScope({ project: Option.some(other) }),
+      Message.SelectedScope({ project: Option.some(otherScoped) }),
     )
     const insights = rescoped.model.screens.insights
-    expect(insights.project).toStrictEqual(Option.some(other))
+    expect(insights.project).toStrictEqual(Option.some(otherScoped))
     expect(insights.summary._tag).toBe('Loading')
     expect(insights.tables.tokens._tag).toBe('Loading')
     expect(
@@ -351,7 +359,7 @@ describe('the queries asked of the engine', () => {
           ? [command.args.query]
           : [],
       ),
-    ).toStrictEqual([queryOf('tokens', Option.some(other))])
+    ).toStrictEqual([queryOf('tokens', Option.some(otherScoped))])
   })
 
   test('Refresh asks again, what is shown kept meanwhile', () => {
@@ -373,7 +381,7 @@ describe('the queries asked of the engine', () => {
 
 describe('tokens and cost, by run, ticket or project', () => {
   test('choosing Ticket asks the tokens again by ticket; an answer by run, come late, is dropped', () => {
-    const byTicket = queryOf('tokens', Option.some(project), 'ticket')
+    const byTicket = queryOf('tokens', Option.some(scoped), 'ticket')
     const ticketTable = table({
       columns: [
         { name: 'Ticket', unit: 'text' },
@@ -392,16 +400,25 @@ describe('tokens and cost, by run, ticket or project', () => {
       ),
       click(within(tokens, role('button', { name: 'Ticket' }))),
       SceneCommand.expectExact(
-        Insights.RunQuery({ panel: 'tokens', query: byTicket }),
+        Insights.RunQuery({
+          panel: 'tokens',
+          scope: Option.some(scoped),
+          query: byTicket,
+        }),
       ),
       expectScene(
         within(tokens, role('button', { name: 'Ticket' })),
       ).toHaveAttr('aria-pressed', 'true'),
       expectScene(within(tokens, text('Asking the engine…'))).toExist(),
       SceneCommand.resolve(
-        Insights.RunQuery({ panel: 'tokens', query: byTicket }),
+        Insights.RunQuery({
+          panel: 'tokens',
+          scope: Option.some(scoped),
+          query: byTicket,
+        }),
         Insights.Message.SucceededQuery({
           panel: 'tokens',
+          scope: Option.some(scoped),
           query: byTicket,
           table: ticketTable,
         }),
@@ -418,6 +435,7 @@ describe('tokens and cost, by run, ticket or project', () => {
       insightsMessage(
         Insights.Message.SucceededQuery({
           panel: 'tokens',
+          scope: Option.some(scoped),
           query: queryOf('tokens'),
           table: tables.tokens,
         }),
@@ -486,6 +504,7 @@ describe('each panel drawn from its query’s answer', () => {
       insightsMessage(
         Insights.Message.SucceededQuery({
           panel: 'flaky',
+          scope: Option.some(scoped),
           query: queryOf('flaky'),
           table: table({ columns: [{ name: 'Test', unit: 'text' }], rows: [] }),
         }),
@@ -496,6 +515,7 @@ describe('each panel drawn from its query’s answer', () => {
       insightsMessage(
         Insights.Message.FailedQuery({
           panel: 'models',
+          scope: Option.some(scoped),
           query: queryOf('models'),
           reason: 'the engine is not connected',
         }),
@@ -521,6 +541,7 @@ describe('each panel drawn from its query’s answer', () => {
           insightsMessage(
             Insights.Message.FailedQuery({
               panel: name,
+              scope: Option.some(scoped),
               query: queryOf(name),
               reason: 'insights.query is not served yet',
             }),
@@ -533,7 +554,7 @@ describe('each panel drawn from its query’s answer', () => {
         ).model,
         insightsMessage(
           Insights.Message.FailedLoadSummary({
-            project: Option.some(project),
+            project: Option.some(scoped),
             reason: 'insights.summary is not served yet',
           }),
         ),

@@ -17,6 +17,7 @@ import {
 } from '@fabrica/contracts'
 
 import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import * as RemoteEngines from '../src/app/remote-engines'
@@ -32,6 +33,10 @@ import { view } from '../src/app/view'
 const box = 'build-box'
 const home = ProjectId.make('p-home')
 const site = ProjectId.make('p-site')
+
+/** Each project, named with the engine holding it. */
+const homeHere: EngineProject = { engine: localEngineName, project: home }
+const siteOnBox: EngineProject = { engine: box, project: site }
 const epoch = StreamEpoch.make('epoch-1')
 const at = (hour: number) => DateTime.makeUnsafe(Date.UTC(2026, 9, 30, hour))
 
@@ -185,7 +190,7 @@ describe('Needs your attention from every engine', () => {
   test("a project's own scope shows its engine's requests alone", () => {
     const scoped = received(
       withRows,
-      Message.SelectedScope({ project: Option.some(site) }),
+      Message.SelectedScope({ project: Option.some(siteOnBox) }),
       snapshot(box, siteMiddle),
       // This machine's stream of All projects, sending after the scope changed.
       snapshot(localEngineName, homeEarly),
@@ -199,7 +204,7 @@ describe('Needs your attention from every engine', () => {
       withRows,
       snapshot(localEngineName, homeEarly),
       snapshot(box, siteMiddle),
-      Message.SelectedScope({ project: Option.some(home) }),
+      Message.SelectedScope({ project: Option.some(homeHere) }),
     )
     expect(scoped.attention).toEqual(Option.none())
     expect(scoped.engineAttention).toEqual([])
@@ -233,11 +238,11 @@ describe("The attention column's watch", () => {
   })
 
   test("a project's scope, its own engine alone", () => {
-    expect(watched({ ...withRows, scope: Option.some(site) })).toEqual({
+    expect(watched({ ...withRows, scope: Option.some(siteOnBox) })).toEqual({
       engines: [box],
       project: Option.some(site),
     })
-    expect(watched({ ...withRows, scope: Option.some(home) })).toEqual({
+    expect(watched({ ...withRows, scope: Option.some(homeHere) })).toEqual({
       engines: [localEngineName],
       project: Option.some(home),
     })

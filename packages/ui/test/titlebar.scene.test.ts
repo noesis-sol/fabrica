@@ -21,7 +21,8 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { update } from '../src/app/update'
@@ -40,6 +41,7 @@ import titlebarCss from '../src/console/titlebar.css?raw'
 // usage windows in box-drawing lines, and the bar as the window's drag region but for its controls.
 
 const project = ProjectId.make('p-1')
+const scoped: EngineProject = { engine: localEngineName, project }
 const gb = 1024 ** 3
 
 /** `n` GB in whole bytes. */
@@ -53,7 +55,7 @@ const connected: Model = {
     release: '0.1.0',
     protocol: protocolVersion,
   }),
-  scope: Option.some(project),
+  scope: Option.some(scoped),
 }
 
 const decodeLoad = Schema.decodeUnknownSync(Schema.toCodecJson(HostLoad))
@@ -339,7 +341,12 @@ describe('the usage windows', () => {
     const before = withUsage([usageWindow('five_hour', 0.41)])
     const { model: after } = update(
       before,
-      Message.SelectedScope({ project: Option.some(ProjectId.make('p-2')) }),
+      Message.SelectedScope({
+        project: Option.some({
+          engine: localEngineName,
+          project: ProjectId.make('p-2'),
+        }),
+      }),
     )
     expect(after.usage).toEqual(Option.none())
   })

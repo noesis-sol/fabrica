@@ -18,8 +18,8 @@ import { applyItems } from '../app/streams'
 // and the count; an "All projects" row, then one row per project on every known engine: its chip in
 // its colour (the five role colours in turn, by its index) holding its two-digit index, its name, its
 // Base and, where more than one engine is known, the engine's name, and its run's state on the right.
-// Selecting a row scopes the main area to it, its project named with its engine (engine-project.ts), so the
-// same project on two engines is two rows; "+ Add project" is pinned at the bottom. A selected row
+// Selecting a row scopes the main area to it, its project named with its engine (engine-project.ts),
+// so the same project on two engines is two rows; "+ Add project" is pinned at the bottom. A selected row
 // is marked by its left bar and background and by `aria-current`, a run's state in a word beside its
 // colour, so neither rests on colour alone (§18.2).
 
@@ -124,7 +124,10 @@ export const rowProject = (row: Row): EngineProject => ({
 })
 
 /** The row holding `project` on its engine; none while no row shows it. */
-export const rowOf = (model: Model, project: EngineProject): Option.Option<Row> =>
+export const rowOf = (
+  model: Model,
+  project: EngineProject,
+): Option.Option<Row> =>
   Array.findFirst(
     rows(model),
     row =>

@@ -35,7 +35,8 @@ import {
 } from '@fabrica/contracts'
 
 import { sayElapsed, sayMoment } from '../src/app/clock'
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { update } from '../src/app/update'
@@ -50,6 +51,9 @@ import { waitForWords, waitingWords } from '../src/console/waiting'
 
 const project = ProjectId.make('p-1')
 
+/** The project, named with this machine's engine, which holds it. */
+const scoped: EngineProject = { engine: localEngineName, project }
+
 /** Thursday 29 October 2026, 12:00 UTC: 14:00 in Athens. */
 const at = Date.UTC(2026, 9, 29, 12, 0, 0)
 const now = DateTime.makeZonedUnsafe(at, { timeZone: 'Europe/Athens' })
@@ -61,7 +65,7 @@ const connected: Model = {
     release: '0.1.0',
     protocol: protocolVersion,
   }),
-  scope: Option.some(project),
+  scope: Option.some(scoped),
   now: Option.some(now),
 }
 
@@ -276,8 +280,11 @@ describe('the run controls', () => {
       expectScene(role('menu', { name: 'Start run' })).toBeAbsent(),
       expectScene(role('button', { name: 'Starting…' })).toBeDisabled(),
       Command.resolve(
-        Stats.StartRun({ project, mode: RunMode.cases.tickets.make({}) }),
-        Stats.Message.SucceededStartRun({ project }),
+        Stats.StartRun({
+          project: scoped,
+          mode: RunMode.cases.tickets.make({}),
+        }),
+        Stats.Message.SucceededStartRun({ project: scoped }),
       ),
       expectScene(role('button', { name: 'Start run' })).toBeEnabled(),
     )
@@ -305,12 +312,14 @@ describe('the run controls', () => {
       update,
       givenStory(connected),
       message(
-        statsMessage(Stats.Message.ChoseMode({ project, mode: 'tickets' })),
+        statsMessage(
+          Stats.Message.ChoseMode({ project: scoped, mode: 'tickets' }),
+        ),
       ),
       StoryCommand.expectHas(Stats.StartRun),
       StoryCommand.resolve(
         Stats.StartRun,
-        Stats.Message.SucceededStartRun({ project }),
+        Stats.Message.SucceededStartRun({ project: scoped }),
       ),
       model(shown => {
         expect(shown.runWatch).toBe(connected.runWatch + 1)
@@ -333,10 +342,10 @@ describe('the run controls', () => {
       submit(role('form', { name: 'Start run: One ticket' })),
       Command.resolve(
         Stats.StartRun({
-          project,
+          project: scoped,
           mode: RunMode.cases.ticket.make({ ticket: TicketId.make('fa-12') }),
         }),
-        Stats.Message.SucceededStartRun({ project }),
+        Stats.Message.SucceededStartRun({ project: scoped }),
       ),
       expectScene(role('form', { name: 'Start run: One ticket' })).toBeAbsent(),
     )
@@ -361,13 +370,13 @@ describe('the run controls', () => {
       submit(role('form', { name: 'Start run: A spec' })),
       Command.resolve(
         Stats.StartRun({
-          project,
+          project: scoped,
           mode: RunMode.cases.spec.make({
             source: 'docs/spec.md',
             refine: true,
           }),
         }),
-        Stats.Message.SucceededStartRun({ project }),
+        Stats.Message.SucceededStartRun({ project: scoped }),
       ),
     )
     scene(
@@ -399,7 +408,7 @@ describe('the run controls', () => {
       click(role('button', { name: 'Stop the run' })),
       expectScene(role('button', { name: 'Stop' })).toBeDisabled(),
       Command.resolve(
-        Stats.AskRun({ project, action: 'stop' }),
+        Stats.AskRun({ project: scoped, action: 'stop' }),
         Stats.Message.SucceededRunRequest(),
       ),
       expectScene(role('button', { name: 'Stop' })).toBeEnabled(),
@@ -412,7 +421,7 @@ describe('the run controls', () => {
       given(withRun()),
       click(role('button', { name: 'Drain' })),
       Command.resolve(
-        Stats.AskRun({ project, action: 'drain' }),
+        Stats.AskRun({ project: scoped, action: 'drain' }),
         Stats.Message.SucceededRunRequest(),
       ),
     )
@@ -477,7 +486,10 @@ describe('the run controls', () => {
       click(role('button', { name: 'Start run' })),
       click(role('menuitem', { name: 'The current tickets' })),
       Command.resolve(
-        Stats.StartRun({ project, mode: RunMode.cases.tickets.make({}) }),
+        Stats.StartRun({
+          project: scoped,
+          mode: RunMode.cases.tickets.make({}),
+        }),
 
         Stats.Message.FailedRunRequest({
           action: 'start',

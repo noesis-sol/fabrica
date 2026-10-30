@@ -28,7 +28,8 @@ import {
 import * as VirtualList from '@foldkit/ui/virtualList'
 
 import { dayOf } from '../src/app/clock'
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import type { EventsItem } from '../src/app/streams'
@@ -40,7 +41,12 @@ import { historyLine, historyRows, historyTime } from '../src/console/history'
 // kind's dot in its role's colour and its line as the log says it, newest first with new events on
 // top, times in the viewer's zone with the day when it isn't today, and only the rows in view drawn.
 
-const project = ProjectId.make('p-1')
+const project: EngineProject = {
+  engine: localEngineName,
+  project: ProjectId.make('p-1'),
+}
+/** Another project on the same engine. */
+const other: EngineProject = { ...project, project: ProjectId.make('p-2') }
 const run = RunId.make('2026-10-29T10:00:00.000+02:00')
 const ticket = TicketId.make('fa-7')
 const question = TicketId.make('fa-q1')
@@ -660,7 +666,7 @@ describe('the list', () => {
       given(connected),
       Subscription.emit(
         Message.ReceivedEvents({
-          project: ProjectId.make('p-2'),
+          project: other,
           items: [snapshotOf([dispatch(1)])],
         }),
       ),
@@ -670,7 +676,7 @@ describe('the list', () => {
     )
     const { model: shown } = update(
       withEvents([dispatch(1)]),
-      Message.SelectedScope({ project: Option.some(ProjectId.make('p-2')) }),
+      Message.SelectedScope({ project: Option.some(other) }),
     )
     expect(shown.events).toEqual([])
   })

@@ -25,7 +25,6 @@ import {
   PermissionDecision,
   PermissionId,
   type PermissionShown,
-  ProjectId,
   type ProjectNotFound,
   QuestionAnswer,
   type QuestionChoices,
@@ -39,13 +38,17 @@ import {
 } from '@fabrica/contracts'
 
 import { sayElapsed } from '../app/clock'
-import { localEngineName } from '../app/connection'
 import { EngineProject } from '../app/engine-project'
 import {
   type EngineNotConnected,
   type EngineServices,
   sessionFor,
 } from '../app/engine-route'
+import {
+  type EngineAttention,
+  type EngineRequest,
+  engineRequests,
+} from '../app/streams'
 import { type Chip, chipView } from './sidebar'
 
 // The console's Needs your attention column (spec §15.1, §18.3, H62, H92; Appendix A.2): what waits on
@@ -60,7 +63,8 @@ import { type Chip, chipView } from './sidebar'
 // the worker view. Keys 1–9 answer the question whose options are drawn, only that one, and only 500 ms
 // after they were first drawn: a guard that starts again whenever the request they would answer changes,
 // counted on the injected clock (§15.1, H88; tutti-14o5). Every answer carries its request's ID, and
-// goes to the engine whose requests the column shows (engine-route.ts).
+// goes to the engine the request is open on (engine-route.ts): under All projects the column holds
+// every connected engine's requests, each card with its engine.
 // A Submodel: the root folds its Messages, keeps its open request in step with the stream, and gives it
 // the requests and the time.
 
@@ -90,8 +94,12 @@ export type Open = typeof Open.Type
  */
 export const Guard = defineTaggedUnion({
   Off: {},
-  Waiting: { request: AttentionRequest, drawing: Schema.Int },
-  Passed: { request: AttentionRequest },
+  Waiting: {
+    engine: Schema.String,
+    request: AttentionRequest,
+    drawing: Schema.Int,
+  },
+  Passed: { engine: Schema.String, request: AttentionRequest },
 })
 export type Guard = typeof Guard.Type
 
@@ -104,8 +112,6 @@ export const Sending = defineTaggedUnion({
 export type Sending = typeof Sending.Type
 
 export const Model = Schema.Struct({
-  /** The name of the engine whose requests the column shows: the scope's, where its answers go. */
-  engine: Schema.String,
   open: Open,
   guard: Guard,
   /** How many times options have been drawn: each drawing's guard is its own. */
@@ -115,7 +121,6 @@ export const Model = Schema.Struct({
 export type Model = typeof Model.Type
 
 export const init = (): Model => ({
-  engine: localEngineName,
   open: Open.None(),
   guard: Guard.Off(),
   drawings: 0,
@@ -123,29 +128,41 @@ export const init = (): Model => ({
 })
 
 export const Message = defineMessageUnion({
-  /** Answer on a question's card: its options open, or close again. */
-  ClickedAnswer: { request: AttentionRequest },
+  /** Answer on a question's card, open on the engine named `engine`: its options open, or close again. */
+  ClickedAnswer: { engine: Schema.String, request: AttentionRequest },
   ChoseOption: { key: Schema.String, index: Schema.Int },
   TypedAnswer: { key: Schema.String, text: Schema.String },
   SubmittedAnswer: { key: Schema.String },
   /** The guard's time has gone by for one drawing of a request's options. */
   PassedGuard: { drawing: Schema.Int },
-  ClickedTalkItThrough: { project: ProjectId, ticket: TicketId },
+  ClickedTalkItThrough: { project: EngineProject, ticket: TicketId },
 
-  ClickedApprove: { key: Schema.String, answer: AttentionAnswer },
+  ClickedApprove: {
+    key: Schema.String,
+    engine: Schema.String,
+    answer: AttentionAnswer,
+  },
   ClickedDecisionMenu: { key: Schema.String },
-  ClickedAllowForRun: { key: Schema.String, answer: AttentionAnswer },
+  ClickedAllowForRun: {
+    key: Schema.String,
+    engine: Schema.String,
+    answer: AttentionAnswer,
+  },
   ClickedRefuse: { key: Schema.String },
   TypedRefusalNote: { key: Schema.String, note: Schema.String },
   SubmittedRefusal: {
     key: Schema.String,
-    project: ProjectId,
+    project: EngineProject,
     id: PermissionId,
   },
   CancelledOpen: {},
 
-  ClickedTaskDone: { key: Schema.String, project: ProjectId, ticket: TicketId },
-  ClickedReview: { project: ProjectId, ticket: TicketId },
+  ClickedTaskDone: {
+    key: Schema.String,
+    project: EngineProject,
+    ticket: TicketId,
+  },
+  ClickedReview: { project: EngineProject, ticket: TicketId },
   ClickedOpenSession: { ticket: TicketId },
 
   SucceededAnswer: { key: Schema.String },
@@ -310,12 +327,12 @@ type Return = Update.ReturnWithOutMessage<
 /** A return with no OutMessage. */
 type Kept = Update.Return<Model, Message, EngineServices>
 
-/** The guard started afresh for `request`'s options, drawn now. */
-const drawing = (model: Model, request: AttentionRequest): Kept => {
+/** The guard started afresh for the options of `request`, open on the engine named `engine`, drawn now. */
+const drawing = (model: Model, { engine, request }: EngineRequest): Kept => {
   const next = model.drawings + 1
   return {
     model: modifyFields(model, {
-      guard: () => Guard.Waiting({ request, drawing: next }),
+      guard: () => Guard.Waiting({ engine, request, drawing: next }),
       drawings: () => next,
     }),
     commands: [WaitGuard({ drawing: next })],
@@ -328,9 +345,13 @@ const closed = (model: Model): Model =>
     guard: () => Guard.Off(),
   })
 
-const sending = (model: Model, key: string, answer: AttentionAnswer): Kept => ({
+const sending = (
+  model: Model,
+  { key, engine }: { readonly key: string; readonly engine: string },
+  answer: AttentionAnswer,
+): Kept => ({
   model: modifyFields(model, { sending: () => Sending.Pending({ key }) }),
-  commands: [Answer({ key, engine: model.engine, answer })],
+  commands: [Answer({ key, engine, answer })],
 })
 
 const isPending = (model: Model): boolean =>
@@ -353,16 +374,25 @@ const optionAnswer = (
       )
     : Option.none()
 
-/** The drawn request, when its key is `key`. */
+/** The drawn request with the engine it is open on, when its key is `key`. */
 const drawnWithKey = (
   model: Model,
   key: string,
-): Option.Option<AttentionRequest> =>
-  Option.filter(drawnRequest(model), request => attentionKey(request) === key)
+): Option.Option<EngineRequest> =>
+  Open.guards.Answering(model.open)
+    ? Option.filter(
+        Guard.match(model.guard, {
+          Off: (): Option.Option<EngineRequest> => Option.none(),
+          Waiting: ({ engine, request }) => Option.some({ engine, request }),
+          Passed: ({ engine, request }) => Option.some({ engine, request }),
+        }),
+        ({ request }) => attentionKey(request) === key,
+      )
+    : Option.none()
 
 export const update = (model: Model, message: Message): Return =>
   Message.match<Return>(message, {
-    ClickedAnswer: ({ request }) =>
+    ClickedAnswer: ({ engine, request }) =>
       Open.guards.Answering(model.open) &&
       model.open.key === attentionKey(request)
         ? { model: closed(model) }
@@ -375,7 +405,7 @@ export const update = (model: Model, message: Message): Return =>
                   text: '',
                 }),
             }),
-            request,
+            { engine, request },
           ),
     ChoseOption: ({ key, index }) => ({
       model: modifyFields(model, {
@@ -408,7 +438,7 @@ export const update = (model: Model, message: Message): Return =>
       const { chosen, text } = model.open
       return Option.match(drawnWithKey(model, key), {
         onNone: () => ({ model }),
-        onSome: request =>
+        onSome: ({ engine, request }) =>
           Option.match(
             Option.isSome(chosen)
               ? optionAnswer(request, chosen.value)
@@ -427,7 +457,7 @@ export const update = (model: Model, message: Message): Return =>
                 ),
             {
               onNone: () => ({ model }),
-              onSome: answer => sending(model, key, answer),
+              onSome: answer => sending(model, { key, engine }, answer),
             },
           ),
       })
@@ -438,21 +468,24 @@ export const update = (model: Model, message: Message): Return =>
         model:
           Guard.guards.Waiting(guard) && guard.drawing === drawing
             ? modifyFields(model, {
-                guard: () => Guard.Passed({ request: guard.request }),
+                guard: () =>
+                  Guard.Passed({
+                    engine: guard.engine,
+                    request: guard.request,
+                  }),
               })
             : model,
       }
     },
     ClickedTalkItThrough: ({ project, ticket }) => ({
       model,
-      outMessage: OutMessage.OpenedAnswerTalk({
-        project: { engine: model.engine, project },
-        ticket,
-      }),
+      outMessage: OutMessage.OpenedAnswerTalk({ project, ticket }),
     }),
 
-    ClickedApprove: ({ key, answer }) =>
-      isPending(model) ? { model } : sending(closed(model), key, answer),
+    ClickedApprove: ({ key, engine, answer }) =>
+      isPending(model)
+        ? { model }
+        : sending(closed(model), { key, engine }, answer),
     ClickedDecisionMenu: ({ key }) => ({
       model: modifyFields(closed(model), {
         open: () =>
@@ -461,8 +494,10 @@ export const update = (model: Model, message: Message): Return =>
             : Open.ChoosingDecision({ key }),
       }),
     }),
-    ClickedAllowForRun: ({ key, answer }) =>
-      isPending(model) ? { model } : sending(closed(model), key, answer),
+    ClickedAllowForRun: ({ key, engine, answer }) =>
+      isPending(model)
+        ? { model }
+        : sending(closed(model), { key, engine }, answer),
     ClickedRefuse: ({ key }) => ({
       model: modifyFields(closed(model), {
         open: () => Open.Refusing({ key, note: '' }),
@@ -483,9 +518,9 @@ export const update = (model: Model, message: Message): Return =>
         ? { model }
         : sending(
             closed(model),
-            key,
+            { key, engine: project.engine },
             AttentionAnswer.cases.permission.make({
-              project,
+              project: project.project,
               id,
               decision: PermissionDecision.cases.refuse.make({
                 note: decodeText(model.open.note.trim()),
@@ -501,20 +536,11 @@ export const update = (model: Model, message: Message): Return =>
             model: modifyFields(model, {
               sending: () => Sending.Pending({ key }),
             }),
-            commands: [
-              CloseTask({
-                key,
-                project: { engine: model.engine, project },
-                ticket,
-              }),
-            ],
+            commands: [CloseTask({ key, project, ticket })],
           },
     ClickedReview: ({ project, ticket }) => ({
       model,
-      outMessage: OutMessage.OpenedReview({
-        project: { engine: model.engine, project },
-        ticket,
-      }),
+      outMessage: OutMessage.OpenedReview({ project, ticket }),
     }),
     ClickedOpenSession: ({ ticket }) => ({
       model,
@@ -558,7 +584,8 @@ export const pressedOptionKey = (
         ),
         {
           onNone: () => ({ model }),
-          onSome: answer => sending(model, key, answer),
+          onSome: answer =>
+            sending(model, { key, engine: guard.engine }, answer),
         },
       )
     : { model }
@@ -575,57 +602,61 @@ const openKey = (open: Open): Option.Option<string> =>
   })
 
 /**
- * The column kept in step with the requests the stream of the engine named `engine` gives: what a card
- * has open closes when its request leaves the list (answered elsewhere, or the scope changed) or the
- * requests are another engine's, and drawn options whose request changed are drawn afresh, their guard
- * started again and their choice made again from the new request (none while the maintainer's own
- * words are typed), so an option chosen before can't stand for another (§15.1, tutti-14o5).
+ * The column kept in step with every engine's requests, as their streams give them: what a card has
+ * open closes when its request leaves the list (answered elsewhere, or the scope changed), and drawn
+ * options whose request changed are drawn afresh, their guard started again and their choice made
+ * again from the new request (none while the maintainer's own words are typed), so an option chosen
+ * before can't stand for another (§15.1, tutti-14o5). A drawn request is the one of its key on its own
+ * engine.
  */
 export const receivedRequests = (
   model: Model,
-  {
-    engine,
-    requests,
-  }: {
-    readonly engine: string
-    readonly requests: Option.Option<ReadonlyArray<AttentionRequest>>
-  },
+  engines: ReadonlyArray<EngineAttention>,
 ): Kept => {
-  if (model.engine !== engine) {
-    return { model: modifyFields(closed(model), { engine: () => engine }) }
-  }
-  const listed = Option.getOrElse(requests, () => [])
-  const find = (key: string) =>
-    Array.findFirst(listed, request => attentionKey(request) === key)
+  const listed = engineRequests(engines)
   const open = openKey(model.open)
-  if (Option.isSome(open) && Option.isNone(find(open.value))) {
+  if (
+    Option.isSome(open) &&
+    !listed.some(({ request }) => attentionKey(request) === open.value)
+  ) {
     return { model: closed(model) }
   }
-  return Option.match(drawnRequest(model), {
-    onNone: () => ({ model }),
-    onSome: drawn =>
-      Option.match(find(attentionKey(drawn)), {
-        onNone: () => ({ model: closed(model) }),
-        onSome: current =>
-          sameRequest(current, drawn)
-            ? { model }
-            : drawing(
-                modifyFields(model, {
-                  open: open =>
-                    Open.guards.Answering(open)
-                      ? Open.Answering({
-                          ...open,
-                          chosen:
-                            open.text.trim() === ''
-                              ? preselected(current)
-                              : Option.none(),
-                        })
-                      : open,
-                }),
-                current,
-              ),
-      }),
-  })
+  return Option.match(
+    Option.flatMap(openKey(model.open), key => drawnWithKey(model, key)),
+    {
+      onNone: () => ({ model }),
+      onSome: drawn =>
+        Option.match(
+          Array.findFirst(
+            listed,
+            ({ engine, request }) =>
+              engine === drawn.engine &&
+              attentionKey(request) === attentionKey(drawn.request),
+          ),
+          {
+            onNone: () => ({ model: closed(model) }),
+            onSome: current =>
+              sameRequest(current.request, drawn.request)
+                ? { model }
+                : drawing(
+                    modifyFields(model, {
+                      open: open =>
+                        Open.guards.Answering(open)
+                          ? Open.Answering({
+                              ...open,
+                              chosen:
+                                open.text.trim() === ''
+                                  ? preselected(current.request)
+                                  : Option.none(),
+                            })
+                          : open,
+                    }),
+                    current,
+                  ),
+          },
+        ),
+    },
+  )
 }
 
 // The view.
@@ -688,14 +719,14 @@ export const sessionTicket = (
 
 /** What the frame gives the column. */
 export interface ViewInputs {
-  /** The scope's open requests. */
-  readonly requests: Option.Option<ReadonlyArray<AttentionRequest>>
+  /** The scope's open requests, each engine's apart: under All projects every connected engine's. */
+  readonly requests: ReadonlyArray<EngineAttention>
   /** The time now, in the viewer's zone. */
   readonly now: Option.Option<DateTime.Zoned>
   /** Whether the engine's client is held, so answers can be sent. */
   readonly live: boolean
   /** The chip a request's card carries for its project: none in a project's own scope (§18.3). */
-  readonly chip: (project: ProjectId) => Option.Option<Chip>
+  readonly chip: (project: EngineProject) => Option.Option<Chip>
 }
 
 const primaryButton =
@@ -718,14 +749,14 @@ const kindTag = (kind: Kind, h: HtmlBuilder<Message>): Html =>
   )
 
 const firstRow = (
-  request: AttentionRequest,
+  { engine, request }: EngineRequest,
   inputs: ViewInputs,
   h: HtmlBuilder<Message>,
 ): Html =>
   h.div(
     [h.Class('flex items-center gap-8')],
     [
-      Option.match(inputs.chip(request.project), {
+      Option.match(inputs.chip({ engine, project: request.project }), {
         onNone: () => h.empty,
         onSome: chip => chipView(chip, h),
       }),
@@ -880,7 +911,7 @@ const permissionAnswer = (
   })
 
 const decisionMenu = (
-  key: string,
+  { key, engine }: { readonly key: string; readonly engine: string },
   request: Permission,
   h: HtmlBuilder<Message>,
 ): Html =>
@@ -904,6 +935,7 @@ const decisionMenu = (
               h.OnClick(
                 Message.ClickedAllowForRun({
                   key,
+                  engine,
                   answer: permissionAnswer(
                     request,
                     PermissionDecision.cases.allow_run.make({}),
@@ -934,7 +966,7 @@ const decisionMenu = (
   )
 
 const refusalForm = (
-  key: string,
+  { key, engine }: { readonly key: string; readonly engine: string },
   request: Permission,
   note: string,
   h: HtmlBuilder<Message>,
@@ -945,7 +977,7 @@ const refusalForm = (
       h.OnSubmit(
         Message.SubmittedRefusal({
           key,
-          project: request.project,
+          project: { engine, project: request.project },
           id: request.id,
         }),
       ),
@@ -984,6 +1016,7 @@ const refusalForm = (
 
 const approvalBody = (
   model: Model,
+  engine: string,
   request: Permission,
   inputs: ViewInputs,
   h: HtmlBuilder<Message>,
@@ -997,7 +1030,7 @@ const approvalBody = (
     reason(request.why, h),
     shownInput(request.shown, h),
     Open.guards.Refusing(model.open) && model.open.key === key
-      ? refusalForm(key, request, model.open.note, h)
+      ? refusalForm({ key, engine }, request, model.open.note, h)
       : actions(
           [
             h.button(
@@ -1007,6 +1040,7 @@ const approvalBody = (
                 h.OnClick(
                   Message.ClickedApprove({
                     key,
+                    engine,
                     answer: permissionAnswer(
                       request,
                       PermissionDecision.cases.allow_once.make({}),
@@ -1030,7 +1064,7 @@ const approvalBody = (
               ['▾'],
             ),
             openSession(request, h),
-            menuOpen ? decisionMenu(key, request, h) : h.empty,
+            menuOpen ? decisionMenu({ key, engine }, request, h) : h.empty,
           ],
           h,
         ),
@@ -1046,6 +1080,7 @@ const keyCap = (label: string, h: HtmlBuilder<Message>): Html =>
 
 const optionsPanel = (
   model: Model,
+  engine: string,
   request: Question,
   answering: Extract<Open, { readonly _tag: 'Answering' }>,
   inputs: ViewInputs,
@@ -1147,7 +1182,7 @@ const optionsPanel = (
               h.Type('button'),
               h.OnClick(
                 Message.ClickedTalkItThrough({
-                  project: request.project,
+                  project: { engine, project: request.project },
                   ticket: request.ticket,
                 }),
               ),
@@ -1164,6 +1199,7 @@ const optionsPanel = (
 
 const questionBody = (
   model: Model,
+  engine: string,
   request: Question,
   inputs: ViewInputs,
   h: HtmlBuilder<Message>,
@@ -1201,7 +1237,7 @@ const questionBody = (
           [
             h.Type('button'),
             h.AriaExpanded(Option.isSome(answering)),
-            h.OnClick(Message.ClickedAnswer({ request })),
+            h.OnClick(Message.ClickedAnswer({ engine, request })),
             h.Class(primaryButton),
           ],
           ['Answer'],
@@ -1212,13 +1248,15 @@ const questionBody = (
     ),
     Option.match(answering, {
       onNone: () => h.empty,
-      onSome: answering => optionsPanel(model, request, answering, inputs, h),
+      onSome: answering =>
+        optionsPanel(model, engine, request, answering, inputs, h),
     }),
     failure(model, key, h),
   ]
 }
 
 const reviewBody = (
+  engine: string,
   request: Extract<AttentionRequest, { readonly _tag: 'review' }>,
   h: HtmlBuilder<Message>,
 ): ReadonlyArray<Html> => [
@@ -1231,7 +1269,7 @@ const reviewBody = (
           h.Type('button'),
           h.OnClick(
             Message.ClickedReview({
-              project: request.project,
+              project: { engine, project: request.project },
               ticket: request.ticket,
             }),
           ),
@@ -1247,6 +1285,7 @@ const reviewBody = (
 
 const taskBody = (
   model: Model,
+  engine: string,
   request: Extract<AttentionRequest, { readonly _tag: 'task' }>,
   inputs: ViewInputs,
   h: HtmlBuilder<Message>,
@@ -1264,7 +1303,7 @@ const taskBody = (
             h.OnClick(
               Message.ClickedTaskDone({
                 key,
-                project: request.project,
+                project: { engine, project: request.project },
                 ticket: request.ticket,
               }),
             ),
@@ -1279,14 +1318,16 @@ const taskBody = (
   ]
 }
 
+/** A request's card, keyed by its engine and its key: one key may be open on two engines. */
 const card = (
   model: Model,
-  request: AttentionRequest,
+  open: EngineRequest,
   inputs: ViewInputs,
   h: HtmlBuilder<Message>,
-): Html =>
-  h.keyed('li')(
-    attentionKey(request),
+): Html => {
+  const { engine, request } = open
+  return h.keyed('li')(
+    `${engine}/${attentionKey(request)}`,
     [
       h.DataAttribute('card', kindOf(request)),
       h.AriaLabel(`${kindWords[kindOf(request)]} ${cardTicket(request)}`),
@@ -1296,19 +1337,21 @@ const card = (
       h.Style({ padding: '12px 14px' }),
     ],
     [
-      firstRow(request, inputs, h),
+      firstRow(open, inputs, h),
       ...AttentionRequest.match(request, {
-        permission: permission => approvalBody(model, permission, inputs, h),
-        question: question => questionBody(model, question, inputs, h),
-        review: review => reviewBody(review, h),
-        task: task => taskBody(model, task, inputs, h),
+        permission: permission =>
+          approvalBody(model, engine, permission, inputs, h),
+        question: question => questionBody(model, engine, question, inputs, h),
+        review: review => reviewBody(engine, review, h),
+        task: task => taskBody(model, engine, task, inputs, h),
       }),
     ],
   )
+}
 
 export const view = defineView<Model, Message, ViewInputs>(
   (model, inputs, h) => {
-    const requests = Option.getOrElse(inputs.requests, () => [])
+    const requests = engineRequests(inputs.requests)
     return h.div(
       [h.Class('flex flex-col gap-8')],
       [

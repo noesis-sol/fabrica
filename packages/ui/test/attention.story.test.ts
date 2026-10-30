@@ -37,6 +37,7 @@ import {
 } from '@fabrica/contracts'
 
 import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { Screen } from '../src/app/screen'
@@ -55,6 +56,9 @@ import * as Review from '../src/screens/review'
 // request changes, counted on the injected clock.
 
 const project = ProjectId.make('p-1')
+
+/** The project, named with this machine's engine, which holds it. */
+const scoped: EngineProject = { engine: localEngineName, project }
 
 /** Thursday 29 October 2026, 12:00 UTC: 14:00 in Athens. */
 const at = Date.UTC(2026, 9, 29, 12, 0, 0)
@@ -184,14 +188,18 @@ const connected: Model = {
     release: '0.1.0',
     protocol: protocolVersion,
   }),
-  scope: Option.some(project),
+  scope: Option.some(scoped),
   now: Option.some(now),
 }
 
 const withRequests = (
   requests: ReadonlyArray<AttentionRequest>,
   base: Model = connected,
-): Model => ({ ...base, attention: Option.some(requests) })
+): Model => ({
+  ...base,
+  attention: Option.some(requests),
+  engineAttention: [{ engine: localEngineName, requests }],
+})
 
 const epoch = StreamEpoch.make('epoch-1')
 
@@ -266,7 +274,12 @@ describe('the key guard', () => {
   test('a key before 500 ms answers nothing; after it, the option at its place', () => {
     const drawn = sent(
       withRequests([question]),
-      attentionMessage(Attention.Message.ClickedAnswer({ request: question })),
+      attentionMessage(
+        Attention.Message.ClickedAnswer({
+          engine: localEngineName,
+          request: question,
+        }),
+      ),
     )
     expect(commandsOf(drawn)).toEqual([['WaitGuard', { drawing: 1 }]])
     const early = sent(drawn.model, key('1'))
@@ -281,7 +294,10 @@ describe('the key guard', () => {
       key('1'),
     )
     expect(commandsOf(passed)).toEqual([
-      ['Answer', { key: questionKey, answer: answerWith(1) }],
+      [
+        'Answer',
+        { key: questionKey, engine: localEngineName, answer: answerWith(1) },
+      ],
     ])
     story(
       update,
@@ -314,7 +330,10 @@ describe('the key guard', () => {
       }),
       message(
         attentionMessage(
-          Attention.Message.ClickedAnswer({ request: question }),
+          Attention.Message.ClickedAnswer({
+            engine: localEngineName,
+            request: question,
+          }),
         ),
       ),
       model(shown => {
@@ -339,7 +358,12 @@ describe('the key guard', () => {
     const passed = sent(
       withRequests([question]),
       received([question]),
-      attentionMessage(Attention.Message.ClickedAnswer({ request: question })),
+      attentionMessage(
+        Attention.Message.ClickedAnswer({
+          engine: localEngineName,
+          request: question,
+        }),
+      ),
       attentionMessage(Attention.Message.PassedGuard({ drawing: 1 })),
     )
     expect(
@@ -367,7 +391,12 @@ describe('the key guard', () => {
           key('1'),
         ),
       ),
-    ).toEqual([['Answer', { key: questionKey, answer: answerWith(0) }]])
+    ).toEqual([
+      [
+        'Answer',
+        { key: questionKey, engine: localEngineName, answer: answerWith(0) },
+      ],
+    ])
     // The choice is made again from the changed request: its recommended option now.
     expect(redrawn.model.console.attention.open).toEqual(
       Attention.Open.Answering({
@@ -405,7 +434,10 @@ describe('the key guard', () => {
       givenStory(withRequests([question, review])),
       message(
         attentionMessage(
-          Attention.Message.ClickedAnswer({ request: question }),
+          Attention.Message.ClickedAnswer({
+            engine: localEngineName,
+            request: question,
+          }),
         ),
       ),
       StoryCommand.resolve(
@@ -430,7 +462,10 @@ describe('the key guard', () => {
       givenStory(withRequests([question, consequential])),
       message(
         attentionMessage(
-          Attention.Message.ClickedAnswer({ request: question }),
+          Attention.Message.ClickedAnswer({
+            engine: localEngineName,
+            request: question,
+          }),
         ),
       ),
       StoryCommand.resolve(
@@ -450,7 +485,10 @@ describe('the key guard', () => {
       givenStory(withRequests([question])),
       message(
         attentionMessage(
-          Attention.Message.ClickedAnswer({ request: question }),
+          Attention.Message.ClickedAnswer({
+            engine: localEngineName,
+            request: question,
+          }),
         ),
       ),
       StoryCommand.resolve(
@@ -524,7 +562,11 @@ describe('a question', () => {
       click(role('radio', { name: /Memory/ })),
       submit(role('form', { name: 'Answer' })),
       Command.resolve(
-        Attention.Answer({ key: questionKey, answer: answerWith(2) }),
+        Attention.Answer({
+          key: questionKey,
+          engine: localEngineName,
+          answer: answerWith(2),
+        }),
         Attention.Message.SucceededAnswer({ key: questionKey }),
       ),
       expectScene(role('form', { name: 'Answer' })).toBeAbsent(),
@@ -564,6 +606,7 @@ describe('a question', () => {
       Command.resolve(
         Attention.Answer({
           key: questionKey,
+          engine: localEngineName,
           answer: AttentionAnswer.cases.question.make({
             project,
             ticket: TicketId.make('fa-q1'),
@@ -588,16 +631,16 @@ describe('a question', () => {
       message(
         attentionMessage(
           Attention.Message.ClickedTalkItThrough({
-            project,
+            project: scoped,
             ticket: TicketId.make('fa-q1'),
           }),
         ),
       ),
       // The answer talk is opened on the question's project, by the maintainer's action.
       StoryCommand.resolve(
-        TalkPanel.OpenAnswerTalk({ project }),
+        TalkPanel.OpenAnswerTalk({ project: scoped }),
         TalkPanel.Message.FailedOpenAnswerTalk({
-          project,
+          project: scoped,
           reason: 'NotImplemented',
         }),
       ),
@@ -675,6 +718,7 @@ describe('an approval', () => {
       Command.resolve(
         Attention.Answer({
           key: 'permission:p-1:perm-1',
+          engine: localEngineName,
           answer: AttentionAnswer.cases.permission.make({
             project,
             id: PermissionId.make('perm-1'),
@@ -696,6 +740,7 @@ describe('an approval', () => {
       Command.resolve(
         Attention.Answer({
           key: 'permission:p-1:perm-1',
+          engine: localEngineName,
           answer: AttentionAnswer.cases.permission.make({
             project,
             id: PermissionId.make('perm-1'),
@@ -715,6 +760,7 @@ describe('an approval', () => {
       Command.resolve(
         Attention.Answer({
           key: 'permission:p-1:perm-1',
+          engine: localEngineName,
           answer: AttentionAnswer.cases.permission.make({
             project,
             id: PermissionId.make('perm-1'),
@@ -756,19 +802,19 @@ describe('reviews and tasks', () => {
       Command.expectExact(
         Review.LoadDiff({
           subject: Review.Subject.Ticket({
-            project,
+            project: scoped,
             ticket: TicketId.make('fa-11'),
           }),
         }),
-        Review.LoadReport({ project }),
-        Review.LoadLog({ project }),
+        Review.LoadReport({ project: scoped }),
+        Review.LoadLog({ project: scoped }),
       ),
       Command.resolveAll(
         [
           Review.LoadDiff,
           Review.Message.FailedLoadDiff({
             subject: Review.Subject.Ticket({
-              project,
+              project: scoped,
               ticket: TicketId.make('fa-11'),
             }),
             reason: 'the engine is not connected',
@@ -777,14 +823,14 @@ describe('reviews and tasks', () => {
         [
           Review.LoadReport,
           Review.Message.FailedLoadReport({
-            project,
+            project: scoped,
             reason: 'the engine is not connected',
           }),
         ],
         [
           Review.LoadLog,
           Review.Message.FailedLoadLog({
-            project,
+            project: scoped,
             reason: 'the engine is not connected',
           }),
         ],
@@ -812,7 +858,7 @@ describe('reviews and tasks', () => {
       Command.resolve(
         Attention.CloseTask({
           key: 'task:p-1:fa-12',
-          project,
+          project: scoped,
           ticket: TicketId.make('fa-12'),
         }),
         Attention.Message.SucceededAnswer({ key: 'task:p-1:fa-12' }),

@@ -19,7 +19,8 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { chordLabel } from '../src/app/keys'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
@@ -35,6 +36,8 @@ import * as Stats from '../src/console/stats'
 // button would.
 
 const project = ProjectId.make('p-1')
+/** The projects, named with this machine's engine, which holds them. */
+const scoped: EngineProject = { engine: localEngineName, project }
 
 const at = Date.UTC(2026, 9, 29, 12, 0, 0)
 
@@ -45,7 +48,7 @@ const connected: Model = {
     release: '0.1.0',
     protocol: protocolVersion,
   }),
-  scope: Option.some(project),
+  scope: Option.some(scoped),
 }
 
 const decodeRunView = Schema.decodeUnknownSync(Schema.toCodecJson(RunView))
@@ -257,7 +260,10 @@ describe('the keys run the controls', () => {
       message(key('r')),
       message(
         Message.GotStatsMessage({
-          message: Stats.Message.ChoseMode({ project, mode: 'feature' }),
+          message: Stats.Message.ChoseMode({
+            project: scoped,
+            mode: 'feature',
+          }),
         }),
       ),
       message(key('r', { inField: true })),
@@ -278,11 +284,14 @@ describe('the keys run the controls', () => {
       message(Message.RequestedPalette()),
       message(Message.RanPaletteEntry({ id: 'run.start.tickets' })),
       Command.expectExact(
-        Stats.StartRun({ project, mode: RunMode.cases.tickets.make({}) }),
+        Stats.StartRun({
+          project: scoped,
+          mode: RunMode.cases.tickets.make({}),
+        }),
       ),
       Command.resolve(
         Stats.StartRun,
-        Stats.Message.SucceededStartRun({ project }),
+        Stats.Message.SucceededStartRun({ project: scoped }),
       ),
     )
   })
@@ -292,7 +301,7 @@ describe('the keys run the controls', () => {
       update,
       given(withRun('running')),
       message(key('s')),
-      Command.expectExact(Stats.AskRun({ project, action: 'drain' })),
+      Command.expectExact(Stats.AskRun({ project: scoped, action: 'drain' })),
       Command.resolve(Stats.AskRun, Stats.Message.SucceededRunRequest()),
     )
   })
@@ -302,7 +311,7 @@ describe('the keys run the controls', () => {
       update,
       given(withRun('draining')),
       message(key('s')),
-      Command.expectExact(Stats.AskRun({ project, action: 'undrain' })),
+      Command.expectExact(Stats.AskRun({ project: scoped, action: 'undrain' })),
       Command.resolve(Stats.AskRun, Stats.Message.SucceededRunRequest()),
     )
   })
@@ -324,7 +333,7 @@ describe('the keys run the controls', () => {
       }),
       message(key('x')),
       message(key('x')),
-      Command.expectExact(Stats.AskRun({ project, action: 'stop' })),
+      Command.expectExact(Stats.AskRun({ project: scoped, action: 'stop' })),
       Command.resolve(Stats.AskRun, Stats.Message.SucceededRunRequest()),
     )
   })

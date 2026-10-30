@@ -27,7 +27,8 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { update } from '../src/app/update'
@@ -42,6 +43,9 @@ import * as TalkPanel from '../src/console/talk-panel'
 
 const project = ProjectId.make('p-1')
 
+/** The project, named with this machine's engine, which holds it. */
+const scoped: EngineProject = { engine: localEngineName, project }
+
 /** Thursday 29 October 2026, 22:00 UTC. */
 const at = Date.UTC(2026, 9, 29, 22, 0, 0)
 const now = DateTime.makeZonedUnsafe(at, { timeZone: 'Europe/Athens' })
@@ -53,7 +57,7 @@ const connected: Model = {
     release: '0.1.0',
     protocol: protocolVersion,
   }),
-  scope: Option.some(project),
+  scope: Option.some(scoped),
   now: Option.some(now),
 }
 
@@ -133,7 +137,7 @@ const checklistOf = (
 const answering = (attention: ReadonlyArray<AttentionRequest>): Model => ({
   ...checklistOf(
     Stats.Checklist.Answering({
-      project,
+      project: scoped,
       preflight,
       fix: ['concurrent_low'],
       override: ['free_disk'],
@@ -158,8 +162,8 @@ describe('the overnight pre-flight', () => {
         'Running the pre-flight…',
       ),
       Command.resolve(
-        Stats.CheckPreflight({ project }),
-        Stats.Message.SucceededPreflight({ project, preflight }),
+        Stats.CheckPreflight({ project: scoped }),
+        Stats.Message.SucceededPreflight({ project: scoped, preflight }),
       ),
       expectScene(selector('[data-check="concurrent_low"]')).toContainText(
         'concurrent is 1',
@@ -206,7 +210,7 @@ describe('the overnight pre-flight', () => {
   test('a refusal is fixed or overridden, never both', () => {
     story(
       update,
-      givenStory(checklistOf(Stats.offered(project, preflight))),
+      givenStory(checklistOf(Stats.offered(scoped, preflight))),
       message(
         statsMessage(
           Stats.Message.ToggledOverride({ check: 'concurrent_low' }),
@@ -240,8 +244,8 @@ describe('the overnight pre-flight', () => {
       click(role('button', { name: 'Start run' })),
       click(role('menuitem', { name: 'Overnight' })),
       Command.resolve(
-        Stats.CheckPreflight({ project }),
-        Stats.Message.SucceededPreflight({ project, preflight: clear }),
+        Stats.CheckPreflight({ project: scoped }),
+        Stats.Message.SucceededPreflight({ project: scoped, preflight: clear }),
       ),
       expectScene(selector('[data-preflight-counts]')).toHaveText(
         '3 tickets ready · 0 wait only on questions · 0 questions to answer',
@@ -250,8 +254,8 @@ describe('the overnight pre-flight', () => {
       expectScene(checklist).toBeAbsent(),
       expectScene(role('button', { name: 'Starting…' })).toBeDisabled(),
       Command.resolve(
-        Stats.StartOvernight({ project, fix: [], override: [] }),
-        Stats.Message.SucceededStartRun({ project }),
+        Stats.StartOvernight({ project: scoped, fix: [], override: [] }),
+        Stats.Message.SucceededStartRun({ project: scoped }),
       ),
     )
   })
@@ -261,11 +265,13 @@ describe('the overnight pre-flight', () => {
       update,
       givenStory({ ...connected, attention: Option.some([q1, q2]) }),
       message(
-        statsMessage(Stats.Message.ChoseMode({ project, mode: 'overnight' })),
+        statsMessage(
+          Stats.Message.ChoseMode({ project: scoped, mode: 'overnight' }),
+        ),
       ),
       StoryCommand.resolve(
         Stats.CheckPreflight,
-        Stats.Message.SucceededPreflight({ project, preflight }),
+        Stats.Message.SucceededPreflight({ project: scoped, preflight }),
       ),
       message(
         statsMessage(Stats.Message.ToggledOverride({ check: 'free_disk' })),
@@ -274,13 +280,16 @@ describe('the overnight pre-flight', () => {
       model(shown => {
         expect(shown.console.stats.checklist._tag).toBe('Answering')
         expect(shown.console.talkPanel.answer).toEqual(
-          TalkPanel.Answer.Opening({ project }),
+          TalkPanel.Answer.Opening({ project: scoped }),
         )
       }),
-      StoryCommand.expectExact(TalkPanel.OpenAnswerTalk({ project })),
+      StoryCommand.expectExact(TalkPanel.OpenAnswerTalk({ project: scoped })),
       StoryCommand.resolve(
         TalkPanel.OpenAnswerTalk,
-        TalkPanel.Message.FailedOpenAnswerTalk({ project, reason: 'not yet' }),
+        TalkPanel.Message.FailedOpenAnswerTalk({
+          project: scoped,
+          reason: 'not yet',
+        }),
       ),
       message(statsMessage(Stats.Message.ClickedStartOvernight())),
       model(shown => {
@@ -288,14 +297,14 @@ describe('the overnight pre-flight', () => {
       }),
       StoryCommand.expectExact(
         Stats.StartOvernight({
-          project,
+          project: scoped,
           fix: ['concurrent_low', 'usage_limit_wait'],
           override: ['free_disk'],
         }),
       ),
       StoryCommand.resolve(
         Stats.StartOvernight,
-        Stats.Message.SucceededStartRun({ project }),
+        Stats.Message.SucceededStartRun({ project: scoped }),
       ),
     )
   })
@@ -350,11 +359,11 @@ describe('the overnight pre-flight', () => {
       click(role('button', { name: 'Start overnight' })),
       Command.resolve(
         Stats.StartOvernight({
-          project,
+          project: scoped,
           fix: ['concurrent_low'],
           override: ['free_disk'],
         }),
-        Stats.Message.SucceededStartRun({ project }),
+        Stats.Message.SucceededStartRun({ project: scoped }),
       ),
     )
   })
@@ -364,11 +373,13 @@ describe('the overnight pre-flight', () => {
       update,
       givenStory(connected),
       message(
-        statsMessage(Stats.Message.ChoseMode({ project, mode: 'overnight' })),
+        statsMessage(
+          Stats.Message.ChoseMode({ project: scoped, mode: 'overnight' }),
+        ),
       ),
       StoryCommand.resolve(
         Stats.CheckPreflight,
-        Stats.Message.SucceededPreflight({ project, preflight }),
+        Stats.Message.SucceededPreflight({ project: scoped, preflight }),
       ),
       message(
         statsMessage(Stats.Message.ToggledOverride({ check: 'free_disk' })),
@@ -381,7 +392,9 @@ describe('the overnight pre-flight', () => {
       }),
       // A pre-flight arriving after the cancel is dropped.
       message(
-        statsMessage(Stats.Message.SucceededPreflight({ project, preflight })),
+        statsMessage(
+          Stats.Message.SucceededPreflight({ project: scoped, preflight }),
+        ),
       ),
       model(shown => {
         expect(shown.console.stats.checklist).toEqual(Stats.Checklist.None())
@@ -389,7 +402,7 @@ describe('the overnight pre-flight', () => {
     )
     scene(
       { update, view },
-      given(checklistOf(Stats.offered(project, preflight))),
+      given(checklistOf(Stats.offered(scoped, preflight))),
       click(within(checklist, role('button', { name: 'Cancel' }))),
       expectScene(checklist).toBeAbsent(),
       expectScene(role('button', { name: 'Start run' })).toBeEnabled(),
@@ -403,9 +416,9 @@ describe('the overnight pre-flight', () => {
       click(role('button', { name: 'Start run' })),
       click(role('menuitem', { name: 'Overnight' })),
       Command.resolve(
-        Stats.CheckPreflight({ project }),
+        Stats.CheckPreflight({ project: scoped }),
         Stats.Message.FailedPreflight({
-          project,
+          project: scoped,
           reason: 'not connected to the engine',
         }),
       ),
@@ -414,8 +427,8 @@ describe('the overnight pre-flight', () => {
       ),
       click(role('button', { name: 'Check again' })),
       Command.resolve(
-        Stats.CheckPreflight({ project }),
-        Stats.Message.SucceededPreflight({ project, preflight: clear }),
+        Stats.CheckPreflight({ project: scoped }),
+        Stats.Message.SucceededPreflight({ project: scoped, preflight: clear }),
       ),
       expectScene(role('button', { name: 'Start overnight' })).toBeEnabled(),
       click(within(checklist, role('button', { name: 'Cancel' }))),
@@ -425,7 +438,14 @@ describe('the overnight pre-flight', () => {
   test("another project's checklist isn't shown in this one's row", () => {
     scene(
       { update, view },
-      given(checklistOf(Stats.offered(ProjectId.make('p-2'), preflight))),
+      given(
+        checklistOf(
+          Stats.offered(
+            { ...scoped, project: ProjectId.make('p-2') },
+            preflight,
+          ),
+        ),
+      ),
       expectScene(checklist).toBeAbsent(),
     )
   })

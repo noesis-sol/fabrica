@@ -28,6 +28,7 @@ import {
 import * as VirtualList from '@foldkit/ui/virtualList'
 
 import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import type { EventsItem } from '../src/app/streams'
@@ -111,10 +112,16 @@ const patchOf = (
   events: ReadonlyArray<RunEvent>,
 ): typeof EventsItem.Type => ({ _tag: 'patch', seq, value: events })
 
+/** A project on this machine's engine, which holds them all. */
+const here = (project: ProjectId): EngineProject => ({
+  engine: localEngineName,
+  project,
+})
+
 const eventsOf = (
   project: ProjectId,
   items: readonly [typeof EventsItem.Type, ...Array<typeof EventsItem.Type>],
-): Message => Message.ReceivedEvents({ project, items })
+): Message => Message.ReceivedEvents({ project: here(project), items })
 
 const measured = () =>
   Mount.resolve(
@@ -197,7 +204,10 @@ describe('History under All projects', () => {
         ]),
       ]),
     )
-    expect(patched.events.map(entry => entry.project)).toEqual([alpha, beta])
+    expect(patched.events.map(entry => entry.project)).toEqual([
+      here(alpha),
+      here(beta),
+    ])
     expect(patched.events[1]).toBe(both.events[1])
     expect(
       historyRows(
@@ -226,7 +236,7 @@ describe('History under All projects', () => {
     const shared = RunId.make('r-1')
     const rows = historyRows(
       [alpha, beta].map(project => ({
-        project,
+        project: here(project),
         events: [dispatch(shared, '2026-10-29T10:05:00.000+02:00', project)],
         chip: Option.none(),
       })),
@@ -237,7 +247,7 @@ describe('History under All projects', () => {
   test("a project's own scope shows its events alone, with no chip", () => {
     scene(
       { update, view },
-      given({ ...known, scope: Option.some(alpha) }),
+      given({ ...known, scope: Option.some(here(alpha)) }),
       Subscription.emit(
         eventsOf(beta, [
           snapshotOf([
@@ -261,7 +271,7 @@ describe('History under All projects', () => {
 
   test('choosing All projects clears the scoped project’s events until the streams send theirs', () => {
     const scoped = received(
-      { ...known, scope: Option.some(alpha) },
+      { ...known, scope: Option.some(here(alpha)) },
       eventsOf(alpha, [
         snapshotOf([
           dispatch(alphaRun, '2026-10-29T10:05:00.000+02:00', 'alpha one'),
@@ -378,7 +388,7 @@ describe("History's events watch", () => {
   test("a project's scope watches its viewed run alone", () => {
     const scoped = {
       ...known,
-      scope: Option.some(alpha),
+      scope: Option.some(here(alpha)),
       runView: Option.some(viewOf(alpha, alphaRun)),
     }
     expect(watched(scoped)).toEqual([

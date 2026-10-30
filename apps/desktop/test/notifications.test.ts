@@ -29,6 +29,7 @@ import {
 const project = ProjectId.make('p-fabrica')
 
 const toQuestion = NotificationTarget.cases.Request.make({
+  engine: 'local',
   ref: AttentionRef.cases.question.make({
     project,
     ticket: TicketId.make('fa-q1'),
@@ -211,11 +212,16 @@ describe('the preload’s notifications', () => {
     deliver(channels.notificationClicked, toQuestion)
     deliver(channels.notificationClicked, { _tag: 'Request', ref: 'fa-q1' })
     deliver(channels.notificationClicked, { _tag: 'Project', project })
+    deliver(channels.notificationClicked, {
+      _tag: 'Project',
+      engine: 'build-box',
+      project,
+    })
     stop()
     deliver(channels.notificationClicked, toQuestion)
     expect(seen).toEqual([
       toQuestion,
-      NotificationTarget.cases.Project.make({ project }),
+      NotificationTarget.cases.Project.make({ engine: 'build-box', project }),
     ])
   })
 

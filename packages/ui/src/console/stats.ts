@@ -191,7 +191,8 @@ export interface ControlInputs {
 /** The project the controls act on: the scoped one, while the engine's client is held. */
 export const controlledProject = (
   inputs: ControlInputs,
-): Option.Option<EngineProject> => (inputs.live ? inputs.project : Option.none())
+): Option.Option<EngineProject> =>
+  inputs.live ? inputs.project : Option.none()
 
 /** Whether the run's controls wait: a request unanswered, or the run stopping. */
 export const isBusy = (model: Model, state: RunState): boolean =>
@@ -435,7 +436,11 @@ export const typedMode = (
         )
 }
 
-const starting = (model: Model, project: EngineProject, mode: RunMode): Return => ({
+const starting = (
+  model: Model,
+  project: EngineProject,
+  mode: RunMode,
+): Return => ({
   model: modifyFields(model, {
     controls: () => Controls.Closed(),
     request: () => Request.Pending({ action: 'start' }),
@@ -791,8 +796,7 @@ export const questionsLeft = (
       })),
     onSome: requests => {
       const open = requests.flatMap(request =>
-        request._tag === 'question' &&
-        request.project === gone.project.project
+        request._tag === 'question' && request.project === gone.project.project
           ? [request]
           : [],
       )

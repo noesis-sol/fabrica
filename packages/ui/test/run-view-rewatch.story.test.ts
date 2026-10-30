@@ -15,7 +15,8 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { makeSubscriptions } from '../src/app/subscriptions'
@@ -28,6 +29,10 @@ import { WaitToRewatchRunView, update } from '../src/app/update'
 const engine = EngineId.make('e-1')
 const project = ProjectId.make('p-1')
 const other = ProjectId.make('p-2')
+
+/** The projects, named with this machine's engine, which holds them. */
+const scoped: EngineProject = { engine: localEngineName, project }
+const otherScoped: EngineProject = { engine: localEngineName, project: other }
 const first = RunId.make('r-1')
 const second = RunId.make('r-2')
 
@@ -38,7 +43,7 @@ const connected: Model = {
     release: '0.1.0',
     protocol: protocolVersion,
   }),
-  scope: Option.some(project),
+  scope: Option.some(scoped),
 }
 
 const idle = ProjectRunState.cases.idle.make({})
@@ -74,9 +79,9 @@ const received = (shown: Model, ...messages: ReadonlyArray<Message>): Model =>
 
 const going = received(connected, projects(running(first)))
 
-const noRun = Message.EndedRunView({ project, reason: 'NoRun' })
+const noRun = Message.EndedRunView({ project: scoped, reason: 'NoRun' })
 
-const waited = Message.WaitedToRewatchRunView({ project, run: first })
+const waited = Message.WaitedToRewatchRunView({ project: scoped, run: first })
 
 const { runView } = makeSubscriptions({
   nextFrame: Effect.void,
@@ -131,7 +136,9 @@ describe('a run view watch that ended with no run', () => {
       update,
       given(going),
       message(noRun),
-      Command.expectExact(WaitToRewatchRunView({ project, run: first })),
+      Command.expectExact(
+        WaitToRewatchRunView({ project: scoped, run: first }),
+      ),
       Command.resolve(WaitToRewatchRunView, waited),
       model(shown => {
         expect(shown.runWatch).toBe(going.runWatch + 1)
@@ -158,7 +165,12 @@ describe('a run view watch that ended with no run', () => {
     story(
       update,
       given(going),
-      message(Message.EndedRunView({ project, reason: 'ProjectNotFound' })),
+      message(
+        Message.EndedRunView({
+          project: scoped,
+          reason: 'ProjectNotFound',
+        }),
+      ),
       Command.expectNone(),
     )
   })
@@ -167,7 +179,7 @@ describe('a run view watch that ended with no run', () => {
     story(
       update,
       given(going),
-      message(Message.EndedRunView({ project: other, reason: 'NoRun' })),
+      message(Message.EndedRunView({ project: otherScoped, reason: 'NoRun' })),
       Command.expectNone(),
     )
   })
@@ -175,7 +187,10 @@ describe('a run view watch that ended with no run', () => {
   test('the pause watches nothing again once the run ended, the next run started or the scope moved', () => {
     const ended = received(going, noRun, projects(idle), waited)
     const next = received(going, noRun, projects(running(second)), waited)
-    const elsewhere = received({ ...going, scope: Option.some(other) }, waited)
+    const elsewhere = received(
+      { ...going, scope: Option.some(otherScoped) },
+      waited,
+    )
     expect(ended.runWatch).toBe(going.runWatch)
     expect(next.runWatch).toBe(going.runWatch)
     expect(elsewhere.runWatch).toBe(going.runWatch)
@@ -192,7 +207,7 @@ describe('a run view watch that ended with no run', () => {
   it.effect('the pause is a second, on the injected clock', () =>
     Effect.gen(function* () {
       const waiting = yield* Effect.forkChild(
-        WaitToRewatchRunView({ project, run: first }).effect,
+        WaitToRewatchRunView({ project: scoped, run: first }).effect,
       )
       yield* TestClock.adjust('999 millis')
       expect(waiting.pollUnsafe()).toBeUndefined()

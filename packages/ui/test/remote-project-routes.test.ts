@@ -47,6 +47,7 @@ import {
 } from '@fabrica/contracts'
 
 import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { noAppHost } from '../src/app/host'
 import { Message } from '../src/app/message'
 import { type Flags, type Model, initialModel } from '../src/app/model'
@@ -77,6 +78,13 @@ const siteRun = RunId.make('2026-10-30T09:00:00.000+01:00')
 const boxEngine = EngineId.make('e-build-box')
 const boxAddress = EngineAddress.cases.Ssh.make({ destination: 'me@build-box' })
 const epoch = StreamEpoch.make('epoch-1')
+
+/** The known engine's name, as the app's known engines have it. */
+const box = 'build-box'
+
+/** Each project, named with the engine holding it. */
+const homeHere: EngineProject = { engine: localEngineName, project: home }
+const siteOnBox: EngineProject = { engine: box, project: site }
 
 const status = (project: ProjectId, name: string, run: ProjectRunState) =>
   new ProjectStatus({
@@ -310,7 +318,7 @@ describe('a known engine’s project', () => {
                 KnownEnginesAnswer.cases.Read.make({
                   engines: [
                     KnownEngine.make({
-                      name: 'build-box',
+                      name: box,
                       address: boxAddress,
                       engine: boxEngine,
                       protocol: protocolVersion,
@@ -340,7 +348,7 @@ describe('a known engine’s project', () => {
               if (
                 message._tag === 'GotTalkPanelMessage' &&
                 message.message._tag === 'OpenedRunTalk' &&
-                message.message.project === site
+                message.message.project.project === site
               ) {
                 return {
                   model: next.model,
@@ -363,7 +371,7 @@ describe('a known engine’s project', () => {
               // setting is read.
               const scoped = update(
                 next.model,
-                Message.SelectedScope({ project: Option.some(site) }),
+                Message.SelectedScope({ project: Option.some(siteOnBox) }),
               )
               return {
                 model: scoped.model,
@@ -373,6 +381,7 @@ describe('a known engine’s project', () => {
                   Command.mapMessage(
                     Attention.Answer({
                       key: 'question',
+                      engine: box,
                       answer: AttentionAnswer.cases.question.make({
                         project: site,
                         ticket: TicketId.make('si-1'),
@@ -383,7 +392,7 @@ describe('a known engine’s project', () => {
                       Message.GotAttentionMessage({ message: answered }),
                   ),
                   Command.mapMessage(
-                    TalkPanel.LoadQuestionsSetting({ project: site }),
+                    TalkPanel.LoadQuestionsSetting({ project: siteOnBox }),
                     read => Message.GotTalkPanelMessage({ message: read }),
                   ),
                 ],
@@ -454,8 +463,6 @@ describe('a known engine’s project', () => {
 })
 
 // The Model's side: which engine each run, open request and load sample is of.
-
-const box = 'build-box'
 
 const connected: Model = {
   ...initialModel(flags),
@@ -605,7 +612,7 @@ describe('the stats row’s load', () => {
   test('is the scoped project’s engine’s: another engine’s sample is left out', () => {
     const scoped = update(
       withRows,
-      Message.SelectedScope({ project: Option.some(site) }),
+      Message.SelectedScope({ project: Option.some(siteOnBox) }),
     ).model
     expect(
       update(
@@ -625,11 +632,11 @@ describe('the stats row’s load', () => {
       Message.ReceivedLoad({ engine: localEngineName, items: loadItems }),
     ).model
     expect(
-      update(loaded, Message.SelectedScope({ project: Option.some(home) }))
+      update(loaded, Message.SelectedScope({ project: Option.some(homeHere) }))
         .model.load,
     ).toEqual(Option.some(load))
     expect(
-      update(loaded, Message.SelectedScope({ project: Option.some(site) }))
+      update(loaded, Message.SelectedScope({ project: Option.some(siteOnBox) }))
         .model.load,
     ).toEqual(Option.none())
   })

@@ -719,7 +719,7 @@ export const update = (model: Model, message: Message): Return =>
               ? load
               : Option.none(),
         }),
-        { engine: scopeEngine(project), requests: Option.none() },
+        [],
       )
       // The Settings and Insights screens show the new scope's settings and telemetry; the Review screen
       // follows the scope to its project.
@@ -862,7 +862,7 @@ export const update = (model: Model, message: Message): Return =>
             }),
           screens: screens => modifyFields(screens, { talks: Talks.init }),
         }),
-        { engine: scopeEngine(model.scope), requests: Option.none() },
+        [],
       ),
     FailedToConnect: ({ reason }) => ({
       model: modifyFields(model, {
@@ -1045,10 +1045,7 @@ export const update = (model: Model, message: Message): Return =>
     ReceivedAttention: ({ engine, items }) => {
       // A project's scope shows its own engine's requests alone, whatever an engine's stream of the
       // scope before sends after it.
-      if (
-        Option.isSome(model.scope) &&
-        engine !== scopeEngine(model.scope)
-      ) {
+      if (Option.isSome(model.scope) && engine !== scopeEngine(model.scope)) {
         return { model }
       }
       const engineAttention = applyEngineAttention(
@@ -1061,15 +1058,15 @@ export const update = (model: Model, message: Message): Return =>
         attention: () => joinedAttention(engineAttention),
       })
       return andThen(
-        foldRequests(received, { engine, requests: received.attention }),
+        foldRequests(received, received.engineAttention),
         requested =>
           Option.match(requested.attention, {
             onNone: () => ({ model: requested }),
-            onSome: requests =>
+            onSome: () =>
               stepTalkPanel(requested, talkPanel =>
                 TalkPanel.receivedQuestions(
                   talkPanel,
-                  TalkPanel.openQuestions(engine, requests),
+                  TalkPanel.openQuestions(requested.engineAttention),
                 ),
               ),
           }),

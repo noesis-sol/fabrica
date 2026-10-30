@@ -19,7 +19,8 @@ import {
 } from '@fabrica/contracts'
 
 import { dayOf } from '../../src/app/clock'
-import { Connection } from '../../src/app/connection'
+import { Connection, localEngineName } from '../../src/app/connection'
+import type { EngineProject } from '../../src/app/engine-project'
 import { AppHost, noAppHost } from '../../src/app/host'
 import { Model, initialModel } from '../../src/app/model'
 import { layerNotifier, silentNotifier } from '../../src/app/notifier'
@@ -107,6 +108,9 @@ const projectIds = projectRows.map((_, index) =>
 
 /** The project the sidebar has selected: the first, as the reference selects its first session. */
 const project = projectIds[0] ?? ProjectId.make('p-1')
+
+/** The selected project, named with this machine's engine, which holds it. */
+const scoped: EngineProject = { engine: localEngineName, project }
 
 const projects = projectRows.map(
   ([name, base, state], index) =>
@@ -343,7 +347,7 @@ const talkPanel: TalkPanel.Model = {
   run: TalkPanel.Run.Open({
     conversation: {
       talk: TalkId.make('t-run'),
-      project,
+      project: scoped,
       mode: 'run',
       model: 'claude',
       lines: [
@@ -376,7 +380,7 @@ export const consoleScene = (): Model => {
       release: '0.1.0',
       protocol: protocolVersion,
     }),
-    scope: Option.some(project),
+    scope: Option.some(scoped),
     now: Option.some(now),
     today: Option.some(dayOf(now)),
     load: Option.some(load),
@@ -386,13 +390,14 @@ export const consoleScene = (): Model => {
     ]),
     runView: Option.some(runView),
     attention: Option.some(attention),
-    events: [{ project, events: [...events].reverse() }],
+    engineAttention: [{ engine: localEngineName, requests: attention }],
+    events: [{ project: scoped, events: [...events].reverse() }],
     console: {
       ...base.console,
       talkPanel,
       sidebar: Sidebar.receivedProjects(base.console.sidebar, {
         engine,
-        name: 'local',
+        name: localEngineName,
         items: [
           {
             _tag: 'snapshot',

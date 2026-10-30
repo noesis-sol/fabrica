@@ -27,7 +27,8 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { update } from '../src/app/update'
@@ -43,6 +44,7 @@ import * as InProgress from '../src/console/in-progress'
 const engine = EngineId.make('e-1')
 const other = ProjectId.make('p-other')
 const project = ProjectId.make('p-1')
+const scoped: EngineProject = { engine: localEngineName, project }
 
 /** Thursday 29 October 2026, 12:00 UTC. */
 const at = Date.UTC(2026, 9, 29, 12, 0, 0)
@@ -57,7 +59,7 @@ const connected: Model = update(
       release: '0.1.0',
       protocol: protocolVersion,
     }),
-    scope: Option.some(project),
+    scope: Option.some(scoped),
     now: Option.some(now),
   },
   Message.ReceivedProjects({

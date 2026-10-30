@@ -22,7 +22,8 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { Screen } from '../src/app/screen'
@@ -41,8 +42,12 @@ import { type Theme, themeAttribute, themeStorageKey } from '../src/theme/theme'
 // each with its source, and the theme, an app install's setting, switched there and applied at once:
 // data-theme on the root, the native window told, and the choice kept for the install's next start.
 
-const project = ProjectId.make('p-1')
-const other = ProjectId.make('p-2')
+/** The projects, named with this machine's engine, which holds them. */
+const project: EngineProject = {
+  engine: localEngineName,
+  project: ProjectId.make('p-1'),
+}
+const other: EngineProject = { ...project, project: ProjectId.make('p-2') }
 const engine = EngineId.make('e-1')
 const flags = { platform: 'darwin' as const, release: '0.0.0' }
 

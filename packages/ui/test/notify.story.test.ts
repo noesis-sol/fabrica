@@ -201,7 +201,10 @@ const questionRef = AttentionRef.cases.question.make({
 const questionTold: DesktopNotification = {
   title: 'Question · fabrica',
   body: 'Which store keeps the sessions?',
-  target: NotificationTarget.cases.Request.make({ ref: questionRef }),
+  target: NotificationTarget.cases.Request.make({
+    engine: localEngineName,
+    ref: questionRef,
+  }),
 }
 
 const permissionRef = AttentionRef.cases.permission.make({
@@ -209,7 +212,10 @@ const permissionRef = AttentionRef.cases.permission.make({
   id: PermissionId.make('perm-1'),
 })
 
-const toProject = NotificationTarget.cases.Project.make({ project })
+const toProject = NotificationTarget.cases.Project.make({
+  engine: localEngineName,
+  project,
+})
 
 const events = (
   ...value: ReadonlyArray<RunEvent>
@@ -289,6 +295,7 @@ describe('requests that notify', () => {
             title: 'Permission request · fabrica',
             body: 'fa-7 asks to use bash: not on the allow list',
             target: NotificationTarget.cases.Request.make({
+              engine: localEngineName,
               ref: permissionRef,
             }),
           },
@@ -349,6 +356,7 @@ describe('requests that notify', () => {
             title: 'Permission request · fabrica',
             body: 'fa-7 asks to use bash: not on the allow list',
             target: NotificationTarget.cases.Request.make({
+              engine: localEngineName,
               ref: permissionRef,
             }),
           },
@@ -472,6 +480,7 @@ describe('questions --auto-answer answers at once', () => {
             ...questionTold,
             title: 'Question · tutti',
             target: NotificationTarget.cases.Request.make({
+              engine: localEngineName,
               ref: AttentionRef.cases.question.make({
                 project: other,
                 ticket: TicketId.make('fa-q1'),
@@ -708,7 +717,7 @@ describe('a click on a notification', () => {
   const elsewhere: Model = {
     ...plainRun,
     screen: Screen.Backlog(),
-    scope: Option.some(other),
+    scope: Option.some({ engine: localEngineName, project: other }),
   }
 
   test('focuses the request on the console, in its project', () => {
@@ -717,12 +726,17 @@ describe('a click on a notification', () => {
       given(elsewhere),
       message(
         Message.ClickedNotification({
-          target: NotificationTarget.cases.Request.make({ ref: questionRef }),
+          target: NotificationTarget.cases.Request.make({
+            engine: localEngineName,
+            ref: questionRef,
+          }),
         }),
       ),
       model(shown => {
         expect(shown.screen).toEqual(Screen.Console())
-        expect(shown.scope).toEqual(Option.some(project))
+        expect(shown.scope).toEqual(
+          Option.some({ engine: localEngineName, project }),
+        )
         expect(shown.focusedRequest).toEqual(Option.some(questionRef))
       }),
     )
@@ -734,7 +748,10 @@ describe('a click on a notification', () => {
       given({ ...plainRun, screen: Screen.Settings() }),
       message(
         Message.ClickedNotification({
-          target: NotificationTarget.cases.Request.make({ ref: permissionRef }),
+          target: NotificationTarget.cases.Request.make({
+            engine: localEngineName,
+            ref: permissionRef,
+          }),
         }),
       ),
       model(shown => {
@@ -752,7 +769,9 @@ describe('a click on a notification', () => {
       message(Message.ClickedNotification({ target: toProject })),
       model(shown => {
         expect(shown.screen).toEqual(Screen.Console())
-        expect(shown.scope).toEqual(Option.some(project))
+        expect(shown.scope).toEqual(
+          Option.some({ engine: localEngineName, project }),
+        )
         expect(shown.focusedRequest).toEqual(Option.none())
       }),
     )
@@ -764,10 +783,17 @@ describe('a click on a notification', () => {
       given(plainRun),
       message(
         Message.ClickedNotification({
-          target: NotificationTarget.cases.Request.make({ ref: questionRef }),
+          target: NotificationTarget.cases.Request.make({
+            engine: localEngineName,
+            ref: questionRef,
+          }),
         }),
       ),
-      message(Message.SelectedScope({ project: Option.some(other) })),
+      message(
+        Message.SelectedScope({
+          project: Option.some({ engine: localEngineName, project: other }),
+        }),
+      ),
       model(shown => {
         expect(shown.focusedRequest).toEqual(Option.none())
       }),

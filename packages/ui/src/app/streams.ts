@@ -110,26 +110,38 @@ export const applyEngineAttention = (
   )
 }
 
+/** An open attention request, with the name of the engine it is open on. */
+export interface EngineRequest {
+  readonly engine: string
+  readonly request: AttentionRequest
+}
+
 const byOpenedAt = Order.mapInput(
   DateTime.Order,
-  (request: AttentionRequest) => request.openedAt,
+  ({ request }: EngineRequest) => request.openedAt,
 )
 
 /**
- * Every engine's open requests in one list, oldest first, those opened at once in their engines'
- * order; none until an engine's first snapshot.
+ * Every engine's open requests in one list, each with its engine, oldest first, those opened at once
+ * in their engines' order.
  */
+export const engineRequests = (
+  engines: ReadonlyArray<EngineAttention>,
+): ReadonlyArray<EngineRequest> =>
+  Array.sort(
+    engines.flatMap(({ engine, requests }) =>
+      requests.map(request => ({ engine, request })),
+    ),
+    byOpenedAt,
+  )
+
+/** Every engine's open requests in one list, oldest first (`engineRequests`); none until an engine's first snapshot. */
 export const joinedAttention = (
   engines: ReadonlyArray<EngineAttention>,
 ): Option.Option<ReadonlyArray<AttentionRequest>> =>
   engines.length === 0
     ? Option.none()
-    : Option.some(
-        Array.sort(
-          engines.flatMap(entry => entry.requests),
-          byOpenedAt,
-        ),
-      )
+    : Option.some(engineRequests(engines).map(({ request }) => request))
 
 const byId = {
   of: (ticket: Ticket) => ticket.id,
@@ -160,7 +172,10 @@ export const applyEvents = (
         ),
   )
 
-/** One project's run's events, newest first, from its stream's first snapshot; the project named with its engine. */
+/**
+ * One project's run's events, newest first, from its stream's first snapshot, the project named
+ * with its engine.
+ */
 export const ProjectEvents = Schema.Struct({
   project: EngineProject,
   events: RunEvents,
@@ -190,9 +205,7 @@ export const applyProjectEvents = (
       onSome: events =>
         Option.isSome(known)
           ? current.map(entry =>
-              sameProject(entry.project, project)
-                ? { project, events }
-                : entry,
+              sameProject(entry.project, project) ? { project, events } : entry,
             )
           : [...current, { project, events }],
     },

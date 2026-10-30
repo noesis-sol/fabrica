@@ -34,7 +34,7 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
 import {
   chordLabel,
   commandsFor,
@@ -146,7 +146,7 @@ const connected: Model = {
         release: '0.1.0',
         protocol: protocolVersion,
       }),
-      scope: Option.some(fabrica),
+      scope: Option.some({ engine: localEngineName, project: fabrica }),
     },
     Message.ReceivedProjects({
       engine,
@@ -218,6 +218,7 @@ const insightsUnserved = [
       [
         Insights.RunQuery,
         Insights.Message.FailedQuery({
+          scope: Option.none(),
           panel,
           query: InsightsQuery.cases.cost_per_merged_ticket.make({
             project: Option.none(),
@@ -394,7 +395,9 @@ describe('running a command', () => {
       ),
       message(fieldKey('Enter')),
       model(shown => {
-        expect(shown.scope).toEqual(Option.some(tutti))
+        expect(shown.scope).toEqual(
+          Option.some({ engine: localEngineName, project: tutti }),
+        )
         expect(shown.overlay).toEqual(Overlay.Closed())
       }),
     )

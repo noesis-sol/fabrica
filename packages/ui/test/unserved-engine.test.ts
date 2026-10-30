@@ -27,6 +27,7 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
+import { localEngineName } from '../src/app/connection'
 import { nextAnimationFrame } from '../src/app/frame'
 import { noAppHost } from '../src/app/host'
 import type { Pressed } from '../src/app/keys'
@@ -195,7 +196,10 @@ describe('the console against an engine that serves little yet', () => {
           Runtime.makeApplication({
             ...app,
             init: () => ({
-              model: { ...initialModel(flags), scope: Option.some(project) },
+              model: {
+                ...initialModel(flags),
+                scope: Option.some({ engine: localEngineName, project }),
+              },
             }),
             update: (model, message) => {
               Effect.runSync(
@@ -236,7 +240,8 @@ describe('the console against an engine that serves little yet', () => {
         )
         yield* awaitMessage(
           message =>
-            message._tag === 'EndedRunView' && message.project === project,
+            message._tag === 'EndedRunView' &&
+            message.project.project === project,
         )
         yield* awaitMessage(message => message._tag === 'ReceivedLoad')
 

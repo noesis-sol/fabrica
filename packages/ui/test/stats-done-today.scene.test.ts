@@ -15,7 +15,8 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { type Model, initialModel } from '../src/app/model'
 import { update } from '../src/app/update'
 import { view } from '../src/app/view'
@@ -25,6 +26,7 @@ import { view } from '../src/app/view'
 // run's own done count.
 
 const project = ProjectId.make('p-1')
+const scoped: EngineProject = { engine: localEngineName, project }
 
 /** Thursday 29 October 2026, 12:00 UTC. */
 const at = Date.UTC(2026, 9, 29, 12, 0, 0)
@@ -37,7 +39,7 @@ const secondRunOfTheDay: Model = {
     release: '0.1.0',
     protocol: protocolVersion,
   }),
-  scope: Option.some(project),
+  scope: Option.some(scoped),
   now: Option.some(DateTime.makeZonedUnsafe(at, { timeZone: 'UTC' })),
   runView: Option.some(
     Schema.decodeUnknownSync(Schema.toCodecJson(RunView))({

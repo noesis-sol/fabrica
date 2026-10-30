@@ -53,6 +53,10 @@ const fabrica = ProjectId.make('p-fabrica')
 const tutti = ProjectId.make('p-tutti')
 const site = ProjectId.make('p-site')
 
+/** The projects, each named with the engine holding it. */
+const tuttiHere = { engine: localEngineName, project: tutti }
+const siteOnServer = { engine: 'server-1', project: site }
+
 const status = (
   project: ProjectId,
   name: string,
@@ -181,7 +185,7 @@ describe('the rows', () => {
       { role: 'c1', label: '06' },
       { role: 'c2', label: '12' },
     ])
-    expect(projectChip(twoEngines.console.sidebar, site)).toEqual(
+    expect(projectChip(twoEngines.console.sidebar, siteOnServer)).toEqual(
       Option.some({ role: 'c3', label: '03' }),
     )
   })
@@ -319,9 +323,9 @@ describe('selection', () => {
     story(
       update,
       given(twoEngines),
-      message(Message.SelectedScope({ project: Option.some(tutti) })),
+      message(Message.SelectedScope({ project: Option.some(tuttiHere) })),
       model(shown => {
-        expect(shown.scope).toEqual(Option.some(tutti))
+        expect(shown.scope).toEqual(Option.some(tuttiHere))
       }),
       message(Message.SelectedScope({ project: Option.none() })),
       model(shown => {
@@ -333,11 +337,13 @@ describe('selection', () => {
   test("selecting the scope already chosen keeps the Model, so its streams' values stay", () => {
     const scoped = after(
       twoEngines,
-      Message.SelectedScope({ project: Option.some(site) }),
+      Message.SelectedScope({ project: Option.some(siteOnServer) }),
     )
     expect(
-      update(scoped, Message.SelectedScope({ project: Option.some(site) }))
-        .model,
+      update(
+        scoped,
+        Message.SelectedScope({ project: Option.some(siteOnServer) }),
+      ).model,
     ).toBe(scoped)
   })
 })

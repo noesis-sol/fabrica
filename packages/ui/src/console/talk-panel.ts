@@ -7,7 +7,6 @@ import { modifyFields } from 'foldkit/struct'
 import { defineView } from 'foldkit/submodel'
 
 import {
-  type AttentionRequest,
   OpenedTalk,
   type ProjectSettings,
   TalkContext,
@@ -17,12 +16,9 @@ import {
   type TranscriptItem,
 } from '@fabrica/contracts'
 
-import {
-  EngineProject,
-  projectKey,
-  sameProject,
-} from '../app/engine-project'
+import { EngineProject, projectKey, sameProject } from '../app/engine-project'
 import { type EngineServices, requestProject } from '../app/engine-route'
+import { type EngineAttention, engineRequests } from '../app/streams'
 import * as Conversation from './conversation'
 import * as Sidebar from './sidebar'
 
@@ -339,16 +335,20 @@ const reconcile = (model: Model): Return => {
   )
 }
 
-/** The open questions among the scope's attention requests on the engine named `engine`, oldest first. */
+/** The open questions among the scope's attention requests, each engine's, oldest first. */
 export const openQuestions = (
-  engine: string,
-  requests: ReadonlyArray<AttentionRequest>,
+  engines: ReadonlyArray<EngineAttention>,
 ): ReadonlyArray<OpenQuestion> =>
-  Array.sortWith(
-    requests.flatMap(request => (request._tag === 'question' ? [request] : [])),
-    request => request.openedAt,
-    (first, second) => (first < second ? -1 : first > second ? 1 : 0),
-  ).map(({ project, ticket }) => ({ project: { engine, project }, ticket }))
+  engineRequests(engines).flatMap(({ engine, request }) =>
+    request._tag === 'question'
+      ? [
+          {
+            project: { engine, project: request.project },
+            ticket: request.ticket,
+          },
+        ]
+      : [],
+  )
 
 /** The scope's open questions changed: the answer talk follows them. */
 export const receivedQuestions = (
@@ -385,9 +385,7 @@ export const scoped = (
       Option.match(scope, {
         onNone: () => questions,
         onSome: project =>
-          questions.filter(question =>
-            sameProject(question.project, project),
-          ),
+          questions.filter(question => sameProject(question.project, project)),
       }),
     address: () => Address.None(),
     composer: composer =>
@@ -612,7 +610,7 @@ export const update = (
     FailedOpenAnswerTalk: ({ project, reason }) => ({
       model:
         Answer.guards.Opening(model.answer) &&
-      sameProject(model.answer.project, project)
+        sameProject(model.answer.project, project)
           ? modifyFields(model, {
               answer: () => Answer.Failed({ project, reason }),
             })
@@ -672,9 +670,7 @@ const projectNameOf = (
   project: EngineProject,
 ): string =>
   Option.match(
-    Array.findFirst(projects, entry =>
-      sameProject(entry.project, project),
-    ),
+    Array.findFirst(projects, entry => sameProject(entry.project, project)),
     { onNone: () => project.project, onSome: entry => entry.name },
   )
 
@@ -693,35 +689,35 @@ const askingWhich = (
     inputs.projects.map(({ project }) => project.engine),
   ).length
   return [
-  h.div(
-    [
-      h.Role('group'),
-      h.AriaLabel('Which project?'),
-      h.Class('flex flex-wrap items-center gap-6 text-xs'),
-    ],
-    [
-      h.span([h.Class('text-muted')], ['Which project?']),
-      ...inputs.projects.map(({ project, name }) =>
-        h.keyed('button')(
-          projectKey(project),
+    h.div(
+      [
+        h.Role('group'),
+        h.AriaLabel('Which project?'),
+        h.Class('flex flex-wrap items-center gap-6 text-xs'),
+      ],
+      [
+        h.span([h.Class('text-muted')], ['Which project?']),
+        ...inputs.projects.map(({ project, name }) =>
+          h.keyed('button')(
+            projectKey(project),
+            [
+              h.Type('button'),
+              h.OnClick(Message.ChoseProject({ project })),
+              h.Class(smallButton),
+            ],
+            [engines > 1 ? `${name} · ${project.engine}` : name],
+          ),
+        ),
+        h.button(
           [
             h.Type('button'),
-            h.OnClick(Message.ChoseProject({ project })),
-            h.Class(smallButton),
+            h.OnClick(Message.CancelledAsking()),
+            h.Class('text-muted'),
           ],
-          [engines > 1 ? `${name} · ${project.engine}` : name],
+          ['Cancel'],
         ),
-      ),
-      h.button(
-        [
-          h.Type('button'),
-          h.OnClick(Message.CancelledAsking()),
-          h.Class('text-muted'),
-        ],
-        ['Cancel'],
-      ),
-    ],
-  ),
+      ],
+    ),
   ]
 }
 

@@ -21,6 +21,7 @@ import {
 } from '@fabrica/contracts'
 
 import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { update } from '../src/app/update'
@@ -33,6 +34,7 @@ import { queue, shownAtMost } from '../src/console/up-next'
 // tickets past the column's count as `+N more`.
 
 const project = ProjectId.make('p-1')
+const scoped: EngineProject = { engine: localEngineName, project }
 const at = 1_793_268_900_000
 
 const connected: Model = {
@@ -42,7 +44,7 @@ const connected: Model = {
     release: '0.1.0',
     protocol: protocolVersion,
   }),
-  scope: Option.some(project),
+  scope: Option.some(scoped),
 }
 
 /** A ticket row's JSON in `phase`. */

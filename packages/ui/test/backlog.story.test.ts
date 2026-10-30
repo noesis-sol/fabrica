@@ -27,7 +27,8 @@ import {
 import * as VirtualList from '@foldkit/ui/virtualList'
 
 import { dayOf } from '../src/app/clock'
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { Screen } from '../src/app/screen'
@@ -43,6 +44,10 @@ import { graphKey, graphOf } from '../src/screens/backlog-graph'
 
 const project = ProjectId.make('p-1')
 const other = ProjectId.make('p-2')
+
+/** The projects, named with this machine's engine, which holds them. */
+const scoped: EngineProject = { engine: localEngineName, project }
+const otherScoped: EngineProject = { engine: localEngineName, project: other }
 const at = 1_793_268_900_000
 const id = (ticket: string) => TicketId.make(ticket)
 
@@ -140,7 +145,7 @@ const edges = [
   { from: 'fa-7', to: 'fa-6', kind: 'related' },
 ]
 
-const facts = (forProject: ProjectId = project): Backlog.Facts =>
+const facts = (forProject: EngineProject = scoped): Backlog.Facts =>
   decodeFacts({
     project: forProject,
     ready: ['fa-2'],
@@ -257,7 +262,7 @@ const requests = (
 ) => commands.map(({ name, args }) => ({ name, args }))
 
 const loadFacts = (open: ReadonlyArray<TicketId>) =>
-  requests([Backlog.LoadFacts({ ask: { project, open } })])
+  requests([Backlog.LoadFacts({ ask: { project: scoped, open } })])
 
 const said = (rows: ReadonlyArray<Backlog.BacklogRow>) =>
   rows.map(row => [row.ticket, row.mark.word, row.note])
@@ -365,14 +370,17 @@ describe('why the rest isn’t ready', () => {
       Backlog.update,
       given(Backlog.init()),
       model(shown => {
-        const told = Backlog.receivedBacklog(shown, { project, tickets })
+        const told = Backlog.receivedBacklog(shown, {
+          project: scoped,
+          tickets,
+        })
         expect(requests(told.commands)).toEqual(loadFacts(openIds))
         expect(AsyncData.isLoading(told.model.facts)).toBe(true)
-        expect(told.model.asking).toEqual(Option.some(project))
+        expect(told.model.asking).toEqual(Option.some(scoped))
       }),
     )
     const asked = Backlog.receivedBacklog(Backlog.init(), {
-      project,
+      project: scoped,
       tickets,
     }).model
     story(
@@ -389,15 +397,18 @@ describe('why the rest isn’t ready', () => {
 
   test('a change while the engine is asked waits for its answer, then asks once more', () => {
     const asked = Backlog.receivedBacklog(Backlog.init(), {
-      project,
+      project: scoped,
       tickets,
     }).model
     const changed = Backlog.receivedBacklog(asked, {
-      project,
+      project: scoped,
       tickets: tickets.filter(shown => shown.id !== 'fa-3'),
     })
     expect(changed.commands).toBeUndefined()
-    const again = { project, open: [id('fa-1'), id('fa-2'), id('fa-q1')] }
+    const again = {
+      project: scoped,
+      open: [id('fa-1'), id('fa-2'), id('fa-q1')],
+    }
     expect(changed.model.again).toEqual(Option.some(again))
     story(
       Backlog.update,
@@ -407,7 +418,7 @@ describe('why the rest isn’t ready', () => {
       model(shown => {
         expect(AsyncData.isRefreshing(shown.facts)).toBe(true)
         expect(shown.again).toEqual(Option.none())
-        expect(shown.asking).toEqual(Option.some(project))
+        expect(shown.asking).toEqual(Option.some(scoped))
       }),
       Command.resolve(
         Backlog.LoadFacts,
@@ -421,13 +432,15 @@ describe('why the rest isn’t ready', () => {
 
   test('an answer for another project than the one asked is dropped', () => {
     const asked = Backlog.receivedBacklog(Backlog.init(), {
-      project,
+      project: scoped,
       tickets,
     }).model
     story(
       Backlog.update,
       given(asked),
-      message(Backlog.Message.SucceededLoadFacts({ facts: facts(other) })),
+      message(
+        Backlog.Message.SucceededLoadFacts({ facts: facts(otherScoped) }),
+      ),
       model(shown => {
         expect(shown).toBe(asked)
       }),
@@ -436,14 +449,17 @@ describe('why the rest isn’t ready', () => {
 
   test('the engine’s failure is kept in words, and the next change asks again', () => {
     const asked = Backlog.receivedBacklog(Backlog.init(), {
-      project,
+      project: scoped,
       tickets,
     }).model
     story(
       Backlog.update,
       given(asked),
       message(
-        Backlog.Message.FailedLoadFacts({ project, reason: 'not connected' }),
+        Backlog.Message.FailedLoadFacts({
+          project: scoped,
+          reason: 'not connected',
+        }),
       ),
       model(shown => {
         expect(AsyncData.getError(shown.facts)).toEqual(
@@ -451,7 +467,8 @@ describe('why the rest isn’t ready', () => {
         )
         expect(
           requests(
-            Backlog.receivedBacklog(shown, { project, tickets }).commands,
+            Backlog.receivedBacklog(shown, { project: scoped, tickets })
+              .commands,
           ),
         ).toEqual(loadFacts(openIds))
       }),
@@ -541,12 +558,12 @@ const connected: Model = {
     release: '0.1.0',
     protocol: protocolVersion,
   }),
-  scope: Option.some(project),
+  scope: Option.some(scoped),
   today: Option.some(today),
 }
 
 const snapshot = Message.ReceivedBacklog({
-  project,
+  project: scoped,
   items: [
     {
       _tag: 'snapshot',
@@ -659,7 +676,7 @@ describe('the screen', () => {
     const resent = update(
       answered,
       Message.ReceivedBacklog({
-        project,
+        project: scoped,
         items: [
           {
             _tag: 'patch',

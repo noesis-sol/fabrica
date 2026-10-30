@@ -13,7 +13,8 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
-import { Connection } from '../src/app/connection'
+import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { makeSubscriptions } from '../src/app/subscriptions'
@@ -27,6 +28,9 @@ import { goingRun } from '../src/console/sidebar'
 const engine = EngineId.make('e-1')
 const project = ProjectId.make('p-1')
 const other = ProjectId.make('p-2')
+
+/** The scoped project, named with this machine's engine, which holds it. */
+const scoped: EngineProject = { engine: localEngineName, project }
 const first = RunId.make('r-1')
 const second = RunId.make('r-2')
 
@@ -37,7 +41,7 @@ const connected: Model = {
     release: '0.1.0',
     protocol: protocolVersion,
   }),
-  scope: Option.some(project),
+  scope: Option.some(scoped),
 }
 
 const idle = ProjectRunState.cases.idle.make({})
@@ -129,14 +133,22 @@ describe("the scoped project's run view watch", () => {
       connected,
       projects(status(project, running(first)), status(other, idle)),
     ).console.sidebar
-    expect(goingRun(sidebar, project)).toEqual(Option.some(first))
-    expect(goingRun(sidebar, other)).toEqual(Option.none())
-    expect(goingRun(sidebar, ProjectId.make('p-3'))).toEqual(Option.none())
+    expect(goingRun(sidebar, scoped)).toEqual(Option.some(first))
+    expect(goingRun(sidebar, { ...scoped, project: other })).toEqual(
+      Option.none(),
+    )
+    expect(
+      goingRun(sidebar, { ...scoped, project: ProjectId.make('p-3') }),
+    ).toEqual(Option.none())
+    // The same project ID on an engine whose rows don't hold it.
+    expect(goingRun(sidebar, { ...scoped, engine: 'build-box' })).toEqual(
+      Option.none(),
+    )
     const waited = received(
       connected,
       projects(status(project, waiting(second))),
     ).console.sidebar
-    expect(goingRun(waited, project)).toEqual(Option.some(second))
+    expect(goingRun(waited, scoped)).toEqual(Option.some(second))
   })
 
   test('a run started elsewhere watches the view afresh, with no new scope and no run the app started', () => {

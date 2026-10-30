@@ -131,7 +131,10 @@ export const runViewMessages = (
     ),
   )
 
-/** The events of a run on the engine named `engine`, a frame's at a time; the stream ends with the run, its events kept. */
+/**
+ * The events of a run on the engine named `engine`, a frame's at a time; the stream ends with the run,
+ * its events kept.
+ */
 export const eventMessages = (
   client: EngineClientShape,
   {
@@ -311,7 +314,7 @@ const EngineRun = Schema.Struct({
   run: RunId,
 })
 
-/** The scoped project, while its engine is connected; none under All projects. */
+/** The scoped project, while its engine is connected: none under All projects or while it isn't. */
 const liveScope = (model: Model): Option.Option<EngineProject> =>
   Option.filter(model.scope, ({ engine }) =>
     RemoteEngines.isEngineLive(model, engine),

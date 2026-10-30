@@ -30,6 +30,7 @@ import {
 } from '@fabrica/contracts'
 
 import { Connection, localEngineName } from '../src/app/connection'
+import type { EngineProject } from '../src/app/engine-project'
 import { Message } from '../src/app/message'
 import { type Model, initialModel } from '../src/app/model'
 import { Screen } from '../src/app/screen'
@@ -51,6 +52,13 @@ import * as Talks from '../src/screens/talks'
 const engine = EngineId.make('e-1')
 const auth = ProjectId.make('p-1')
 const billing = ProjectId.make('p-2')
+
+/** The projects, named with this machine's engine, which holds them. */
+const authHere: EngineProject = { engine: localEngineName, project: auth }
+const billingHere: EngineProject = {
+  engine: localEngineName,
+  project: billing,
+}
 const runTalk = TalkId.make('t-run-1')
 const billingTalk = TalkId.make('t-run-2')
 const answerTalk = TalkId.make('t-answer-1')
@@ -71,7 +79,7 @@ const status = (project: ProjectId, name: string): ProjectStatus =>
 
 const projects = Message.ReceivedProjects({
   engine,
-  name: 'local',
+  name: localEngineName,
   items: [
     {
       _tag: 'snapshot',
@@ -110,9 +118,12 @@ const talksMessage = (message: Talks.Message): Message =>
 /** The auth project in scope, its run talk open. */
 const scopedToAuth: Model = received(
   connected,
-  Message.SelectedScope({ project: Option.some(auth) }),
+  Message.SelectedScope({ project: Option.some(authHere) }),
   panelMessage(
-    TalkPanel.Message.OpenedRunTalk({ project: auth, opened: opened(runTalk) }),
+    TalkPanel.Message.OpenedRunTalk({
+      project: authHere,
+      opened: opened(runTalk),
+    }),
   ),
 )
 
@@ -214,20 +225,20 @@ describe('the run talk', () => {
     story(
       update,
       given(connected),
-      message(Message.SelectedScope({ project: Option.some(auth) })),
+      message(Message.SelectedScope({ project: Option.some(authHere) })),
       model(shown => {
         expect(shown.console.talkPanel.run).toEqual(
-          TalkPanel.Run.Opening({ project: auth }),
+          TalkPanel.Run.Opening({ project: authHere }),
         )
         // The subscriptions open the scope's run talk.
         expect(opening.modelToDependencies(shown).project).toEqual(
-          Option.some(auth),
+          Option.some(authHere),
         )
       }),
       message(
         panelMessage(
           TalkPanel.Message.OpenedRunTalk({
-            project: auth,
+            project: authHere,
             opened: opened(runTalk),
           }),
         ),
@@ -352,16 +363,16 @@ describe('the answer talk', () => {
       given(scopedToAuth),
       message(attention(question(auth, 'fa-q1'))),
       Command.resolve(
-        TalkPanel.LoadQuestionsSetting({ project: auth }),
+        TalkPanel.LoadQuestionsSetting({ project: authHere }),
         TalkPanel.Message.LoadedQuestionsSetting({
-          project: auth,
+          project: authHere,
           mode: 'auto',
         }),
       ),
       Command.resolve(
-        TalkPanel.OpenAnswerTalk({ project: auth }),
+        TalkPanel.OpenAnswerTalk({ project: authHere }),
         TalkPanel.Message.OpenedAnswerTalk({
-          project: auth,
+          project: authHere,
           opened: opened(answerTalk),
         }),
       ),
@@ -394,16 +405,16 @@ describe('the answer talk', () => {
       given(scopedToAuth),
       message(attention(question(auth, 'fa-q1'))),
       Command.resolve(
-        TalkPanel.LoadQuestionsSetting({ project: auth }),
+        TalkPanel.LoadQuestionsSetting({ project: authHere }),
         TalkPanel.Message.LoadedQuestionsSetting({
-          project: auth,
+          project: authHere,
           mode: 'auto',
         }),
       ),
       Command.resolve(
-        TalkPanel.OpenAnswerTalk({ project: auth }),
+        TalkPanel.OpenAnswerTalk({ project: authHere }),
         TalkPanel.Message.OpenedAnswerTalk({
-          project: auth,
+          project: authHere,
           opened: opened(answerTalk),
         }),
       ),
@@ -422,9 +433,9 @@ describe('the answer talk', () => {
       given(scopedToAuth),
       message(attention(question(auth, 'fa-q1'))),
       Command.resolve(
-        TalkPanel.LoadQuestionsSetting({ project: auth }),
+        TalkPanel.LoadQuestionsSetting({ project: authHere }),
         TalkPanel.Message.LoadedQuestionsSetting({
-          project: auth,
+          project: authHere,
           mode: 'key',
         }),
       ),
@@ -441,9 +452,9 @@ describe('the answer talk', () => {
         }),
       ),
       Command.resolve(
-        TalkPanel.OpenAnswerTalk({ project: auth }),
+        TalkPanel.OpenAnswerTalk({ project: authHere }),
         TalkPanel.Message.OpenedAnswerTalk({
-          project: auth,
+          project: authHere,
           opened: opened(answerTalk),
         }),
       ),
@@ -459,16 +470,16 @@ describe('the answer talk', () => {
       given(scopedToAuth),
       message(attention(question(auth, 'fa-q1'))),
       Command.resolve(
-        TalkPanel.LoadQuestionsSetting({ project: auth }),
+        TalkPanel.LoadQuestionsSetting({ project: authHere }),
         TalkPanel.Message.LoadedQuestionsSetting({
-          project: auth,
+          project: authHere,
           mode: 'auto',
         }),
       ),
       Command.resolve(
-        TalkPanel.OpenAnswerTalk({ project: auth }),
+        TalkPanel.OpenAnswerTalk({ project: authHere }),
         TalkPanel.Message.FailedOpenAnswerTalk({
-          project: auth,
+          project: authHere,
           reason: 'NotImplemented',
         }),
       ),
@@ -477,7 +488,10 @@ describe('the answer talk', () => {
       model(shown => {
         expect(shownTalk(shown)).toEqual(Option.some(runTalk))
         expect(shown.console.talkPanel.answer).toEqual(
-          TalkPanel.Answer.Failed({ project: auth, reason: 'NotImplemented' }),
+          TalkPanel.Answer.Failed({
+            project: authHere,
+            reason: 'NotImplemented',
+          }),
         )
       }),
     )
@@ -490,15 +504,15 @@ describe('the answer talk', () => {
       message(
         Message.GotAttentionMessage({
           message: Attention.Message.ClickedTalkItThrough({
-            project: auth,
+            project: authHere,
             ticket: question(auth, 'fa-q1').ticket,
           }),
         }),
       ),
       Command.resolve(
-        TalkPanel.OpenAnswerTalk({ project: auth }),
+        TalkPanel.OpenAnswerTalk({ project: authHere }),
         TalkPanel.Message.OpenedAnswerTalk({
-          project: auth,
+          project: authHere,
           opened: opened(answerTalk),
         }),
       ),
@@ -526,7 +540,7 @@ describe('the answer talk', () => {
           attention(question(auth, 'fa-q1')),
           panelMessage(
             TalkPanel.Message.LoadedQuestionsSetting({
-              project: auth,
+              project: authHere,
               mode: 'key',
             }),
           ),
@@ -549,9 +563,9 @@ describe('under All projects', () => {
       ),
       message(panelMessage(TalkPanel.Message.SubmittedDraft())),
       Command.resolve(
-        TalkPanel.OpenRunTalk({ project: billing }),
+        TalkPanel.OpenRunTalk({ project: billingHere }),
         TalkPanel.Message.OpenedRunTalk({
-          project: billing,
+          project: billingHere,
           opened: opened(billingTalk),
         }),
       ),
@@ -583,9 +597,9 @@ describe('under All projects', () => {
         ),
       ),
       SceneCommand.resolve(
-        TalkPanel.OpenRunTalk({ project: auth }),
+        TalkPanel.OpenRunTalk({ project: authHere }),
         TalkPanel.Message.OpenedRunTalk({
-          project: auth,
+          project: authHere,
           opened: opened(runTalk),
         }),
       ),
@@ -597,10 +611,10 @@ describe('under All projects', () => {
     )
     expect(
       TalkPanel.namedProjects('Move auth refresh and Billing along', [
-        { project: auth, name: 'Auth refresh' },
-        { project: billing, name: 'Billing' },
+        { project: authHere, name: 'Auth refresh' },
+        { project: billingHere, name: 'Billing' },
       ]),
-    ).toEqual([auth, billing])
+    ).toEqual([authHere, billingHere])
     expect(TalkPanel.names('rebilling', 'Billing')).toBe(false)
   })
 })
@@ -613,22 +627,24 @@ describe('the Talks screen', () => {
       message(Message.RequestedScreen({ screen: Screen.Talks() })),
       message(talksMessage(Talks.Message.ClickedStart({ mode: 'refine' }))),
       message(talksMessage(Talks.Message.TypedStart({ text: 'docs/spec.md' }))),
-      message(talksMessage(Talks.Message.SubmittedStart({ project: auth }))),
+      message(
+        talksMessage(Talks.Message.SubmittedStart({ project: authHere })),
+      ),
       Command.resolve(
         Talks.OpenTalk({
-          project: auth,
+          project: authHere,
           mode: 'refine',
           context: TalkContext.cases.refine.make({ spec: 'docs/spec.md' }),
         }),
         Talks.Message.OpenedTalk({
-          project: auth,
+          project: authHere,
           mode: 'refine',
           opened: opened(TalkId.make('t-refine-1')),
         }),
       ),
       model(shown => {
         expect(Talks.heldTalks(shown.screens.talks)).toEqual([
-          { project: auth, talk: TalkId.make('t-refine-1') },
+          { project: authHere, talk: TalkId.make('t-refine-1') },
         ])
       }),
     )
@@ -640,7 +656,7 @@ describe('the Talks screen', () => {
           Message.RequestedScreen({ screen: Screen.Talks() }),
           talksMessage(
             Talks.Message.OpenedTalk({
-              project: auth,
+              project: authHere,
               mode: 'feature',
               opened: opened(TalkId.make('t-feature-1')),
             }),

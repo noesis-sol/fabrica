@@ -76,7 +76,10 @@ export const Message = defineMessageUnion({
   FailedLoadDiff: { subject: Subject, reason: Schema.String },
   SucceededLoadReport: { project: EngineProject, report: Report },
   FailedLoadReport: { project: EngineProject, reason: Schema.String },
-  SucceededLoadLog: { project: EngineProject, lines: Schema.Array(Schema.String) },
+  SucceededLoadLog: {
+    project: EngineProject,
+    lines: Schema.Array(Schema.String),
+  },
   FailedLoadLog: { project: EngineProject, reason: Schema.String },
   /** Monaco drew the file, or couldn't. */
   CompletedShowDiff: {},
@@ -268,9 +271,8 @@ export const opened = (
       onSome: shown =>
         show(model, {
           project: shown,
-          subject: Option.filter(
-            model.subject,
-            subject => sameProject(subject.project, shown),
+          subject: Option.filter(model.subject, subject =>
+            sameProject(subject.project, shown),
           ).pipe(
             Option.orElse(() =>
               Option.map(run, going =>
