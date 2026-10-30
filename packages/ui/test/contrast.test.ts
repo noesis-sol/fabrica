@@ -50,25 +50,13 @@ describe('the contrast ratio', () => {
 
 const themes = themeVariables(themesCss)
 
-// The handoff's Classic falls short of AA on these pairs, filed as fab-mgi.35 (how to fix them is
-// fab-mgi.36's question). themes.css stays the handoff's text, so the test holds them as known: a
-// new failure fails it, and so does one of these passing, so the list is struck when they're fixed.
+// Every theme passes AA on every pair: Classic's ink, c2 and c3 were amended to (fab-mgi.35, spec
+// §27.2). A pair falling short is held here only as a known failure, filed as a ticket: a new failure
+// fails the test, and so does one of these passing, so the list is struck when it's fixed.
 const knownFailures: ReadonlyMap<string, ReadonlyArray<string>> = new Map([
   ['lichen-bright', []],
   ['neon-grid', []],
-  [
-    'classic',
-    [
-      'c2 on panel',
-      'c3 on bg',
-      'c3 on panel',
-      'ink on c1',
-      'ink on c2',
-      'ink on c3',
-      'ink on c4',
-      'ink on c5',
-    ],
-  ],
+  ['classic', []],
 ])
 
 describe("each theme's contrast", () => {

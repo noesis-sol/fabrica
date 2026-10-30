@@ -16,8 +16,8 @@
 [data-theme="classic"] {
   --bg: #1A1D21; --side: #19171D; --panel: #222529;
   --line: rgba(255,255,255,0.1); --muted: #949BA4; --fg: #D1D2D3;
-  --c1: #2BAC76; --c2: #C2724E; --c3: #E5484D; --c4: #5B9BD5; --c5: #D4A574;
-  --ink: #FFFFFF;
+  --c1: #2BAC76; --c2: #C57856; --c3: #E85D62; --c4: #5B9BD5; --c5: #D4A574;
+  --ink: #1A1D21;
   --font: Inter, system-ui, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   --r: 6px; --rb: 4px; --rw: 10px;

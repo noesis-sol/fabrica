@@ -1226,7 +1226,11 @@ Each option below was weighed and set aside. Don't bring one back without meetin
 
 ### 27.2 Changes to decisions
 
-A \[DECISION\] changed after 2026-10-29 is recorded here: what it was, what it is now, and why. None yet.
+A \[DECISION\] changed after 2026-10-29 is recorded here: what it was, what it is now, and why.
+
+| Was | Is | Why |
+|---|---|---|
+| `themes.css` is the handoff's text, unchanged (§18.2, Appendix B) | The handoff's `themes.css` with Classic amended, 2026-10-30: `--ink` `#FFFFFF` → `#1A1D21` (its `--bg`), `--c2` `#C2724E` → `#C57856`, `--c3` `#E5484D` → `#E85D62`; `design/console/themes.css`, Appendix B and `packages/ui`'s copy are that text. The HTML references and `kits.png` still draw the designer's Classic | The designer's Classic failed WCAG AA on eight pairs (white ink on every fill, `--c2` and `--c3` as text on its surfaces), against H63; the maintainer chose to amend it, lightening `--c2` and `--c3` the least that passes (fab-mgi.36) |
 
 ## 28. Open questions
 
@@ -1385,7 +1389,7 @@ Where Fabrica's console departs from it, §18.3 says so and wins; the departures
 
 ## Appendix B. The theme tokens
 
-`themes.css` as the handoff gives it, the only source of colours, fonts, radii and glows (§18.2). It is copied into `packages/ui` unchanged; this copy and `design/console/themes.css` are the same text.
+`themes.css` as the handoff gives it, with Classic's `--ink`, `--c2` and `--c3` amended to pass WCAG AA (§27.2), the only source of colours, fonts, radii and glows (§18.2). It is copied into `packages/ui` unchanged; this copy and `design/console/themes.css` are the same text.
 
 ```css
 /* Hivemind console themes. Apply one by setting data-theme on the app root. */
@@ -1406,8 +1410,8 @@ Where Fabrica's console departs from it, §18.3 says so and wins; the departures
 [data-theme="classic"] {
   --bg: #1A1D21; --side: #19171D; --panel: #222529;
   --line: rgba(255,255,255,0.1); --muted: #949BA4; --fg: #D1D2D3;
-  --c1: #2BAC76; --c2: #C2724E; --c3: #E5484D; --c4: #5B9BD5; --c5: #D4A574;
-  --ink: #FFFFFF;
+  --c1: #2BAC76; --c2: #C57856; --c3: #E85D62; --c4: #5B9BD5; --c5: #D4A574;
+  --ink: #1A1D21;
   --font: Inter, system-ui, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   --r: 6px; --rb: 4px; --rw: 10px;
