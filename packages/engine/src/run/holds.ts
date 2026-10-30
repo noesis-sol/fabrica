@@ -1,13 +1,4 @@
-import {
-  Data,
-  DateTime,
-  Duration,
-  Effect,
-  Option,
-  Redacted,
-  Ref,
-  Stream,
-} from 'effect'
+import { Data, Duration, Effect, Option, Redacted, Ref, Stream } from 'effect'
 
 import {
   type HoldKind,
@@ -28,6 +19,7 @@ import {
   ProbeOutcome,
   Settle,
   type Tripped,
+  type UsageHoldShape,
   anyOn,
   clockHeld,
   counted,
@@ -214,15 +206,16 @@ export const makeEnvironmentHold = Effect.fn('EnvironmentHold.make')(
 )
 
 /**
- * The supervisor's trouble routed to the holds (§14.1, §14.2, §14.6): a usage limit holds the run for
- * its provider until its reset (one at or before now taken as unknown, waited `retry`), a refused
- * credential for `retry`, each worker waiting until its hold lifts; a session that didn't start is
- * counted for the environment hold. The usage limit's and the credentials' lifts on the proxy's probe
- * come with their holds (fab-mgi.4.12, .13).
+ * The supervisor's trouble routed to the holds (§14.1, §14.2, §14.6): a usage limit waits on the usage
+ * hold for its provider (`usage`), which lifts on the model proxy's probe; a refused credential holds
+ * the run for its provider for `retry`, each worker waiting until its hold lifts; a session that didn't
+ * start is counted for the environment hold. The credentials' lift on the proxy's probe comes with its
+ * hold (fab-mgi.4.13).
  */
 export const supervisorHolds = (input: {
   readonly holds: HoldsShape
   readonly environment: EnvironmentHoldShape
+  readonly usage: UsageHoldShape
   readonly retry: Duration.Duration
   readonly sleep: (duration: Duration.Duration) => Effect.Effect<void>
   /** Where the timed lifts run: the run's scope. */
@@ -249,21 +242,7 @@ export const supervisorHolds = (input: {
       yield* holds.lifted(key)
     })
   return {
-    usageLimited: ({ provider, resetAt }) =>
-      Effect.flatMap(DateTime.now, now => {
-        const known = DateTime.isGreaterThan(resetAt, now)
-        return waitOn({
-          hold: 'USAGE_LIMIT',
-          provider,
-          why: known
-            ? `${provider}'s usage limit, until its reset at ${DateTime.formatIso(resetAt)}`
-            : `${provider}'s usage limit, its reset unknown`,
-          until: known ? DateTime.distance(now, resetAt) : input.retry,
-          lifted: known
-            ? `${provider}'s reset passed`
-            : `${formatDurationMillis(Duration.toMillis(input.retry))} waited on ${provider}'s usage limit`,
-        })
-      }),
+    usageLimited: input.usage.waitOut,
     credentialRefused: ({ provider, reason }) =>
       waitOn({
         hold: 'CREDENTIALS',

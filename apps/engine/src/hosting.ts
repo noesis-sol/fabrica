@@ -197,7 +197,8 @@ export const runHosting = (
       )
       const runner = Layer.provideMerge(config.runner, timing)
       const proxy = Proxy.layer({ routes: config.routes }).pipe(
-        Layer.provide(Layer.merge(config.secrets, Proxy.layerOpen)),
+        Layer.provide(config.secrets),
+        Layer.provideMerge(Proxy.layerHeld),
       )
       return yield* Layer.build(
         Layer.mergeAll(

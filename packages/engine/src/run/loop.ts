@@ -42,7 +42,13 @@ import {
 } from '../cost'
 import { footprintParts } from '../footprints'
 import { Git, Worktrees, isClean, ticketBranch } from '../git'
-import { QUICK_SETTLE, makeHolds, stopping } from '../holds'
+import {
+  QUICK_SETTLE,
+  makeHolds,
+  makeUsageHold,
+  stopping,
+  usageHeld,
+} from '../holds'
 import {
   type MergeQueueShape,
   MergeSetup,
@@ -57,7 +63,7 @@ import {
   HandBackWorker,
   type HandBackWorkerShape,
 } from '../merge/handbacks'
-import { ModelProxy } from '../proxy'
+import { ModelProxy, Permits } from '../proxy'
 import {
   RunLog,
   dispatchingLine,
@@ -550,11 +556,36 @@ const runStarted = Effect.fn('Run.started')(function* (
     reopen: tickets => Effect.forEach(tickets, reopened, { discard: true }),
     probed: Effect.suspend(() => probeFreed),
   })
+  // The usage-limit hold (§14.2): a quota refused holds the run for its provider, whose calls the
+  // proxy's permits hold back until the hold lifts on the proxy's probe.
+  const usage = yield* makeUsageHold({
+    holds,
+    log,
+    run,
+    retry: project.usage_limit_retry,
+    wait: project.usage_limit_wait,
+    events: yield* proxy.events,
+    probe: ({ provider, model }) => proxy.probe({ provider, model, run }),
+    modelFor: provider =>
+      Option.map(
+        Option.fromUndefinedOr(
+          [...Option.toArray(project.model), ...project.model_fallbacks].find(
+            choice => choice.provider === provider,
+          ),
+        ),
+        choice => choice.model,
+      ),
+  })
+  yield* (yield* Permits).hold({
+    run,
+    held: holds.changes.pipe(Stream.map(usageHeld)),
+  })
   const supervision = yield* makeSupervision({
     proxy: yield* proxy.events,
     holds: supervisorHolds({
       holds,
       environment,
+      usage,
       retry: project.usage_limit_retry,
       sleep: clock.sleep,
       fork: effect => Effect.asVoid(Effect.forkIn(effect, runScope)),

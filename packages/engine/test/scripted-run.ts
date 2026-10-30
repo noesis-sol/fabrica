@@ -33,7 +33,7 @@ import {
   Authentication,
   ModelProxy,
   type ProviderRoute,
-  layerOpen,
+  layerHeld,
   make as makeProxy,
 } from '../src/proxy'
 import { RunHosting, RunHostingShape } from '../src/run/hosting'
@@ -338,9 +338,8 @@ export const scriptedHosting = (
         ModelProxy,
         makeProxy({ routes: routesAt(provider.url) }),
       ).pipe(
-        Layer.provide(
-          Layer.merge(Layer.succeed(Secrets)(testSecrets), layerOpen),
-        ),
+        Layer.provide(Layer.succeed(Secrets)(testSecrets)),
+        Layer.provideMerge(layerHeld),
       )
       const services = yield* Layer.build(
         Layer.mergeAll(

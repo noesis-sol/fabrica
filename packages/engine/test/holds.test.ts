@@ -444,6 +444,7 @@ describe('the environment hold', () => {
             const routed = supervisorHolds({
               holds,
               environment,
+              usage: { refused: () => Effect.void, waitOut: () => Effect.void },
               retry: Duration.minutes(15),
               sleep: Effect.sleep,
               fork: effect => Effect.asVoid(Effect.forkIn(effect, scope)),

@@ -63,7 +63,7 @@ import {
   Authentication,
   ModelProxy,
   type ProviderRoute,
-  layerOpen,
+  layerHeld,
   make as makeProxy,
 } from '../src/proxy'
 import {
@@ -418,7 +418,10 @@ const services = (
     Effect.map(makeProxy({ routes: routesAt(provider) }), live =>
       probe === undefined ? live : ModelProxy.of({ ...live, probe }),
     ),
-  ).pipe(Layer.provide(Layer.merge(Layer.succeed(Secrets)(secrets), layerOpen)))
+  ).pipe(
+    Layer.provide(Layer.succeed(Secrets)(secrets)),
+    Layer.provideMerge(layerHeld),
+  )
   const middle = Layer.mergeAll(
     checksLayer,
     checkOwnPassesLayer,
@@ -443,7 +446,7 @@ const services = (
       reaperGrace: Duration.millis(500),
     }),
     proxy,
-    Layer.provide(
+    Layer.provideMerge(
       layerRunLog({ root: fixture.checkout, run }),
       DateTime.layerCurrentZoneOffset(0),
     ),

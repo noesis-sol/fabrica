@@ -1,5 +1,7 @@
 import { DateTime, Duration, Effect, Stream } from 'effect'
 
+import { sameDay, sayMoment } from '@fabrica/contracts'
+
 // The app's clock (spec §18.3, H80): the time now, in the viewer's zone, about every second, and how
 // the console says a moment and a time gone by. The ticks are the host's, given to the subscriptions
 // (`localTicks` in the app, fixed moments in tests), so no view reads the clock itself.
@@ -18,37 +20,10 @@ export const localTicks: Stream.Stream<DateTime.Zoned> = Stream.tick(
   ),
 )
 
-const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-const months = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-]
-
 const twoDigits = (value: number): string => String(value).padStart(2, '0')
 
-/** Whether `at` falls on `now`'s day, in `now`'s zone. */
-export const sameDay = (
-  at: DateTime.DateTime,
-  now: DateTime.Zoned,
-): boolean => {
-  const moment = DateTime.toParts(DateTime.setZone(at, now.zone))
-  const today = DateTime.toParts(now)
-  return (
-    moment.year === today.year &&
-    moment.month === today.month &&
-    moment.day === today.day
-  )
-}
+// How a moment is said is the contracts' rule, which the engine says its moments by too.
+export { sameDay, sayMoment }
 
 /**
  * The start of `now`'s day, in its zone: what a part that shows moments but no elapsed time draws
@@ -56,21 +31,6 @@ export const sameDay = (
  */
 export const dayOf = (now: DateTime.Zoned): DateTime.Zoned =>
   DateTime.startOf(now, 'day')
-
-/**
- * `at` in `now`'s zone, as a time on the 24-hour clock, with its day when that isn't `now`'s:
- * `14:05`, or `Fri 30 Oct 02:00`.
- */
-export const sayMoment = (
-  at: DateTime.DateTime,
-  now: DateTime.Zoned,
-): string => {
-  const moment = DateTime.toParts(DateTime.setZone(at, now.zone))
-  const time = `${twoDigits(moment.hour)}:${twoDigits(moment.minute)}`
-  return sameDay(at, now)
-    ? time
-    : `${weekdays[moment.weekDay]} ${moment.day} ${months[moment.month - 1]} ${time}`
-}
 
 /** Whole seconds from `since` to `now`, never negative. */
 export const secondsSince = (
