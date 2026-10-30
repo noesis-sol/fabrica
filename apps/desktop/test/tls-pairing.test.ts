@@ -116,8 +116,10 @@ const refusalSaid = (target: ConnectionTarget) =>
       }),
     )
     const socket = yield* portSocket(webPortEnd(channel.port1))
-    const reader = yield* socket.reader
-    const failed = yield* Effect.flip(reader.pull)
+    // A connection refused before the engine's opened fails the page's open; after, its first read.
+    const failed = yield* Effect.flip(
+      Effect.scoped(Effect.flatMap(socket.reader, reader => reader.pull)),
+    )
     return Option.map(connectionRefused(failed), ({ reason }) => reason)
   })
 

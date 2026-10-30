@@ -1,7 +1,11 @@
-import { Effect, Layer, Option, type Scope } from 'effect'
+import { Duration, Effect, Layer, Option, type Scope, Stream } from 'effect'
+import { constVoid } from 'effect/Function'
+import { RpcMessage } from 'effect/rpc'
 import { Socket } from 'effect/socket'
 import { type ChildProcessByStdio, spawn } from 'node:child_process'
 import { PassThrough, Readable, Writable } from 'node:stream'
+
+import { ndjson } from '@fabrica/contracts'
 
 import { reconnectBackOff } from '../port'
 
@@ -9,6 +13,15 @@ import { reconnectBackOff } from '../port'
 // and WSL2 bridges take (`ssh <destination> fabrica bridge`, `wsl.exe -d <distro> -- fabrica bridge`),
 // each running `fabrica bridge` through `bridgeScript` on its host. Each connection runs the command anew, and the child is stopped as its connection closes; a child
 // that exits ends its connection, failing it with the cause its command's `ended` reads from its exit.
+//
+// A connection opens once the engine is reached (H61), not as the child starts: ssh may first ask for a
+// host key's acceptance, a passphrase or a security key's touch, and `fabrica bridge` may start a cold
+// engine, or wsl.exe WSL2, and the RPC's pinger fails a connection whose ping goes unanswered for about
+// 10 s once it opens. `fabrica bridge` says nothing until spoken to, so the open says the RPC's ping and
+// waits for the first byte of the answer (the engine's pong, which the client then reads as the answer
+// to a ping of its own); a child that ends first fails the open, with the cause its command's `ended`
+// reads from its exit. It waits `reachLimit` at most, the time its command says it waits on a person
+// left out.
 
 /**
  * What a bridge runs on its host, by sh: `fabrica bridge`, or the engine's link `~/.local/bin/fabrica`
@@ -41,7 +54,18 @@ export interface BridgeCommand {
    * where it isn't, the bridge's stderr is the client's own.
    */
   readonly ended?: (end: BridgeEnd) => Option.Option<Error>
+  /**
+   * Whether the command waits on a person now (ssh asking for a passphrase, say), then each change of
+   * it, its last word holding: the time it does is left out of `reachLimit`. Never, where it isn't given.
+   */
+  readonly asking?: Stream.Stream<boolean>
 }
+
+/**
+ * How long a bridge has to reach the engine, from its start or a person's last answer: room for a slow
+ * link, a cold engine's start (`fabrica bridge` gives one 10 s) and WSL2's.
+ */
+export const reachLimit = Duration.seconds(60)
 
 /** Effect's own back-off for a lost bridge: 0.5 s, growing, up to 5 s. */
 export const bridgeBackOff = reconnectBackOff
@@ -142,17 +166,95 @@ const readableOf = (child: Bridge, ended: BridgeCommand['ended']) => {
   return webReadable(out)
 }
 
+/**
+ * `readable`'s first bytes, then `readable` as it goes on: the connection's reads once the open has
+ * waited for the first. A bridge that ends first fails the open, with the cause its end gave.
+ */
+const firstBytes = (
+  readable: ReadableStream<Uint8Array>,
+): Effect.Effect<ReadableStream<Uint8Array>, Socket.SocketError> => {
+  const reader = readable.getReader()
+  return Effect.tryPromise({
+    try: () => reader.read(),
+    catch: openFailed,
+  }).pipe(
+    Effect.flatMap(first =>
+      first.done
+        ? Effect.fail(
+            openFailed(
+              new Error('the bridge ended before it reached the engine'),
+            ),
+          )
+        : Effect.succeed(
+            new ReadableStream<Uint8Array>({
+              start: controller => controller.enqueue(first.value),
+              pull: async controller => {
+                const { done, value } = await reader.read()
+                if (done) {
+                  controller.close()
+                } else {
+                  controller.enqueue(value)
+                }
+              },
+              cancel: reason => reader.cancel(reason),
+            }),
+          ),
+    ),
+  )
+}
+
+/** The RPC's ping, as its NDJSON frame: what the open says to be answered. */
+const ping = (): Uint8Array => {
+  const frame = ndjson.makeUnsafe().encode(RpcMessage.constPing)
+  return typeof frame === 'string'
+    ? new TextEncoder().encode(frame)
+    : (frame ?? new Uint8Array())
+}
+
+/** Ends once `reachLimit` has passed with nobody asked, the time `asking` says somebody is left out. */
+const limitPassed = (asking: Stream.Stream<boolean>): Effect.Effect<void> =>
+  asking.pipe(
+    Stream.concat(Stream.never),
+    Stream.changes,
+    Stream.switchMap(now =>
+      now ? Stream.never : Stream.fromEffect(Effect.sleep(reachLimit)),
+    ),
+    Stream.runHead,
+    Effect.asVoid,
+  )
+
+const unreached = new Socket.SocketError({
+  reason: new Socket.SocketOpenError({
+    kind: 'Timeout',
+    cause: new Error(
+      `the bridge reached no engine within ${Duration.format(reachLimit)}`,
+    ),
+  }),
+})
+
 /** A bridge's stdio, its command made anew for each connection, in the connection's scope. */
 export const bridgeSocket = (
   open: Effect.Effect<BridgeCommand, Socket.SocketError, Scope.Scope>,
 ): Effect.Effect<Socket.Socket> =>
   Socket.fromTransformStream(
-    Effect.flatMap(open, bridge =>
-      Effect.map(runBridge(bridge), (child): Socket.InputTransformStream => ({
-        readable: readableOf(child, bridge.ended),
-        writable: Writable.toWeb(child.stdin),
-      })),
-    ),
+    Effect.gen(function* () {
+      const bridge = yield* open
+      const child = yield* runBridge(bridge)
+      const reading = firstBytes(readableOf(child, bridge.ended))
+      const writable = Writable.toWeb(child.stdin)
+      const writer = writable.getWriter()
+      // A child that ends before it reads the ping is its first read's to report.
+      writer.write(ping()).catch(constVoid)
+      writer.releaseLock()
+      const readable = yield* Effect.raceFirst(
+        reading,
+        Effect.andThen(
+          limitPassed(bridge.asking ?? Stream.make(false)),
+          Effect.fail(unreached),
+        ),
+      )
+      return { readable, writable } satisfies Socket.InputTransformStream
+    }),
   )
 
 /** A bridge's stdio: each connection runs the command anew. */

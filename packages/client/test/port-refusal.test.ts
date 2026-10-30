@@ -14,8 +14,9 @@ import {
 } from '../src'
 
 // A connection the relay refuses (spec §8.2, §9.1): its handler ends with a ConnectionRefused, which the
-// port carries to the page as a `Refused` signal, its words with it; the page's reads fail with it, and
-// its client's first hello; the page's reconnects stop there. Over a real MessageChannel.
+// port carries to the page as a `Refused` signal, its words with it; the page's open fails with it (the
+// handler never read the connection, so it never opened), and its client's first hello; the page's
+// reconnects stop there. Over a real MessageChannel.
 
 /** A port pair: the page's end and the relay's, closed with the scope. */
 const ports = Effect.acquireRelease(
@@ -37,22 +38,21 @@ const refusal = 'the host key of u@server-1 has changed'
 /** The relay's link to the engine, lost. */
 class LinkLost extends Data.TaggedError('LinkLost') {}
 
-/** The page's first connection over a relay whose handler ends with `ending`: what its read fails with. */
-const firstRead = (ending: Effect.Effect<void, Error>) =>
+/** The page's first connection over a relay whose handler ends with `ending`: what its open fails with. */
+const firstOpen = (ending: Effect.Effect<void, Error>) =>
   Effect.gen(function* () {
     const { page, relay } = yield* ports
     yield* portServer(relay)
       .run(() => ending)
       .pipe(Effect.forkScoped)
     const socket = yield* portSocket(page)
-    const reader = yield* socket.reader
-    return yield* Effect.flip(reader.pull)
+    return yield* Effect.flip(Effect.scoped(socket.reader))
   })
 
 describe('a refused connection', () => {
-  it.effect("fails the page's reads with the relay's words", () =>
+  it.effect("fails the page's open with the relay's words", () =>
     Effect.gen(function* () {
-      const error = yield* firstRead(
+      const error = yield* firstOpen(
         Effect.fail(new ConnectionRefused({ reason: refusal })),
       )
       expect(
@@ -63,8 +63,8 @@ describe('a refused connection', () => {
 
   it.effect('is only a refusal where the relay says so', () =>
     Effect.gen(function* () {
-      const closed = yield* firstRead(Effect.void)
-      const failed = yield* firstRead(Effect.fail(new LinkLost()))
+      const closed = yield* firstOpen(Effect.void)
+      const failed = yield* firstOpen(Effect.fail(new LinkLost()))
       expect(connectionRefused(closed)).toEqual(Option.none())
       expect(connectionRefused(failed)).toEqual(Option.none())
     }).pipe(Effect.scoped),

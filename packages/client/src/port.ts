@@ -1,6 +1,7 @@
 import {
   type Cause,
   Data,
+  Deferred,
   Effect,
   Exit,
   Option,
@@ -24,6 +25,11 @@ import { Socket, SocketServer } from 'effect/socket'
 // connection wouldn't mend, which the page's client stops reconnecting at. Each open of the page's socket is a new connection, so a connection the
 // engine dropped reaches the page's client, which reconnects and resumes its streams as over any
 // other transport; and a connection never reads frames its predecessor was sent.
+//
+// The relay says it took a connection only as its handler first reads it, which the relay's does once
+// its own connection to the engine is open, and the page's open waits for that (H61). The RPC's pinger
+// fails a connection whose ping goes unanswered for about 10 s once it opens; so an open that waits on
+// ssh's prompts or a cold engine fails only where that wait itself does, never on the pinger.
 
 /** What the page says on the port: it opens connection `connection`, or closes it. */
 export const PageSignal = Schema.TaggedUnion({
@@ -183,9 +189,11 @@ const inbox = () => {
 }
 
 /**
- * The page's end: each open is a new connection, whose frames are read from the relay's `Opened` for
- * it until its `Closed` (or the port's closing), and written to the port; a `Refused` fails its reads
- * with the relay's ConnectionRefused. Closing the open tells the relay. The port itself stays open: it is the page's for its life.
+ * The page's end: each open is a new connection, which opens once the relay says `Opened` for it, and
+ * whose frames are read from then until its `Closed` (or the port's closing), and written to the port;
+ * a `Refused` fails its reads with the relay's ConnectionRefused. One the relay ends before it opened
+ * fails its open: with the ConnectionRefused where it was refused. Closing the open tells the relay.
+ * The port itself stays open: it is the page's for its life.
  */
 export const portSocket = (port: PortEnd): Effect.Effect<Socket.Socket> => {
   let opened = 0
@@ -194,22 +202,45 @@ export const portSocket = (port: PortEnd): Effect.Effect<Socket.Socket> => {
       opened += 1
       const connection = opened
       const frames = inbox()
+      // Settled as the relay takes the connection, or ends it first.
+      const opening = Deferred.makeUnsafe<void, Socket.SocketError>()
       let taken = false
+      const notOpened = (cause: Error) =>
+        Deferred.doneUnsafe(
+          opening,
+          Effect.fail(
+            new Socket.SocketError({
+              reason: new Socket.SocketOpenError({ kind: 'Unknown', cause }),
+            }),
+          ),
+        )
       const stop = port.listen({
         onMessage: data =>
           Option.match(decodeRelaySignal(data), {
             onSome: RelaySignal.match({
               Opened: signal => {
-                taken = taken || signal.connection === connection
+                if (signal.connection === connection) {
+                  taken = true
+                  Deferred.doneUnsafe(opening, Effect.void)
+                }
               },
               Closed: signal => {
                 if (signal.connection === connection) {
+                  notOpened(
+                    new Error(
+                      `the relay ended connection ${connection} before it opened`,
+                    ),
+                  )
                   frames.end()
                 }
               },
               Refused: signal => {
                 if (signal.connection === connection) {
-                  frames.fail(new ConnectionRefused({ reason: signal.reason }))
+                  const refused = new ConnectionRefused({
+                    reason: signal.reason,
+                  })
+                  notOpened(refused)
+                  frames.fail(refused)
                 }
               },
             }),
@@ -219,7 +250,10 @@ export const portSocket = (port: PortEnd): Effect.Effect<Socket.Socket> => {
               }
             },
           }),
-        onClose: frames.end,
+        onClose: () => {
+          notOpened(new Error('the port closed before the connection opened'))
+          frames.end()
+        },
       })
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
@@ -229,6 +263,7 @@ export const portSocket = (port: PortEnd): Effect.Effect<Socket.Socket> => {
         }),
       )
       port.post(PageSignal.cases.Open.make({ connection }))
+      yield* Deferred.await(opening)
       return {
         readable: frames.readable,
         writable: new WritableStream<Uint8Array>({
@@ -261,7 +296,9 @@ const release = (taken: Taken): void => {
 
 /**
  * The relay's end: each connection the page opens is a `Socket` the handler gets, its frames the
- * page's, its writes posted to the page while the page keeps it. A connection the page closes, or
+ * page's, its writes posted to the page while the page keeps it. The page is told the connection is
+ * `Opened` as the handler first reads it (a socket's writes wait for that read): a handler that reads
+ * once the engine is reached opens the page's connection only then. A connection the page closes, or
  * replaces with a new one, ends its socket's reads; one whose handler ends is `Closed` to the page,
  * or `Refused` where the handler failed with a ConnectionRefused.
  * Once the port has closed, every connection's reads end and `run` waits on (`portClosed` says when).
@@ -296,18 +333,22 @@ export const portServer = (
           const taken: Taken = { connection, frames: inbox(), live: true }
           current = Option.some(taken)
           const socket = yield* Socket.fromTransformStream(
-            Effect.succeed({
-              readable: taken.frames.readable,
-              writable: new WritableStream<Uint8Array>({
-                write: chunk => {
-                  if (taken.live) {
-                    port.post(chunk)
-                  }
-                },
-              }),
+            Effect.sync(() => {
+              if (taken.live) {
+                port.post(RelaySignal.cases.Opened.make({ connection }))
+              }
+              return {
+                readable: taken.frames.readable,
+                writable: new WritableStream<Uint8Array>({
+                  write: chunk => {
+                    if (taken.live) {
+                      port.post(chunk)
+                    }
+                  },
+                }),
+              }
             }),
           )
-          port.post(RelaySignal.cases.Opened.make({ connection }))
           yield* handler(socket).pipe(
             Effect.onExit(exit =>
               Effect.sync(() => {

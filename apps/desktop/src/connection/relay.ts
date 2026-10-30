@@ -25,7 +25,11 @@ const copy = (from: Socket.Reader, to: Socket.Writer) =>
 /** What the relay says of an engine connection's failure: a refusal in words, or none. */
 export type Refusal = (error: Socket.SocketError) => Option.Option<string>
 
-/** Joins one connection of the page's to a new one to the engine, until either ends; a refusal is said. */
+/**
+ * Joins one connection of the page's to a new one to the engine, until either ends; a refusal is said.
+ * The page's connection is read only once the engine's is open, so the page's opens only then (H61):
+ * while ssh asks for what it needs, or a cold engine starts, the page's client waits on its open.
+ */
 const join = Effect.fn('ConnectionRelay.join')(function* (
   page: Socket.Socket,
   engine: EngineSocket,
@@ -35,6 +39,7 @@ const join = Effect.fn('ConnectionRelay.join')(function* (
     const socket = yield* engine
     const fromEngine = yield* socket.reader
     const toEngine = yield* socket.writer
+    // The page's connection opens here, as it is first read.
     const fromPage = yield* page.reader
     const toPage = yield* page.writer
     return yield* Effect.raceFirst(

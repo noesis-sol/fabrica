@@ -177,8 +177,8 @@ describe('a connection over ssh', () => {
             }),
           )
           const socket = yield* portSocket(webPortEnd(channel.port1))
-          const reader = yield* socket.reader
-          const failed = yield* Effect.flip(reader.pull)
+          // ssh refused before the engine was reached: the page's connection never opened.
+          const failed = yield* Effect.flip(Effect.scoped(socket.reader))
           expect(
             Option.map(connectionRefused(failed), ({ reason }) => reason),
           ).toEqual(

@@ -8,6 +8,8 @@ import {
   Schedule,
   Schema,
   type Scope,
+  Stream,
+  SubscriptionRef,
 } from 'effect'
 import type { RpcClientError } from 'effect/rpc'
 import { Socket, type SocketServer } from 'effect/socket'
@@ -34,7 +36,9 @@ import {
 // an unknown one the user didn't accept; neither is tried again (`sshReconnect`). How ssh asks for what
 // it needs (an unknown host's key, a passphrase, a password) is the caller's `prompting`: on the terminal,
 // as ssh asks; not at all; or relayed to the caller through `SSH_ASKPASS`, which takes OpenSSH 8.4 or
-// later (`SSH_ASKPASS_REQUIRE=force`; on Windows the only way, fab-mgi.13).
+// later (`SSH_ASKPASS_REQUIRE=force`; on Windows the only way, fab-mgi.13). The time ssh waits on a
+// person is left out of the bridge's `reachLimit`: a relayed prompt's, until it is answered (a notice's,
+// until ssh stops its helper); on the terminal, which ssh asks on unseen, the whole open's.
 
 /** An unknown host's key, as ssh asks to accept it. */
 export interface HostKeyPrompt {
@@ -321,7 +325,9 @@ export const checkSshVersion = (options: {
 // The relay. ssh runs `SSH_ASKPASS` with its prompt as the one argument (and `SSH_ASKPASS_PROMPT` set to
 // `confirm` or `none` for a yes-or-no or a notice) and reads the answer from its stdout. The helper,
 // written into the connection's private folder, sends the prompt as one JSON line to the connection's
-// socket there and prints the answer it gets back; it never reads its stdin, which is the bridge's.
+// socket there and prints the answer it gets back; it never reads its stdin, which is the bridge's. A
+// notice gets no answer: ssh stops its helper once the person has done what it asked (touched their
+// security key), which ends the helper's connection.
 
 /** What the helper sends: ssh's prompt, and its `SSH_ASKPASS_PROMPT`. */
 const AskpassRequest = Schema.Struct({
@@ -396,9 +402,6 @@ const replyTo = (
   destination: string,
 ): Effect.Effect<AskpassReply> => {
   const text = request.prompt
-  if (request.hint === 'none') {
-    return Effect.as(prompts.notice({ destination, text }), cancel)
-  }
   if (request.hint === 'confirm') {
     return Effect.map(prompts.confirm({ destination, text }), yes =>
       yes ? answer('yes') : cancel,
@@ -420,11 +423,15 @@ const replyTo = (
   })
 }
 
-/** Reads the helper's one line from `socket`, asks `prompts`, and sends the reply. */
+/**
+ * Reads the helper's one line from `socket`, asks `prompts`, and sends the reply; a notice it tells, and
+ * holds until the helper's connection ends. `whileAsking` runs each, ssh waiting on a person meanwhile.
+ */
 const serveHelper = (
   socket: Socket.Socket,
   prompts: SshPrompts,
   destination: string,
+  whileAsking: <A, E>(effect: Effect.Effect<A, E>) => Effect.Effect<A, E>,
 ) =>
   Effect.gen(function* () {
     const reader = yield* socket.reader
@@ -444,7 +451,15 @@ const serveHelper = (
       }
     }
     const request = yield* decodeRequest(line.slice(0, line.indexOf('\n')))
-    const reply = yield* replyTo(request, prompts, destination)
+    if (request.hint === 'none') {
+      return yield* whileAsking(
+        Effect.andThen(
+          prompts.notice({ destination, text: request.prompt }),
+          Effect.forever(reader.pull),
+        ),
+      )
+    }
+    const reply = yield* whileAsking(replyTo(request, prompts, destination))
     yield* writer.write(`${yield* encodeReply(reply)}\n`)
     yield* writer.write(new Socket.CloseEvent())
   }).pipe(
@@ -456,15 +471,21 @@ const serveHelper = (
 const fileStep = (run: () => Promise<unknown>) =>
   Effect.tryPromise({ try: run, catch: openFailed })
 
-/** The relay's variables for one connection: its private folder, helper and socket, gone with its scope. */
+/** What ssh runs with for one connection: its environment, and whether it waits on a person, as a bridge's `asking`. */
+interface SshRun {
+  readonly env: Readonly<Record<string, string>>
+  readonly asking: Stream.Stream<boolean>
+}
+
+/**
+ * The relay's variables for one connection (its private folder, helper and socket, gone with its scope),
+ * and whether a prompt of the connection's waits on its answer.
+ */
 const openRelay = (
   relay: Extract<SshPrompting, { readonly _tag: 'Relay' }>,
+  env: Readonly<Record<string, string>>,
   destination: string,
-): Effect.Effect<
-  Readonly<Record<string, string>>,
-  Socket.SocketError,
-  Scope.Scope
-> =>
+): Effect.Effect<SshRun, Socket.SocketError, Scope.Scope> =>
   Effect.gen(function* () {
     const folder = yield* Effect.acquireRelease(
       fileStep(() => mkdtemp(NodePath.join(relay.folder, 'ssh-'))).pipe(
@@ -486,13 +507,26 @@ const openRelay = (
     yield* fileStep(() => chmod(helper, 0o700))
     const server: SocketServer.SocketServer['Service'] =
       yield* NodeSocketServer.make({ path }).pipe(Effect.mapError(openFailed))
+    const waiting = yield* SubscriptionRef.make(0)
+    const whileAsking = <A, E>(effect: Effect.Effect<A, E>) =>
+      Effect.acquireUseRelease(
+        SubscriptionRef.update(waiting, count => count + 1),
+        () => effect,
+        () => SubscriptionRef.update(waiting, count => count - 1),
+      )
     yield* server
-      .run(socket => serveHelper(socket, relay.prompts, destination))
+      .run(socket =>
+        serveHelper(socket, relay.prompts, destination, whileAsking),
+      )
       .pipe(Effect.ignore, Effect.forkScoped)
     return {
-      SSH_ASKPASS: helper,
-      SSH_ASKPASS_REQUIRE: 'force',
-      FABRICA_ASKPASS: path,
+      env: {
+        ...env,
+        SSH_ASKPASS: helper,
+        SSH_ASKPASS_REQUIRE: 'force',
+        FABRICA_ASKPASS: path,
+      },
+      asking: Stream.map(SubscriptionRef.changes(waiting), count => count > 0),
     }
   })
 
@@ -509,22 +543,23 @@ export const sshSocket = (options: SshOptions): Effect.Effect<Socket.Socket> =>
       )
     const open: Effect.Effect<BridgeCommand, Socket.SocketError, Scope.Scope> =
       SshPrompting.$match(options.prompting, {
-        Terminal: () => Effect.succeed(options.env),
-        None: () => Effect.succeed(options.env),
+        // ssh may ask on the terminal at any time, unseen: the person there ends the wait.
+        Terminal: (): Effect.Effect<SshRun> =>
+          Effect.succeed({ env: options.env, asking: Stream.make(true) }),
+        None: (): Effect.Effect<SshRun> =>
+          Effect.succeed({ env: options.env, asking: Stream.make(false) }),
         Relay: relay =>
           Effect.andThen(
             checked,
-            Effect.map(openRelay(relay, options.destination), relayed => ({
-              ...options.env,
-              ...relayed,
-            })),
+            openRelay(relay, options.env, options.destination),
           ),
       }).pipe(
-        Effect.map(env => ({
+        Effect.map(({ env, asking }) => ({
           command: options.ssh ?? 'ssh',
           args: sshArguments(options),
           env,
           ended,
+          asking,
         })),
       )
     return yield* bridgeSocket(open)
