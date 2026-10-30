@@ -11,7 +11,7 @@ import {
 } from 'effect'
 import { RpcSerialization, RpcServer } from 'effect/rpc'
 import { SocketServer } from 'effect/socket'
-import { Runtime } from 'foldkit'
+import { Command, Runtime } from 'foldkit'
 
 import { describe, expect, it, test } from '@effect/vitest'
 import {
@@ -22,6 +22,7 @@ import {
   webPortEnd,
 } from '@fabrica/client'
 import {
+  AttentionAnswer,
   AttentionRequest,
   AttentionRpcs,
   EngineHello,
@@ -31,11 +32,15 @@ import {
   ProjectId,
   ProjectRpcs,
   ProjectRunState,
+  OpenedTalk,
   ProjectStatus,
   type ProjectStatusItem,
+  QuestionAnswer,
   RunId,
   RunRpcs,
+  SessionId,
   StreamEpoch,
+  TalkId,
   TalkRpcs,
   TicketId,
   protocolVersion,
@@ -53,6 +58,8 @@ import { noSshPromptHost } from '../src/app/ssh-prompts'
 import type { AttentionItem } from '../src/app/streams'
 import { themeHostOf } from '../src/app/theme-host'
 import { update } from '../src/app/update'
+import * as Attention from '../src/console/attention'
+import * as TalkPanel from '../src/console/talk-panel'
 
 // A known engine's project's requests and streams go through that engine's own connection (spec §9.1,
 // §18.1): the whole program runs against two test engines, this machine's on the app's own port and
@@ -180,13 +187,21 @@ const engineServing = ({
     'run.watchEvents': ({ project }) =>
       askedStream('run.watchEvents', Option.some(project)),
     'attention.list': notServed,
-    'attention.answer': notServed,
-    'attention.watch': ({ project }) => askedStream('attention.watch', project),
-    'talk.open': ({ project }) =>
-      Effect.andThen(ask('talk.open', Option.some(project)), () =>
+    'attention.answer': ({ answer }) =>
+      Effect.andThen(ask('attention.answer', Option.some(answer.project)), () =>
         Effect.die('not served'),
       ),
-    'talk.send': notServed,
+    'attention.watch': ({ project }) => askedStream('attention.watch', project),
+    'talk.open': ({ project }) =>
+      Effect.as(
+        ask('talk.open', Option.some(project)),
+        new OpenedTalk({
+          talk: TalkId.make(`t-${engine}`),
+          session: SessionId.make(`s-${engine}`),
+          model: 'sonnet',
+        }),
+      ),
+    'talk.send': () => ask('talk.send', Option.none()),
     'talk.close': notServed,
     'talk.watchTranscript': () => Stream.never,
   })
@@ -321,9 +336,31 @@ describe('a known engine’s project', () => {
             }),
             update: (model, message) => {
               const next = update(model, message)
+              // The run talk opened on the build-box's project: the user writes to it.
+              if (
+                message._tag === 'GotTalkPanelMessage' &&
+                message.message._tag === 'OpenedRunTalk' &&
+                message.message.project === site
+              ) {
+                return {
+                  model: next.model,
+                  commands: [
+                    ...(next.commands ?? []),
+                    Command.mapMessage(
+                      TalkPanel.SendToTalk({
+                        talk: message.message.opened.talk,
+                        text: 'Hold the merges',
+                      }),
+                      sent => Message.GotTalkPanelMessage({ message: sent }),
+                    ),
+                  ],
+                }
+              }
               if (message._tag !== 'Ticked' || Option.isSome(model.scope)) {
                 return next
               }
+              // The build-box's project scoped, the user answers a question of it, and its questions
+              // setting is read.
               const scoped = update(
                 next.model,
                 Message.SelectedScope({ project: Option.some(site) }),
@@ -333,6 +370,22 @@ describe('a known engine’s project', () => {
                 commands: [
                   ...(next.commands ?? []),
                   ...(scoped.commands ?? []),
+                  Command.mapMessage(
+                    Attention.Answer({
+                      key: 'question',
+                      answer: AttentionAnswer.cases.question.make({
+                        project: site,
+                        ticket: TicketId.make('si-1'),
+                        answer: QuestionAnswer.cases.option.make({ index: 0 }),
+                      }),
+                    }),
+                    answered =>
+                      Message.GotAttentionMessage({ message: answered }),
+                  ),
+                  Command.mapMessage(
+                    TalkPanel.LoadQuestionsSetting({ project: site }),
+                    read => Message.GotTalkPanelMessage({ message: read }),
+                  ),
                 ],
               }
             },
@@ -381,10 +434,18 @@ describe('a known engine’s project', () => {
         yield* awaiting(boxAsked, of('attention.watch', Option.some(site)))
         yield* awaiting(boxAsked, of('engine.watchLoad', Option.none()))
         yield* awaiting(boxAsked, of('talk.open', Option.some(site)))
+        // Its Commands too: the answer, the setting read, and what is sent to its run talk.
+        yield* awaiting(boxAsked, of('attention.answer', Option.some(site)))
+        yield* awaiting(
+          boxAsked,
+          of('projects.settings.get', Option.some(site)),
+        )
+        yield* awaiting(boxAsked, of('talk.send', Option.none()))
 
         expect(
-          (yield* SubscriptionRef.get(localAsked)).filter(entry =>
-            Option.contains(entry.project, site),
+          (yield* SubscriptionRef.get(localAsked)).filter(
+            entry =>
+              Option.contains(entry.project, site) || entry.rpc === 'talk.send',
           ),
         ).toEqual([])
         expect(yield* Deferred.isDone(crashed)).toBe(false)
