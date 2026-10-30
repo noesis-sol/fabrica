@@ -33,7 +33,13 @@ import * as VirtualList from '@foldkit/ui/virtualList'
 import { sayMoment } from '../app/clock'
 import { type EngineConnectionService, requestEngine } from '../app/connection'
 import type { Role } from '../console/history'
-import { Graph, drawGraph, graphKey, graphOf } from './backlog-graph'
+import {
+  Graph,
+  drawGraph,
+  focusTicket,
+  graphKey,
+  graphOf,
+} from './backlog-graph'
 
 // The Backlog screen (spec §18.4, H24, H40): the scoped project's epics and tickets, their links drawn
 // as a graph, what is ready and why the rest isn't (`tickets.why`, in the log's words, H81), the
@@ -120,6 +126,7 @@ export const Message = defineMessageUnion({
   ChoseSection: { section: Section },
   /** A ticket chosen in the list or the graph. */
   SelectedTicket: { ticket: TicketId },
+  CompletedFocusGraph: {},
   GotListMessage: { message: VirtualList.Message },
   SucceededLoadFacts: { facts: Facts },
   FailedLoadFacts: { project: ProjectId, reason: Schema.String },
@@ -176,15 +183,24 @@ export const LoadFacts = Command.define('LoadFacts', {
     ),
 })
 
-/** Draws the graph in its element, a tapped ticket chosen. */
+/** Selects the chosen ticket in the graph drawn and centres it there. */
+export const FocusGraph = Command.define('FocusGraph', {
+  args: { ticket: TicketId },
+  messages: [Message.CompletedFocusGraph],
+  execute: ({ ticket }) =>
+    focusTicket(ticket).pipe(Effect.as(Message.CompletedFocusGraph())),
+})
+
+/** Draws the graph in its element, the chosen ticket selected in it, a tapped ticket chosen. */
 export const DrawGraph = Mount.defineStream('DrawGraph', {
-  args: { graph: Graph },
+  args: { graph: Graph, selected: Schema.Option(TicketId) },
   messages: [Message.SelectedTicket],
-  execute: ({ element, graph }) =>
+  execute: ({ element, graph, selected }) =>
     Stream.callback<TicketId>(queue =>
       drawGraph({
         element,
         graph,
+        selected,
         onTap: ticket => {
           Queue.offerUnsafe(queue, ticket)
         },
@@ -273,11 +289,14 @@ export const update = (model: Model, message: Message): Return =>
           ? model
           : modifyFields(model, { section: () => section }),
     }),
-    SelectedTicket: ({ ticket }) => ({
-      model: Option.contains(model.selected, ticket)
-        ? model
-        : modifyFields(model, { selected: () => Option.some(ticket) }),
-    }),
+    SelectedTicket: ({ ticket }) =>
+      Option.contains(model.selected, ticket)
+        ? { model }
+        : {
+            model: modifyFields(model, { selected: () => Option.some(ticket) }),
+            commands: [FocusGraph({ ticket })],
+          },
+    CompletedFocusGraph: () => ({ model }),
     GotListMessage: ({ message }) => foldList(model, message),
     SucceededLoadFacts: ({ facts }) =>
       answered(model, facts.project, AsyncData.succeed(facts)),
@@ -672,6 +691,7 @@ const listView = (
 
 const graphView = (
   graph: Option.Option<Graph>,
+  selected: Option.Option<TicketId>,
   h: HtmlBuilder<Message>,
 ): Html =>
   h.section(
@@ -684,7 +704,7 @@ const graphView = (
           drawn.nodes.length === 0
             ? notice('No open tickets to draw', h)
             : h.keyed('div')(graphKey(drawn), [
-                h.OnMount(DrawGraph({ graph: drawn })),
+                h.OnMount(DrawGraph({ graph: drawn, selected })),
                 h.Role('img'),
                 h.AriaLabel(
                   `${drawn.nodes.length} tickets and ${drawn.edges.length} links`,
@@ -888,7 +908,10 @@ const backlogView = (
           listView(model, rows, Option.isNone(facts), h),
           h.div(
             [h.Class('flex min-h-0 flex-col gap-12')],
-            [graphView(graph, h), chosenView(model, tickets, facts, h)],
+            [
+              graphView(graph, model.selected, h),
+              chosenView(model, tickets, facts, h),
+            ],
           ),
         ],
       ),

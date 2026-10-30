@@ -463,8 +463,12 @@ describe('why the rest isn’t ready', () => {
       Backlog.update,
       given(Backlog.init()),
       message(Backlog.Message.ChoseSection({ section: 'waiting' })),
-      message(Backlog.Message.SelectedTicket({ ticket: id('fa-3') })),
       Command.expectNone(),
+      message(Backlog.Message.SelectedTicket({ ticket: id('fa-3') })),
+      Command.resolve(
+        Backlog.FocusGraph({ ticket: id('fa-3') }),
+        Backlog.Message.CompletedFocusGraph(),
+      ),
       model(shown => {
         expect(shown.section).toBe('waiting')
         expect(shown.selected).toEqual(Option.some(id('fa-3')))
@@ -589,6 +593,10 @@ describe('the screen', () => {
         Backlog.DrawGraph,
         Backlog.Message.SelectedTicket({ ticket: id('fa-2') }),
       ),
+      SceneCommand.resolve(
+        Backlog.FocusGraph,
+        Backlog.Message.CompletedFocusGraph(),
+      ),
       expectScene(role('button', { name: 'Open 6' })).toHaveAttr(
         'aria-pressed',
         'true',
@@ -606,6 +614,10 @@ describe('the screen', () => {
         'waits for fa-2 to merge: it is open; waits for fa-6, the ticket it was filed from, to merge',
       ),
       click(role('button', { name: 'fa-3 Session store: waiting' })),
+      SceneCommand.resolve(
+        Backlog.FocusGraph,
+        Backlog.Message.CompletedFocusGraph(),
+      ),
       expectScene(
         role('button', { name: 'fa-3 Session store: waiting' }),
       ).toHaveAttr('aria-pressed', 'true'),
@@ -620,6 +632,10 @@ describe('the screen', () => {
         role('button', {
           name: 'fa-q1 Keep the old refresh endpoint?: for you',
         }),
+      ),
+      SceneCommand.resolve(
+        Backlog.FocusGraph,
+        Backlog.Message.CompletedFocusGraph(),
       ),
       expectScene(role('region', { name: 'Options' })).toContainText(
         'Keep it (recommended): Old clients go on working',
