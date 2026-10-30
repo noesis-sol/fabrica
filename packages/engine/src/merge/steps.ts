@@ -22,7 +22,13 @@ import {
   type TicketNotFound,
   WorkGraph,
 } from '../workgraph'
-import { HandBack, fixCheck, resolveConflict } from './handbacks'
+import {
+  HandBack,
+  type HandBackBook,
+  fixCheck,
+  resolveConflict,
+  suiteAfter,
+} from './handbacks'
 import {
   type Aside,
   Diagnosis,
@@ -60,11 +66,12 @@ export type Step = Data.TaggedEnum<{
   /** Base and the branch are read: nothing to merge, already on top of Base and set up, or to rebase. */
   Locate: { readonly rounds: number }
   /**
-   * The branch is rebased onto `onto`, Base's commit; `since` was their merge base, and `pending` the
-   * setup files the worktree waited to be set up for before it.
+   * The branch, at `from`, is rebased onto `onto`, Base's commit; `since` was their merge base, and
+   * `pending` the setup files the worktree waited to be set up for before it.
    */
   Rebase: {
     readonly rounds: number
+    readonly from: CommitHash
     readonly onto: CommitHash
     readonly since: Option.Option<CommitHash>
     readonly pending: ReadonlyArray<string>
@@ -125,10 +132,13 @@ const describeNotRun = NotRun.$match({
 })
 
 /**
- * The machine, on the services the engine runs it with and the queue's `train`: `run` takes a ticket's
- * turn to its end.
+ * The machine, on the services the engine runs it with, the queue's `train` and its `book` of
+ * hand-backs: `run` takes a ticket's turn to its end, and `settle` records an outcome reached after it.
  */
-export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
+export const makeMachine = Effect.fnUntraced(function* (
+  train: MergeTrain,
+  book: HandBackBook,
+) {
   const git = yield* Git
   const graph = yield* WorkGraph
   const setup = yield* MergeSetup
@@ -219,18 +229,20 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
     // A branch on top of Base whose worktree waits for a setup goes through the rebase step, which sets it up.
     if (Option.contains(since, base) && pending.length === 0)
       return Step.Check({ rounds, onto: base, head })
-    return Step.Rebase({ rounds, onto: base, since, pending })
+    return Step.Rebase({ rounds, from: head, onto: base, since, pending })
   })
 
   const rebase = Effect.fn('MergeQueue.rebase')(function* (
     turn: MergeTurn,
     {
       rounds,
+      from,
       onto,
       since,
       pending,
     }: {
       readonly rounds: number
+      readonly from: CommitHash
       readonly onto: CommitHash
       readonly since: Option.Option<CommitHash>
       readonly pending: ReadonlyArray<string>
@@ -275,10 +287,9 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
           return Step.Check({ rounds, onto, head })
         }),
       Conflict: ({ files }) =>
-        Effect.flatMap(resolveConflict({ turn, files }), handBack =>
-          HandBack.$match(handBack, {
-            SetAside: given => Effect.as(abort, aside(turn, given)),
-          }),
+        Effect.flatMap(
+          resolveConflict({ turn, files, onto, since, from, book, git, setup }),
+          handBack => handedOver(turn, handBack, abort),
         ),
       AlreadyRebasing: () =>
         Effect.succeed(
@@ -329,7 +340,14 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
       None: (): Effect.Effect<Step> => Effect.succeed(confirm(head, true)),
       Command: ({ command }): Effect.Effect<Step, CantTell | GitFailed> =>
         Effect.gen(function* () {
-          const outcome = yield* train.check({ turn, onto, head, command })
+          const suite = suiteAfter(yield* book.awaiting(ticket))
+          const outcome = yield* train.check({
+            turn,
+            onto,
+            head,
+            command,
+            suite,
+          })
           return yield* CheckOutcome.$match(outcome, {
             Passed: ({ left }) =>
               Leftovers.$match(left, {
@@ -350,8 +368,16 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
                       }),
                   ),
               }),
-            Failed: failed => handedBack(turn, failed),
-            TimedOut: timedOut => handedBack(turn, timedOut),
+            Failed: failed =>
+              Effect.flatMap(
+                fixCheck({ turn, outcome: failed, onto, head, book, git }),
+                handBack => handedOver(turn, handBack, Effect.void),
+              ),
+            TimedOut: timedOut =>
+              Effect.flatMap(
+                fixCheck({ turn, outcome: timedOut, onto, head, book, git }),
+                handBack => handedOver(turn, handBack, Effect.void),
+              ),
             CouldNotRun: ({ reason }) =>
               Effect.succeed(
                 aside(turn, {
@@ -364,14 +390,31 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
     })
   })
 
-  /** A failed merge check, handed back. */
-  const handedBack = (
+  /**
+   * What a conflict's or a failed check's hand-back decided, as the turn's end: set aside after `undo`
+   * (the rebase aborted), or handed back, its job kept for the queue to give.
+   */
+  const handedOver = <E>(
     turn: MergeTurn,
-    outcome: Extract<CheckOutcome, { readonly _tag: 'Failed' | 'TimedOut' }>,
-  ) =>
-    Effect.map(fixCheck({ turn, outcome }), handBack =>
-      HandBack.$match(handBack, { SetAside: given => aside(turn, given) }),
-    )
+    handBack: HandBack,
+    undo: Effect.Effect<unknown, E>,
+  ): Effect.Effect<Step, E> =>
+    HandBack.$match(handBack, {
+      SetAside: given => Effect.as(undo, aside(turn, given)),
+      Recheck: given => Effect.as(undo, aside(turn, given)),
+      Give: ({ job }) =>
+        Effect.as(
+          book.hold(job),
+          done(
+            MergeOutcome.HandedBack({
+              ticket: turn.worktree.ticket,
+              kind: job.kind,
+              attempt: job.attempt,
+              detail: job.detail,
+            }),
+          ),
+        ),
+    })
 
   /** The turn goes round again from `locate`, while its budget lets it. */
   const goRound = (turn: MergeTurn, rounds: number, moved: string) =>
@@ -574,6 +617,8 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
           Effect.uninterruptible,
         ),
       Merged: () => Effect.void,
+      // Its hand-back follows, out of the queue.
+      HandedBack: () => Effect.void,
       NoMergeCheck: () => Effect.void,
       SetupFailed: () => Effect.void,
       Interrupted: () => Effect.void,
@@ -655,5 +700,5 @@ export const makeMachine = Effect.fnUntraced(function* (train: MergeTrain) {
     )
   })
 
-  return { run }
+  return { run, settle }
 })

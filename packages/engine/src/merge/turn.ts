@@ -8,6 +8,16 @@ import type { MergeUpdate } from './outcome'
 // What a merge works with (spec §13.7): the project's settings it reads, resolved once per run, and a
 // ticket's turn in the queue.
 
+/** How often a merge hands a ticket back to its worker, by kind, and how long each hand-back may take. */
+export interface HandBackLimits {
+  /** Conflict hand-backs a ticket may have in a run. */
+  readonly resolve: number
+  /** Failed-check hand-backs a ticket may have in a run. */
+  readonly fix: number
+  /** How long each may take, the holds left out. */
+  readonly timeout: Duration.Input
+}
+
 /** The run's settings for its merges. */
 export interface MergeConfig {
   /** The project's checkout, Base checked out in it, and where its worktrees are. */
@@ -20,6 +30,8 @@ export interface MergeConfig {
   readonly checkTimeout: Duration.Input
   /** The project's `setup_files`. */
   readonly setupFiles: ReadonlyArray<string>
+  /** `hand_backs.resolve`, `hand_backs.fix` and `resolve_timeout`: how often, and how long, a ticket is handed back. */
+  readonly handBacks: HandBackLimits
   /** `merge.train`: 1 lets the next ticket in line be checked beside the merge check, 0 never. */
   readonly train: number
   /** The merge check's share of the machine's cores, at least 1. */

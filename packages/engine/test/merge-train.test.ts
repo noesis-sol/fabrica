@@ -201,6 +201,7 @@ const config = (checkout: string, check: string, train = 1): MergeConfig => ({
   checkFast: CommandSetting.cases.Command.make({ command: check }),
   checkTimeout: Duration.minutes(1),
   setupFiles: defaultSetupFiles,
+  handBacks: { resolve: 0, fix: 0, timeout: Duration.minutes(20) },
   train,
   cores: 1,
   actor,

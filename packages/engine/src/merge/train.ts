@@ -9,7 +9,7 @@ import {
   SynchronizedRef,
 } from 'effect'
 
-import type { CommitHash, TicketId } from '@fabrica/contracts'
+import type { CheckSuite, CommitHash, TicketId } from '@fabrica/contracts'
 
 import { type CheckInput, CheckOutcome, Checks } from '../checks'
 import {
@@ -47,12 +47,13 @@ export const MachineHold = Context.Reference<{
   defaultValue: () => ({ holds: Effect.succeed(false) }),
 })
 
-/** The run of the project's merge check `command` in the turn's worktree. */
+/** The run of the project's merge check `command` in the turn's worktree, as `suite`: a fix's or a recheck's, or a merge's. */
 export const mergeCheckInput = (
   turn: MergeTurn,
   command: string,
+  suite: CheckSuite = 'merge',
 ): CheckInput => ({
-  suite: 'merge',
+  suite,
   ticket: Option.some(turn.worktree.ticket),
   command,
   worktree: turn.worktree.path,
@@ -127,13 +128,14 @@ export interface MergeTrain {
   /**
    * The merge check `command` of the turn's `head` on top of `onto`, its record published: the ride's
    * outcome when the ticket rode to that head and its first merged as checked, else the check run in its
-   * worktree, the next ticket in line riding beside it.
+   * worktree as `suite`, the next ticket in line riding beside it.
    */
   readonly check: (input: {
     readonly turn: MergeTurn
     readonly onto: CommitHash
     readonly head: CommitHash
     readonly command: string
+    readonly suite: CheckSuite
   }) => Effect.Effect<CheckOutcome, CantTell | GitFailed>
   /** A turn ended with `outcome`: a ride beside it is kept when it merged as checked, and put back otherwise. */
   readonly settle: (outcome: MergeOutcome) => Effect.Effect<void>
@@ -173,14 +175,19 @@ export const makeTrain = Effect.fn('MergeTrain.make')(function* ({
     )
 
   /**
-   * Runs a turn's merge check and publishes its record, marked as the train's where `train`; the
-   * untracked files it writes are recorded as the queue's, however it ends.
+   * Runs a turn's merge check as `suite` and publishes its record, marked as the train's where `train`;
+   * the untracked files it writes are recorded as the queue's, however it ends.
    */
-  const runCheck = (turn: MergeTurn, command: string, train: boolean) =>
+  const runCheck = (
+    turn: MergeTurn,
+    command: string,
+    train: boolean,
+    suite: CheckSuite = 'merge',
+  ) =>
     recordingWrites(
       git,
       turn.worktree.path,
-      checks.run(mergeCheckInput(turn, command)),
+      checks.run(mergeCheckInput(turn, command, suite)),
     ).pipe(
       Effect.map(({ value }) => value),
       Effect.tap(outcome =>
@@ -378,6 +385,7 @@ export const makeTrain = Effect.fn('MergeTrain.make')(function* ({
     onto,
     head,
     command,
+    suite,
   }) {
     const ahead = yield* SynchronizedRef.modifyEffect(carriage, current =>
       taken(current, { turn, onto, head }),
@@ -393,7 +401,7 @@ export const makeTrain = Effect.fn('MergeTrain.make')(function* ({
             )
         : board(current, { turn, head, command }),
     )
-    return yield* runCheck(turn, command, false)
+    return yield* runCheck(turn, command, false, suite)
   })
 
   const arrive: MergeTrain['arrive'] = Effect.fn('MergeTrain.arrive')(

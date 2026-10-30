@@ -138,10 +138,20 @@ export interface GitShape {
   readonly abortRebase: (input: {
     readonly worktree: string
   }) => Effect.Effect<AbortOutcome, CantTell | GitFailed>
+  /** Whether a rebase is in progress in the worktree. */
+  readonly isRebasing: (input: {
+    readonly worktree: string
+  }) => Effect.Effect<boolean, CantTell>
   /** Puts the worktree's branch, index and files back at the commit `to`, dropping what moved them since. */
   readonly resetTo: (input: {
     readonly worktree: string
     readonly to: CommitHash
+  }) => Effect.Effect<void, GitFailed>
+  /** Points the ref `ref` (a full name, `refs/fabrica/…`) at the commit `commit`, so that git keeps it. */
+  readonly keepCommit: (input: {
+    readonly repo: string
+    readonly ref: string
+    readonly commit: CommitHash
   }) => Effect.Effect<void, GitFailed>
   /**
    * Removes the untracked `files` (paths from the worktree's root, as its status names them) from the
@@ -807,6 +817,15 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     return AbortOutcome.Aborted()
   })
 
+  const isRebasing = Effect.fn('Git.isRebasing')(function* ({
+    worktree,
+  }: {
+    readonly worktree: string
+  }) {
+    const inProgress = yield* rebasing('isRebasing', worktree)
+    return inProgress()
+  })
+
   const fastForward = Effect.fn('Git.fastForward')(function* ({
     checkout,
     base,
@@ -874,6 +893,18 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
       cwd: worktree,
       args: ['reset', '--hard', '--quiet', '--end-of-options', to, '--'],
     })
+  })
+
+  const keepCommit = Effect.fn('Git.keepCommit')(function* ({
+    repo,
+    ref,
+    commit,
+  }: {
+    readonly repo: string
+    readonly ref: string
+    readonly commit: CommitHash
+  }) {
+    yield* writeOnly({ cwd: repo, args: ['update-ref', '--', ref, commit] })
   })
 
   const removeUntracked = Effect.fn('Git.removeUntracked')(function* ({
@@ -1086,7 +1117,9 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     worktrees,
     rebase,
     abortRebase,
+    isRebasing,
     resetTo,
+    keepCommit,
     removeUntracked,
     restoreTracked,
     fastForward,

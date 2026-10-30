@@ -235,6 +235,11 @@ const runStarted = Effect.fn('Run.started')(function* (
     checkFast: project.check_fast,
     checkTimeout: project.check_timeout,
     setupFiles: project.setup_files,
+    handBacks: {
+      resolve: project.hand_backs.resolve,
+      fix: project.hand_backs.fix,
+      timeout: project.resolve_timeout,
+    },
     train: project.merge.train,
     cores: config.cores,
     actor,
@@ -638,6 +643,48 @@ const runStarted = Effect.fn('Run.started')(function* (
         // The run's log of what a merge wrote and why it waits comes with fab-mgi.30.
         Wrote: () => Effect.void,
         MergesWait: () => Effect.void,
+        // Its worker has it, in a slot of the run's (§13.7): the queue goes on meanwhile.
+        HandedBack: ({ kind, attempt, detail }) =>
+          ended(
+            Effect.gen(function* () {
+              yield* state.move({
+                ticket,
+                to:
+                  kind === 'resolve'
+                    ? Phase.cases.resolving.make({ attempt })
+                    : Phase.cases.fixing.make({ attempt }),
+                cause: detail,
+              })
+              yield* record(log, {
+                kind: 'warn',
+                ticket,
+                text: warningLine({
+                  tag: kind === 'resolve' ? 'RESOLVING' : 'FIXING',
+                  about: 'ticket',
+                  text: `${ticket} handed back to its worker (${attempt === 1 ? 'first' : `attempt ${attempt}`}): ${detail}`,
+                }),
+              })
+            }),
+          ),
+        Requeued: ({ for: why, detail }) =>
+          Effect.gen(function* () {
+            const line = yield* merges.line
+            yield* state.move({
+              ticket,
+              to: Phase.cases.waiting_to_merge.make({
+                place: line.waiting.length + 1,
+              }),
+              cause: detail,
+            })
+            yield* record(log, {
+              kind: 'info',
+              ticket,
+              text:
+                why === 'recheck'
+                  ? `  ${detail}`
+                  : `  ${ticket} back in line to merge: ${detail}`,
+            })
+          }),
         Merged: ({ commit, unchecked }) =>
           ended(
             Effect.gen(function* () {

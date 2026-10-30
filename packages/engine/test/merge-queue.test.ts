@@ -204,6 +204,7 @@ const config = (
   checkFast,
   checkTimeout: Duration.minutes(1),
   setupFiles: defaultSetupFiles,
+  handBacks: { resolve: 0, fix: 0, timeout: Duration.minutes(20) },
   train: 1,
   cores: 1,
   actor,
