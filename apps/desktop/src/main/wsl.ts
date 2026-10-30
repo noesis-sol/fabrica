@@ -1,26 +1,16 @@
-import { Data, Effect, Layer, Option } from 'effect'
-import { FetchHttpClient } from 'effect/http'
+import { Data, Effect, Option } from 'effect'
 import { spawn } from 'node:child_process'
 
 import {
-  type CheckAnswer,
-  type InstallAnswer,
-  type InstallConsent,
+  EngineHost,
+  InstallAnswer,
+  UbuntuInstall,
   type WslDistro,
+  WslSearch,
 } from '@fabrica/client'
-import {
-  type DistributionSource,
-  HostShell,
-  answerCheck,
-  answerInstall,
-  checkHost,
-  installEngine,
-  wslShell,
-} from '@fabrica/client/install'
 import {
   type Held,
   type WslRunner,
-  WslSearch,
   findDistribution,
   holdDistribution,
   wslEnv,
@@ -28,24 +18,17 @@ import {
 } from '@fabrica/client/node'
 
 import { ConnectionTarget } from '../connection/target'
+import { EngineAddress, type KnownEngine } from './state'
 
 // The Windows app's engine in WSL2 (spec §7.6, H31), one more host: the distribution found, or Ubuntu
 // installed where there is none, in a console window of its own, where WSL asks for the new user's
-// name and password; the engine checked and installed there with the install's own steps
-// (`@fabrica/client/install`), run through `wsl.exe -d <distro> --exec`, its login service a systemd
-// user unit only where the distribution's systemd runs (the bridge starts the engine otherwise); and
-// the engine reached through `wsl.exe -d <distro> -- fabrica bridge` in the connection process, while
-// a detached wsl.exe holds the distribution for as long as the engine answers, since WSL shuts down a
-// distribution no Windows process holds (fab-mgi.16).
-
-/** What installing Ubuntu came to. */
-export type UbuntuInstall = Data.TaggedEnum<{
-  /** The distribution to run the engine in, found once the install had ended. */
-  Ready: { readonly distro: WslDistro }
-  /** None was found after it: why, in words. */
-  Unfinished: { readonly reason: string }
-}>
-export const UbuntuInstall = Data.taggedEnum<UbuntuInstall>()
+// name and password; the engine checked and installed there as on any host (`engine-install.ts`), run
+// through `wsl.exe -d <distro> --exec`, its login service a systemd user unit only where the
+// distribution's systemd runs (the bridge starts the engine otherwise); and the engine reached through
+// `wsl.exe -d <distro> -- fabrica bridge` in the connection process, while a detached wsl.exe holds the
+// distribution for as long as the engine answers, since WSL shuts down a distribution no Windows
+// process holds (fab-mgi.16). The app reaches it where this machine runs no engine of its own: at
+// launch, the first known engine in WSL2, and once Add engine has installed one, that one.
 
 /** How `wsl.exe --install` ended: its exit code, or the reason it didn't run. */
 type Ended = Data.TaggedEnum<{
@@ -78,10 +61,11 @@ export const installUbuntu = Effect.fn('Wsl.installUbuntu')(function* (
 ) {
   const ended = yield* runInstall(runner)
   const found = yield* findDistribution(runner)
-  return WslSearch.$match(found, {
-    Found: ({ distro }) => UbuntuInstall.Ready({ distro }),
-    None: () =>
-      UbuntuInstall.Unfinished({
+  return WslSearch.match(found, {
+    Found: ({ distro }): UbuntuInstall =>
+      UbuntuInstall.cases.Ready.make({ distro }),
+    None: (): UbuntuInstall =>
+      UbuntuInstall.cases.Unfinished.make({
         reason: Ended.$match(ended, {
           Exited: ({ code }) =>
             code === 0
@@ -90,51 +74,12 @@ export const installUbuntu = Effect.fn('Wsl.installUbuntu')(function* (
           NotRun: ({ reason }) => `couldn't run wsl.exe: ${reason}`,
         }),
       }),
-    Unavailable: ({ reason }) =>
-      UbuntuInstall.Unfinished({ reason: `couldn't run wsl.exe: ${reason}` }),
+    Unavailable: ({ reason }): UbuntuInstall =>
+      UbuntuInstall.cases.Unfinished.make({
+        reason: `couldn't run wsl.exe: ${reason}`,
+      }),
   })
 })
-
-/** The install's shell in `distro`, with Node's fetch for the releases. */
-const onDistro = (runner: WslRunner & { readonly distro: WslDistro }) =>
-  Layer.merge(
-    Layer.succeed(
-      HostShell,
-      wslShell({
-        distro: runner.distro,
-        env: runner.env,
-        ...(runner.wsl === undefined ? {} : { wsl: runner.wsl }),
-      }),
-    ),
-    FetchHttpClient.layer,
-  )
-
-/** Checks `distro` for the engine `source` offers: what it is, the engine there, and the plan. */
-export const checkWslEngine = ({
-  source,
-  ...runner
-}: WslRunner & {
-  readonly distro: WslDistro
-  readonly source: DistributionSource
-}): Effect.Effect<CheckAnswer> =>
-  answerCheck(checkHost(source)).pipe(Effect.provide(onDistro(runner)))
-
-/**
- * Installs or updates the engine in `distro` as `consent` agreed, its login service a systemd user unit
- * where the distribution's systemd runs.
- */
-export const installWslEngine = ({
-  source,
-  consent,
-  ...runner
-}: WslRunner & {
-  readonly distro: WslDistro
-  readonly source: DistributionSource
-  readonly consent: InstallConsent
-}): Effect.Effect<InstallAnswer> =>
-  answerInstall(
-    installEngine({ source, consent, loginService: 'where-systemd-runs' }),
-  ).pipe(Effect.provide(onDistro(runner)))
 
 /**
  * The connection process's target for the engine in `distro`, and its keep-alive, started as the app
@@ -160,3 +105,33 @@ export const reachWslEngine = Effect.fn('Wsl.reachEngine')(function* (
     held,
   }
 })
+
+/**
+ * The distribution whose engine the app reaches at launch: where this machine runs no engine the app
+ * can reach (`local` is Unavailable, as on Windows), the first known engine in WSL2.
+ */
+export const launchDistro = ({
+  local,
+  known,
+}: {
+  readonly local: ConnectionTarget
+  readonly known: ReadonlyArray<KnownEngine>
+}): Option.Option<WslDistro> =>
+  ConnectionTarget.guards.Unavailable(local)
+    ? Option.fromUndefinedOr(
+        known.map(({ address }) => address).find(EngineAddress.guards.Wsl)
+          ?.distro,
+      )
+    : Option.none()
+
+/** The distribution whose engine the app reaches once Add engine has installed or updated it there. */
+export const installedDistro = ({
+  host,
+  answer,
+}: {
+  readonly host: EngineHost
+  readonly answer: InstallAnswer
+}): Option.Option<WslDistro> =>
+  EngineHost.guards.Wsl(host) && InstallAnswer.guards.Installed(answer)
+    ? Option.some(host.distro)
+    : Option.none()

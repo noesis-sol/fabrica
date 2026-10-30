@@ -23,6 +23,7 @@ import {
 import {
   type EngineClientShape,
   Link,
+  WslSearch,
   make,
   windowsDriveOf,
   windowsDriveWarning,
@@ -40,7 +41,6 @@ import {
 } from '../src/install'
 import {
   type WslFailure,
-  WslSearch,
   checkoutWarning,
   chooseDistribution,
   decodeWslText,
@@ -237,20 +237,20 @@ describe('the WSL distribution', () => {
   it("chooses the default WSL2 distribution, else the first, and never a tool's own", () => {
     // Docker Desktop's is the default here: the first other WSL2 one is chosen.
     expect(chooseDistribution(parseWslList(listing))).toEqual(
-      WslSearch.Found({ distro: 'Ubuntu-24.04' }),
+      WslSearch.cases.Found.make({ distro: 'Ubuntu-24.04' }),
     )
     expect(
       chooseDistribution([
         { name: 'Ubuntu-24.04', version: 2, default: false },
         { name: 'Ubuntu', version: 2, default: true },
       ]),
-    ).toEqual(WslSearch.Found({ distro: 'Ubuntu' }))
+    ).toEqual(WslSearch.cases.Found.make({ distro: 'Ubuntu' }))
     expect(
       chooseDistribution([
         { name: 'Debian', version: 1, default: true },
         { name: 'docker-desktop', version: 2, default: false },
       ]),
-    ).toEqual(WslSearch.None({ wsl1: ['Debian'] }))
+    ).toEqual(WslSearch.cases.None.make({ wsl1: ['Debian'] }))
   })
 
   it('warns about a checkout on a Windows drive', () => {
@@ -298,7 +298,7 @@ layer(layerDistro, { excludeTestServices: true })(
         Effect.gen(function* () {
           const { env, runs } = yield* setUp({ list: wide(listing) })
           expect(yield* findDistribution({ env })).toEqual(
-            WslSearch.Found({ distro: 'Ubuntu-24.04' }),
+            WslSearch.cases.Found.make({ distro: 'Ubuntu-24.04' }),
           )
           expect(yield* runs).toEqual([
             { utf8: '1', args: ['--list', '--verbose'] },
@@ -315,7 +315,7 @@ layer(layerDistro, { excludeTestServices: true })(
           code: 1,
         })
         expect(yield* findDistribution({ env })).toEqual(
-          WslSearch.None({ wsl1: [] }),
+          WslSearch.cases.None.make({ wsl1: [] }),
         )
       }),
     )
@@ -327,7 +327,7 @@ layer(layerDistro, { excludeTestServices: true })(
           env,
           wsl: NodePath.join(dir, 'no-wsl.exe'),
         })
-        expect(WslSearch.$is('Unavailable')(found)).toBe(true)
+        expect(WslSearch.guards.Unavailable(found)).toBe(true)
       }),
     )
 

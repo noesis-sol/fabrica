@@ -9,6 +9,7 @@ import {
   Semaphore,
 } from 'effect'
 
+import { WslDistro } from '@fabrica/client'
 import { EngineId, ProtocolVersion } from '@fabrica/contracts'
 import { readFileText, writeFileWhole } from '@fabrica/engine/files'
 
@@ -28,7 +29,7 @@ export const EngineAddress = Schema.TaggedUnion({
   /** Through the SSH stdio bridge: `user@host`, or a host of `~/.ssh/config`. */
   Ssh: { destination: Schema.NonEmptyString },
   /** Through the bridge in a WSL2 distribution. */
-  Wsl: { distro: Schema.NonEmptyString },
+  Wsl: { distro: WslDistro },
   /** WebSocket over TLS, at `host:port`, with a pairing token. */
   Tls: { address: Schema.NonEmptyString },
 })

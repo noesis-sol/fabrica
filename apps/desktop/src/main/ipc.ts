@@ -7,6 +7,8 @@ import {
   type InstallAnswer,
   InstallConsent,
   SshPromptAnswer,
+  type UbuntuInstall,
+  type WslSearch,
 } from '@fabrica/client'
 import type { ReleaseVersion } from '@fabrica/contracts'
 import type { ServiceInstall } from '@fabrica/ui/host'
@@ -39,6 +41,10 @@ export interface MainActions {
     readonly host: EngineHost
     readonly consent: InstallConsent
   }) => Promise<InstallAnswer>
+  /** Looks for the WSL2 distribution to run the engine in (§7.6). */
+  readonly findWsl: () => Promise<WslSearch>
+  /** Installs Ubuntu in WSL, as the user agreed, and looks for the distribution again. */
+  readonly installUbuntu: () => Promise<UbuntuInstall>
   /** The page's answer to what ssh asked (spec §9.1), for the connection process. */
   readonly answerSshPrompt: (answer: SshPromptAnswer) => void
 }
@@ -153,6 +159,8 @@ export const registerIpc = ({
   onInvoke(channels.version, () => Promise.resolve(actions.version))
   onInvoke(channels.updateStatus, () => Promise.resolve(actions.updateStatus()))
   onInvoke(channels.installLoginService, actions.installLoginService)
+  onInvoke(channels.findWsl, actions.findWsl)
+  onInvoke(channels.installUbuntu, actions.installUbuntu)
   onRequest(channels.checkEngine, decodeCheck, ([host]) =>
     actions.checkEngine(host),
   )

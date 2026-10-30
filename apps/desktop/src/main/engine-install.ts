@@ -13,12 +13,14 @@ import {
   DistributionSource,
   HostShell,
   type HostShellShape,
+  type LoginServiceUse,
   answerCheck,
   answerInstall,
   checkHost,
   installEngine,
   localShell,
   sshShell,
+  wslShell,
 } from '@fabrica/client/install'
 import {
   CHECKSUMS,
@@ -29,8 +31,9 @@ import {
 } from '@fabrica/engine/update'
 
 // Add engine and the update offer at connect, in main (spec §9.2, H22): the renderer asks main to check
-// a host, this machine or one over SSH, for an engine, and to install or update it there as the user
-// agreed; main runs the install's own steps (`@fabrica/client/install`) on the host's shell. The engine
+// a host, this machine, one over SSH or a WSL2 distribution (§7.6), for an engine, and to install or
+// update it there as the user agreed; main runs the install's own steps (`@fabrica/client/install`) on
+// the host's shell. The engine
 // comes from the release folder a packaged app carries where it is signed (the Windows app's, for WSL2),
 // else from Fabrica's releases, downloaded under the app's temp folder where the host can't download it
 // itself. Either way checksums.txt is verified with the release keys. ssh asks nothing (`BatchMode`)
@@ -93,7 +96,7 @@ export const engineSource = Effect.fn('EngineInstall.source')(function* ({
   )
 })
 
-/** The shell the install runs on `host` with: ssh to its destination, or this machine's. */
+/** The shell the install runs on `host` with: ssh to its destination, wsl.exe into its distribution, or this machine's. */
 export const hostShellOf = ({
   host,
   env,
@@ -105,6 +108,18 @@ export const hostShellOf = ({
   EngineHost.match(host, {
     Local: () => localShell({ env }),
     Ssh: ({ destination }) => sshShell({ destination, env }),
+    Wsl: ({ distro }) => wslShell({ distro, env }),
+  })
+
+/**
+ * Whether the engine on `host` runs as a login service: always, but in a WSL2 distribution only where
+ * its systemd runs, since the bridge starts the engine there otherwise (§7.6).
+ */
+export const loginServiceOn = (host: EngineHost): LoginServiceUse =>
+  EngineHost.match(host, {
+    Local: (): LoginServiceUse => 'always',
+    Ssh: (): LoginServiceUse => 'always',
+    Wsl: (): LoginServiceUse => 'where-systemd-runs',
   })
 
 /** The install's shell on `host`, with Node's fetch for the releases. */
@@ -138,6 +153,6 @@ export const installEngineOn = ({
   readonly source: DistributionSource
   readonly env: Readonly<Record<string, string>>
 }): Effect.Effect<InstallAnswer> =>
-  answerInstall(installEngine({ source, consent })).pipe(
-    Effect.provide(onHost({ host, env })),
-  )
+  answerInstall(
+    installEngine({ source, consent, loginService: loginServiceOn(host) }),
+  ).pipe(Effect.provide(onHost({ host, env })))

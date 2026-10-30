@@ -250,6 +250,8 @@ describe("the user's choice of the login service", () => {
       installLoginService: answer,
       checkEngine: unused,
       installEngine: unused,
+      findWsl: unused,
+      installUbuntu: unused,
       answerSshPrompt: () => undefined,
     }
     registerIpc({

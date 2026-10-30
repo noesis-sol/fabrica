@@ -8,14 +8,18 @@ import {
   SshPromptAnswer,
   SshPromptEvent,
   type SshPromptsApi,
+  UbuntuInstall,
+  WslSearch,
   sshPromptsMember,
 } from '@fabrica/client'
 import { ReleaseVersion } from '@fabrica/contracts'
 import {
   ServiceInstall,
   checkEngineMethod,
+  findWslMethod,
   installEngineMethod,
   installLoginServiceMethod,
+  installUbuntuMethod,
 } from '@fabrica/ui/host'
 import {
   DesktopNotification,
@@ -30,8 +34,9 @@ import { Theme } from '@fabrica/ui/theme'
 // the preload, from the page and from main, and by main, from the preload. The window controls, the
 // folder picker, the app's version, the update status, the system notifications and their clicks
 // (§18.5), installing the local engine's login service, checking a host for an engine and installing it
-// there (§9.2), what ssh asks as it connects and the page's answers (§9.1), and the engine port, which
-// the preload hands to the page as a window message (contextBridge can't carry a MessagePort).
+// there (§9.2), finding a WSL2 distribution to run it in and installing Ubuntu where there is none
+// (§7.6), what ssh asks as it connects and the page's answers (§9.1), and the engine port, which the
+// preload hands to the page as a window message (contextBridge can't carry a MessagePort).
 
 /** The IPC channels between main and the preload, each named once. */
 export const channels = {
@@ -48,6 +53,8 @@ export const channels = {
   installLoginService: 'fabrica:install-login-service',
   checkEngine: 'fabrica:check-engine',
   installEngine: 'fabrica:install-engine',
+  findWsl: 'fabrica:find-wsl',
+  installUbuntu: 'fabrica:install-ubuntu',
   sshPrompt: 'fabrica:ssh-prompt',
   answerSshPrompt: 'fabrica:ssh-prompt-answer',
   enginePort: 'fabrica:engine-port',
@@ -108,6 +115,10 @@ export interface FabricaApi {
     host: EngineHost,
     consent: InstallConsent,
   ) => Promise<InstallAnswer>
+  /** Looks for the WSL2 distribution to run the engine in (§7.6). */
+  readonly [findWslMethod]: () => Promise<WslSearch>
+  /** Installs Ubuntu in WSL, as the user agreed, and looks for the distribution again. */
+  readonly [installUbuntuMethod]: () => Promise<UbuntuInstall>
   /** What ssh asks as the app connects, and the page's answers (spec §9.1). */
   readonly [sshPromptsMember]: SshPromptsApi
 }
@@ -138,6 +149,8 @@ const decodeEngineHost = Schema.decodeUnknownSync(EngineHost)
 const decodeConsent = Schema.decodeUnknownSync(InstallConsent)
 const decodeCheckAnswer = Schema.decodeUnknownSync(CheckAnswer)
 const decodeInstallAnswer = Schema.decodeUnknownSync(InstallAnswer)
+const decodeWslSearch = Schema.decodeUnknownSync(WslSearch)
+const decodeUbuntuInstall = Schema.decodeUnknownSync(UbuntuInstall)
 // A prompt crosses to the page encoded (contextBridge copies plain values only), and the page decodes it.
 const decodeSshEventOption = Schema.decodeUnknownOption(SshPromptEvent)
 const encodeSshEvent = Schema.encodeSync(SshPromptEvent)
@@ -185,6 +198,9 @@ export const makeApi = (ipc: PreloadIpc): FabricaApi => ({
         ),
       )
       .then(decodeInstallAnswer),
+  [findWslMethod]: () => ipc.invoke(channels.findWsl).then(decodeWslSearch),
+  [installUbuntuMethod]: () =>
+    ipc.invoke(channels.installUbuntu).then(decodeUbuntuInstall),
   [sshPromptsMember]: {
     onEvent: listener =>
       ipc.on(channels.sshPrompt, value => {

@@ -262,6 +262,10 @@ describe('main’s end of notify', () => {
         Promise.resolve({ _tag: 'Failed', reason: 'not this test’s' }),
       installEngine: () =>
         Promise.resolve({ _tag: 'Failed', reason: 'not this test’s' }),
+      findWsl: () =>
+        Promise.resolve({ _tag: 'Unavailable', reason: 'not this test’s' }),
+      installUbuntu: () =>
+        Promise.resolve({ _tag: 'Unfinished', reason: 'not this test’s' }),
       answerSshPrompt: () => undefined,
     }
     registerIpc({ ipc, trusted: url => url === app, actions })

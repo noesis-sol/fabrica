@@ -3,12 +3,13 @@ import { readFile, writeFile } from 'node:fs/promises'
 import * as NodePath from 'node:path'
 
 import { describe, expect, it, layer } from '@effect/vitest'
+import { UbuntuInstall } from '@fabrica/client'
 import { holdScript, wslFailed } from '@fabrica/client/node'
 import { Toolbox, layerToolbox, shStub, tempFolder } from '@fabrica/testkit'
 
 import { ConnectionTarget } from '../src/connection/target'
 import { engineSocket } from '../src/connection/transports'
-import { UbuntuInstall, installUbuntu, reachWslEngine } from '../src/main/wsl'
+import { installUbuntu, reachWslEngine } from '../src/main/wsl'
 
 // Main's WSL2 host and the connection process's WSL2 target (spec §7.6, H31) against a stub `wsl.exe`
 // that records each run's arguments: `--install -d Ubuntu` ends with its folder's `install-code`, and
@@ -79,7 +80,7 @@ describe('the WSL2 host in main', () => {
         Effect.gen(function* () {
           const { env, runs } = yield* setUp({ installs: true })
           expect(yield* installUbuntu({ env })).toEqual(
-            UbuntuInstall.Ready({ distro: 'Ubuntu' }),
+            UbuntuInstall.cases.Ready.make({ distro: 'Ubuntu' }),
           )
           expect(yield* runs).toEqual([
             '--install -d Ubuntu',
@@ -95,12 +96,12 @@ describe('the WSL2 host in main', () => {
           const unready = yield* installUbuntu({
             env: (yield* setUp({ installs: false })).env,
           })
-          expect(UbuntuInstall.$is('Unfinished')(unready)).toBe(true)
+          expect(UbuntuInstall.guards.Unfinished(unready)).toBe(true)
           const failed = yield* installUbuntu({
             env: (yield* setUp({ installs: false, installCode: 1 })).env,
           })
           expect(failed).toEqual(
-            UbuntuInstall.Unfinished({
+            UbuntuInstall.cases.Unfinished.make({
               reason: 'wsl.exe --install -d Ubuntu ended with 1',
             }),
           )

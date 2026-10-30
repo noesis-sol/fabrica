@@ -7,7 +7,8 @@ import { ConnectionTarget } from '../connection/target'
 // Main's part in the app's connection to its engine (spec §5, §8.2): it starts the connection process
 // and, at each load of a page, makes a port pair and hands one end to the page and the other, with
 // the engine to reach, to the connection process; it then leaves the data path. A connection process
-// that exits is started again after a pause, and every page it served gets a new port.
+// that exits is started again after a pause, and every page it served gets a new port; so does every
+// page when the app's engine changes (the Windows app's in WSL2, once Add engine has installed it).
 
 /** The engine the app reaches on this machine: its local socket, where the engine runs here (§4). */
 export const localTarget = (host: HostPlaces): ConnectionTarget =>
@@ -44,15 +45,17 @@ export interface BrokerHost<Port> {
   readonly afterExit: (restart: () => void) => void
   /** A new port pair: one end for the page, one for the connection process. */
   readonly channel: () => { readonly page: Port; readonly relay: Port }
+  /** The engine the pages reach until `retarget` names another. */
   readonly target: ConnectionTarget
 }
 
 /**
  * The broker: `attach` gives a page a port at each of its loads, until it has gone; `post` reaches the
- * connection process running.
+ * connection process running; `retarget` gives every page a port to another engine.
  */
 export const makeBroker = <Port>(host: BrokerHost<Port>) => {
   let child: Option.Option<ConnectionProcess<Port>> = Option.none()
+  let target = host.target
   const pages = new Set<BrokeredPage<Port>>()
 
   const connection = (): ConnectionProcess<Port> =>
@@ -71,7 +74,7 @@ export const makeBroker = <Port>(host: BrokerHost<Port>) => {
 
   const broker = (page: BrokeredPage<Port>): void => {
     const { page: pageEnd, relay } = host.channel()
-    connection().relay(host.target, relay)
+    connection().relay(target, relay)
     page.send(pageEnd)
   }
 
@@ -79,6 +82,13 @@ export const makeBroker = <Port>(host: BrokerHost<Port>) => {
     /** Hands the connection process `message` while it runs; nothing once it has exited. */
     post: (message: unknown): void => {
       Option.map(child, running => running.post(message))
+    },
+    /** Has every page reach `next` from now on, each through a new port. */
+    retarget: (next: ConnectionTarget): void => {
+      target = next
+      for (const page of pages) {
+        broker(page)
+      }
     },
     attach: (page: BrokeredPage<Port>): void => {
       page.onLoad(() => {

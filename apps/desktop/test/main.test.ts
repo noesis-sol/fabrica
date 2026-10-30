@@ -348,6 +348,10 @@ const recordingActions = () => {
       Promise.reject(new Error('the engine install’s tests answer it')),
     installEngine: () =>
       Promise.reject(new Error('the engine install’s tests answer it')),
+    findWsl: () =>
+      Promise.reject(new Error('the WSL2 engine’s tests answer it')),
+    installUbuntu: () =>
+      Promise.reject(new Error('the WSL2 engine’s tests answer it')),
     answerSshPrompt: ({ id }) => done.push(`answerSshPrompt ${id}`),
   }
   return { done, actions }

@@ -132,6 +132,8 @@ describe('main’s engine install', () => {
         asked.push(request)
         return Promise.resolve(installed)
       },
+      findWsl: unused,
+      installUbuntu: unused,
     }
     registerIpc({
       ipc: {

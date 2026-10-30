@@ -754,9 +754,11 @@ export const update = (model: Model, message: Message): Return =>
     GotHistoryMessage: ({ message }) => foldHistory(model, message),
     GotEnginesMessage: ({ message }) => {
       const folded = foldEngines(model, message)
-      // This machine's engine updated: a connection it refused is tried again.
+      // The app's engine installed or updated: a connection it refused, or one stopped at a refusal
+      // (the WSL2 distribution had no fabrica), is tried again.
       return Engines.reconnectsAfter(message) &&
-        Connection.guards.Refused(folded.model.connection)
+        (Connection.guards.Refused(folded.model.connection) ||
+          Connection.guards.Stopped(folded.model.connection))
         ? {
             ...folded,
             model: modifyFields(folded.model, {

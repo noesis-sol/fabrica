@@ -11,7 +11,7 @@ import type { RpcClientError } from 'effect/rpc'
 import { Socket } from 'effect/socket'
 import { execFile, spawn } from 'node:child_process'
 
-import { type WslDistro, windowsDriveWarning } from '../wsl-host'
+import { type WslDistro, WslSearch, windowsDriveWarning } from '../wsl-host'
 import {
   type BridgeCommand,
   type BridgeEnd,
@@ -94,17 +94,6 @@ export const parseWslList = (text: string): ReadonlyArray<WslDistribution> =>
 export const isToolDistribution = (name: string): boolean =>
   /^(?:docker-desktop|rancher-desktop|podman-machine)/u.test(name)
 
-/** What the search for a distribution found. */
-export type WslSearch = Data.TaggedEnum<{
-  /** The WSL2 distribution to run the engine in. */
-  Found: { readonly distro: WslDistro }
-  /** No WSL2 distribution, or no WSL: offer `wsl --install -d Ubuntu`. `wsl1` names WSL 1 ones there. */
-  None: { readonly wsl1: ReadonlyArray<WslDistro> }
-  /** wsl.exe couldn't be run, so neither can its install: why. */
-  Unavailable: { readonly reason: string }
-}>
-export const WslSearch = Data.taggedEnum<WslSearch>()
-
 /** The distribution to run the engine in, of those listed: the default where it is WSL2, else the first. */
 export const chooseDistribution = (
   listed: ReadonlyArray<WslDistribution>,
@@ -113,12 +102,12 @@ export const chooseDistribution = (
   const wsl2 = usable.filter(found => found.version === 2)
   const chosen = wsl2.find(found => found.default) ?? wsl2[0]
   return chosen === undefined
-    ? WslSearch.None({
+    ? WslSearch.cases.None.make({
         wsl1: usable
           .filter(found => found.version === 1)
           .map(({ name }) => name),
       })
-    : WslSearch.Found({ distro: chosen.name })
+    : WslSearch.cases.Found.make({ distro: chosen.name })
 }
 
 /** How long wsl.exe has to answer a question: its service may be starting. */
@@ -193,7 +182,9 @@ export const findDistribution = Effect.fn('Wsl.findDistribution')(function* (
   return yield* askWsl(runner, wslListArguments).pipe(
     Effect.map(ran => chooseDistribution(parseWslList(ran.stdout))),
     Effect.catch(unavailable =>
-      Effect.succeed(WslSearch.Unavailable({ reason: unavailable.reason })),
+      Effect.succeed(
+        WslSearch.cases.Unavailable.make({ reason: unavailable.reason }),
+      ),
     ),
   )
 })

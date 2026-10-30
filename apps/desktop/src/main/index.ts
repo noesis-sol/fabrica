@@ -11,6 +11,7 @@ import {
   app,
   dialog,
   ipcMain,
+  safeStorage,
   session,
   shell,
   utilityProcess,
@@ -24,7 +25,11 @@ import type {
   EngineHost,
   InstallAnswer,
   InstallConsent,
+  UbuntuInstall,
+  WslDistro,
+  WslSearch,
 } from '@fabrica/client'
+import { findDistribution } from '@fabrica/client/node'
 import { ReleaseVersion } from '@fabrica/contracts'
 import { ServiceInstall } from '@fabrica/ui/host'
 import { type Theme, defaultTheme } from '@fabrica/ui/theme'
@@ -48,6 +53,7 @@ import { makeNotifications } from './notifications'
 import { type BrokeredPage, localTarget, makeBroker } from './ports'
 import { guardPermissions, guardWebContents } from './security'
 import { askpassNode, makePromptDesk } from './ssh-prompts'
+import { makeAppState, safeStorageBox } from './state'
 import { makeUpdateStatusCell } from './updateStatus'
 import {
   UpdateChannel,
@@ -63,11 +69,18 @@ import {
   windowClose,
   windowOptions,
 } from './window'
+import {
+  installUbuntu,
+  installedDistro,
+  launchDistro,
+  reachWslEngine,
+} from './wsl'
 
 // Electron main (spec §5): the window, its title bar and its confinement, the preload's API, the
 // connection process, to which it brokers each page's engine port and whose ssh prompts it asks the
-// page (§9.1), and the local engine, started at launch when none answers (§7.1). It runs no
-// orchestration and stays out of the data path.
+// page (§9.1), and the local engine, started at launch when none answers (§7.1); on Windows, where
+// none runs, the engine in WSL2, kept running (§7.6). It runs no orchestration and stays out of the
+// data path.
 
 const preload = fileURLToPath(new URL('../preload/index.cjs', import.meta.url))
 const connectionProcess = fileURLToPath(
@@ -153,6 +166,39 @@ const checkEngine = (host: EngineHost): Promise<CheckAnswer> =>
     ),
   )
 
+/** wsl.exe as the app runs it: the user's environment, `wsl.exe` found on its PATH. */
+const wslRunner = { env: definedOf(process.env) }
+
+/** Has every page reach the engine in `distro`, the distribution kept running while it answers. */
+const reachWsl = (distro: WslDistro) =>
+  Effect.map(reachWslEngine({ ...wslRunner, distro }), ({ target }) =>
+    broker.retarget(target),
+  )
+
+/** The app's engine in WSL2 at launch, where this machine runs none: the first known one. */
+const reachKnownWslEngine = makeAppState({
+  folder: app.getPath('userData'),
+  secrets: safeStorageBox(safeStorage, process.platform),
+}).pipe(
+  Effect.flatMap(state => state.engines),
+  Effect.flatMap(known =>
+    Option.match(launchDistro({ local: target, known }), {
+      onNone: () => Effect.void,
+      onSome: reachWsl,
+    }),
+  ),
+  Effect.catch(error =>
+    Effect.logWarning(`the known engines: ${error.reason}`),
+  ),
+)
+
+const findWsl = (): Promise<WslSearch> =>
+  Effect.runPromise(findDistribution(wslRunner))
+
+const installUbuntuInWsl = (): Promise<UbuntuInstall> =>
+  Effect.runPromise(installUbuntu(wslRunner))
+
+/** Installs or updates the engine on a host; one installed in WSL2 is the engine the app reaches then. */
 const installEngine = (request: {
   readonly host: EngineHost
   readonly consent: InstallConsent
@@ -161,6 +207,12 @@ const installEngine = (request: {
     installSource().pipe(
       Effect.flatMap(source =>
         installEngineOn({ ...request, source, env: definedOf(process.env) }),
+      ),
+      Effect.tap(answer =>
+        Option.match(installedDistro({ host: request.host, answer }), {
+          onNone: () => Effect.void,
+          onSome: reachWsl,
+        }),
       ),
     ),
   )
@@ -434,12 +486,15 @@ if (!app.requestSingleInstanceLock()) {
       installLoginService: installService,
       checkEngine,
       installEngine,
+      findWsl,
+      installUbuntu: installUbuntuInWsl,
       answerSshPrompt: promptDesk.answer,
     },
   })
 
   void app.whenReady().then(async () => {
     void Effect.runPromise(reachLocalEngine)
+    void Effect.runPromise(reachKnownWslEngine)
     Option.map(makeUpdater(), updater =>
       followUpdates({
         updater,

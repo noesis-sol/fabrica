@@ -7,10 +7,9 @@
     "types": ["node"],
     "allowImportingTsExtensions": true
   },
-  // The connection process, main's WSL2 module (which reaches @fabrica/client's Node transports, whose
-  // web streams are Node's) and their tests have their own, without the DOM (tsconfig.connection.json).
+  // The connection process and its tests, main's WSL2 module's among them, have their own, without the
+  // DOM (tsconfig.connection.json).
   "exclude": [
-    "src/main/wsl.ts",
     "test/connection.test.ts",
     "test/connection-ssh.test.ts",
     "test/connection-prompts.test.ts",

@@ -5,12 +5,15 @@ import {
   type EngineHost,
   InstallAnswer,
   type InstallConsent,
+  UbuntuInstall,
+  WslSearch,
 } from '@fabrica/client'
 
 // What the renderer may ask of the app around it (spec §7.1, §9.2, §20.1): installing the local engine
 // as a login service, which main does through the bundled `fabrica service install` when the user
-// chooses; and checking a host, this machine or one over SSH, for an engine, then installing or
-// updating it there with the user's consent (`@fabrica/client/install`). The preload's API answers
+// chooses; checking a host, this machine, one over SSH or a WSL2 distribution, for an engine, then
+// installing or updating it there with the user's consent (`@fabrica/client/install`); and, on
+// Windows, finding the WSL2 distribution to run it in, or installing Ubuntu. The preload's API answers
 // them in the desktop app; the renderer alone in a browser has no app around it. What crosses is
 // decoded, here and in the preload, with the schemas below and the client's.
 
@@ -36,6 +39,10 @@ export interface AppHostShape {
       readonly consent: InstallConsent
     }) => Effect.Effect<InstallAnswer>
   >
+  /** Looks for the WSL2 distribution to run the engine in: none where no app is around. */
+  readonly findWsl: Option.Option<Effect.Effect<WslSearch>>
+  /** Installs Ubuntu in WSL, as the user agreed: none where no app is around. */
+  readonly installUbuntu: Option.Option<Effect.Effect<UbuntuInstall>>
 }
 
 export class AppHost extends Context.Service<AppHost, AppHostShape>()(
@@ -47,11 +54,15 @@ export const noAppHost: AppHostShape = {
   installLoginService: Option.none(),
   checkEngine: Option.none(),
   installEngine: Option.none(),
+  findWsl: Option.none(),
+  installUbuntu: Option.none(),
 }
 
 const decodeInstall = Schema.decodeUnknownEffect(ServiceInstall)
 const decodeCheckAnswer = Schema.decodeUnknownEffect(CheckAnswer)
 const decodeInstallAnswer = Schema.decodeUnknownEffect(InstallAnswer)
+const decodeWslSearch = Schema.decodeUnknownEffect(WslSearch)
+const decodeUbuntuInstall = Schema.decodeUnknownEffect(UbuntuInstall)
 
 /** The `window.fabrica` method the preload exposes for the login service, by name. */
 export const installLoginServiceMethod = 'installLoginService'
@@ -59,6 +70,10 @@ export const installLoginServiceMethod = 'installLoginService'
 /** The `window.fabrica` methods the preload exposes for checking a host and installing its engine. */
 export const checkEngineMethod = 'checkEngine'
 export const installEngineMethod = 'installEngine'
+
+/** The `window.fabrica` methods the preload exposes for finding a WSL2 distribution and installing Ubuntu. */
+export const findWslMethod = 'findWsl'
+export const installUbuntuMethod = 'installUbuntu'
 
 const failureWords = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
@@ -99,6 +114,8 @@ export const appHostOf = (target: object): AppHostShape => {
   const install = methodOf(api, installLoginServiceMethod, decodeInstall)
   const check = methodOf(api, checkEngineMethod, decodeCheckAnswer)
   const installEngine = methodOf(api, installEngineMethod, decodeInstallAnswer)
+  const findWsl = methodOf(api, findWslMethod, decodeWslSearch)
+  const installUbuntu = methodOf(api, installUbuntuMethod, decodeUbuntuInstall)
   return {
     installLoginService: Option.map(install, call =>
       call([]).pipe(
@@ -131,6 +148,20 @@ export const appHostOf = (target: object): AppHostShape => {
               Effect.succeed(InstallAnswer.cases.Failed.make({ reason })),
             ),
           ),
+    ),
+    findWsl: Option.map(findWsl, call =>
+      call([]).pipe(
+        Effect.catch(reason =>
+          Effect.succeed(WslSearch.cases.Unavailable.make({ reason })),
+        ),
+      ),
+    ),
+    installUbuntu: Option.map(installUbuntu, call =>
+      call([]).pipe(
+        Effect.catch(reason =>
+          Effect.succeed(UbuntuInstall.cases.Unfinished.make({ reason })),
+        ),
+      ),
     ),
   }
 }

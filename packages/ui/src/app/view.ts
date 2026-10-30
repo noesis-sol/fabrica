@@ -456,6 +456,7 @@ const screenView = (model: Model, h: HtmlBuilder<Message>): Html =>
         viewInputs: {
           connection: model.connection,
           engines: model.console.sidebar.engines,
+          platform: model.platform,
         },
         toParentMessage: message => Message.GotEnginesMessage({ message }),
       }),

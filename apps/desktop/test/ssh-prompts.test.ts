@@ -146,6 +146,8 @@ describe('the prompts across the preload', () => {
         installLoginService: unused,
         checkEngine: unused,
         installEngine: unused,
+        findWsl: unused,
+        installUbuntu: unused,
         answerSshPrompt: answer => answers.push(answer),
       },
     })

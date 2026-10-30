@@ -3,16 +3,18 @@ import { Option, Schema } from 'effect'
 import { ReleaseVersion } from '@fabrica/contracts'
 
 import { SshDestination } from '../destination'
+import { WslDistro } from '../wsl-host'
 
 // What installing an engine on a host comes to (spec §9.2, §8.4), as the app's renderer asks for it and
 // shows it: the host to install on, what its check found and proposes, the user's consent to it, and
 // the outcome. Each crosses from the app's main process to the renderer and is decoded there, so this
 // module has no Node in it; the steps themselves are `@fabrica/client/install`'s.
 
-/** The host an engine is installed on: this machine, or one reached through SSH. */
+/** The host an engine is installed on: this machine, one reached through SSH, or a WSL2 distribution. */
 export const EngineHost = Schema.TaggedUnion({
   Local: {},
   Ssh: { destination: SshDestination },
+  Wsl: { distro: WslDistro },
 })
 export type EngineHost = typeof EngineHost.Type
 

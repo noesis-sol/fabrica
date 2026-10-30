@@ -1,7 +1,8 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    // The connection process is Node's, in Electron's utilityProcess: no DOM. So is main's WSL2 module.
+    // The connection process is Node's, in Electron's utilityProcess: no DOM. So is main's WSL2 module,
+    // which main type-checks with the DOM too (tsconfig.node.json).
     "types": ["node"]
   },
   "include": [

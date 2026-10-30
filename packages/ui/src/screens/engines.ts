@@ -24,7 +24,10 @@ import {
   InstallConsent,
   InstallPlan,
   SshDestination,
+  UbuntuInstall,
+  WslSearch,
   consentFor,
+  windowsDriveWarning,
 } from '@fabrica/client'
 import {
   CommandLine,
@@ -34,6 +37,7 @@ import {
   EngineStatus,
   FolderListing,
   type HostFolder,
+  type Platform,
   ProjectId,
   ProjectInfo,
   ProjectSource,
@@ -57,12 +61,15 @@ import { type EngineProjects, runLabel } from '../console/sidebar'
 // The app reaches its local engine through the connection; the SSH, WSL2 and TLS engines join it with
 // remote engines. Add engine takes an SSH destination and has the app check the host (its system, the
 // engine there and its version), then install the app's engine there, or update an older one, only
-// once the user agrees to what the check proposes (§9.2). An engine that refuses the app's version at
+// once the user agrees to what the check proposes (§9.2). On Windows it offers WSL2 too (§7.6): the
+// distribution the app found is checked the same way, and where there is none the app offers to
+// install Ubuntu, or says why WSL can't run. An engine that refuses the app's version at
 // connect is offered its update the same way, on this machine (§8.4); an app too old for its engine is
 // told to update itself. A project is added as a checkout on the engine's host,
 // by its path, typed or found by browsing the host's folders through the engine (from the path typed,
 // or its home folder), or as a clone of a git URL, which the engine checks and, where `.fabrica/` is
-// missing, offers to set up (`init`). A project is trusted or untrusted from its row, the words beside the
+// missing, offers to set up (`init`); a checkout on a Windows drive, as a WSL2 engine sees it under
+// `/mnt/<letter>`, is warned about. A project is trusted or untrusted from its row, the words beside the
 // list saying what trusting it lets its own files do. Credentials are set by name and removed, never shown (§20.3); the key a
 // form holds is redacted, so no log or trace of the Model shows it. The local engine runs at login
 // when the user chooses, which the app around the renderer installs (§7.1).
@@ -157,6 +164,16 @@ export const SetupStep = defineTaggedUnion({
 })
 export type SetupStep = typeof SetupStep.Type
 
+/** Where finding a WSL2 distribution to add an engine in stands (§7.6). */
+export const WslStep = defineTaggedUnion({
+  Searching: {},
+  Searched: { search: WslSearch },
+  /** Ubuntu installing in WSL's own window, as the user agreed. */
+  InstallingUbuntu: {},
+  UbuntuUnfinished: { reason: Schema.String },
+})
+export type WslStep = typeof WslStep.Type
+
 /** Add engine, and the update offered to an engine that refused the app at connect (§9.2, §8.4). */
 export const EngineSetup = defineTaggedUnion({
   Closed: {},
@@ -165,6 +182,8 @@ export const EngineSetup = defineTaggedUnion({
     destination: Schema.String,
     problem: Schema.Option(Schema.String),
   },
+  /** A WSL2 distribution to add the engine in, being found (§7.6). */
+  Wsl: { step: WslStep },
   Running: { host: EngineHost, step: SetupStep },
 })
 export type EngineSetup = typeof EngineSetup.Type
@@ -276,6 +295,15 @@ export const Message = defineMessageUnion({
   CompletedEngineInstall: { host: EngineHost, answer: InstallAnswer },
   RetriedEngineCheck: {},
   ClosedEngineSetup: {},
+  /** Add engine in WSL2 rather than over SSH: the distribution is looked for (again). */
+  ChoseWslEngine: {},
+  /** Add engine over SSH rather than in WSL2. */
+  ChoseSshEngine: {},
+  CompletedWslSearch: { search: WslSearch },
+  RequestedUbuntuInstall: {},
+  CompletedUbuntuInstall: { outcome: UbuntuInstall },
+  /** Check the distribution found for an engine. */
+  RequestedWslCheck: {},
 })
 export type Message = typeof Message.Type
 
@@ -446,6 +474,33 @@ export const InstallEngine = Command.define('InstallEngine', {
     }),
 })
 
+/** What the WSL2 search and Ubuntu's install say where no app is around the renderer to do them. */
+export const noAppForWsl = 'only the Windows app runs engines in WSL2'
+
+export const FindWsl = Command.define('FindWsl', {
+  messages: [Message.CompletedWslSearch],
+  execute: Effect.gen(function* () {
+    const app = yield* AppHost
+    const search = yield* Option.getOrElse(app.findWsl, () =>
+      Effect.succeed(WslSearch.cases.Unavailable.make({ reason: noAppForWsl })),
+    )
+    return Message.CompletedWslSearch({ search })
+  }),
+})
+
+export const InstallUbuntu = Command.define('InstallUbuntu', {
+  messages: [Message.CompletedUbuntuInstall],
+  execute: Effect.gen(function* () {
+    const app = yield* AppHost
+    const outcome = yield* Option.getOrElse(app.installUbuntu, () =>
+      Effect.succeed(
+        UbuntuInstall.cases.Unfinished.make({ reason: noAppForWsl }),
+      ),
+    )
+    return Message.CompletedUbuntuInstall({ outcome })
+  }),
+})
+
 /** What the screen's Commands need: the engine connection, and the app around the renderer. */
 export type Requires = EngineConnectionService | AppHost
 
@@ -609,13 +664,47 @@ export const sameHost = (a: EngineHost, b: EngineHost): boolean =>
     Local: () => EngineHost.guards.Local(b),
     Ssh: ({ destination }) =>
       EngineHost.guards.Ssh(b) && b.destination === destination,
+    Wsl: ({ distro }) => EngineHost.guards.Wsl(b) && b.distro === distro,
   })
 
-/** Whether the setup is waiting on the app: a check or an install under way, which nothing else interrupts. */
+/**
+ * Whether the setup is waiting on the app: a check, an install, a search for a WSL2 distribution or
+ * Ubuntu's install under way, which nothing else interrupts.
+ */
 const busy = (setup: EngineSetup): boolean =>
-  EngineSetup.guards.Running(setup) &&
-  (SetupStep.guards.Checking(setup.step) ||
-    SetupStep.guards.Installing(setup.step))
+  EngineSetup.match(setup, {
+    Closed: () => false,
+    Editing: () => false,
+    Wsl: ({ step }) =>
+      WslStep.guards.Searching(step) || WslStep.guards.InstallingUbuntu(step),
+    Running: ({ step }) =>
+      SetupStep.guards.Checking(step) || SetupStep.guards.Installing(step),
+  })
+
+/** The WSL2 search's step moved on by `next`, where it is under way; any other setup is kept. */
+const stepWsl = (
+  model: Model,
+  next: (step: WslStep) => Option.Option<WslStep>,
+): Model =>
+  EngineSetup.match(model.engineSetup, {
+    Wsl: ({ step }) =>
+      Option.match(next(step), {
+        onNone: () => model,
+        onSome: moved =>
+          modifyFields(model, {
+            engineSetup: () => EngineSetup.Wsl({ step: moved }),
+          }),
+      }),
+    Closed: () => model,
+    Editing: () => model,
+    Running: () => model,
+  })
+
+/** The distribution the WSL2 search found, where it has found one. */
+const foundDistro = (setup: EngineSetup): Option.Option<WslSearch> =>
+  EngineSetup.guards.Wsl(setup) && WslStep.guards.Searched(setup.step)
+    ? Option.some(setup.step.search)
+    : Option.none()
 
 /** The host is checked: the setup running on it, and the check asked. */
 const startCheck = (model: Model, host: EngineHost): Return => ({
@@ -646,18 +735,20 @@ const stepSetup = (
         : model,
     Closed: () => model,
     Editing: () => model,
+    Wsl: () => model,
   })
 
 /**
- * Whether `message` means the engine this app connects to may take it now: this machine's engine
- * installed or updated, so a connection it refused is tried again.
+ * Whether `message` means the engine this app connects to may take it now: this machine's engine, or
+ * the one in WSL2 the Windows app reaches, installed or updated, so a connection it refused is tried
+ * again.
  */
 export const reconnectsAfter = (message: Message): boolean =>
   Match.value(message).pipe(
     Match.tag(
       'CompletedEngineInstall',
       ({ host, answer }) =>
-        EngineHost.guards.Local(host) && InstallAnswer.guards.Installed(answer),
+        !EngineHost.guards.Ssh(host) && InstallAnswer.guards.Installed(answer),
     ),
     Match.orElse(() => false),
   )
@@ -927,6 +1018,7 @@ export const update = (model: Model, message: Message): Return =>
               startCheck(model, EngineHost.cases.Ssh.make({ destination })),
           }),
         Closed: () => ({ model }),
+        Wsl: () => ({ model }),
         Running: () => ({ model }),
       }),
     RequestedEngineUpdate: () =>
@@ -970,6 +1062,7 @@ export const update = (model: Model, message: Message): Return =>
           }),
         Closed: () => ({ model }),
         Editing: () => ({ model }),
+        Wsl: () => ({ model }),
       }),
     CompletedEngineInstall: ({ host, answer }) => ({
       model: stepSetup(model, host, step =>
@@ -993,15 +1086,82 @@ export const update = (model: Model, message: Message): Return =>
         ? model
         : modifyFields(model, { engineSetup: () => EngineSetup.Closed() }),
     }),
+    ChoseWslEngine: () =>
+      busy(model.engineSetup) || EngineSetup.guards.Closed(model.engineSetup)
+        ? { model }
+        : {
+            model: modifyFields(model, {
+              engineSetup: () => EngineSetup.Wsl({ step: WslStep.Searching() }),
+            }),
+            commands: [FindWsl()],
+          },
+    ChoseSshEngine: () => ({
+      model:
+        EngineSetup.guards.Wsl(model.engineSetup) && !busy(model.engineSetup)
+          ? modifyFields(model, {
+              engineSetup: () =>
+                EngineSetup.Editing({
+                  destination: '',
+                  problem: Option.none(),
+                }),
+            })
+          : model,
+    }),
+    CompletedWslSearch: ({ search }) => ({
+      model: stepWsl(model, step =>
+        WslStep.guards.Searching(step)
+          ? Option.some(WslStep.Searched({ search }))
+          : Option.none(),
+      ),
+    }),
+    RequestedUbuntuInstall: () =>
+      Option.exists(foundDistro(model.engineSetup), WslSearch.guards.None)
+        ? {
+            model: modifyFields(model, {
+              engineSetup: () =>
+                EngineSetup.Wsl({ step: WslStep.InstallingUbuntu() }),
+            }),
+            commands: [InstallUbuntu()],
+          }
+        : { model },
+    CompletedUbuntuInstall: ({ outcome }) => ({
+      model: stepWsl(model, step =>
+        WslStep.guards.InstallingUbuntu(step)
+          ? Option.some(
+              UbuntuInstall.match(outcome, {
+                Ready: ({ distro }): WslStep =>
+                  WslStep.Searched({
+                    search: WslSearch.cases.Found.make({ distro }),
+                  }),
+                Unfinished: ({ reason }): WslStep =>
+                  WslStep.UbuntuUnfinished({ reason }),
+              }),
+            )
+          : Option.none(),
+      ),
+    }),
+    RequestedWslCheck: () =>
+      Option.match(
+        Option.filter(foundDistro(model.engineSetup), WslSearch.guards.Found),
+        {
+          onNone: () => ({ model }),
+          onSome: ({ distro }) =>
+            startCheck(model, EngineHost.cases.Wsl.make({ distro })),
+        },
+      ),
   })
 
 // The view: the handoff's panel, card and list language (§18.2), since the handoff draws no screen
 // but the console.
 
-/** What the frame gives the screen: the connection, and each known engine's projects, as the sidebar holds them. */
+/**
+ * What the frame gives the screen: the connection, each known engine's projects, as the sidebar holds
+ * them, and where the app runs, since only the Windows app adds engines in WSL2.
+ */
 export interface ViewInputs {
   readonly connection: Connection
   readonly engines: ReadonlyArray<EngineProjects>
+  readonly platform: Platform
 }
 
 const card = 'flex flex-col gap-10 rounded-card border border-line bg-panel'
@@ -1220,6 +1380,7 @@ export const hostName = (host: EngineHost): string =>
   EngineHost.match(host, {
     Local: () => 'this machine',
     Ssh: ({ destination }) => destination,
+    Wsl: ({ distro }) => `WSL ${distro}`,
   })
 
 /** What the check proposes, in words. */
@@ -1252,9 +1413,43 @@ const closeButton = (label: string, h: HtmlBuilder<Message>): Html =>
     [label],
   )
 
+/** Where Add engine adds the engine: over SSH, or in WSL2 (§7.6). */
+type EnginePlace = 'ssh' | 'wsl'
+
+const placeButton = (
+  place: EnginePlace,
+  chosen: EnginePlace,
+  label: string,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.button(
+    [
+      h.Type('button'),
+      h.AriaPressed(place === chosen ? 'true' : 'false'),
+      h.OnClick(
+        place === 'wsl' ? Message.ChoseWslEngine() : Message.ChoseSshEngine(),
+      ),
+      h.Class(
+        `rounded-button border px-10 py-4 text-xs ${place === chosen ? 'border-c1 font-bold' : 'border-line text-muted'}`,
+      ),
+    ],
+    [label],
+  )
+
+/** The choice between an engine over SSH and one in WSL2, on Windows. */
+const placeChoice = (chosen: EnginePlace, h: HtmlBuilder<Message>): Html =>
+  h.div(
+    [h.Role('group'), h.AriaLabel('Add an engine'), h.Class('flex gap-8')],
+    [
+      placeButton('ssh', chosen, 'Over SSH', h),
+      placeButton('wsl', chosen, 'In WSL2', h),
+    ],
+  )
+
 const addEngineForm = (
   destination: string,
   problem: Option.Option<string>,
+  platform: Platform,
   h: HtmlBuilder<Message>,
 ): Html =>
   h.form(
@@ -1265,6 +1460,7 @@ const addEngineForm = (
       h.Style(cardStyle),
     ],
     [
+      platform === 'win32' ? placeChoice('ssh', h) : h.empty,
       labelled(
         'add-engine-destination',
         'SSH destination',
@@ -1404,12 +1600,141 @@ const stepView = (
       ),
   })
 
+const statusLine = (text: string, h: HtmlBuilder<Message>): Html =>
+  h.p([h.Role('status'), h.Class('text-xs text-muted')], [text])
+
+const quietAction = (
+  label: string,
+  message: Message,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.button(
+    [h.Type('button'), h.OnClick(message), h.Class(quietButton)],
+    [label],
+  )
+
+const primaryAction = (
+  label: string,
+  message: Message,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.button(
+    [h.Type('button'), h.OnClick(message), h.Class(primaryButton)],
+    [label],
+  )
+
+const actions = (buttons: ReadonlyArray<Html>, h: HtmlBuilder<Message>): Html =>
+  h.div([h.Class('flex items-center gap-8')], [...buttons])
+
+/** What the search for a WSL2 distribution found, and what can be done with it. */
+const wslSearchView = (search: WslSearch, h: HtmlBuilder<Message>): Html =>
+  WslSearch.match(search, {
+    Found: ({ distro }) =>
+      h.div(
+        [h.Class('flex flex-col gap-8')],
+        [
+          h.p(
+            [h.Class('text-sm')],
+            [
+              `The engine runs in ${distro}, WSL's default WSL2 distribution or else its first. It is checked first; nothing is installed until you agree.`,
+            ],
+          ),
+          actions(
+            [
+              primaryAction(`Check ${distro}`, Message.RequestedWslCheck(), h),
+              closeButton('Cancel', h),
+            ],
+            h,
+          ),
+        ],
+      ),
+    None: ({ wsl1 }) =>
+      h.div(
+        [h.Class('flex flex-col gap-8')],
+        [
+          h.p(
+            [h.Class('text-sm')],
+            [
+              'WSL has no WSL2 distribution to run the engine in. Install Ubuntu? WSL installs it, and itself where it isn’t there, in a window of its own, where it asks for a user name and password; Windows may ask to restart.',
+            ],
+          ),
+          wsl1.length === 0
+            ? h.empty
+            : h.p(
+                [h.Class('text-xs text-c2')],
+                [
+                  `${wsl1.join(', ')} ${wsl1.length === 1 ? 'runs' : 'run'} WSL 1, where the engine can’t run.`,
+                ],
+              ),
+          actions(
+            [
+              primaryAction(
+                'Install Ubuntu',
+                Message.RequestedUbuntuInstall(),
+                h,
+              ),
+              closeButton('Cancel', h),
+            ],
+            h,
+          ),
+        ],
+      ),
+    Unavailable: ({ reason }) =>
+      h.div(
+        [h.Class('flex flex-col gap-8')],
+        [
+          problemLine(`WSL can’t run here: ${reason}`, h),
+          actions(
+            [
+              quietAction('Look again', Message.ChoseWslEngine(), h),
+              closeButton('Close', h),
+            ],
+            h,
+          ),
+        ],
+      ),
+  })
+
+/** Add engine in WSL2: the distribution looked for, Ubuntu installed where there is none (§7.6). */
+const wslView = (step: WslStep, h: HtmlBuilder<Message>): Html =>
+  h.section(
+    [h.AriaLabel('Engine in WSL2'), h.Class(card), h.Style(cardStyle)],
+    [
+      placeChoice('wsl', h),
+      WslStep.match(step, {
+        Searching: () => statusLine('Looking for a WSL2 distribution…', h),
+        Searched: ({ search }) => wslSearchView(search, h),
+        InstallingUbuntu: () =>
+          statusLine('Installing Ubuntu: finish its setup in WSL’s window…', h),
+        UbuntuUnfinished: ({ reason }) =>
+          h.div(
+            [h.Class('flex flex-col gap-8')],
+            [
+              problemLine(reason, h),
+              actions(
+                [
+                  quietAction('Look again', Message.ChoseWslEngine(), h),
+                  closeButton('Close', h),
+                ],
+                h,
+              ),
+            ],
+          ),
+      }),
+    ],
+  )
+
 /** Add engine's form, or the setup under way on a host. */
-const setupView = (model: Model, h: HtmlBuilder<Message>): Html =>
+const setupView = (
+  model: Model,
+  platform: Platform,
+  h: HtmlBuilder<Message>,
+): Html =>
   EngineSetup.match(model.engineSetup, {
     Closed: () => h.empty,
     Editing: ({ destination, problem }) =>
-      addEngineForm(destination, problem, h),
+      addEngineForm(destination, problem, platform, h),
+    Wsl: ({ step }) => wslView(step, h),
     Running: ({ host, step }) =>
       h.section(
         [
@@ -1664,6 +1989,7 @@ const addProjectForm = (
             ]),
             h,
           ),
+      form.kind === 'path' ? driveWarning(form.path.trim(), h) : h.empty,
       form.kind === 'path' && !adding ? folderBrowser(folders, h) : h.empty,
       labelled(
         'add-project-name',
@@ -1775,10 +2101,21 @@ const addedView = (added: Added, h: HtmlBuilder<Message>): Html => {
           ),
         ],
       ),
+      driveWarning(project.path, h),
       setUpLine,
     ],
   )
 }
+
+/**
+ * The warning about a checkout at `path` on a Windows drive, as a WSL2 engine sees it under
+ * `/mnt/<letter>` (§7.6): none elsewhere.
+ */
+const driveWarning = (path: string, h: HtmlBuilder<Message>): Html =>
+  Option.match(windowsDriveWarning(path), {
+    onNone: () => h.empty,
+    onSome: text => h.p([h.Class('text-xs text-c2')], [text]),
+  })
 
 /** What trusting a project lets its own files do, beside the projects' list (§12.1, §20.2). */
 export const trustWords =
@@ -2160,7 +2497,7 @@ export const view = defineView<Model, Message, ViewInputs>((model, inputs, h) =>
             ],
           ),
           engineCard(model, inputs, h),
-          setupView(model, h),
+          setupView(model, inputs.platform, h),
         ],
       ),
       projectsView(model, inputs, h),
