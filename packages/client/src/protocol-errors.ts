@@ -1,5 +1,5 @@
-import { Effect, Latch } from 'effect'
-import { RpcClient, type RpcMessage } from 'effect/rpc'
+import { Effect, Latch, Match } from 'effect'
+import { RpcClient } from 'effect/rpc'
 
 // The requests a protocol error ends, interrupted at the engine (fab-mgi.94). On a protocol error,
 // a lost connection or a frame the client can't read (a line longer than the NDJSON parser's
@@ -32,28 +32,29 @@ export const interruptingOnProtocolErrors = Effect.fnUntraced(function* (
     return requests
   }
 
-  const send = (
-    clientId: number,
-    request: RpcMessage.FromClientEncoded,
-    transferables?: ReadonlyArray<globalThis.Transferable>,
+  const send: RpcClient.Protocol['Service']['send'] = (
+    clientId,
+    request,
+    transferables,
   ) =>
     Effect.suspend(() => {
       const sent = protocol.send(clientId, request, transferables)
-      switch (request._tag) {
-        case 'Request': {
+      return Match.valueTags(request, {
+        Request: ({ id }) => {
           const requests = requestsOf(clientId)
-          requests.add(request.id)
+          requests.add(id)
           return Effect.tapError(sent, () =>
-            Effect.sync(() => requests.delete(request.id)),
+            Effect.sync(() => requests.delete(id)),
           )
-        }
-        case 'Interrupt': {
-          requestsOf(clientId).delete(request.requestId)
+        },
+        Interrupt: ({ requestId }) => {
+          requestsOf(clientId).delete(requestId)
           return sent
-        }
-        default:
-          return sent
-      }
+        },
+        Ack: () => sent,
+        Ping: () => sent,
+        Eof: () => sent,
+      })
     })
 
   /** Interrupts at the engine every request client `clientId` has in flight, forgetting them. */
@@ -76,21 +77,24 @@ export const interruptingOnProtocolErrors = Effect.fnUntraced(function* (
       ...protocol,
       send,
       run: (clientId, write) =>
-        protocol.run(clientId, response => {
-          switch (response._tag) {
-            case 'Exit':
-              requestsOf(clientId).delete(response.requestId)
+        protocol.run(clientId, response =>
+          Match.valueTags(response, {
+            Exit: ({ requestId }) => {
+              requestsOf(clientId).delete(requestId)
               return write(response)
-            case 'ClientProtocolError':
-              return idle.close.pipe(
+            },
+            ClientProtocolError: () =>
+              idle.close.pipe(
                 Effect.andThen(write(response)),
                 Effect.andThen(interruptAll(clientId)),
                 Effect.ensuring(idle.open),
-              )
-            default:
-              return write(response)
-          }
-        }),
+              ),
+            Chunk: () => write(response),
+            Defect: () => write(response),
+            Pong: () => write(response),
+            Request: () => write(response),
+          }),
+        ),
     }),
     settled: idle.await,
   } satisfies ProtocolErrors
