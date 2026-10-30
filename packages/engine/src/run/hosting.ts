@@ -18,7 +18,7 @@ import type { runProject } from './loop'
 
 // What the engine's runs run on (spec §7.3, §12, §13): the services a run needs beside its own log, its
 // project's work graph and the control server and `check_own` passes on it (the agents, the model proxy, the checks, git and
-// its worktrees, the merge setup, what the control server answers with, the zone its records are dated
+// its worktrees, what the control server answers with, the zone its records are dated
 // in), and the host's shares for its workers. The daemon is given them as it starts; where it isn't, it
 // refuses every run, saying why.
 

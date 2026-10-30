@@ -6,6 +6,7 @@ import {
   Exit,
   FiberSet,
   Option,
+  Ref,
   Scope,
   Stream,
 } from 'effect'
@@ -26,10 +27,12 @@ import {
   exitCodeOf,
 } from '@fabrica/contracts'
 
+import { Checks } from '../checks'
 import { footprintParts } from '../footprints'
-import { Git, ticketBranch } from '../git'
+import { Git, Worktrees, ticketBranch } from '../git'
 import {
   type MergeQueueShape,
+  MergeSetup,
   MergeUpdate,
   make as makeMergeQueue,
 } from '../merge'
@@ -51,6 +54,14 @@ import { endSteps } from './end'
 import { type Gated, type Taken, makeFootprintsGate } from './footprints-gate'
 import { MayTake, mayTake } from './holds'
 import { record } from './records'
+import {
+  SetupRetry,
+  makeProjectSetup,
+  setupRetries,
+  setupWaiting,
+  setupWaitsLines,
+  waitsForSetup,
+} from './setup'
 import { StartChecked, type Started, runStartChecks } from './start-checks'
 import {
   type RunSnapshot,
@@ -137,14 +148,14 @@ const descendants = (
   return found
 }
 
-/** The phases a ticket can be dispatched from: back in the queue. */
+/** The phases a ticket can be dispatched from: back in the queue, but not until a merge where its setup failed. */
 const dispatchable = (snapshot: RunSnapshot, ticket: TicketId): boolean => {
   const taken = snapshot.tickets.get(ticket)
   return (
     taken === undefined ||
     taken.phase._tag === 'queued' ||
     taken.phase._tag === 'held_back' ||
-    taken.phase._tag === 'waiting'
+    (taken.phase._tag === 'waiting' && !waitsForSetup(taken.phase))
   )
 }
 
@@ -215,6 +226,7 @@ const runStarted = Effect.fn('Run.started')(function* (
   const log = yield* RunLog
   const graph = yield* WorkGraph
   const git = yield* Git
+  const worktrees = yield* Worktrees
   const run = log.run
   const project = started.settings.project
   const actor: Actor = { _tag: 'engine', engine: config.engine }
@@ -226,6 +238,16 @@ const runStarted = Effect.fn('Run.started')(function* (
     kind: 'info',
     text: `start: the carry-over: ${carried.length === 0 ? 'nothing to resume' : `${carried.length} to resume`}`,
   })
+
+  // The project's setup, in a dispatch's worktree and in a merge's (§13.8).
+  const setup = makeProjectSetup(yield* Checks, log, {
+    command: project.setup,
+    checkout: config.checkout,
+    timeLimit: project.check_timeout,
+    cores: config.cores,
+  })
+  // The tickets whose merge's setup failed: a merge puts them back in line, not in the queue.
+  const failedAtMerge = yield* Ref.make<ReadonlySet<TicketId>>(new Set())
 
   // The merge queue lives in a scope of its own, so the end stops it before writing its records.
   const mergeScope = yield* Scope.make()
@@ -243,7 +265,10 @@ const runStarted = Effect.fn('Run.started')(function* (
     train: project.merge.train,
     cores: config.cores,
     actor,
-  }).pipe(Scope.provide(mergeScope))
+  }).pipe(
+    Effect.provideService(MergeSetup, MergeSetup.of(setup)),
+    Scope.provide(mergeScope),
+  )
   const mergeUpdates = yield* merges.updates.pipe(Scope.provide(mergeScope))
   const graphChanges = yield* graph.changes
 
@@ -288,6 +313,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     started,
     log,
     merges,
+    setup,
     actor,
   }
 
@@ -354,6 +380,88 @@ const runStarted = Effect.fn('Run.started')(function* (
       ticket,
       outcome,
       text: settledLine({ ticket, how }),
+    })
+
+  /** The ticket's setup failed: back until a merge or a probe (`SETUP_FAILED`, §13.8). */
+  const setupFailed = (ticket: TicketId, detail: string) =>
+    Effect.andThen(
+      state.move({
+        ticket,
+        to: Phase.cases.waiting.make({ for: WaitFor.cases.setup.make({}) }),
+        cause: detail,
+      }),
+      record(log, {
+        kind: 'warn',
+        ticket,
+        text: warningLine({
+          tag: 'SETUP_FAILED',
+          about: 'ticket',
+          text: `${ticket} waits for a merge or a probe: ${detail}`,
+        }),
+      }),
+    )
+
+  /**
+   * A merge, of `merged`, frees the tickets whose setup failed (§13.8): one its worker's setup failed
+   * goes back in the queue, and one its merge's setup failed back in line to merge, each set up again
+   * as it comes round.
+   */
+  const setupsRetried = (merged: TicketId) =>
+    Effect.gen(function* () {
+      const waiting = setupWaiting(yield* state.current)
+      if (waiting.length === 0) return
+      const atMerge = yield* Ref.get(failedAtMerge)
+      const listed = waiting.some(ticket => atMerge.has(ticket))
+        ? yield* worktrees
+            .list({ home: config.home })
+            .pipe(
+              Effect.catch(error =>
+                Effect.as(
+                  Effect.logWarning(
+                    `the worktrees of the tickets whose merge's setup failed can't be listed: ${error.message}`,
+                  ),
+                  [],
+                ),
+              ),
+            )
+        : []
+      const cause = `${merged} merged: its setup runs again`
+      yield* Effect.forEach(
+        setupRetries({ waiting, failedAtMerge: atMerge, worktrees: listed }),
+        SetupRetry.$match({
+          Requeue: ({ ticket }) =>
+            Effect.asVoid(
+              state.move({ ticket, to: Phase.cases.queued.make({}), cause }),
+            ),
+          Remerge: ({ worktree }) =>
+            Effect.gen(function* () {
+              const { ticket } = worktree
+              yield* Ref.update(
+                failedAtMerge,
+                failed => new Set([...failed].filter(id => id !== ticket)),
+              )
+              const line = yield* merges.line
+              yield* state.move({
+                ticket,
+                to: Phase.cases.waiting_to_merge.make({
+                  place: line.waiting.length + 1,
+                }),
+                cause,
+              })
+              yield* merges.enqueue(worktree)
+              yield* record(log, {
+                kind: 'info',
+                ticket,
+                text: `  ${ticket} back in line to merge: ${cause}`,
+              })
+            }),
+          Stays: ({ ticket }) =>
+            Effect.logWarning(
+              `${ticket} stays waiting for its setup: its worktree isn't there`,
+            ),
+        }),
+        { discard: true },
+      )
     })
 
   /**
@@ -465,16 +573,10 @@ const runStarted = Effect.fn('Run.started')(function* (
             ),
           ),
         SetupFailed: ({ detail }) =>
-          Effect.gen(function* () {
-            yield* tracked(graph.release({ id: ticket, actor }))
-            yield* state.move({
-              ticket,
-              to: Phase.cases.waiting.make({
-                for: WaitFor.cases.setup.make({}),
-              }),
-              cause: detail,
-            })
-          }),
+          Effect.andThen(
+            tracked(graph.release({ id: ticket, actor })),
+            setupFailed(ticket, detail),
+          ),
         Failed: ({ reason }) =>
           Effect.andThen(
             Effect.ignore(graph.release({ id: ticket, actor })),
@@ -707,6 +809,7 @@ const runStarted = Effect.fn('Run.started')(function* (
                 }),
               })
               yield* closeEpics
+              yield* setupsRetried(ticket)
             }),
           ),
         NoChange: () =>
@@ -771,14 +874,9 @@ const runStarted = Effect.fn('Run.started')(function* (
           ),
         SetupFailed: ({ detail }) =>
           ended(
-            Effect.asVoid(
-              state.move({
-                ticket,
-                to: Phase.cases.waiting.make({
-                  for: WaitFor.cases.setup.make({}),
-                }),
-                cause: detail,
-              }),
+            Effect.andThen(
+              Ref.update(failedAtMerge, failed => new Set([...failed, ticket])),
+              setupFailed(ticket, detail),
             ),
           ),
         // Only the end stops the queue; it moves the tickets left to stopped itself.
@@ -1106,13 +1204,16 @@ const endRun = Effect.fn('Run.end')(function* (input: {
     kind,
     merged: inPhase(left, 'merged').length,
   })
-  const asked = inPhase(left, 'asked').flatMap(taken =>
-    taken.phase._tag === 'asked'
-      ? [
-          `QUESTIONS_WAITING: ${taken.ticket} waits on the question ${taken.phase.question}`,
-        ]
-      : [],
-  )
+  const waits = [
+    ...setupWaitsLines(left),
+    ...inPhase(left, 'asked').flatMap(taken =>
+      taken.phase._tag === 'asked'
+        ? [
+            `QUESTIONS_WAITING: ${taken.ticket} waits on the question ${taken.phase.question}`,
+          ]
+        : [],
+    ),
+  ]
   yield* Ending.$match(ending, {
     Done: ({ kind: done }) =>
       record(
@@ -1122,7 +1223,7 @@ const endRun = Effect.fn('Run.end')(function* (input: {
           detail: done,
           text: `${done} after ${left.dispatched} ${left.dispatched === 1 ? 'ticket' : 'tickets'}`,
         },
-        asked,
+        waits,
       ),
     Stop: ({ kind: stopped, ticket, detail }) =>
       record(
@@ -1136,7 +1237,7 @@ const endRun = Effect.fn('Run.end')(function* (input: {
           }),
           text: `${stopped}: ${detail}`,
         },
-        asked,
+        waits,
       ),
   })
   yield* state.endLeft

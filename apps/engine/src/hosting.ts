@@ -13,7 +13,6 @@ import {
   Control,
   Daemon,
   Git,
-  Merge,
   Process,
   Projects,
   Proxy,
@@ -239,8 +238,6 @@ export const runHosting = (
           Checks.layer,
           Git.worktreesLayer,
           permissionsAttention,
-          // The project's setup in a merge's worktree is fab-mgi.4.5's: until then nothing runs.
-          Merge.noSetup,
           Agent.layer({
             ...config.agents,
             data: config.paths.data,

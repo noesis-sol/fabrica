@@ -22,7 +22,7 @@ import {
   layer as gitLayer,
   worktreesLayer,
 } from '../src/git'
-import { MergeWaits, noSetup } from '../src/merge'
+import { MergeWaits } from '../src/merge'
 import {
   Deadlines,
   type RunnerConfig,
@@ -358,7 +358,6 @@ export const scriptedHosting = (
           checksLayer,
           Layer.provide(layerWake, noSleepCauses),
           allowing,
-          noSetup,
           Layer.succeed(MergeWaits, {
             beforeRetry: Effect.sleep('3 seconds'),
             poll: Effect.sleep('2 seconds'),

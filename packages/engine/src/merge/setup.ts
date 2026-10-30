@@ -9,8 +9,8 @@ import { recordingWrites } from './hygiene'
 import { dropRecord, readRecord, writeRecord } from './records'
 
 // The setup a merge's rebase calls for (spec §13.7 step 4, §13.8): whether a rebase changed a setup
-// file, the setup a worktree still waits for, and the port the queue runs the setup through. The port
-// does nothing until the run's setup fills it.
+// file, the setup a worktree still waits for, and the port the queue runs the setup through. The run
+// serves the port with the project's setup (`run/setup.ts`).
 
 /**
  * Whether `path` (from the repository's root) is a setup file: it, or its file name for a pattern
@@ -125,7 +125,7 @@ export class MergeSetup extends Context.Service<MergeSetup, MergeSetupShape>()(
   '@fabrica/engine/MergeSetup',
 ) {}
 
-/** The port before the run's setup fills it: nothing runs, and the worktree is ready. */
+/** The port where no setup runs: every worktree is ready, as the merge queue's own tests take it. */
 export const noSetup: Layer.Layer<MergeSetup> = Layer.succeed(
   MergeSetup,
   MergeSetup.of({ run: () => Effect.succeed(SetupOutcome.Ready()) }),

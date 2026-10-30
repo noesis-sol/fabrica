@@ -50,7 +50,7 @@ import {
   worktreePath,
   worktreesLayer,
 } from '../src/git'
-import { MergeWaits, noSetup } from '../src/merge'
+import { MergeWaits } from '../src/merge'
 import {
   Deadlines,
   type RunnerConfig,
@@ -423,7 +423,6 @@ const services = (
     checkOwnPassesLayer,
     Layer.provide(layerWake, noSleepCauses),
     attentionLayer,
-    noSetup,
     liveMergeWaits,
     agentLayer({
       node: process.execPath,

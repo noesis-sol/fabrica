@@ -35,7 +35,7 @@ import {
   layer as gitLayer,
   worktreesLayer,
 } from '../src/git'
-import { MergeWaits, noSetup } from '../src/merge'
+import { MergeWaits } from '../src/merge'
 import {
   Deadlines,
   type RunnerConfig,
@@ -417,7 +417,6 @@ const services = (fixture: Project, provider: string) => {
     checkOwnPassesLayer,
     Layer.provide(layerWake, noSleepCauses),
     attentionLayer,
-    noSetup,
     liveMergeWaits,
     agentLayer({
       node: process.execPath,

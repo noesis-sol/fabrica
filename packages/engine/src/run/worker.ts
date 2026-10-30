@@ -24,7 +24,11 @@ import { PiAgent } from '../agent'
 import { ControlRole, ControlServer, Outcome, type OwnCheck } from '../control'
 import { readFileText } from '../files'
 import { Git, Prepared, type Worktree, Worktrees } from '../git'
-import type { MergeQueueShape } from '../merge'
+import {
+  type MergeQueueShape,
+  type MergeSetupShape,
+  SetupOutcome,
+} from '../merge'
 import { ModelProxy } from '../proxy'
 import type { RunLog } from '../runlog'
 import { WorkGraph } from '../workgraph'
@@ -38,7 +42,7 @@ import {
   specSection,
 } from './prompt'
 import { record } from './records'
-import { SetUp, setUpWorktree } from './setup'
+import { setUpWorktree } from './setup'
 import type { Started } from './start-checks'
 
 // One dispatch of a ticket (spec §13.2, §12.1, §12.9): claimed, given a worktree from Base (created,
@@ -94,6 +98,8 @@ export interface WorkerContext {
   readonly started: Started
   readonly log: RunLog['Service']
   readonly merges: MergeQueueShape
+  /** The project's setup, as a dispatch sets its worktree up (§13.8). */
+  readonly setup: MergeSetupShape
   readonly actor: Actor
 }
 
@@ -188,7 +194,10 @@ const promptOf = Effect.fn('Run.prompt')(function* (
   }
 })
 
-/** The worktree from Base for the ticket: created, or reused and rebased, a conflicting rebase undone. */
+/**
+ * The worktree from Base for the ticket: created, or reused and rebased, a conflicting rebase undone;
+ * with the Base commit it was prepared from.
+ */
 const worktreeFor = Effect.fn('Run.worktree')(function* (
   context: WorkerContext,
   ticket: TicketId,
@@ -219,7 +228,7 @@ const worktreeFor = Effect.fn('Run.worktree')(function* (
         ? Effect.asVoid(git.abortRebase({ worktree: worktree.path }))
         : Effect.void,
   })
-  return prepared
+  return { prepared, base: base.value }
 })
 
 /** A dispatch that can't go on, in words. */
@@ -264,9 +273,16 @@ const firstWorktree = Effect.fn('Run.firstWorktree')(function* (
     assignee: new Assignee({ engine: context.config.engine, session }),
     actor: context.actor,
   })
-  const prepared = yield* worktreeFor(context, ticket)
-  const setUp = yield* setUpWorktree({ prepared })
-  return SetUp.$is('Failed')(setUp)
+  const { prepared, base } = yield* worktreeFor(context, ticket)
+  const project = context.started.settings.project
+  const setUp = yield* setUpWorktree(yield* Git, context.setup, {
+    ticket,
+    prepared,
+    base,
+    command: project.setup,
+    patterns: project.setup_files,
+  })
+  return SetupOutcome.$is('Failed')(setUp)
     ? Result.fail(setUp.detail)
     : Result.succeed(prepared.worktree)
 })
