@@ -13,6 +13,7 @@ import {
 
 import {
   type Actor,
+  type CommitHash,
   type DoneKind,
   type EndKind,
   type ExitCode,
@@ -26,6 +27,7 @@ import {
   type TicketId,
   WaitFor,
   exitCodeOf,
+  factsOf,
 } from '@fabrica/contracts'
 
 import { Checks } from '../checks'
@@ -50,7 +52,15 @@ import {
 } from '../runlog'
 import { WorkGraph } from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
-import { carriedOver } from './carryover'
+import {
+  ResumeWhy,
+  type SavedSession,
+  SessionLeft,
+  carryOver,
+  closeMerged,
+  mergedOnBase,
+  resumeWords,
+} from './carryover'
 import { type RunConfig, RunMode } from './config'
 import { type RunControl, makeRunControl } from './control'
 import { endSteps } from './end'
@@ -100,7 +110,9 @@ import {
 // at once, its end line, and its exit code. The run's state has one owner (`state.ts`); the loop is
 // one fiber, woken by the workers, the merge queue, the work graph and its control (`control.ts`): a
 // stop ends it `INTERRUPTED`; a drain dispatches nothing more, and the run ends `DRAINED` once nothing
-// is in progress.
+// is in progress. Its start takes up what an earlier run left (`carryover.ts`, §13.10): each ticket
+// with a saved session, carried over, answered or undeferred, resumes it as a dispatch does, in a free
+// slot (H76); a ticket merged by hand is noticed as Base moves.
 
 /** How a run ended, and the exit code the CLI exits with (§13.11). */
 export interface RunEnd {
@@ -152,14 +164,33 @@ const descendants = (
   return found
 }
 
-/** The phases a ticket can be dispatched from: back in the queue, but not until a merge where its setup failed. */
+/**
+ * The phases a ticket can be dispatched from: back in the queue, but not until a merge where its setup
+ * failed; or waiting on its question, which a ready ticket's answer closed.
+ */
 const dispatchable = (snapshot: RunSnapshot, ticket: TicketId): boolean => {
   const taken = snapshot.tickets.get(ticket)
   return (
     taken === undefined ||
     taken.phase._tag === 'queued' ||
     taken.phase._tag === 'held_back' ||
+    taken.phase._tag === 'asked' ||
     (taken.phase._tag === 'waiting' && !waitsForSetup(taken.phase))
+  )
+}
+
+/** The phases where a ticket's branch is no worker's or merge's now: a hand merge of it is noticed there. */
+const outOfHand = (snapshot: RunSnapshot, ticket: TicketId): boolean => {
+  const taken = snapshot.tickets.get(ticket)
+  return (
+    taken === undefined ||
+    !(
+      factsOf(taken.phase).takesSlot ||
+      taken.phase._tag === 'waiting_to_merge' ||
+      taken.phase._tag === 'merging' ||
+      taken.phase._tag === 'merged' ||
+      taken.phase._tag === 'no_change'
+    )
   )
 }
 
@@ -236,11 +267,32 @@ const runStarted = Effect.fn('Run.started')(function* (
   const actor: Actor = { _tag: 'engine', engine: config.engine }
   const { limit } = config.options
 
-  // Getting ready (H80): each of the start's steps said as it ends.
-  const carried = yield* carriedOver({ checkout: config.checkout })
+  // Getting ready (H80): each of the start's steps said as it ends. The carry-over first, before
+  // anything writes the run's state (§13.10): a stop during it cuts it short.
+  const carried = yield* carryOver({
+    checkout: config.checkout,
+    home: config.home,
+    base: started.base,
+    engine: config.engine,
+    actor,
+    log,
+    stopping: Effect.map(control.state, now => now === 'stopping'),
+  })
+  const sessions = carried.sessions
+  const carriedWords = [
+    ...(carried.toResume.length === 0
+      ? []
+      : [`${carried.toResume.length} to resume`]),
+    ...(carried.toMerge.length === 0
+      ? []
+      : [`${carried.toMerge.length} back in line to merge`]),
+    ...(carried.merged.length === 0
+      ? []
+      : [`${carried.merged.length} on ${started.base} already, closed`]),
+  ]
   yield* record(log, {
     kind: 'info',
-    text: `start: the carry-over: ${carried.length === 0 ? 'nothing to resume' : `${carried.length} to resume`}`,
+    text: `start: the carry-over: ${carriedWords.length === 0 ? 'nothing to resume' : carriedWords.join(', ')}${carried.cutShort ? '; cut short by a stop, the rest kept for the next start' : ''}`,
   })
 
   // The project's setup, in a dispatch's worktree and in a merge's (§13.8).
@@ -300,6 +352,32 @@ const runStarted = Effect.fn('Run.started')(function* (
   })
 
   const state = yield* makeRunState(log)
+  // The carried tickets that had finished go back in line to merge, taking no slot (§13.7).
+  yield* Effect.forEach(
+    carried.toMerge,
+    worktree =>
+      Effect.gen(function* () {
+        const title = yield* graph.show(worktree.ticket).pipe(
+          Effect.map(({ ticket }) => ticket.title),
+          Effect.orElseSucceed(() => worktree.ticket),
+        )
+        yield* state.enter({ ticket: worktree.ticket, title })
+        const line = yield* merges.line
+        yield* state.move({
+          ticket: worktree.ticket,
+          to: Phase.cases.waiting_to_merge.make({
+            place: line.waiting.length + 1,
+          }),
+          cause: 'carried over: finished, back in line to merge',
+        })
+        yield* merges.enqueue({
+          ticket: worktree.ticket,
+          path: worktree.path,
+          branch: worktree.branch,
+        })
+      }),
+    { discard: true },
+  )
   const footprints = yield* makeFootprintsGate({
     checkout: config.checkout,
     home: config.home,
@@ -327,6 +405,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     log,
     merges,
     setup,
+    sessions,
     actor,
   }
 
@@ -357,6 +436,10 @@ const runStarted = Effect.fn('Run.started')(function* (
           graph.defer({ id: ticket, until: Option.none(), actor }),
         ),
       )
+      yield* sessions.left({
+        ticket,
+        left: SessionLeft.cases.set_aside.make({}),
+      })
       const before = yield* state.move({
         ticket,
         to: Phase.cases.set_aside.make({ reason }),
@@ -488,6 +571,10 @@ const runStarted = Effect.fn('Run.started')(function* (
         Finished: ({ worktree }) =>
           Effect.gen(function* () {
             // Its phase moves before it is in line, so the queue's first step comes after it.
+            yield* sessions.left({
+              ticket,
+              left: SessionLeft.cases.finished.make({}),
+            })
             const line = yield* merges.line
             const place = line.waiting.length + 1
             yield* state.move({
@@ -500,6 +587,10 @@ const runStarted = Effect.fn('Run.started')(function* (
         Deferred: ({ reason }) =>
           Effect.gen(function* () {
             yield* settled(ticket, 'defer', `deferred: ${reason}`)
+            yield* sessions.left({
+              ticket,
+              left: SessionLeft.cases.set_aside.make({}),
+            })
             yield* state.move({
               ticket,
               to: Phase.cases.set_aside.make({ reason: 'DEFERRED' }),
@@ -521,6 +612,8 @@ const runStarted = Effect.fn('Run.started')(function* (
         WaitsFor: ({ ticket: other, needs }) =>
           Effect.gen(function* () {
             yield* settled(ticket, 'wait_for', `waits for ${other} to merge`)
+            // It starts afresh once the other merges, in its worktree rebased onto Base.
+            yield* sessions.drop(ticket)
             yield* tracked(graph.release({ id: ticket, actor }))
             yield* state.move({
               ticket,
@@ -549,6 +642,12 @@ const runStarted = Effect.fn('Run.started')(function* (
               Effect.map(({ ticket: shown }) => shown.title),
               Effect.orElseSucceed(() => question),
             )
+            // Back in the queue, its session kept: the answer readies it, and it resumes (H76).
+            yield* sessions.left({
+              ticket,
+              left: SessionLeft.cases.asked.make({ question }),
+            })
+            yield* tracked(graph.release({ id: ticket, actor }))
             yield* state.move({
               ticket,
               to: Phase.cases.asked.make({ question }),
@@ -652,11 +751,11 @@ const runStarted = Effect.fn('Run.started')(function* (
    * last to the merge queue unverified; a disagreement handed back for the worker to ask the
    * maintainer. The verifier off, a finish goes to the merge queue as it is.
    */
-  const workOn = (taken: Ticket, session: SessionId) =>
+  const workOn = (taken: Ticket, session: SessionId, first: WorkerTurn) =>
     Effect.gen(function* () {
       const ticket = taken.id
       const rounds: Array<VerifierRound> = []
-      let turn: WorkerTurn = WorkerTurn.First()
+      let turn: WorkerTurn = first
       while (true) {
         const end = yield* supervision.watch({
           ticket,
@@ -829,6 +928,7 @@ const runStarted = Effect.fn('Run.started')(function* (
         Merged: ({ commit, unchecked }) =>
           ended(
             Effect.gen(function* () {
+              yield* sessions.drop(ticket)
               yield* state.move({
                 ticket,
                 to: Phase.cases.merged.make({ commit }),
@@ -854,6 +954,7 @@ const runStarted = Effect.fn('Run.started')(function* (
         NoChange: () =>
           ended(
             Effect.gen(function* () {
+              yield* sessions.drop(ticket)
               yield* state.move({
                 ticket,
                 to: Phase.cases.no_change.make({}),
@@ -872,6 +973,10 @@ const runStarted = Effect.fn('Run.started')(function* (
         SetAside: ({ reason, detail }) =>
           ended(
             Effect.gen(function* () {
+              yield* sessions.left({
+                ticket,
+                left: SessionLeft.cases.set_aside.make({}),
+              })
               yield* state.move({
                 ticket,
                 to: Phase.cases.set_aside.make({ reason }),
@@ -949,6 +1054,120 @@ const runStarted = Effect.fn('Run.started')(function* (
     })
 
   /**
+   * How a dispatched ticket's worker starts: its saved session resumed (§13.2, H76), told why from
+   * where it was left, or a first turn where it has none.
+   */
+  const turnOf = (ticket: TicketId) =>
+    Effect.gen(function* () {
+      const saved = yield* sessions.saved(ticket)
+      if (Option.isNone(saved)) return WorkerTurn.First()
+      const why = yield* whyResumed(saved.value)
+      return WorkerTurn.Resume({ saved: saved.value, why })
+    })
+
+  const whyResumed = (saved: SavedSession) =>
+    SessionLeft.match(saved.left, {
+      working: () => Effect.succeed<ResumeWhy>(ResumeWhy.Carried()),
+      finished: () => Effect.succeed<ResumeWhy>(ResumeWhy.Carried()),
+      set_aside: () => Effect.succeed<ResumeWhy>(ResumeWhy.Undeferred()),
+      asked: ({ question }) =>
+        graph.show(question).pipe(
+          Effect.map(({ ticket: asked }) =>
+            Option.getOrElse(
+              Option.flatMap(asked.question, ({ answer }) => answer),
+              () => 'it was closed with no answer given',
+            ),
+          ),
+          Effect.orElseSucceed(() => 'it is gone, with no answer given'),
+          Effect.map((answer): ResumeWhy =>
+            ResumeWhy.Answered({ question, answer }),
+          ),
+        ),
+    })
+
+  /** The tickets the run set aside that the work graph has open again: back in the queue, to resume (H76). */
+  const undeferred = Effect.gen(function* () {
+    const aside = inPhase(yield* state.current, 'set_aside')
+    yield* Effect.forEach(
+      aside,
+      taken =>
+        graph.show(taken.ticket).pipe(
+          Effect.flatMap(({ ticket }) =>
+            ticket.status === 'open'
+              ? Effect.asVoid(
+                  state.move({
+                    ticket: taken.ticket,
+                    to: Phase.cases.queued.make({}),
+                    cause: 'undeferred',
+                  }),
+                )
+              : Effect.void,
+          ),
+          Effect.catchTag('TicketNotFound', () => Effect.void),
+        ),
+      { discard: true },
+    )
+  })
+
+  /**
+   * Notices tickets merged by hand as Base moves (§13.10, orchestra-nr1v.9): each saved session's
+   * ticket out of every worker's and merge's hands whose branch moved past its Base commit and is on
+   * Base is counted closed, merged, its claim dropped (what it blocks freed), its worktree removed.
+   */
+  let baseSeen: CommitHash = started.baseCommit
+  const handMerged = Effect.gen(function* () {
+    const now = yield* git
+      .commitHash({
+        repo: config.checkout,
+        revision: `refs/heads/${started.base}`,
+      })
+      .pipe(Effect.orElseSucceed(() => Option.none<CommitHash>()))
+    if (Option.isNone(now) || now.value === baseSeen) return
+    baseSeen = now.value
+    const snapshot = yield* state.current
+    const saved = (yield* sessions.all).filter(entry =>
+      outOfHand(snapshot, entry.ticket),
+    )
+    yield* Effect.forEach(
+      saved,
+      entry =>
+        Effect.gen(function* () {
+          const commit = yield* mergedOnBase({
+            checkout: config.checkout,
+            base: started.base,
+            ticket: entry.ticket,
+            from: entry.base,
+          })
+          if (Option.isNone(commit)) return
+          yield* closeMerged({
+            home: config.home,
+            ticket: entry.ticket,
+            commit: commit.value,
+            sessions,
+            actor,
+            why: `Merged by hand into ${started.base}.`,
+          }).pipe(Effect.catch(error => stop('TRACKER_FAILED', error.message)))
+          const title = titleOf(snapshot, entry.ticket)
+          yield* state.move({
+            ticket: entry.ticket,
+            to: Phase.cases.merged.make({ commit: commit.value }),
+            cause: `merged by hand into ${started.base}`,
+          })
+          yield* record(log, {
+            kind: 'closed',
+            ticket: entry.ticket,
+            title,
+            commit: commit.value,
+            detail: `${shortCommit(commit.value)} merged by hand into ${started.base}`,
+            text: `  ${entry.ticket} merged by hand into ${started.base} as ${shortCommit(commit.value)}: closed, its worktree and branch removed`,
+          })
+        }),
+      { discard: true },
+    )
+    if (saved.length > 0) yield* closeEpics
+  })
+
+  /**
    * Dispatches the ticket: its record, with what the queue holds, its footprint line and any files it
    * shares with a ticket in progress that may conflict (§13.4), then its worker, forked under its
    * supervision.
@@ -1002,9 +1221,16 @@ const runStarted = Effect.fn('Run.started')(function* (
         { discard: true },
       )
       const session = yield* drawSession
+      const turn = yield* turnOf(ticket.id)
+      if (WorkerTurn.$is('Resume')(turn))
+        yield* record(log, {
+          kind: 'info',
+          ticket: ticket.id,
+          text: `  ${ticket.id} resumes its session: ${resumeWords(turn.why)}`,
+        })
       yield* FiberSet.run(
         workers,
-        workOn(ticket, session).pipe(
+        workOn(ticket, session, turn).pipe(
           Effect.catchCause(cause =>
             Cause.hasInterruptsOnly(cause)
               ? Effect.void
@@ -1086,7 +1312,12 @@ const runStarted = Effect.fn('Run.started')(function* (
   const look = (reasons: ReadonlyArray<WakeReason>) =>
     Effect.gen(function* () {
       yield* Effect.forEach(reasons, drainSaid, { discard: true })
-      if (readsReady(reasons)) ready = yield* readReady(yield* state.current)
+      if (readsReady(reasons)) {
+        yield* handMerged
+        if (reasons.some(reason => WakeReason.$is('TicketsChanged')(reason)))
+          yield* undeferred
+        ready = yield* readReady(yield* state.current)
+      }
       if (reasons.some(reason => WakeReason.$is('Started')(reason)))
         yield* record(log, {
           kind: 'info',
@@ -1100,11 +1331,18 @@ const runStarted = Effect.fn('Run.started')(function* (
           title: ticket.title,
         })
         const taken = before.tickets.get(ticket.id)
-        if (!entered && taken !== undefined && taken.phase._tag === 'waiting')
+        if (
+          !entered &&
+          taken !== undefined &&
+          (taken.phase._tag === 'waiting' || taken.phase._tag === 'asked')
+        )
           yield* state.move({
             ticket: ticket.id,
             to: Phase.cases.queued.make({}),
-            cause: 'ready again',
+            cause:
+              taken.phase._tag === 'asked'
+                ? `${taken.phase.question} answered`
+                : 'ready again',
           })
       }
       const may = yield* mayTake(before)

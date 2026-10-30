@@ -531,10 +531,15 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
         First: () => Option.none<Worktree>(),
         Again: ({ worktree: kept }) => Option.some(kept),
         HandBack: ({ worktree: kept }) => Option.some(kept),
+        // A resume's worktree is found as it begins.
+        Resume: () => Option.none<Worktree>(),
       })
-      let session = WorkerTurn.$is('HandBack')(turn)
-        ? turn.session
-        : Option.none<string>()
+      let session = WorkerTurn.$match(turn, {
+        First: () => Option.none<string>(),
+        Again: () => Option.none<string>(),
+        HandBack: ({ session: kept }) => kept,
+        Resume: ({ saved }) => Option.some(saved.session),
+      })
       let restarted = false
 
       /** Resumes the worker's session with `prompt`; it fails where the worker has no worktree yet. */

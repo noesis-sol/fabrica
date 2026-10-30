@@ -1,4 +1,12 @@
-import { DateTime, Duration, Effect, Layer, Option, Redacted } from 'effect'
+import {
+  DateTime,
+  Duration,
+  Effect,
+  Layer,
+  Option,
+  Redacted,
+  type Scope,
+} from 'effect'
 import { TestClock } from 'effect/testing'
 import { execFileSync } from 'node:child_process'
 import {
@@ -75,10 +83,13 @@ import { anthropicAnswer, anthropicBadKey } from './proxy-streams'
  * ticket's `stub:` line says: `finish [<file>,…]` (commits a file of its own and appends a line to each
  * file named, runs `check_own`, finishes with its pass),
  * `defer`, `wait_for <ticket>` (then finishes once a note says it waited), `ask`, or `nothing` (settles
- * with no outcome). It keeps what it was prompted with and every call in its session folder.
+ * with no outcome); `hang` (commits its file, runs `check_own`, and works until it is stopped),
+ * `wait <file>` (finishes once the file is there) or `commit_defer` (commits its file, then defers). A
+ * session resumed with `switch_session` (a carry-over, an answer, an undefer) finishes instead of
+ * hanging, deferring or asking. It keeps what it was prompted with and every call in its session folder.
  */
 const STUB = `import { execFileSync } from 'node:child_process'
-import { appendFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, writeFileSync } from 'node:fs'
 import { connect } from 'node:net'
 import { join } from 'node:path'
 const args = process.argv.slice(2)
@@ -88,7 +99,8 @@ const out = record => process.stdout.write(JSON.stringify(record) + '\\n')
 const respond = (id, command, data) =>
   out({ id, type: 'response', command, success: true, ...(data === undefined ? {} : { data }) })
 const sessionId = 's-' + process.pid
-const sessionFile = join(sessions, sessionId + '.jsonl')
+let sessionFile = join(sessions, sessionId + '.jsonl')
+let resumed = false
 process.on('SIGTERM', () => process.exit(0))
 let socket
 let pending = ''
@@ -130,10 +142,32 @@ const work = async () => {
   const ticket = view.ticket
   const [action, target] = ((ticket.description ?? '').match(/stub: (.*)/)?.[1] ?? 'finish').split(' ')
   const waited = view.notes.some(note => note.body.startsWith('Waiting on'))
+  const commitOwn = () => {
+    writeFileSync(ticket.id + '.txt', ticket.title + '\\n')
+    git('add', '--all')
+    git('commit', '--quiet', '--message', ticket.title)
+  }
   if (action === 'nothing') return
-  if (action === 'defer') return call('defer', { reason: 'it needs a decision first' })
+  if (action === 'hang' && !resumed) {
+    commitOwn()
+    await call('check_own', {})
+    return new Promise(() => {})
+  }
+  if (action === 'wait')
+    await new Promise(resolve => {
+      const poll = setInterval(() => {
+        if (!existsSync(target)) return
+        clearInterval(poll)
+        resolve()
+      }, 50)
+    })
+  if (action === 'commit_defer' && !resumed) {
+    commitOwn()
+    return call('defer', { reason: 'it needs a decision first' })
+  }
+  if (action === 'defer' && !resumed) return call('defer', { reason: 'it needs a decision first' })
   if (action === 'wait_for' && !waited) return call('wait_for', { ticket: target, needs: 'its API' })
-  if (action === 'ask')
+  if (action === 'ask' && !resumed)
     return call('ask_question', {
       title: 'Keep the old flag?',
       description: 'The flag is read nowhere now.',
@@ -142,9 +176,10 @@ const work = async () => {
       maintainerOnly: false,
     })
   writeFileSync(ticket.id + '.txt', ticket.title + '\\n')
-  for (const name of (target ?? '').split(',').filter(name => name !== '')) appendFileSync(name, ticket.title + '\\n')
+  if (action !== 'wait')
+    for (const name of (target ?? '').split(',').filter(name => name !== '')) appendFileSync(name, ticket.title + '\\n')
   git('add', '--all')
-  git('commit', '--quiet', '--message', ticket.title)
+  if (git('status', '--porcelain') !== '') git('commit', '--quiet', '--message', ticket.title)
   const checked = await call('check_own', {})
   return call('finish', {
     checkOwn: { tree: checked.tree, commit: git('rev-parse', 'HEAD'), output: checked.output },
@@ -165,6 +200,11 @@ const handle = command => {
           out({ type: 'agent_end', messages: [], willRetry: false })
           out({ type: 'agent_settled', aborted: false })
         })
+    case 'switch_session':
+      resumed = true
+      sessionFile = command.sessionPath
+      note({ event: 'resumed', session: command.sessionPath })
+      return respond(command.id, 'switch_session', { cancelled: false })
     case 'abort':
       return respond(command.id, 'abort')
     default:
@@ -490,6 +530,23 @@ export const ofKind = <K extends RunEvent['kind']>(
     (event): event is Extract<RunEvent, { readonly kind: K }> =>
       event.kind === kind,
   )
+
+/**
+ * Runs `body` on every service a run runs on, its runs sharing one work graph, as one engine's runs of
+ * the project do; the provider answers every call.
+ */
+export const withRuns = <
+  A,
+  E,
+  R extends Layer.Success<ReturnType<typeof services>> | Scope.Scope,
+>(
+  fixture: Project,
+  body: Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const provider = yield* fakeProvider('takes')
+    return yield* body.pipe(Effect.provide(services(fixture, provider.url)))
+  }).pipe(Effect.scoped)
 
 /**
  * Runs the project: `setup` files its tickets, `optionsOf` gives the run's flags from what it made,

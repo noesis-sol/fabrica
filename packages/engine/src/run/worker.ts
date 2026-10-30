@@ -12,6 +12,7 @@ import {
 import {
   type Actor,
   Assignee,
+  type CommitHash,
   type MergeStanding,
   ModelOverride,
   type RunId,
@@ -33,6 +34,15 @@ import {
 import { ModelProxy } from '../proxy'
 import type { RunLog } from '../runlog'
 import { WorkGraph } from '../workgraph'
+import {
+  type CarrySessionsShape,
+  type ResumeWhy,
+  type SavedSession,
+  SessionLeft,
+  beganNow,
+  changesSince,
+  resumePrompt,
+} from './carryover'
 import type { RunConfig } from './config'
 import {
   type CitedSpec,
@@ -52,7 +62,10 @@ import type { Attempt } from './supervisor'
 // first prompt, its model and its proxy token; its control channel's outcomes come back as the
 // worker's end. A hand-back (§13.6) gives the same worker its worktree as it left it and its session
 // resumed, with the hand-back's prompt. Everything it opens (the control socket, the proxy's token,
-// the agent) is held in its scope and closed with it.
+// the agent) is held in its scope and closed with it. A resume (§13.2, H76: carried over, answered,
+// undeferred) claims the ticket again and gives a worker its worktree as it was and its saved session
+// resumed, told why and what changed since it began; its worktree gone, it starts afresh. Each saves
+// its session for the carry-over once its agent has started (H75).
 
 /** How a dispatch's worker starts its turn. */
 export type WorkerTurn = Data.TaggedEnum<{
@@ -67,6 +80,8 @@ export type WorkerTurn = Data.TaggedEnum<{
     readonly session: Option.Option<string>
     readonly prompt: string
   }
+  /** Resumed (§13.2, H76): claimed again, its worktree as it was, its saved session told `why`. */
+  Resume: { readonly saved: SavedSession; readonly why: ResumeWhy }
 }>
 export const WorkerTurn = Data.taggedEnum<WorkerTurn>()
 
@@ -108,6 +123,8 @@ export interface WorkerContext {
   readonly merges: MergeQueueShape
   /** The project's setup, as a dispatch sets its worktree up (§13.8). */
   readonly setup: MergeSetupShape
+  /** The run's saved sessions, for the carry-over (§13.10). */
+  readonly sessions: CarrySessionsShape
   readonly actor: Actor
 }
 
@@ -269,18 +286,29 @@ const endOf = (
       Option.some(WorkerEnd.ToolFailed({ tool, reason })),
   })
 
-/** The worktree of the ticket's first turn: claimed, prepared and set up; none where its setup failed. */
-const firstWorktree = Effect.fn('Run.firstWorktree')(function* (
+/** Claims the ticket for the worker's session. */
+const claimFor = (
   context: WorkerContext,
   ticket: TicketId,
   session: SessionId,
-) {
-  const graph = yield* WorkGraph
-  yield* graph.claim({
-    id: ticket,
-    assignee: new Assignee({ engine: context.config.engine, session }),
-    actor: context.actor,
+) =>
+  Effect.gen(function* () {
+    const graph = yield* WorkGraph
+    return yield* graph.claim({
+      id: ticket,
+      assignee: new Assignee({ engine: context.config.engine, session }),
+      actor: context.actor,
+    })
   })
+
+/**
+ * The worktree of the ticket's first turn, the ticket claimed: prepared and set up, with the Base
+ * commit it was prepared from; none where its setup failed.
+ */
+const firstWorktree = Effect.fn('Run.firstWorktree')(function* (
+  context: WorkerContext,
+  ticket: TicketId,
+) {
   const { prepared, base } = yield* worktreeFor(context, ticket)
   const project = context.started.settings.project
   const setUp = yield* setUpWorktree(yield* Git, context.setup, {
@@ -292,7 +320,90 @@ const firstWorktree = Effect.fn('Run.firstWorktree')(function* (
   })
   return SetupOutcome.$is('Failed')(setUp)
     ? Result.fail(setUp.detail)
-    : Result.succeed(prepared.worktree)
+    : Result.succeed({ worktree: prepared.worktree, base })
+})
+
+/** How a turn's worker starts, its worktree ready: its prompt, the session it resumes, its saved session's base. */
+interface Begun {
+  readonly worktree: Worktree
+  /** None: the first prompt alone; some: this text, after the first prompt where nothing is resumed. */
+  readonly prompt: Option.Option<string>
+  readonly resume: Option.Option<string>
+  /** The Base commit its worktree was prepared from, its session beginning now; none keeps the saved one's. */
+  readonly base: Option.Option<CommitHash>
+}
+
+/**
+ * The turn's worktree and how its worker starts: a first turn's claimed, prepared and set up; another
+ * go's and a hand-back's as they are; a resume's claimed again and as it was, or, gone, prepared afresh as a first
+ * turn's. A failed setup is its detail.
+ */
+const begin = Effect.fn('Run.begin')(function* (
+  context: WorkerContext,
+  ticket: TicketId,
+  session: SessionId,
+  turn: WorkerTurn,
+) {
+  const afresh = Effect.gen(function* () {
+    const first = yield* firstWorktree(context, ticket)
+    return Result.map(first, ({ worktree, base }): Begun => ({
+      worktree,
+      prompt: Option.none(),
+      resume: Option.none(),
+      base: Option.some(base),
+    }))
+  })
+  return yield* WorkerTurn.$match(turn, {
+    First: () => Effect.andThen(claimFor(context, ticket, session), afresh),
+    // A new session in the worktree as it is, its saved session's Base commit kept.
+    Again: ({ worktree }) =>
+      Effect.map(context.sessions.saved(ticket), saved =>
+        Result.succeed<Begun>({
+          worktree,
+          prompt: Option.none(),
+          resume: Option.none(),
+          base: Option.map(saved, ({ base }) => base),
+        }),
+      ),
+    HandBack: ({ worktree, session: kept, prompt }) =>
+      Effect.succeed(
+        Result.succeed<Begun>({
+          worktree,
+          prompt: Option.some(prompt),
+          resume: kept,
+          base: Option.none(),
+        }),
+      ),
+    Resume: ({ saved, why }) =>
+      Effect.gen(function* () {
+        yield* claimFor(context, ticket, session)
+        const listed = yield* (yield* Worktrees).list({
+          home: context.config.home,
+        })
+        const kept = listed.find(entry => entry.ticket === ticket)
+        if (kept === undefined) {
+          yield* context.sessions.drop(ticket)
+          return yield* afresh
+        }
+        const changes = changesSince(
+          saved.began,
+          yield* beganNow({
+            checkout: context.config.checkout,
+            started: context.started,
+          }),
+        )
+        return Result.succeed<Begun>({
+          worktree: {
+            ticket: kept.ticket,
+            path: kept.path,
+            branch: kept.branch,
+          },
+          prompt: Option.some(resumePrompt({ ticket, why, changes })),
+          resume: Option.some(saved.session),
+          base: Option.some(saved.base),
+        })
+      }),
+  })
 })
 
 /**
@@ -315,25 +426,16 @@ export const runWorker = Effect.fn('Run.worker')(function* (
   const { config, started } = context
   const project = started.settings.project
 
-  const ready = yield* WorkerTurn.$match(turn, {
-    First: () => firstWorktree(context, ticket, session),
-    Again: ({ worktree: kept }) => Effect.succeed(Result.succeed(kept)),
-    HandBack: ({ worktree: kept }) => Effect.succeed(Result.succeed(kept)),
-  })
+  const ready = yield* begin(context, ticket, session, turn)
   if (Result.isFailure(ready))
     return WorkerEnd.SetupFailed({ detail: ready.failure })
-  const worktree = ready.success
+  const { worktree, resume } = ready.success
   yield* watcher.prepared(worktree)
 
   const { prompt: first } = yield* promptOf(ticket, worktree)
-  const [prompt, resume] = WorkerTurn.$match(turn, {
-    First: () => [first, Option.none<string>()] as const,
-    Again: () => [first, Option.none<string>()] as const,
-    HandBack: ({ session: kept, prompt: handBack }) =>
-      [
-        Option.isSome(kept) ? handBack : `${first}\n\n${handBack}`,
-        kept,
-      ] as const,
+  const prompt = Option.match(ready.success.prompt, {
+    onNone: () => first,
+    onSome: text => (Option.isSome(resume) ? text : `${first}\n\n${text}`),
   })
   const channel = yield* control.open({
     project: config.project,
@@ -397,6 +499,33 @@ export const runWorker = Effect.fn('Run.worker')(function* (
     Stream.runForEach(watcher.heard),
     Effect.forkScoped,
   )
+  // Saved for the carry-over once the agent has started (H75): a session beginning now with what it
+  // begins with, a hand-back's under the session it had.
+  yield* Option.match(agent.session.file, {
+    onNone: () => Effect.void,
+    onSome: file =>
+      Option.match(ready.success.base, {
+        onNone: () =>
+          Effect.flatMap(context.sessions.saved(ticket), saved =>
+            Option.match(saved, {
+              onNone: () => Effect.void,
+              onSome: kept => context.sessions.save({ ...kept, session: file }),
+            }),
+          ),
+        onSome: base =>
+          Effect.flatMap(
+            beganNow({ checkout: config.checkout, started }),
+            began =>
+              context.sessions.save({
+                ticket,
+                session: file,
+                base,
+                left: SessionLeft.cases.working.make({}),
+                began,
+              }),
+          ),
+      }),
+  })
   yield* agent.prompt(prompt)
   // The outcome is published before its tool answers, and the turn settles after: it is here.
   const outcome = yield* Deferred.poll(ended)
