@@ -5,6 +5,7 @@ import {
   Deferred,
   Duration,
   Effect,
+  Fiber,
   FiberSet,
   Option,
   Pull,
@@ -37,6 +38,8 @@ import { WorkerEnd, WorkerTurn } from './worker'
 // none is left the start failure is counted for the environment hold (§14.1); a ticket over its budget
 // or past `ticket_limit` is interrupted and set aside, as is one whose worker settles twice with no
 // outcome. A set-aside ticket keeps its worktree and session, and nothing stops the run for one worker.
+// A hand-back's worker (§13.7) is watched the same way but for the usage limit: its turn ends there
+// once the run holds for it, so that the merge queue can take its work where git shows it done.
 // The run's end stops every ticket's supervision before its other steps (§13.9): from then on a
 // worker's end is taken as it comes.
 
@@ -176,9 +179,25 @@ export interface Watch<R> {
   readonly run: (attempt: Attempt) => Effect.Effect<WorkerEnd, never, R>
 }
 
+/** How a hand-back's worker came out under its supervision. */
+export type HandBackEnd = Data.TaggedEnum<{
+  /** It ended as the run's other workers end. */
+  Ended: { readonly end: WorkerEnd }
+  /** Its turn ended on its provider's usage limit, the run holding for it by then. */
+  AtLimit: {}
+}>
+export const HandBackEnd = Data.taggedEnum<HandBackEnd>()
+
 export interface Supervision {
   /** Runs a ticket's worker under its supervision, to the end the run takes from it. */
   readonly watch: <R>(watch: Watch<R>) => Effect.Effect<WorkerEnd, never, R>
+  /**
+   * Runs a hand-back's worker under its supervision, as `watch` does, but for the usage limit: its
+   * turn ends there, once the run holds for it.
+   */
+  readonly handBack: <R>(
+    watch: Watch<R>,
+  ) => Effect.Effect<HandBackEnd, never, R>
   /** The ticket went over its budget (§14.4): its worker is interrupted and it is set aside. */
   readonly overBudget: (input: {
     readonly ticket: TicketId
@@ -310,6 +329,7 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
     ReadonlyMap<TicketId, Option.Option<ModelChoice>>
   >(new Map())
   const held = yield* Ref.make(false)
+  const scope = yield* Effect.scope
 
   /** Interrupts the ticket's attempt with `failure`, unless supervision has stopped. */
   const fail = (attempt: Live, failure: WorkerFailure) =>
@@ -515,7 +535,47 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
     )
   }
 
-  const watch = <R>(input: Watch<R>): Effect.Effect<WorkerEnd, never, R> =>
+  /**
+   * A hand-back's turn ended on the usage limit: the run's hold raised for it, its lift awaited in the
+   * scope, and ended once the run holds (or the hold has lifted already).
+   */
+  const atLimit = (limited: {
+    readonly ticket: TicketId
+    readonly provider: ProviderName
+    readonly resetAt: DateTime.Utc
+  }) =>
+    Effect.gen(function* () {
+      const waiting = yield* Effect.forkIn(
+        options.holds.usageLimited(limited),
+        scope,
+      )
+      yield* Effect.raceFirst(
+        Fiber.join(waiting),
+        Effect.asVoid(
+          options.clock.held.pipe(
+            Stream.filter(holding => holding),
+            Stream.runHead,
+          ),
+        ),
+      )
+      return HandBackEnd.AtLimit()
+    })
+
+  /**
+   * A ticket's worker under §12.8's policies, its end told as `ended` makes it; `limited`, where given,
+   * ends it on the usage limit rather than waiting the limit out.
+   */
+  const supervise = <R, A>(
+    input: Watch<R>,
+    ended: (end: WorkerEnd) => A,
+    limited: Option.Option<
+      (limit: {
+        readonly ticket: TicketId
+        readonly provider: ProviderName
+        readonly resetAt: DateTime.Utc
+      }) => Effect.Effect<A>
+    >,
+  ): Effect.Effect<A, never, R> =>
     Effect.gen(function* () {
       const { ticket } = input
       const step = yield* Schedule.toStep(backoff)
@@ -571,10 +631,12 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
           left: Math.max(0, Duration.toMillis(most) - used),
         }))
         if (Option.isSome(limit) && limit.value.left === 0)
-          return WorkerEnd.SetAside({
-            reason: 'TICKET_LIMIT',
-            note: limitNote(limit.value.most),
-          })
+          return ended(
+            WorkerEnd.SetAside({
+              reason: 'TICKET_LIMIT',
+              note: limitNote(limit.value.most),
+            }),
+          )
         const { came, refused } = yield* attemptOnce({
           watch: input,
           turn,
@@ -596,7 +658,15 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
           Interrupted: ({ failure: why }) =>
             WorkerEnd.Failed({ reason: `interrupted: ${why._tag}` }),
         })
-        if (Option.isNone(failure) || (yield* Ref.get(stopped))) return end
+        if (Option.isNone(failure) || (yield* Ref.get(stopped)))
+          return ended(end)
+        if (
+          WorkerFailure.$is('UsageLimited')(failure.value) &&
+          Option.isSome(limited)
+        ) {
+          const { provider, resetAt } = failure.value
+          return yield* limited.value({ ticket, provider, resetAt })
+        }
 
         // §12.8's table: what each failure does next.
         const next = yield* WorkerFailure.$match(failure.value, {
@@ -693,13 +763,19 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
             Effect.succeed(setAside('TICKET_LIMIT', limitNote(most))),
           Unfinished: () => Effect.succeed(ends(end)),
         })
-        if (Next.$is('Ends')(next)) return next.end
+        if (Next.$is('Ends')(next)) return ended(next.end)
         turn = next.turn
       }
     })
 
   return {
-    watch,
+    watch: input => supervise(input, end => end, Option.none()),
+    handBack: input =>
+      supervise(
+        input,
+        (end): HandBackEnd => HandBackEnd.Ended({ end }),
+        Option.some(atLimit),
+      ),
     overBudget: ({ ticket, detail }) =>
       Effect.flatMap(Ref.get(live), attempts => {
         const attempt = attempts.get(ticket)

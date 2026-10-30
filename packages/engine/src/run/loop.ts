@@ -52,7 +52,11 @@ import {
   isOutcome,
   make as makeMergeQueue,
 } from '../merge'
-import { HandBackClock } from '../merge/handbacks'
+import {
+  HandBackClock,
+  HandBackWorker,
+  type HandBackWorkerShape,
+} from '../merge/handbacks'
 import { ModelProxy } from '../proxy'
 import {
   RunLog,
@@ -67,7 +71,7 @@ import {
   warningLine,
   wroteLine,
 } from '../runlog'
-import { KeptAwake, keepAwake } from '../time'
+import { KeptAwake, Wake, keepAwake } from '../time'
 import { type RunViewSources, makeRunViewSources } from '../view'
 import { WorkGraph } from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
@@ -84,6 +88,7 @@ import { type RunConfig, RunMode, overnightMode } from './config'
 import { type RunControl, makeRunControl } from './control'
 import { endSteps } from './end'
 import { type Gated, type Taken, makeFootprintsGate } from './footprints-gate'
+import { makeHandBackWorker } from './handback-worker'
 import {
   MayTake,
   heldClock,
@@ -382,12 +387,27 @@ const runStarted = Effect.fn('Run.started')(function* (
     Effect.map(cost.ticket(ticket), spendFields)
   const state = yield* makeRunState(log, cost.ticket)
   // The holds, one state (§14, H58): the merge queue's hand-backs and the workers' quiet are counted
-  // on its clock, stopped while they hold.
+  // on its clock, in time awake (§7.7), stopped while they hold.
   const holds = yield* makeHolds({
     log,
     running: Effect.map(state.current, slotsTaken),
   })
-  const clock = heldClock(holds, (yield* HandBackClock).sleep)
+  const wake = yield* Wake
+  const clock = heldClock(holds, duration =>
+    Effect.flatMap(wake.deadline(duration), wake.waitUntil),
+  )
+  // The merge queue's hand-backs go to the run's workers (§13.7), made once their supervision is.
+  const handBackWorker = yield* Deferred.make<HandBackWorkerShape>()
+  const handBacksTo: HandBackWorkerShape = {
+    give: input =>
+      Effect.flatMap(Deferred.await(handBackWorker), worker =>
+        worker.give(input),
+      ),
+    tell: input =>
+      Effect.flatMap(Deferred.await(handBackWorker), worker =>
+        worker.tell(input),
+      ),
+  }
 
   // The merge queue lives in a scope of its own, so the end stops it before writing its records.
   const mergeScope = yield* Scope.make()
@@ -408,6 +428,7 @@ const runStarted = Effect.fn('Run.started')(function* (
   }).pipe(
     Effect.provideService(MergeSetup, MergeSetup.of(setup)),
     Effect.provideService(HandBackClock, clock),
+    Effect.provideService(HandBackWorker, handBacksTo),
     Scope.provide(mergeScope),
   )
   const mergeUpdates = yield* merges.updates.pipe(Scope.provide(mergeScope))
@@ -558,6 +579,15 @@ const runStarted = Effect.fn('Run.started')(function* (
     desk: view.workers,
     cost,
   }
+  yield* Deferred.succeed(
+    handBackWorker,
+    yield* makeHandBackWorker({
+      context,
+      supervision,
+      actor,
+      drawSession,
+    }),
+  )
 
   const stop = (
     kind: StopKind,

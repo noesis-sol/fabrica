@@ -129,7 +129,7 @@ export interface HandBackWorkerShape {
   }) => Effect.Effect<void>
 }
 
-/** The workers hand-backs go to; until the run resumes its workers' sessions for them, none can take one. */
+/** The workers hand-backs go to: a run gives its queue its own (`run/handback-worker.ts`); by default none can take one. */
 export const HandBackWorker = Context.Reference<HandBackWorkerShape>(
   '@fabrica/engine/merge/HandBackWorker',
   {
@@ -155,7 +155,7 @@ export interface HandBackClockShape {
   readonly held: Stream.Stream<boolean>
 }
 
-/** The hand-backs' clock: a run gives its queue its holds' (`run/holds.ts`); by default the run never holds. */
+/** The hand-backs' clock: a run gives its queue its holds', in time awake (`run/holds.ts`); by default the run never holds. */
 export const HandBackClock = Context.Reference<HandBackClockShape>(
   '@fabrica/engine/merge/HandBackClock',
   {
