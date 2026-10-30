@@ -131,6 +131,8 @@ describe('main’s WSL2 search and Ubuntu install', () => {
       knownEngines: unused,
       keepEngine: unused,
       connectEngine: () => undefined,
+      readFingerprint: unused,
+      pairEngine: unused,
     }
     registerIpc({
       ipc: {

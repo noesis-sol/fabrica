@@ -1,6 +1,12 @@
-import { Schema } from 'effect'
+import { Option, Schema } from 'effect'
 
-import { EngineId, ProtocolVersion } from '@fabrica/contracts'
+import {
+  CertificateFingerprint,
+  EngineId,
+  ProtocolVersion,
+  formatListenAddress,
+  parseListenAddress,
+} from '@fabrica/contracts'
 
 import { SshDestination } from './destination'
 import { WslDistro } from './wsl-host'
@@ -14,6 +20,30 @@ import { WslDistro } from './wsl-host'
 export const EngineName = Schema.NonEmptyString
 export type EngineName = typeof EngineName.Type
 
+/** A TCP port an engine's TLS listener is reached on. */
+export const TlsPort = Schema.Int.check(
+  Schema.isBetween({ minimum: 1, maximum: 65_535 }),
+)
+
+/** Where an engine's TLS listener is reached: a host (a name, or an IPv4 or IPv6 address) and a port. */
+export const TlsEndpoint = Schema.Struct({
+  host: Schema.NonEmptyString,
+  port: TlsPort,
+})
+export type TlsEndpoint = typeof TlsEndpoint.Type
+
+const decodeEndpoint = Schema.decodeUnknownOption(TlsEndpoint)
+
+/** The endpoint `host:port` or `[v6]:port` names; none for other text, or a port or host missing. */
+export const parseTlsEndpoint = (text: string): Option.Option<TlsEndpoint> =>
+  Option.flatMap(parseListenAddress(text.trim()), ({ host, port }) =>
+    Option.flatMap(host, name => decodeEndpoint({ host: name, port })),
+  )
+
+/** An endpoint written as parseTlsEndpoint reads it. */
+export const tlsEndpointText = ({ host, port }: TlsEndpoint): string =>
+  formatListenAddress({ host: Option.some(host), port })
+
 /** How the app reaches an engine (spec §8.2). */
 export const EngineAddress = Schema.TaggedUnion({
   /** The engine on this machine, through its local socket. */
@@ -22,8 +52,11 @@ export const EngineAddress = Schema.TaggedUnion({
   Ssh: { destination: SshDestination },
   /** Through the bridge in a WSL2 distribution. */
   Wsl: { distro: WslDistro },
-  /** WebSocket over TLS, at `host:port`, with a pairing token. */
-  Tls: { address: Schema.NonEmptyString },
+  /**
+   * WebSocket over TLS, at `host:port`, its certificate trusted by the SHA-256 fingerprint the user
+   * accepted at pairing (§9.3); its pairing token is kept apart, in the app's secret storage.
+   */
+  Tls: { ...TlsEndpoint.fields, fingerprint: CertificateFingerprint },
 })
 export type EngineAddress = typeof EngineAddress.Type
 

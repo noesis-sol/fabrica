@@ -127,6 +127,8 @@ describe('main’s engine install', () => {
       knownEngines: unused,
       keepEngine: unused,
       connectEngine: () => undefined,
+      readFingerprint: unused,
+      pairEngine: unused,
       checkEngine: host => {
         asked.push(host)
         return Promise.resolve(checked)

@@ -256,6 +256,8 @@ describe("the user's choice of the login service", () => {
       knownEngines: unused,
       keepEngine: unused,
       connectEngine: () => undefined,
+      readFingerprint: unused,
+      pairEngine: unused,
     }
     registerIpc({
       ipc: {

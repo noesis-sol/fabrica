@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./bridge": "./src/engine/bridge.ts",
+    "./certificate": "./src/rpc/certificate.ts",
     "./files": "./src/files/index.ts",
     "./paths": "./src/engine/paths.ts",
     "./update": "./src/update/index.ts"

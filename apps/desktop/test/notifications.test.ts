@@ -272,6 +272,10 @@ describe('main’s end of notify', () => {
       keepEngine: () =>
         Promise.resolve({ _tag: 'Failed', reason: 'not this test’s' }),
       connectEngine: () => undefined,
+      readFingerprint: () =>
+        Promise.resolve({ _tag: 'Failed', reason: 'not this test’s' }),
+      pairEngine: () =>
+        Promise.resolve({ _tag: 'Failed', reason: 'not this test’s' }),
     }
     registerIpc({ ipc, trusted: url => url === app, actions })
     const send = (sender: string | undefined, ...values: Array<unknown>) =>

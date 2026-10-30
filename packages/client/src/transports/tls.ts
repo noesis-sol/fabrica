@@ -1,4 +1,13 @@
-import { Data, Effect, Layer, Redacted, type Scope } from 'effect'
+import {
+  Data,
+  Effect,
+  Layer,
+  Option,
+  Predicate,
+  Redacted,
+  type Scope,
+} from 'effect'
+import type { RpcClientError } from 'effect/rpc'
 import { Socket } from 'effect/socket'
 import { isIPv6 } from 'node:net'
 import { type TLSSocket, connect } from 'node:tls'
@@ -13,7 +22,8 @@ import { bearerAuthorization, pairingPath } from '@fabrica/contracts'
 // connection checks the fingerprint once the TLS handshake is done, before anything is sent, and one
 // to an engine presenting another certificate fails with `CertificateChanged`. The pairing token goes
 // in the upgrade request's `Authorization` header; one the engine refuses fails with `TokenRefused`.
-// Each open of the `Socket` is a new connection; either refusal is the cause of its `SocketOpenError`.
+// Each open of the `Socket` is a new connection; either refusal is the cause of its `SocketOpenError`,
+// which `tlsRefused` finds: trying again would end the same way.
 
 /** Where an engine's TLS listener is. */
 export interface TlsAddress {
@@ -34,7 +44,7 @@ export class CertificateChanged extends Data.TaggedError('CertificateChanged')<{
   readonly presented: string
 }> {
   override get message() {
-    return `the engine presented a certificate whose fingerprint is ${this.presented}, not the ${this.pinned} it was paired with`
+    return `the engine's certificate changed since it was paired: it presented ${this.presented}, not the ${this.pinned} it was paired with; pair it again only once you know the new certificate is the engine's`
   }
 }
 
@@ -43,8 +53,20 @@ export class TokenRefused extends Data.TaggedError('TokenRefused')<{
   readonly status: number
 }> {
   override get message() {
-    return `the engine refused the pairing token (HTTP ${this.status})`
+    return `the engine refused the pairing token (HTTP ${this.status}): it is wrong, or was revoked; pair the engine again with a new token`
   }
+}
+
+/** The refusal a connection's error carries, if the engine refused it: its certificate or the token. */
+export const tlsRefused = (
+  error: Socket.SocketError | RpcClientError.RpcClientError,
+): Option.Option<CertificateChanged | TokenRefused> => {
+  const { reason } = error
+  return Predicate.hasProperty(reason, 'cause') &&
+    (reason.cause instanceof CertificateChanged ||
+      reason.cause instanceof TokenRefused)
+    ? Option.some(reason.cause)
+    : Option.none()
 }
 
 const openFailed = (cause: unknown) =>
@@ -81,11 +103,12 @@ const fingerprintOf = (socket: TLSSocket): string =>
 export const presentedFingerprint = (
   address: TlsAddress,
 ): Effect.Effect<string, Socket.SocketError> =>
-  Effect.acquireUseRelease(
+  Effect.acquireRelease(
     connectTls(address),
-    socket => Effect.sync(() => fingerprintOf(socket)),
     socket => Effect.sync(() => socket.destroy()),
-  )
+    // A connection that hangs is given up by interrupting it, which destroys its socket.
+    { interruptible: true },
+  ).pipe(Effect.map(fingerprintOf), Effect.scoped)
 
 /** A host as a URL writes it. */
 const urlHost = (host: string): string => (isIPv6(host) ? `[${host}]` : host)
@@ -145,10 +168,13 @@ const upgrade = (
 /** A new connection to `engine`: TLS, its certificate checked against the pin, then the upgrade. */
 const open = (engine: TlsEngine) =>
   Effect.gen(function* () {
-    const socket = yield* Effect.acquireRelease(connectTls(engine), socket =>
-      Effect.sync(() => {
-        if (!socket.destroyed) socket.end()
-      }),
+    const socket = yield* Effect.acquireRelease(
+      connectTls(engine),
+      socket =>
+        Effect.sync(() => {
+          if (!socket.destroyed) socket.end()
+        }),
+      { interruptible: true },
     )
     const presented = fingerprintOf(socket)
     if (presented !== engine.fingerprint.toUpperCase())

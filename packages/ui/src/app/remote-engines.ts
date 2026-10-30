@@ -89,6 +89,20 @@ export const atDestination = (
     ),
   )
 
+/** Whether `a` and `b` reach an engine the same way: over TLS, at one endpoint with one pinned certificate. */
+export const sameAddress = (a: EngineAddress, b: EngineAddress): boolean =>
+  EngineAddress.match(a, {
+    Local: () => EngineAddress.guards.Local(b),
+    Ssh: ({ destination }) =>
+      EngineAddress.guards.Ssh(b) && b.destination === destination,
+    Wsl: ({ distro }) => EngineAddress.guards.Wsl(b) && b.distro === distro,
+    Tls: ({ host, port, fingerprint }) =>
+      EngineAddress.guards.Tls(b) &&
+      b.host === host &&
+      b.port === port &&
+      b.fingerprint === fingerprint,
+  })
+
 const changeEngine = (
   model: Model,
   name: EngineName,
@@ -131,7 +145,8 @@ export const loaded = (
 
 /**
  * The engine named `name` at `address` joined to the known engines, to be kept once its first hello
- * comes; one of that name already known is connected to again.
+ * comes; one of that name already known is connected to again, at `address`, kept again where it moved
+ * (an engine over TLS paired again, with its new certificate).
  */
 export const added = (
   model: Model,
@@ -141,7 +156,14 @@ export const added = (
   }: { readonly name: EngineName; readonly address: EngineAddress },
 ): Model =>
   Option.isSome(named(model, name))
-    ? reconnected(model, name)
+    ? reconnected(
+        changeEngine(model, name, engine =>
+          sameAddress(engine.address, address)
+            ? engine
+            : { ...engine, address, kept: Option.none() },
+        ),
+        name,
+      )
     : {
         ...model,
         engines: [
@@ -390,16 +412,7 @@ export type Attempt = Attempts[number]
 const sameAttempt = (a: Attempt, b: Attempt): boolean =>
   a.name === b.name &&
   a.attempt === b.attempt &&
-  EngineAddress.match(a.address, {
-    Local: () => EngineAddress.guards.Local(b.address),
-    Ssh: ({ destination }) =>
-      EngineAddress.guards.Ssh(b.address) &&
-      b.address.destination === destination,
-    Wsl: ({ distro }) =>
-      EngineAddress.guards.Wsl(b.address) && b.address.distro === distro,
-    Tls: ({ address }) =>
-      EngineAddress.guards.Tls(b.address) && b.address.address === address,
-  })
+  sameAddress(a.address, b.address)
 
 export interface RemoteConnectionsShape {
   /** Every held connection's Messages. */

@@ -358,6 +358,10 @@ const recordingActions = () => {
     keepEngine: () =>
       Promise.reject(new Error('the known engines’ tests answer it')),
     connectEngine: ({ request }) => done.push(`connectEngine ${request}`),
+    readFingerprint: () =>
+      Promise.reject(new Error('the TLS pairing’s tests answer it')),
+    pairEngine: () =>
+      Promise.reject(new Error('the TLS pairing’s tests answer it')),
   }
   return { done, actions }
 }

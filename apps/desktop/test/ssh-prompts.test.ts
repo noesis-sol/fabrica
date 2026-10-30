@@ -152,6 +152,8 @@ describe('the prompts across the preload', () => {
         knownEngines: unused,
         keepEngine: unused,
         connectEngine: () => undefined,
+        readFingerprint: unused,
+        pairEngine: unused,
       },
     })
     const send = (sender: string | undefined, value: unknown) =>

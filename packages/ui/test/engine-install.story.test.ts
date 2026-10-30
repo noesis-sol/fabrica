@@ -67,6 +67,8 @@ const stepOf = (shown: Engines.Model): Engines.SetupStep =>
     Running: ({ step }) => step,
     Closed: () => expect.unreachable('the setup is closed'),
     Editing: () => expect.unreachable('the setup is being typed'),
+    EditingTls: () => expect.unreachable('the setup is being typed'),
+    Pairing: () => expect.unreachable('an engine is being paired with'),
     Wsl: () => expect.unreachable('a WSL2 distribution is being found'),
   })
 

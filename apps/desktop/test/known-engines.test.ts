@@ -179,6 +179,8 @@ describe('main’s known engines', () => {
       connectEngine: asked => {
         done.push(asked)
       },
+      readFingerprint: unused,
+      pairEngine: unused,
     }
     registerIpc({
       ipc: {
@@ -288,10 +290,15 @@ describe('a known engine’s port', () => {
     expect(
       knownTarget(EngineAddress.cases.Wsl.make({ distro: 'Ubuntu' }), local),
     ).toEqual(ConnectionTarget.cases.Wsl.make({ distro: 'Ubuntu' }))
+    // One over TLS is reached through its pairing, which holds its token: here it is refused.
     expect(
-      ConnectionTarget.guards.Unavailable(
+      ConnectionTarget.guards.Refused(
         knownTarget(
-          EngineAddress.cases.Tls.make({ address: 'build-box:7443' }),
+          EngineAddress.cases.Tls.make({
+            host: 'build-box',
+            port: 7443,
+            fingerprint: Array.from({ length: 32 }, () => 'AB').join(':'),
+          }),
           local,
         ),
       ),

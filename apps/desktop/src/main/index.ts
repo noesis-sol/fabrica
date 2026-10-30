@@ -38,7 +38,7 @@ import { windowColours } from '@fabrica/ui/window-colours'
 
 import { askpassArguments } from '../connection/askpass'
 import { definedOf } from '../connection/env'
-import { ConnectionTarget } from '../connection/target'
+import { ConnectionTarget, encodeTarget } from '../connection/target'
 import { FolderPick, UpdateStatus, channels } from '../preload/api'
 import { appDataFolder } from './dataFolder'
 import { checkEngineOn, engineSource, installEngineOn } from './engine-install'
@@ -50,7 +50,7 @@ import {
   sendSshPrompt,
 } from './ipc'
 import { keptTheme, makeThemeKeeper } from './keptTheme'
-import { keepEngineIn, knownEnginesOf } from './known-engines'
+import { knownEnginesOf } from './known-engines'
 import {
   bundledLauncher,
   ensureLocalEngine,
@@ -58,12 +58,8 @@ import {
 } from './local-engine'
 import { AppPage, isAppUrl } from './navigation'
 import { makeNotifications } from './notifications'
-import {
-  type BrokeredPage,
-  knownTarget,
-  localTarget,
-  makeBroker,
-} from './ports'
+import { makeFingerprintDesk, makePairings } from './pairing'
+import { type BrokeredPage, localTarget, makeBroker } from './ports'
 import { guardPermissions, guardWebContents } from './security'
 import { askpassNode, makePromptDesk } from './ssh-prompts'
 import { makeAppState, safeStorageBox } from './state'
@@ -92,7 +88,8 @@ import {
 // Electron main (spec §5): the window, its title bar and its confinement, the preload's API, the
 // connection process, to which it brokers each page's engine port, and a port to each known engine the
 // page asks for, and whose ssh prompts it asks the page (§9.1), the app's state with its known engines,
-// and the local engine, started at launch when none answers (§7.1); on Windows, where none runs, the
+// the pairings with engines over TLS, whose certificates the connection process reads (§9.3), and the
+// local engine, started at launch when none answers (§7.1); on Windows, where none runs, the
 // engine in WSL2, kept running (§7.6). It runs no orchestration and stays out of the data path.
 
 const preload = fileURLToPath(new URL('../preload/index.cjs', import.meta.url))
@@ -140,7 +137,9 @@ const reachLocalEngine = ConnectionTarget.match(target, {
     ),
   Ssh: () => Effect.void,
   Wsl: () => Effect.void,
+  Tls: () => Effect.void,
   Unavailable: () => Effect.void,
+  Refused: () => Effect.void,
 })
 
 const installService = (): Promise<ServiceInstall> =>
@@ -256,12 +255,14 @@ const broker = makeBroker<MessagePortMain>({
       ),
     )
     child.on('message', promptDesk.fromConnection)
+    child.on('message', fingerprintDesk.fromConnection)
     child.once('exit', () => {
       promptDesk.connectionGone()
+      fingerprintDesk.connectionGone()
       onExit()
     })
     return {
-      relay: (target, port) => child.postMessage(target, [port]),
+      relay: (target, port) => child.postMessage(encodeTarget(target), [port]),
       post: message => child.postMessage(message),
     }
   },
@@ -275,11 +276,18 @@ const broker = makeBroker<MessagePortMain>({
   target,
 })
 
+// The connection process is started for a fingerprint asked of it, as for a port.
+const fingerprintDesk = makeFingerprintDesk(request => broker.ask(request))
+
+const pairings = makePairings({ state: appState, read: fingerprintDesk.read })
+
 /** Relays a port to the known engine at `address`, for the page's request numbered `request`. */
 const connectEngine = ({ request, address }: EnginePortRequest): void => {
-  Option.map(Option.fromUndefinedOr(appWindow.current()), window =>
-    broker.connect(knownTarget(address, target), port =>
-      sendRemoteEnginePort(window.webContents, { request, port }),
+  void Effect.runPromise(pairings.target(address, target)).then(to =>
+    Option.map(Option.fromUndefinedOr(appWindow.current()), window =>
+      broker.connect(to, port =>
+        sendRemoteEnginePort(window.webContents, { request, port }),
+      ),
     ),
   )
 }
@@ -516,7 +524,10 @@ if (!app.requestSingleInstanceLock()) {
       installUbuntu: installUbuntuInWsl,
       answerSshPrompt: promptDesk.answer,
       knownEngines: () => Effect.runPromise(knownEnginesOf(appState)),
-      keepEngine: engine => Effect.runPromise(keepEngineIn(appState, engine)),
+      keepEngine: engine => Effect.runPromise(pairings.keep(engine)),
+      readFingerprint: endpoint =>
+        Effect.runPromise(pairings.readFingerprint(endpoint)),
+      pairEngine: request => Effect.runPromise(pairings.pair(request)),
       connectEngine,
     },
   })

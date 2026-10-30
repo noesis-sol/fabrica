@@ -4,12 +4,16 @@ import type { MessagePortMain, WebContents } from 'electron'
 import {
   type CheckAnswer,
   EngineHost,
+  type FingerprintAnswer,
   type InstallAnswer,
   InstallConsent,
   type KeepAnswer,
   KnownEngine,
   type KnownEnginesAnswer,
+  type PairAnswer,
+  PairRequest,
   SshPromptAnswer,
+  TlsEndpoint,
   type UbuntuInstall,
   type WslSearch,
 } from '@fabrica/client'
@@ -57,6 +61,12 @@ export interface MainActions {
   readonly keepEngine: (engine: KnownEngine) => Promise<KeepAnswer>
   /** Relays a port to a known engine, handed to the page with the number of its request. */
   readonly connectEngine: (request: EnginePortRequest) => void
+  /** The fingerprint of the certificate the engine at an endpoint presents, at a first pairing (§9.3). */
+  readonly readFingerprint: (
+    endpoint: TlsEndpoint,
+  ) => Promise<FingerprintAnswer>
+  /** Holds the pairing the user agreed to, its token kept once the engine is. */
+  readonly pairEngine: (request: PairRequest) => Promise<PairAnswer>
 }
 
 /** The part of `ipcMain` main uses; each listener gets the sending frame's URL (none once it has gone) and the values. */
@@ -102,6 +112,8 @@ const decodeKeep = Schema.decodeUnknownOption(Schema.Tuple([KnownEngine]))
 const decodePortRequest = Schema.decodeUnknownOption(
   Schema.Tuple([EnginePortRequest]),
 )
+const decodeEndpoint = Schema.decodeUnknownOption(Schema.Tuple([TlsEndpoint]))
+const decodePair = Schema.decodeUnknownOption(Schema.Tuple([PairRequest]))
 
 /** Registers `actions` on `ipc`, for messages from frames whose URL `trusted` takes. */
 export const registerIpc = ({
@@ -189,6 +201,12 @@ export const registerIpc = ({
   onInvoke(channels.knownEngines, actions.knownEngines)
   onRequest(channels.keepEngine, decodeKeep, ([engine]) =>
     actions.keepEngine(engine),
+  )
+  onRequest(channels.readFingerprint, decodeEndpoint, ([endpoint]) =>
+    actions.readFingerprint(endpoint),
+  )
+  onRequest(channels.pairEngine, decodePair, ([request]) =>
+    actions.pairEngine(request),
   )
 }
 

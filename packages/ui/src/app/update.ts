@@ -2,7 +2,7 @@ import { Array, Duration, Effect, Option, Redacted, Schema } from 'effect'
 import { Command, Update } from 'foldkit'
 import { modifyFields } from 'foldkit/struct'
 
-import { EngineAddress, KeepAnswer, KnownEnginesAnswer } from '@fabrica/client'
+import { KeepAnswer, KnownEnginesAnswer } from '@fabrica/client'
 import {
   type AttentionRef,
   type NoRun,
@@ -771,7 +771,8 @@ export const update = (model: Model, message: Message): Return =>
               connection: () => Connection.Connecting(),
             })
           : folded.model
-      // An engine installed on another host joins the known engines; one tried again is connected to.
+      // An engine installed on another host, or paired over TLS, joins the known engines; one tried again
+      // is connected to.
       return {
         ...folded,
         model: Option.match(remote, {
@@ -780,11 +781,8 @@ export const update = (model: Model, message: Message): Return =>
             modifyFields(local, {
               remotes: remotes =>
                 Engines.RemoteChange.$match(change, {
-                  Added: ({ name, destination }) =>
-                    RemoteEngines.added(remotes, {
-                      name,
-                      address: EngineAddress.cases.Ssh.make({ destination }),
-                    }),
+                  Added: ({ name, address }) =>
+                    RemoteEngines.added(remotes, { name, address }),
                   Retried: ({ name }) =>
                     RemoteEngines.reconnected(remotes, name),
                 }),

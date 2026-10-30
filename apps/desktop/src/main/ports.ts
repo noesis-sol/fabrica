@@ -1,6 +1,10 @@
 import { Option, Result } from 'effect'
 
-import { EngineAddress } from '@fabrica/client'
+import {
+  EngineAddress,
+  type TlsEndpoint,
+  tlsEndpointText,
+} from '@fabrica/client'
 import { type HostPlaces, enginePaths } from '@fabrica/engine/paths'
 
 import { ConnectionTarget } from '../connection/target'
@@ -22,7 +26,14 @@ export const localTarget = (host: HostPlaces): ConnectionTarget =>
       ConnectionTarget.cases.Unavailable.make({ reason: unsupported.message }),
   })
 
-/** The engine a known engine's address names, `local` for this machine's. */
+/** What a connection to an engine over TLS the app hasn't paired with says. */
+export const unpaired = (endpoint: TlsEndpoint): string =>
+  `the app hasn't paired with the engine at ${tlsEndpointText(endpoint)}: add it again with a pairing token`
+
+/**
+ * The engine a known engine's address names, `local` for this machine's; one over TLS is refused here,
+ * its target, with the token main keeps for it, being its pairing's (./pairing).
+ */
 export const knownTarget = (
   address: EngineAddress,
   local: ConnectionTarget,
@@ -31,17 +42,15 @@ export const knownTarget = (
     Local: () => local,
     Ssh: ({ destination }) => ConnectionTarget.cases.Ssh.make({ destination }),
     Wsl: ({ distro }) => ConnectionTarget.cases.Wsl.make({ distro }),
-    Tls: () =>
-      ConnectionTarget.cases.Unavailable.make({
-        reason: 'the app does not reach engines over TLS yet',
-      }),
+    Tls: endpoint =>
+      ConnectionTarget.cases.Refused.make({ reason: unpaired(endpoint) }),
   })
 
 /** The connection process, as main reaches it. */
 export interface ConnectionProcess<Port> {
   /** Hands it one end of a page's port, with the engine to relay it to. */
   readonly relay: (target: ConnectionTarget, port: Port) => void
-  /** Hands it a message without a port: the page's answer to what its ssh asked. */
+  /** Hands it a message without a port: the page's answer to what its ssh asked, or main's request. */
   readonly post: (message: unknown) => void
 }
 
@@ -70,7 +79,7 @@ export interface BrokerHost<Port> {
 /**
  * The broker: `attach` gives a page a port at each of its loads, until it has gone; `connect` relays a
  * port to a known engine's target for the page that asked; `post` reaches the connection process
- * running; `retarget` gives every page a port to another engine.
+ * running, `ask` the one running or started for it; `retarget` gives every page a port to another engine.
  */
 export const makeBroker = <Port>(host: BrokerHost<Port>) => {
   let child: Option.Option<ConnectionProcess<Port>> = Option.none()
@@ -105,6 +114,8 @@ export const makeBroker = <Port>(host: BrokerHost<Port>) => {
     post: (message: unknown): void => {
       Option.map(child, running => running.post(message))
     },
+    /** Hands the connection process `message`, starting it where it isn't running. */
+    ask: (message: unknown): void => connection().post(message),
     connect,
     /** Has every page reach `next` from now on, each through a new port. */
     retarget: (next: ConnectionTarget): void => {

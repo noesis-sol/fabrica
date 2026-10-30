@@ -115,6 +115,8 @@ export interface AppStateShape {
     readonly engine: EngineName
     readonly token: Redacted.Redacted<string>
   }) => Effect.Effect<void, AppStateFailed | NoSecretStorage | EngineUnknown>
+  /** Whether a secret can be kept encrypted here: fails, saying why, where it can't. */
+  readonly secretsReady: Effect.Effect<void, NoSecretStorage>
   /** The token kept for the engine named `engine`, if any. */
   readonly token: (
     engine: EngineName,
@@ -252,7 +254,14 @@ export const makeAppState = Effect.fn('AppState.make')(function* ({
     })
   })
 
-  return AppState.of({ engines, saveEngine, removeEngine, saveToken, token })
+  return AppState.of({
+    engines,
+    saveEngine,
+    removeEngine,
+    saveToken,
+    secretsReady,
+    token,
+  })
 })
 
 /** The AppState service over `options`. */

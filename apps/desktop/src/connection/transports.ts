@@ -1,13 +1,23 @@
-import { Context, Effect, Layer, Option, type Scope } from 'effect'
+import {
+  Context,
+  Data,
+  Effect,
+  Layer,
+  Option,
+  Predicate,
+  type Scope,
+} from 'effect'
 import { Socket } from 'effect/socket'
 
 import {
   SshPrompting,
   type SshPrompts,
   layerSsh,
+  layerTls,
   layerUnixSocket,
   layerWsl,
   sshFailed,
+  tlsRefused,
   wslFailed,
 } from '@fabrica/client/node'
 
@@ -16,11 +26,13 @@ import { ConnectionTarget } from './target'
 
 // The connection process's transports (spec §8.2, §9.1, §7.6): how it reaches the engine a target
 // names, one new connection (a socket connection, or an `ssh` or `wsl.exe` child) for each connection
-// the page opens. Its ssh's prompts (an unknown host's key, a passphrase, a password) are relayed to the
+// the page opens; over TLS, a WebSocket to the engine's listener, its certificate checked against the
+// fingerprint pinned at pairing and its token presented. Its ssh's prompts (an unknown host's key, a passphrase, a password) are relayed to the
 // app through `SSH_ASKPASS`, by a helper the Node main names runs; where main names none (Windows, until
 // the app ships a helper of its own), ssh asks nothing (`BatchMode`): it reaches hosts `known_hosts`
 // knows with keys ssh-agent holds. A failure trying again won't mend (a changed host key, a refused
-// sign-in, no fabrica on the host) is a refusal, which the relay says to the page.
+// sign-in, no fabrica on the host, a TLS engine's changed certificate or refused token) is a refusal,
+// which the relay says to the page.
 
 /** A socket to the engine, made anew for each connection the page opens, and closed with its scope. */
 export type EngineSocket = Effect.Effect<Socket.Socket, never, Scope.Scope>
@@ -38,6 +50,25 @@ export interface TransportHost {
     readonly prompts: SshPrompts
   }>
 }
+
+/** A target main refused: no connection is tried. */
+class TargetRefused extends Data.TaggedError('TargetRefused')<{
+  readonly reason: string
+}> {
+  override get message() {
+    return this.reason
+  }
+}
+
+/** A socket whose every open fails with `cause`. */
+const failing = (cause: Error): EngineSocket =>
+  Socket.fromTransformStream(
+    Effect.fail(
+      new Socket.SocketError({
+        reason: new Socket.SocketOpenError({ kind: 'Unknown', cause }),
+      }),
+    ),
+  )
 
 const socketOf = (layer: Layer.Layer<Socket.Socket>): EngineSocket =>
   Effect.map(Layer.build(layer), Context.get(Socket.Socket))
@@ -62,29 +93,36 @@ export const engineSocket = (
       ),
     Wsl: ({ distro }) =>
       socketOf(layerWsl({ distro, env: definedOf(host.env) })),
-    Unavailable: ({ reason }) =>
-      Socket.fromTransformStream(
-        Effect.fail(
-          new Socket.SocketError({
-            reason: new Socket.SocketOpenError({
-              kind: 'Unknown',
-              cause: new Error(reason),
-            }),
-          }),
-        ),
-      ),
+    Tls: engine => socketOf(layerTls(engine)),
+    Unavailable: ({ reason }) => failing(new Error(reason)),
+    Refused: ({ reason }) => failing(new TargetRefused({ reason })),
   })
 
-/** A connection's failure in words, where it is one trying again won't mend: ssh's or wsl.exe's refusal. */
+/** The refusal of a target main refused, that a connection's error carries. */
+const targetRefused = (
+  error: Socket.SocketError,
+): Option.Option<TargetRefused> => {
+  const { reason } = error
+  return Predicate.hasProperty(reason, 'cause') &&
+    reason.cause instanceof TargetRefused
+    ? Option.some(reason.cause)
+    : Option.none()
+}
+
+/**
+ * A connection's failure in words, where it is one trying again won't mend: ssh's or wsl.exe's
+ * refusal, a TLS engine's (its certificate changed since pairing, its token refused), or main's.
+ */
 export const refusalOf = (error: Socket.SocketError): Option.Option<string> =>
-  Option.orElse(
+  Option.firstSomeOf([
     Option.map(
       Option.filter(sshFailed(error), failed => failed.refused),
       failed => failed.message,
     ),
-    () =>
-      Option.map(
-        Option.filter(wslFailed(error), failed => failed.refused),
-        failed => failed.message,
-      ),
-  )
+    Option.map(
+      Option.filter(wslFailed(error), failed => failed.refused),
+      failed => failed.message,
+    ),
+    Option.map(tlsRefused(error), refused => refused.message),
+    Option.map(targetRefused(error), refused => refused.reason),
+  ])

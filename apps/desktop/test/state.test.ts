@@ -49,7 +49,11 @@ const server = engine(
 )
 const paired = engine(
   'paired',
-  EngineAddress.cases.Tls.make({ address: 'build.example.com:7443' }),
+  EngineAddress.cases.Tls.make({
+    host: 'build.example.com',
+    port: 7443,
+    fingerprint: Array.from({ length: 32 }, () => 'AB').join(':'),
+  }),
 )
 
 describe('the app state', () => {

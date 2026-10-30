@@ -23,18 +23,24 @@ import {
   EngineHost,
   EngineInstalled,
   EngineName,
+  FingerprintAnswer,
   HostCheck,
   InstallAnswer,
   InstallConsent,
   InstallPlan,
+  PairAnswer,
   SshDestination,
+  TlsEndpoint,
   UbuntuInstall,
   WslSearch,
   consentFor,
   defaultEngineName,
+  parseTlsEndpoint,
+  tlsEndpointText,
   windowsDriveWarning,
 } from '@fabrica/client'
 import {
+  CertificateFingerprint,
   CommandLine,
   CredentialInfo,
   CredentialName,
@@ -71,6 +77,11 @@ import { type EngineProjects, runLabel } from '../console/sidebar'
 // to what the check proposes (§9.2); the engine installed, or found up to date, joins the known engines
 // and is connected to. On Windows it offers WSL2 too (§7.6): the distribution the app found is checked
 // the same way, and where there is none the app offers to install Ubuntu, or says why WSL can't run. An
+// engine over TLS is paired with instead (§9.3): Add engine takes its TLS address and a pairing token,
+// the app reads the fingerprint of the certificate the engine presents there and shows it, and only once
+// the user accepts it does the engine join the known engines, its fingerprint pinned and its token kept
+// by the app; a paired engine whose certificate changed, or whose token was refused, stops, saying so,
+// and is offered pairing again. An
 // engine that refuses the app's version at connect is offered its update the same way, on this machine
 // or over SSH on its host (§8.4); an app too old for its engine is told to update itself. A project is
 // added as a checkout on the engine's host,
@@ -182,6 +193,20 @@ export const WslStep = defineTaggedUnion({
 })
 export type WslStep = typeof WslStep.Type
 
+/** Where pairing with an engine over TLS stands (§9.3): its certificate read, accepted, paired. */
+export const PairStep = defineTaggedUnion({
+  /** The fingerprint of the certificate the engine presents, being read. */
+  Reading: {},
+  /** Read, for the user to compare and accept. */
+  Read: { fingerprint: CertificateFingerprint },
+  /** Accepted: the app takes the pairing. */
+  Pairing: { fingerprint: CertificateFingerprint },
+  /** The app took it: the engine joins the known engines, connected to. */
+  Paired: { fingerprint: CertificateFingerprint },
+  Failed: { reason: Schema.String },
+})
+export type PairStep = typeof PairStep.Type
+
 /** Add engine, and the update offered to an engine that refused the app at connect (§9.2, §8.4). */
 export const EngineSetup = defineTaggedUnion({
   Closed: {},
@@ -190,6 +215,20 @@ export const EngineSetup = defineTaggedUnion({
     destination: Schema.String,
     name: Schema.String,
     problem: Schema.Option(Schema.String),
+  },
+  /** An engine over TLS (§9.3): its address, the pairing token and the engine's name, as typed. */
+  EditingTls: {
+    address: Schema.String,
+    token: Schema.Redacted(Schema.String),
+    name: Schema.String,
+    problem: Schema.Option(Schema.String),
+  },
+  /** Pairing with the engine named `name` at `endpoint`, with the token typed. */
+  Pairing: {
+    name: EngineName,
+    endpoint: TlsEndpoint,
+    token: Schema.Redacted(Schema.String),
+    step: PairStep,
   },
   /** A WSL2 distribution to add the engine in, being found (§7.6). */
   Wsl: { step: WslStep },
@@ -323,6 +362,21 @@ export const Message = defineMessageUnion({
   CompletedUbuntuInstall: { outcome: UbuntuInstall },
   /** Check the distribution found for an engine. */
   RequestedWslCheck: {},
+  /** Add engine over TLS, with a pairing token (§9.3). */
+  ChoseTlsEngine: {},
+  ChangedEngineAddress: { address: Schema.String },
+  ChangedEngineToken: { token: Schema.Redacted(Schema.String) },
+  CompletedFingerprintRead: {
+    endpoint: TlsEndpoint,
+    answer: FingerprintAnswer,
+  },
+  /** The user accepted the fingerprint read. */
+  AcceptedFingerprint: {},
+  /** Read the engine's certificate again, after a read or a pairing failed. */
+  RetriedFingerprintRead: {},
+  CompletedPairing: { name: EngineName, answer: PairAnswer },
+  /** Pair the known engine named `name` again, at `endpoint`: its certificate changed, or its token was refused. */
+  RequestedRepair: { name: EngineName, endpoint: TlsEndpoint },
 })
 export type Message = typeof Message.Type
 
@@ -520,6 +574,46 @@ export const InstallUbuntu = Command.define('InstallUbuntu', {
   }),
 })
 
+/** What pairing says where no app is around the renderer to do it. */
+export const noAppToPair = 'only the desktop app pairs with engines'
+
+export const ReadFingerprint = Command.define('ReadFingerprint', {
+  args: { endpoint: TlsEndpoint },
+  messages: [Message.CompletedFingerprintRead],
+  execute: ({ endpoint }) =>
+    Effect.gen(function* () {
+      const app = yield* AppHost
+      const answer = yield* Option.match(app.readFingerprint, {
+        onNone: () =>
+          Effect.succeed(
+            FingerprintAnswer.cases.Failed.make({ reason: noAppToPair }),
+          ),
+        onSome: read => read(endpoint),
+      })
+      return Message.CompletedFingerprintRead({ endpoint, answer })
+    }),
+})
+
+export const PairEngine = Command.define('PairEngine', {
+  args: {
+    name: EngineName,
+    endpoint: TlsEndpoint,
+    fingerprint: CertificateFingerprint,
+    token: Schema.Redacted(Schema.NonEmptyString),
+  },
+  messages: [Message.CompletedPairing],
+  execute: request =>
+    Effect.gen(function* () {
+      const app = yield* AppHost
+      const answer = yield* Option.match(app.pairEngine, {
+        onNone: () =>
+          Effect.succeed(PairAnswer.cases.Failed.make({ reason: noAppToPair })),
+        onSome: pair => pair(request),
+      })
+      return Message.CompletedPairing({ name: request.name, answer })
+    }),
+})
+
 /** What the screen's Commands need: the engine connection, and the app around the renderer. */
 export type Requires = EngineConnectionService | AppHost
 
@@ -688,12 +782,15 @@ export const sameHost = (a: EngineHost, b: EngineHost): boolean =>
 
 /**
  * Whether the setup is waiting on the app: a check, an install, a search for a WSL2 distribution or
- * Ubuntu's install under way, which nothing else interrupts.
+ * Ubuntu's install, a certificate's read or a pairing under way, which nothing else interrupts.
  */
 const busy = (setup: EngineSetup): boolean =>
   EngineSetup.match(setup, {
     Closed: () => false,
     Editing: () => false,
+    EditingTls: () => false,
+    Pairing: ({ step }) =>
+      PairStep.guards.Reading(step) || PairStep.guards.Pairing(step),
     Wsl: ({ step }) =>
       WslStep.guards.Searching(step) || WslStep.guards.InstallingUbuntu(step),
     Running: ({ step }) =>
@@ -716,6 +813,8 @@ const stepWsl = (
       }),
     Closed: () => model,
     Editing: () => model,
+    EditingTls: () => model,
+    Pairing: () => model,
     Running: () => model,
   })
 
@@ -757,8 +856,50 @@ const stepSetup = (
         : model,
     Closed: () => model,
     Editing: () => model,
+    EditingTls: () => model,
+    Pairing: () => model,
     Wsl: () => model,
   })
+
+/** The pairing's step moved on by `next`, where it is pairing with `endpoint`; any other setup is kept. */
+const stepPairing = (
+  model: Model,
+  endpoint: TlsEndpoint,
+  next: (step: PairStep) => Option.Option<PairStep>,
+): Model =>
+  EngineSetup.guards.Pairing(model.engineSetup) &&
+  sameEndpoint(model.engineSetup.endpoint, endpoint)
+    ? Option.match(next(model.engineSetup.step), {
+        onNone: () => model,
+        onSome: step =>
+          modifyFields(model, {
+            engineSetup: setup =>
+              EngineSetup.guards.Pairing(setup)
+                ? EngineSetup.Pairing({ ...setup, step })
+                : setup,
+          }),
+      })
+    : model
+
+/** Whether two endpoints are the same. */
+const sameEndpoint = (a: TlsEndpoint, b: TlsEndpoint): boolean =>
+  a.host === b.host && a.port === b.port
+
+/** The pairing with the engine named `name` at `endpoint` begun: its certificate read. */
+const startPairing = (
+  model: Model,
+  pairing: {
+    readonly name: EngineName
+    readonly endpoint: TlsEndpoint
+    readonly token: Redacted.Redacted<string>
+  },
+): Return => ({
+  model: modifyFields(model, {
+    engineSetup: () =>
+      EngineSetup.Pairing({ ...pairing, step: PairStep.Reading() }),
+  }),
+  commands: [ReadFingerprint({ endpoint: pairing.endpoint })],
+})
 
 /**
  * Whether `message` means the engine this app connects to may take it now: this machine's engine, or
@@ -777,8 +918,8 @@ export const reconnectsAfter = (message: Message): boolean =>
 
 /** What the screen's Message changes among the known engines on other hosts (§9.1). */
 export type RemoteChange = Data.TaggedEnum<{
-  /** Installed by Add engine, or found up to date: it joins the known engines, connected to. */
-  Added: { readonly name: EngineName; readonly destination: SshDestination }
+  /** Installed by Add engine, found up to date, or paired: it joins the known engines, connected to. */
+  Added: { readonly name: EngineName; readonly address: EngineAddress }
   /** The user tried its connection again. */
   Retried: { readonly name: EngineName }
 }>
@@ -791,7 +932,7 @@ const settingUp = (
   at: (step: SetupStep) => boolean,
 ): Option.Option<{
   readonly name: EngineName
-  readonly destination: SshDestination
+  readonly address: EngineAddress
 }> =>
   EngineSetup.guards.Running(model.engineSetup) &&
   EngineHost.guards.Ssh(host) &&
@@ -799,14 +940,17 @@ const settingUp = (
   at(model.engineSetup.step)
     ? Option.map(model.engineSetup.name, name => ({
         name,
-        destination: host.destination,
+        address: EngineAddress.cases.Ssh.make({
+          destination: host.destination,
+        }),
       }))
     : Option.none()
 
 /**
  * What `message`, coming to the screen as `model`, changes among the known engines: an engine on an SSH
- * host installed or updated, or found up to date, joins them (or one of its name is connected to
- * again); the user's try again reaches its engine.
+ * host installed or updated, or found up to date, or one over TLS paired with, its fingerprint
+ * pinned, joins them (or one of its name is connected to again, at its new address); the user's try
+ * again reaches its engine.
  */
 export const remoteAfter = (
   model: Model,
@@ -830,6 +974,22 @@ export const remoteAfter = (
           )
         : Option.none(),
     ),
+    Match.tag('CompletedPairing', ({ name, answer }) =>
+      PairAnswer.guards.Paired(answer) &&
+      EngineSetup.guards.Pairing(model.engineSetup) &&
+      model.engineSetup.name === name &&
+      PairStep.guards.Pairing(model.engineSetup.step)
+        ? Option.some(
+            RemoteChange.Added({
+              name,
+              address: EngineAddress.cases.Tls.make({
+                ...model.engineSetup.endpoint,
+                fingerprint: model.engineSetup.step.fingerprint,
+              }),
+            }),
+          )
+        : Option.none(),
+    ),
     Match.tag('RetriedRemote', ({ name }) =>
       Option.some(RemoteChange.Retried({ name })),
     ),
@@ -842,10 +1002,18 @@ interface EngineForm {
   readonly name: string
 }
 
-/** Add engine's form changed by `change`, while it is typed; its problem cleared. */
+/** Add engine's form over TLS, as typed. */
+interface TlsForm {
+  readonly address: string
+  readonly token: Redacted.Redacted<string>
+  readonly name: string
+}
+
+/** Add engine's form changed by `change`, or its form over TLS by `changeTls`, while typed; its problem cleared. */
 const editEngine = (
   model: Model,
   change: (typed: EngineForm) => EngineForm,
+  changeTls: (typed: TlsForm) => TlsForm = typed => typed,
 ): Model =>
   EngineSetup.match(model.engineSetup, {
     Editing: ({ destination, name }) =>
@@ -856,27 +1024,40 @@ const editEngine = (
             problem: Option.none(),
           }),
       }),
+    EditingTls: ({ address, token, name }) =>
+      modifyFields(model, {
+        engineSetup: () =>
+          EngineSetup.EditingTls({
+            ...changeTls({ address, token, name }),
+            problem: Option.none(),
+          }),
+      }),
     Closed: () => model,
     Wsl: () => model,
+    Pairing: () => model,
     Running: () => model,
   })
 
-/** The name Add engine's form gives the engine on `destination`, or why it can't take it. */
+/**
+ * The name Add engine's form gives the engine it reaches, or why it can't take it: the name of the
+ * known engine already reached there (`reachedThere`), else the name typed, else `fallback`.
+ */
 const engineName = (
   typed: string,
-  destination: SshDestination,
+  {
+    reachedThere,
+    fallback,
+  }: {
+    readonly reachedThere: (address: EngineAddress) => boolean
+    readonly fallback: string
+  },
   known: ReadonlyArray<RemoteEngines.RemoteEngine>,
 ): Result.Result<EngineName, string> => {
-  const there = known.find(
-    engine =>
-      EngineAddress.guards.Ssh(engine.address) &&
-      engine.address.destination === destination,
-  )
+  const there = known.find(engine => reachedThere(engine.address))
   if (there !== undefined) {
     return Result.succeed(there.name)
   }
-  const name =
-    typed.trim() === '' ? defaultEngineName(destination) : typed.trim()
+  const name = typed.trim() === '' ? fallback : typed.trim()
   if (name === '' || name === localEngineName) {
     return Result.fail(
       `${localEngineName} names this machine’s engine: give the engine another name.`,
@@ -1159,19 +1340,72 @@ export const update = (
                 'Give the host’s SSH destination: user@host, or a host of your ~/.ssh/config.',
               ),
             onSome: destination =>
-              Result.match(engineName(editing.name, destination, known), {
-                onFailure: refuse,
-                onSuccess: name =>
-                  startCheck(
-                    model,
-                    EngineHost.cases.Ssh.make({ destination }),
-                    Option.some(name),
+              Result.match(
+                engineName(
+                  editing.name,
+                  {
+                    reachedThere: address =>
+                      EngineAddress.guards.Ssh(address) &&
+                      address.destination === destination,
+                    fallback: defaultEngineName(destination),
+                  },
+                  known,
+                ),
+                {
+                  onFailure: refuse,
+                  onSuccess: name =>
+                    startCheck(
+                      model,
+                      EngineHost.cases.Ssh.make({ destination }),
+                      Option.some(name),
+                    ),
+                },
+              ),
+          })
+        },
+        EditingTls: (editing): Return => {
+          const refuse = (problem: string): Return => ({
+            model: modifyFields(model, {
+              engineSetup: () =>
+                EngineSetup.EditingTls({
+                  ...editing,
+                  problem: Option.some(problem),
+                }),
+            }),
+          })
+          const token = Redacted.make(Redacted.value(editing.token).trim())
+          return Option.match(parseTlsEndpoint(editing.address), {
+            onNone: () =>
+              refuse(
+                'Give the engine’s TLS address, host:port, as fabrica engine status prints it on its host.',
+              ),
+            onSome: endpoint =>
+              Redacted.value(token) === ''
+                ? refuse(
+                    'Give a pairing token: fabrica token create makes one on the engine’s host.',
+                  )
+                : Result.match(
+                    engineName(
+                      editing.name,
+                      {
+                        reachedThere: address =>
+                          EngineAddress.guards.Tls(address) &&
+                          sameEndpoint(address, endpoint),
+                        fallback: endpoint.host,
+                      },
+                      known,
+                    ),
+                    {
+                      onFailure: refuse,
+                      onSuccess: name =>
+                        startPairing(model, { name, endpoint, token }),
+                    },
                   ),
-              }),
           })
         },
         Closed: () => ({ model }),
         Wsl: () => ({ model }),
+        Pairing: () => ({ model }),
         Running: () => ({ model }),
       }),
     RequestedEngineUpdate: () =>
@@ -1224,6 +1458,8 @@ export const update = (
           }),
         Closed: () => ({ model }),
         Editing: () => ({ model }),
+        EditingTls: () => ({ model }),
+        Pairing: () => ({ model }),
         Wsl: () => ({ model }),
       }),
     CompletedEngineInstall: ({ host, answer }) => ({
@@ -1259,7 +1495,9 @@ export const update = (
           },
     ChoseSshEngine: () => ({
       model:
-        EngineSetup.guards.Wsl(model.engineSetup) && !busy(model.engineSetup)
+        (EngineSetup.guards.Wsl(model.engineSetup) ||
+          EngineSetup.guards.EditingTls(model.engineSetup)) &&
+        !busy(model.engineSetup)
           ? modifyFields(model, {
               engineSetup: () =>
                 EngineSetup.Editing({
@@ -1302,6 +1540,115 @@ export const update = (
             )
           : Option.none(),
       ),
+    }),
+    ChoseTlsEngine: () => ({
+      model:
+        (EngineSetup.guards.Editing(model.engineSetup) ||
+          EngineSetup.guards.Wsl(model.engineSetup)) &&
+        !busy(model.engineSetup)
+          ? modifyFields(model, {
+              engineSetup: () =>
+                EngineSetup.EditingTls({
+                  address: '',
+                  token: Redacted.make(''),
+                  name: '',
+                  problem: Option.none(),
+                }),
+            })
+          : model,
+    }),
+    ChangedEngineAddress: ({ address }) => ({
+      model: editEngine(
+        model,
+        typed => typed,
+        typed => ({ ...typed, address }),
+      ),
+    }),
+    ChangedEngineToken: ({ token }) => ({
+      model: editEngine(
+        model,
+        typed => typed,
+        typed => ({ ...typed, token }),
+      ),
+    }),
+    CompletedFingerprintRead: ({ endpoint, answer }) => ({
+      model: stepPairing(model, endpoint, step =>
+        PairStep.guards.Reading(step)
+          ? Option.some(
+              FingerprintAnswer.match(answer, {
+                Presented: ({ fingerprint }): PairStep =>
+                  PairStep.Read({ fingerprint }),
+                Failed: ({ reason }): PairStep => PairStep.Failed({ reason }),
+              }),
+            )
+          : Option.none(),
+      ),
+    }),
+    AcceptedFingerprint: () =>
+      EngineSetup.guards.Pairing(model.engineSetup) &&
+      PairStep.guards.Read(model.engineSetup.step)
+        ? {
+            model: modifyFields(model, {
+              engineSetup: setup =>
+                EngineSetup.guards.Pairing(setup) &&
+                PairStep.guards.Read(setup.step)
+                  ? EngineSetup.Pairing({
+                      ...setup,
+                      step: PairStep.Pairing({
+                        fingerprint: setup.step.fingerprint,
+                      }),
+                    })
+                  : setup,
+            }),
+            commands: [
+              PairEngine({
+                name: model.engineSetup.name,
+                endpoint: model.engineSetup.endpoint,
+                fingerprint: model.engineSetup.step.fingerprint,
+                token: model.engineSetup.token,
+              }),
+            ],
+          }
+        : { model },
+    RetriedFingerprintRead: () =>
+      EngineSetup.guards.Pairing(model.engineSetup) &&
+      PairStep.guards.Failed(model.engineSetup.step)
+        ? startPairing(model, {
+            name: model.engineSetup.name,
+            endpoint: model.engineSetup.endpoint,
+            token: model.engineSetup.token,
+          })
+        : { model },
+    CompletedPairing: ({ name, answer }) => ({
+      model:
+        EngineSetup.guards.Pairing(model.engineSetup) &&
+        model.engineSetup.name === name
+          ? stepPairing(model, model.engineSetup.endpoint, step =>
+              PairStep.guards.Pairing(step)
+                ? Option.some(
+                    PairAnswer.match(answer, {
+                      Paired: (): PairStep =>
+                        PairStep.Paired({ fingerprint: step.fingerprint }),
+                      Failed: ({ reason }): PairStep =>
+                        PairStep.Failed({ reason }),
+                    }),
+                  )
+                : Option.none(),
+            )
+          : model,
+    }),
+    RequestedRepair: ({ name, endpoint }) => ({
+      model: busy(model.engineSetup)
+        ? model
+        : modifyFields(model, {
+            engineSetup: () =>
+              EngineSetup.EditingTls({
+                address: tlsEndpointText(endpoint),
+                token: Redacted.make(''),
+                name,
+                problem: Option.none(),
+              }),
+          }),
     }),
     RequestedWslCheck: () =>
       Option.match(
@@ -1515,7 +1862,7 @@ export const addressText = (address: EngineAddress): string =>
     Local: () => 'This machine',
     Ssh: ({ destination }) => destination,
     Wsl: ({ distro }) => `WSL ${distro}`,
-    Tls: ({ address }) => address,
+    Tls: endpoint => tlsEndpointText(endpoint),
   })
 
 /** A known engine on another host: where it is, its connection's state, and what it offers. */
@@ -1590,6 +1937,26 @@ const remoteCard = (
                 ],
                 ['Try again'],
               ),
+              // Its certificate changed, or its token was refused: paired again, with a new token.
+              EngineAddress.guards.Tls(remote.address)
+                ? h.button(
+                    [
+                      h.Type('button'),
+                      h.OnClick(
+                        Message.RequestedRepair({
+                          name: remote.name,
+                          endpoint: {
+                            host: remote.address.host,
+                            port: remote.address.port,
+                          },
+                        }),
+                      ),
+                      h.Disabled(busy(model.engineSetup)),
+                      h.Class(quietButton),
+                    ],
+                    ['Pair again'],
+                  )
+                : h.empty,
             ],
           ),
         Refused: () => updateOffer(model, remote.connection, requestUpdate, h),
@@ -1688,8 +2055,14 @@ const closeButton = (label: string, h: HtmlBuilder<Message>): Html =>
     [label],
   )
 
-/** Where Add engine adds the engine: over SSH, or in WSL2 (§7.6). */
-type EnginePlace = 'ssh' | 'wsl'
+/** Where Add engine adds the engine: over SSH, over TLS with a pairing token (§9.3), or in WSL2 (§7.6). */
+type EnginePlace = 'ssh' | 'tls' | 'wsl'
+
+const choosePlace: Record<EnginePlace, Message> = {
+  ssh: Message.ChoseSshEngine(),
+  tls: Message.ChoseTlsEngine(),
+  wsl: Message.ChoseWslEngine(),
+}
 
 const placeButton = (
   place: EnginePlace,
@@ -1701,9 +2074,7 @@ const placeButton = (
     [
       h.Type('button'),
       h.AriaPressed(place === chosen ? 'true' : 'false'),
-      h.OnClick(
-        place === 'wsl' ? Message.ChoseWslEngine() : Message.ChoseSshEngine(),
-      ),
+      h.OnClick(choosePlace[place]),
       h.Class(
         `rounded-button border px-10 py-4 text-xs ${place === chosen ? 'border-c1 font-bold' : 'border-line text-muted'}`,
       ),
@@ -1711,13 +2082,18 @@ const placeButton = (
     [label],
   )
 
-/** The choice between an engine over SSH and one in WSL2, on Windows. */
-const placeChoice = (chosen: EnginePlace, h: HtmlBuilder<Message>): Html =>
+/** The choice between an engine over SSH, one over TLS, and, on Windows, one in WSL2. */
+const placeChoice = (
+  chosen: EnginePlace,
+  platform: Platform,
+  h: HtmlBuilder<Message>,
+): Html =>
   h.div(
     [h.Role('group'), h.AriaLabel('Add an engine'), h.Class('flex gap-8')],
     [
       placeButton('ssh', chosen, 'Over SSH', h),
-      placeButton('wsl', chosen, 'In WSL2', h),
+      placeButton('tls', chosen, 'Over TLS', h),
+      platform === 'win32' ? placeButton('wsl', chosen, 'In WSL2', h) : h.empty,
     ],
   )
 
@@ -1735,7 +2111,7 @@ const addEngineForm = (
       h.Style(cardStyle),
     ],
     [
-      platform === 'win32' ? placeChoice('ssh', h) : h.empty,
+      placeChoice('ssh', platform, h),
       labelled(
         'add-engine-destination',
         'SSH destination',
@@ -1786,6 +2162,187 @@ const addEngineForm = (
       ),
     ],
   )
+
+/** Add engine over TLS: the engine's address, a pairing token and its name (§9.3). */
+const tlsForm = (
+  { address, token, name }: TlsForm,
+  problem: Option.Option<string>,
+  platform: Platform,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.form(
+    [
+      h.AriaLabel('Add engine over TLS'),
+      h.OnSubmit(Message.SubmittedAddEngine()),
+      h.Class(card),
+      h.Style(cardStyle),
+    ],
+    [
+      placeChoice('tls', platform, h),
+      labelled(
+        'add-engine-address',
+        'TLS address',
+        h.input([
+          h.Id('add-engine-address'),
+          h.Type('text'),
+          h.Value(address),
+          h.Placeholder('build-box:8443'),
+          h.OnInput(address => Message.ChangedEngineAddress({ address })),
+          h.Class(`font-mono ${field}`),
+        ]),
+        h,
+      ),
+      labelled(
+        'add-engine-token',
+        'Pairing token',
+        h.input([
+          h.Id('add-engine-token'),
+          h.Type('password'),
+          h.Value(Redacted.value(token)),
+          h.Autocomplete('off'),
+          h.OnInput(token =>
+            Message.ChangedEngineToken({ token: Redacted.make(token) }),
+          ),
+          h.Class(`font-mono ${field}`),
+        ]),
+        h,
+      ),
+      h.p(
+        [h.Class('text-xs text-muted')],
+        [
+          'Where the engine listens over TLS, as fabrica engine status prints it on its host, and a token fabrica token create made there. The app reads the engine’s certificate first and shows you its fingerprint; nothing is kept until you accept it.',
+        ],
+      ),
+      labelled(
+        'add-engine-name',
+        'Name',
+        h.input([
+          h.Id('add-engine-name'),
+          h.Type('text'),
+          h.Value(name),
+          h.Placeholder('its host’s, where left empty'),
+          h.OnInput(name => Message.ChangedEngineName({ name })),
+          h.Class(field),
+        ]),
+        h,
+      ),
+      Option.match(problem, {
+        onNone: () => h.empty,
+        onSome: text => problemLine(text, h),
+      }),
+      actions(
+        [
+          h.button(
+            [h.Type('submit'), h.Class(primaryButton)],
+            ['Read its certificate'],
+          ),
+          closeButton('Cancel', h),
+        ],
+        h,
+      ),
+    ],
+  )
+
+/** The fingerprint read, as the user compares it with the one the engine's host prints. */
+const fingerprintLine = (fingerprint: string, h: HtmlBuilder<Message>): Html =>
+  h.p(
+    [
+      h.AriaLabel('Certificate fingerprint'),
+      h.Class('break-all font-mono text-xs'),
+    ],
+    [`SHA-256 ${fingerprint}`],
+  )
+
+/** Pairing with the engine named `name` at `endpoint`: its certificate read, accepted, paired. */
+const pairingView = (
+  name: EngineName,
+  endpoint: TlsEndpoint,
+  step: PairStep,
+  h: HtmlBuilder<Message>,
+): Html => {
+  const at = tlsEndpointText(endpoint)
+  return h.section(
+    [h.AriaLabel(`Engine at ${at}`), h.Class(card), h.Style(cardStyle)],
+    [
+      h.h3([h.Class('text-sm font-extrabold')], [`${name} at ${at}`]),
+      PairStep.match(step, {
+        Reading: () =>
+          statusLine(
+            `Reading the certificate the engine at ${at} presents…`,
+            h,
+          ),
+        Read: ({ fingerprint }) =>
+          h.div(
+            [h.Class('flex flex-col gap-8')],
+            [
+              h.p(
+                [h.Class('text-sm')],
+                [`The engine at ${at} presents this certificate:`],
+              ),
+              fingerprintLine(fingerprint, h),
+              h.p(
+                [h.Class('text-xs text-c3')],
+                [
+                  'Compare it with the fingerprint fabrica engine status prints on the engine’s host, and accept it only if they are the same: the app will reach this engine only while it presents this certificate.',
+                ],
+              ),
+              actions(
+                [
+                  h.button(
+                    [
+                      h.Type('button'),
+                      h.OnClick(Message.AcceptedFingerprint()),
+                      h.Class(primaryButton),
+                    ],
+                    ['Accept and pair'],
+                  ),
+                  closeButton('Cancel', h),
+                ],
+                h,
+              ),
+            ],
+          ),
+        Pairing: ({ fingerprint }) =>
+          h.div(
+            [h.Class('flex flex-col gap-8')],
+            [fingerprintLine(fingerprint, h), statusLine('Pairing…', h)],
+          ),
+        Paired: ({ fingerprint }) =>
+          h.div(
+            [h.Class('flex flex-col gap-8')],
+            [
+              h.p(
+                [h.Role('status'), h.Class('text-sm text-c4')],
+                [
+                  `Paired with ${name}: the app reaches it at ${at} while it presents this certificate, and keeps its token once it answers.`,
+                ],
+              ),
+              fingerprintLine(fingerprint, h),
+              actions([closeButton('Close', h)], h),
+            ],
+          ),
+        Failed: ({ reason }) =>
+          h.div(
+            [h.Class('flex flex-col gap-8')],
+            [
+              problemLine(reason, h),
+              actions(
+                [
+                  quietAction(
+                    'Read it again',
+                    Message.RetriedFingerprintRead(),
+                    h,
+                  ),
+                  closeButton('Close', h),
+                ],
+                h,
+              ),
+            ],
+          ),
+      }),
+    ],
+  )
+}
 
 const checkView = (check: HostCheck, h: HtmlBuilder<Message>): Html =>
   h.div(
@@ -1984,11 +2541,15 @@ const wslSearchView = (search: WslSearch, h: HtmlBuilder<Message>): Html =>
   })
 
 /** Add engine in WSL2: the distribution looked for, Ubuntu installed where there is none (§7.6). */
-const wslView = (step: WslStep, h: HtmlBuilder<Message>): Html =>
+const wslView = (
+  step: WslStep,
+  platform: Platform,
+  h: HtmlBuilder<Message>,
+): Html =>
   h.section(
     [h.AriaLabel('Engine in WSL2'), h.Class(card), h.Style(cardStyle)],
     [
-      placeChoice('wsl', h),
+      placeChoice('wsl', platform, h),
       WslStep.match(step, {
         Searching: () => statusLine('Looking for a WSL2 distribution…', h),
         Searched: ({ search }) => wslSearchView(search, h),
@@ -2022,7 +2583,10 @@ const setupView = (
     Closed: () => h.empty,
     Editing: ({ destination, name, problem }) =>
       addEngineForm({ destination, name }, problem, platform, h),
-    Wsl: ({ step }) => wslView(step, h),
+    EditingTls: ({ address, token, name, problem }) =>
+      tlsForm({ address, token, name }, problem, platform, h),
+    Pairing: ({ name, endpoint, step }) => pairingView(name, endpoint, step, h),
+    Wsl: ({ step }) => wslView(step, platform, h),
     Running: ({ host, step }) =>
       h.section(
         [

@@ -3,14 +3,18 @@ import { Option, Schema } from 'effect'
 import {
   CheckAnswer,
   EngineHost,
+  FingerprintAnswer,
   InstallAnswer,
   InstallConsent,
   KeepAnswer,
   KnownEngine,
   KnownEnginesAnswer,
+  PairAnswer,
+  PairRequest,
   SshPromptAnswer,
   SshPromptEvent,
   type SshPromptsApi,
+  TlsEndpoint,
   UbuntuInstall,
   WslSearch,
   sshPromptsMember,
@@ -26,6 +30,8 @@ import {
   installUbuntuMethod,
   keepEngineMethod,
   knownEnginesMethod,
+  pairEngineMethod,
+  readFingerprintMethod,
 } from '@fabrica/ui/host'
 import {
   DesktopNotification,
@@ -46,7 +52,8 @@ import { Theme } from '@fabrica/ui/theme'
 // (§18.5), installing the local engine's login service, checking a host for an engine and installing it
 // there (§9.2), finding a WSL2 distribution to run it in and installing Ubuntu where there is none
 // (§7.6), what ssh asks as it connects and the page's answers (§9.1), the engines the app knows and one
-// to keep (§9.1), and the engine ports, the local engine's and those the page asks for to its other
+// to keep (§9.1), the fingerprint an engine presents over TLS and the pairing the user agreed to, its
+// token crossing as text (§9.3), and the engine ports, the local engine's and those the page asks for to its other
 // known engines, which the preload hands to the page as window messages (contextBridge can't carry a
 // MessagePort).
 
@@ -72,6 +79,8 @@ export const channels = {
   knownEngines: 'fabrica:known-engines',
   keepEngine: 'fabrica:keep-engine',
   connectEngine: 'fabrica:connect-engine',
+  readFingerprint: 'fabrica:read-fingerprint',
+  pairEngine: 'fabrica:pair-engine',
   enginePort: 'fabrica:engine-port',
   remoteEnginePort: 'fabrica:remote-engine-port',
 } as const
@@ -143,6 +152,14 @@ export interface FabricaApi {
   readonly [keepEngineMethod]: (engine: KnownEngine) => Promise<KeepAnswer>
   /** Asks for a port to a known engine, which comes as a window message carrying the request's number. */
   readonly [connectEngineMethod]: (request: EnginePortRequest) => void
+  /** The fingerprint of the certificate the engine at an endpoint presents, at a first pairing (§9.3). */
+  readonly [readFingerprintMethod]: (
+    endpoint: TlsEndpoint,
+  ) => Promise<FingerprintAnswer>
+  /** Hands main the pairing the user agreed to, encoded: the token as text. */
+  readonly [pairEngineMethod]: (
+    request: typeof PairRequest.Encoded,
+  ) => Promise<PairAnswer>
 }
 
 /** The part of `ipcRenderer` the API uses; a listener gets a message's value and the ports it carries. */
@@ -184,6 +201,11 @@ const encodeKnownEngine = Schema.encodeSync(KnownEngine)
 const decodeKeepAnswer = Schema.decodeUnknownSync(KeepAnswer)
 const decodePortRequest = Schema.decodeUnknownSync(EnginePortRequest)
 const encodePortRequest = Schema.encodeSync(EnginePortRequest)
+const decodeEndpoint = Schema.decodeUnknownSync(TlsEndpoint)
+const decodeFingerprintAnswer = Schema.decodeUnknownSync(FingerprintAnswer)
+const decodePairRequest = Schema.decodeUnknownSync(PairRequest)
+const encodePairRequest = Schema.encodeSync(PairRequest)
+const decodePairAnswer = Schema.decodeUnknownSync(PairAnswer)
 const decodePortAnswer = Schema.decodeUnknownOption(
   Schema.Struct({ request: Schema.Int }),
 )
@@ -261,6 +283,21 @@ export const makeApi = (ipc: PreloadIpc): FabricaApi => ({
       channels.connectEngine,
       encodePortRequest(decodePortRequest(request)),
     ),
+  [readFingerprintMethod]: endpoint =>
+    Promise.resolve()
+      .then(() =>
+        ipc.invoke(channels.readFingerprint, decodeEndpoint(endpoint)),
+      )
+      .then(decodeFingerprintAnswer),
+  [pairEngineMethod]: request =>
+    Promise.resolve()
+      .then(() =>
+        ipc.invoke(
+          channels.pairEngine,
+          encodePairRequest(decodePairRequest(request)),
+        ),
+      )
+      .then(decodePairAnswer),
 })
 
 /** Hands the page each engine port main sends, as a window message of type `fabrica:engine-port`. */

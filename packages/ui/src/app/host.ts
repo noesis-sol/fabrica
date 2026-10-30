@@ -4,11 +4,15 @@ import {
   CheckAnswer,
   type EngineAddress,
   type EngineHost,
+  FingerprintAnswer,
   InstallAnswer,
   type InstallConsent,
   KeepAnswer,
   type KnownEngine,
   KnownEnginesAnswer,
+  PairAnswer,
+  PairRequest,
+  type TlsEndpoint,
   UbuntuInstall,
   WslSearch,
 } from '@fabrica/client'
@@ -22,7 +26,9 @@ import type { EnginePortRequest } from './port'
 // Windows, finding the WSL2 distribution to run it in, or installing Ubuntu. The preload's API answers
 // them in the desktop app; the renderer alone in a browser has no app around it. The app keeps the
 // engines it knows (§9.1): the renderer reads them, has one kept once it reached it, and asks for a
-// port to each at each attempt to connect. What crosses is decoded, here and in the preload, with the
+// port to each at each attempt to connect. An engine over TLS is paired with (§9.3): the app reads the
+// fingerprint its certificate presents, and takes the pairing the user agreed to, its token with it.
+// What crosses is decoded, here and in the preload, with the
 // schemas below and the client's.
 
 /** What installing the login service came to. */
@@ -61,6 +67,14 @@ export interface AppHostShape {
   readonly enginePort: Option.Option<
     (address: EngineAddress) => Effect.Effect<MessagePort>
   >
+  /** The fingerprint the engine at an endpoint presents over TLS: none where no app is around. */
+  readonly readFingerprint: Option.Option<
+    (endpoint: TlsEndpoint) => Effect.Effect<FingerprintAnswer>
+  >
+  /** Has the app take the pairing the user agreed to: none where no app is around. */
+  readonly pairEngine: Option.Option<
+    (request: PairRequest) => Effect.Effect<PairAnswer>
+  >
 }
 
 export class AppHost extends Context.Service<AppHost, AppHostShape>()(
@@ -77,6 +91,8 @@ export const noAppHost: AppHostShape = {
   knownEngines: Option.none(),
   keepEngine: Option.none(),
   enginePort: Option.none(),
+  readFingerprint: Option.none(),
+  pairEngine: Option.none(),
 }
 
 const decodeInstall = Schema.decodeUnknownEffect(ServiceInstall)
@@ -86,6 +102,10 @@ const decodeWslSearch = Schema.decodeUnknownEffect(WslSearch)
 const decodeUbuntuInstall = Schema.decodeUnknownEffect(UbuntuInstall)
 const decodeKnownEngines = Schema.decodeUnknownEffect(KnownEnginesAnswer)
 const decodeKeepAnswer = Schema.decodeUnknownEffect(KeepAnswer)
+const decodeFingerprintAnswer = Schema.decodeUnknownEffect(FingerprintAnswer)
+const decodePairAnswer = Schema.decodeUnknownEffect(PairAnswer)
+// The pairing crosses encoded, its token as text: a Redacted doesn't survive the context bridge.
+const encodePairRequest = Schema.encodeSync(PairRequest)
 
 /** The `window.fabrica` method the preload exposes for the login service, by name. */
 export const installLoginServiceMethod = 'installLoginService'
@@ -102,6 +122,10 @@ export const installUbuntuMethod = 'installUbuntu'
 export const knownEnginesMethod = 'knownEngines'
 export const keepEngineMethod = 'keepEngine'
 export const connectEngineMethod = 'connectEngine'
+
+/** The `window.fabrica` methods the preload exposes for pairing with an engine over TLS. */
+export const readFingerprintMethod = 'readFingerprint'
+export const pairEngineMethod = 'pairEngine'
 
 /** Calls its listener with each known engine's port and the number of the request it answers; the function returned stops it. */
 export type RemoteEnginePorts = (
@@ -179,6 +203,12 @@ export const appHostOf = (
   const installUbuntu = methodOf(api, installUbuntuMethod, decodeUbuntuInstall)
   const known = methodOf(api, knownEnginesMethod, decodeKnownEngines)
   const keep = methodOf(api, keepEngineMethod, decodeKeepAnswer)
+  const fingerprint = methodOf(
+    api,
+    readFingerprintMethod,
+    decodeFingerprintAnswer,
+  )
+  const pair = methodOf(api, pairEngineMethod, decodePairAnswer)
   const connect: unknown =
     typeof api === 'object' && api !== null
       ? Reflect.get(api, connectEngineMethod)
@@ -243,6 +273,24 @@ export const appHostOf = (
         call([engine]).pipe(
           Effect.catch(reason =>
             Effect.succeed(KeepAnswer.cases.Failed.make({ reason })),
+          ),
+        ),
+    ),
+    readFingerprint: Option.map(
+      fingerprint,
+      call => (endpoint: TlsEndpoint) =>
+        call([endpoint]).pipe(
+          Effect.catch(reason =>
+            Effect.succeed(FingerprintAnswer.cases.Failed.make({ reason })),
+          ),
+        ),
+    ),
+    pairEngine: Option.map(
+      pair,
+      call => (request: PairRequest) =>
+        call([encodePairRequest(request)]).pipe(
+          Effect.catch(reason =>
+            Effect.succeed(PairAnswer.cases.Failed.make({ reason })),
           ),
         ),
     ),
