@@ -643,7 +643,49 @@ const reopenScreen = (model: Model): Return =>
           ? reviewScope(model)
           : { model }
 
+/**
+ * The scope's attention requests now `engineAttention`, each engine's kept apart: the column shows them
+ * joined, and the answer talk follows their open questions.
+ */
+const showAttention = (
+  model: Model,
+  engineAttention: Model['engineAttention'],
+): Return =>
+  andThen(
+    foldRequests(
+      modifyFields(model, {
+        engineAttention: () => engineAttention,
+        attention: () => joinedAttention(engineAttention),
+      }),
+      engineAttention,
+    ),
+    shown =>
+      stepTalkPanel(shown, talkPanel =>
+        TalkPanel.receivedQuestions(
+          talkPanel,
+          TalkPanel.openQuestions(engineAttention),
+        ),
+      ),
+  )
+
+/**
+ * The attention column keeps the requests of the engines its watch follows alone: an engine that failed,
+ * stopped, was refused or is connecting again (no longer live) has its requests dropped, since none can
+ * be answered there; its stream sends them afresh once it is connected again.
+ */
+const dropLostAttention = (model: Model): Return => {
+  const kept = model.engineAttention.filter(entry =>
+    RemoteEngines.isEngineLive(model, entry.engine),
+  )
+  return kept.length === model.engineAttention.length
+    ? { model }
+    : showAttention(model, kept)
+}
+
 export const update = (model: Model, message: Message): Return =>
+  andThen(receive(model, message), dropLostAttention)
+
+const receive = (model: Model, message: Message): Return =>
   Message.match<Return>(message, {
     PressedKey: pressed =>
       Option.match(commandFor(modelCommands(model), pressed), {
@@ -1053,24 +1095,10 @@ export const update = (model: Model, message: Message): Return =>
         engine,
         items,
       )
-      const received = modifyFields(model, {
-        engineAttention: () => engineAttention,
-        attention: () => joinedAttention(engineAttention),
-      })
-      return andThen(
-        foldRequests(received, received.engineAttention),
-        requested =>
-          Option.match(requested.attention, {
-            onNone: () => ({ model: requested }),
-            onSome: () =>
-              stepTalkPanel(requested, talkPanel =>
-                TalkPanel.receivedQuestions(
-                  talkPanel,
-                  TalkPanel.openQuestions(requested.engineAttention),
-                ),
-              ),
-          }),
-      )
+      // A patch before the engine's first snapshot changes nothing.
+      return engineAttention === model.engineAttention
+        ? { model }
+        : showAttention(model, engineAttention)
     },
     ReceivedBacklog: ({ project, items }) => {
       if (!Option.contains(model.scope, project)) return { model }
