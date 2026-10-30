@@ -1,4 +1,13 @@
-import { Context, Effect, Layer, Option, Semaphore } from 'effect'
+import {
+  Context,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Ref,
+  Scope,
+  Semaphore,
+} from 'effect'
 import { SqlClient } from 'effect/sql'
 import { mkdir } from 'node:fs/promises'
 import * as NodePath from 'node:path'
@@ -12,7 +21,11 @@ import {
 
 import { EngineFiles, type EnginePaths } from '../engine/paths'
 import { Projects } from '../projects/service'
-import { TelemetryDb, telemetryDbLayer } from '../telemetry/duckdb'
+import {
+  TelemetryDb,
+  type TelemetryDbShape,
+  telemetryDbLayer,
+} from '../telemetry/duckdb'
 import {
   type Sources,
   findEventStream,
@@ -27,12 +40,13 @@ import { TelemetryStore } from '../telemetry/store'
 // layer's database, on the daemon's telemetry store (`TelemetryStore`), the one its services record
 // into. The database is opened on the first request, not as the engine starts, so an engine whose
 // host can't load DuckDB still runs: each Insights request then answers a defect giving the reason,
-// kept to that request. A request reads the files of its project, or of every project where it names
-// none: each event stream and Pi's session files, found where they lie; it refreshes the copies of the
-// recorded rows and of those projects' tickets, then runs, one request at a time on the database. A
-// project whose work graph won't open is queried without its tickets. An export (§21, on demand)
-// refreshes the copies of every project's and writes them, metadata only, as Parquet files in a
-// folder on the engine's host, made where it isn't there; its failure is the request's answer.
+// kept to that request, and the next request tries the open again. A request reads the files of its
+// project, or of every project where it names none: each event stream and Pi's session files, found
+// where they lie; it refreshes the copies of the recorded rows and of those projects' tickets, then
+// runs, one request at a time on the database. A project whose work graph won't open is queried
+// without its tickets. An export (§21, on demand) refreshes the copies of every project's and writes
+// them, metadata only, as Parquet files in a folder on the engine's host, made where it isn't there;
+// its failure is the request's answer.
 
 /** A project as a request reads it: its ID and its checkout. */
 interface Place {
@@ -50,9 +64,30 @@ export const insightsHandlersOn = <E, R>(
       const files = yield* EngineFiles
       const { data } = files
       const scope = yield* Effect.scope
-      const opened = yield* Effect.cached(
-        Layer.buildWithScope(database(files), scope).pipe(
-          Effect.map(context => Context.get(context, TelemetryDb)),
+      const openLock = yield* Semaphore.make(1)
+      const kept = yield* Ref.make(Option.none<TelemetryDbShape>())
+      // Only an open that succeeds is kept: one that failed is tried again by the next request. An
+      // open runs whole, whoever asked for it interrupted or not, in a scope of its own, closed where
+      // it fails.
+      const opened = openLock.withPermit(
+        Effect.flatMap(
+          Ref.get(kept),
+          Option.match({
+            onSome: Effect.succeed,
+            onNone: () =>
+              Effect.uninterruptible(
+                Effect.gen(function* () {
+                  const own = yield* Scope.fork(scope)
+                  const built = yield* Layer.buildWithScope(
+                    database(files),
+                    own,
+                  ).pipe(Effect.onError(() => Scope.close(own, Exit.void)))
+                  const db = Context.get(built, TelemetryDb)
+                  yield* Ref.set(kept, Option.some(db))
+                  return db
+                }),
+              ),
+          }),
         ),
       )
       const oneAtATime = yield* Semaphore.make(1)
