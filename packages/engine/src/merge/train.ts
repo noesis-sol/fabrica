@@ -34,11 +34,14 @@ import type { MergeTurn } from './turn'
 // The merge train (spec §13.7, orchestra-8qk2): while one ticket's merge check runs, the next ticket in
 // line rides beside it: its branch is rebased onto the first's rebased head in its own worktree, set up
 // where that rebase, or a setup its worktree waits for, calls for it, and checked there. If the first
-// merges as checked, the second's turn takes that check's outcome and merges with no further check;
-// otherwise the second's branch is put back where it was, set up again where the ride set it up, and its
-// turn prepares it afresh. A stop puts it back without waiting on a setup: the worktree records the
-// files, and the ticket's next merge, or its next ride, sets it up. One ticket rides at most, never
-// deeper (`merge.train`), and none while the machine budget holds.
+// merges as checked and the second's check passed, the second's turn takes that pass and merges with no
+// further check. A ride that failed, timed out or stopped says nothing of its ticket, as the check ran
+// beside another (orchestra train.go): the second's branch is put back where it was, its worktree
+// waiting for the setup the ride ran, and its turn rebases, sets it up and checks it afresh. A first
+// that doesn't merge as checked has the second's branch put back too, set up again where the ride set
+// it up. A stop puts it back without waiting on a setup: the worktree records the files, and the
+// ticket's next merge, or its next ride, sets it up. One ticket rides at most, never deeper
+// (`merge.train`), and none while the machine budget holds.
 
 /** Whether the machine budget holds (§14.3): no ticket rides while it does. Until it is built, it never holds. */
 export const MachineHold = Context.Reference<{
@@ -109,25 +112,26 @@ const riderOf = (carriage: Carriage): Option.Option<TicketId> =>
     Stranded: ({ ticket }) => Option.some(ticket),
   })
 
-/** A ride's check outcome its rider's turn takes as its own: a pass or a failure, never a time limit or a check that couldn't run, as those may be the ride's. */
-const standsFor = CheckOutcome.$match({
-  Passed: () => true,
-  Failed: () => true,
-  TimedOut: () => false,
-  CouldNotRun: () => false,
-})
+/**
+ * Whether a ride stands for its rider's turn: only a check that passed. A failure, a time limit or a
+ * check that couldn't run may be the ride's, slowed beside its first's, and a setup that failed or a
+ * rebase that stopped there leaves the turn its own: the turn checks the ticket again.
+ */
+const standsFor = (ridden: Ridden): boolean =>
+  Ridden.$is('Checked')(ridden) && CheckOutcome.$is('Passed')(ridden.outcome)
 
 export interface MergeTrain {
   /**
    * A turn's step into the queue: waits for the ride its ticket took, so that nothing else works in its
-   * worktree; the outcome its turn ends with when its branch couldn't be put back after one.
+   * worktree, and puts its branch back unless the ride passed; the outcome its turn ends with when its
+   * branch couldn't be put back after one.
    */
   readonly arrive: (
     turn: MergeTurn,
   ) => Effect.Effect<Option.Option<MergeOutcome>>
   /**
    * The merge check `command` of the turn's `head` on top of `onto`, its record published: the ride's
-   * outcome when the ticket rode to that head and its first merged as checked, else the check run in its
+   * pass when the ticket rode to that head and its first merged as checked, else the check run in its
    * worktree as `suite`, the next ticket in line riding beside it.
    */
   readonly check: (input: {
@@ -405,7 +409,7 @@ export const makeTrain = Effect.fn('MergeTrain.make')(function* ({
       ride.onto === onto &&
       Ridden.$is('Checked')(ridden) &&
       ridden.head === head &&
-      standsFor(ridden.outcome)
+      standsFor(ridden)
         ? Option.some(ridden.outcome)
         : Option.none(),
       Carriage.Empty(),
@@ -436,6 +440,19 @@ export const makeTrain = Effect.fn('MergeTrain.make')(function* ({
     return yield* runCheck(turn, command, false, suite)
   })
 
+  /**
+   * The rider's turn after a ride that didn't pass: its branch put back, the setup the ride ran recorded
+   * for the turn's own rebase to run; the outcome its turn ends with where it couldn't be put back.
+   */
+  const leftToItsTurn = (
+    ride: Ride,
+  ): Effect.Effect<readonly [Option.Option<MergeOutcome>, Carriage]> =>
+    Effect.map(putBack(ride, { setUpAgain: false }), after =>
+      Carriage.$is('Stranded')(after)
+        ? [Option.some(after.outcome), Carriage.Empty()]
+        : [Option.none(), after],
+    )
+
   const arrive: MergeTrain['arrive'] = Effect.fn('MergeTrain.arrive')(
     function* (turn) {
       const { ticket } = turn.worktree
@@ -446,33 +463,29 @@ export const makeTrain = Effect.fn('MergeTrain.make')(function* ({
         current.ride.rider.worktree.ticket === ticket
       )
         yield* Fiber.join(current.ride.fiber)
-      return yield* SynchronizedRef.modifyEffect(carriage, now =>
-        Carriage.$match(now, {
-          Empty: () => Effect.succeed([Option.none(), now] as const),
-          Riding: () => Effect.succeed([Option.none(), now] as const),
-          Kept: ({ ride }) =>
-            ride.rider.worktree.ticket !== ticket
-              ? Effect.succeed([Option.none(), now] as const)
-              : Effect.map(Fiber.join(ride.fiber), ridden =>
-                  Ridden.$is('SetupFailed')(ridden)
-                    ? ([
-                        Option.some(
-                          MergeOutcome.SetupFailed({
-                            ticket,
-                            detail: ridden.detail,
-                          }),
-                        ),
-                        Carriage.Empty(),
-                      ] as const)
-                    : ([Option.none(), now] as const),
-                ),
-          Stranded: given =>
-            Effect.succeed(
-              given.ticket === ticket
-                ? ([Option.some(given.outcome), Carriage.Empty()] as const)
-                : ([Option.none(), now] as const),
-            ),
-        }),
+      return yield* SynchronizedRef.modifyEffect(
+        carriage,
+        (
+          now,
+        ): Effect.Effect<readonly [Option.Option<MergeOutcome>, Carriage]> =>
+          Carriage.$match(now, {
+            Empty: () => Effect.succeed([Option.none(), now] as const),
+            Riding: () => Effect.succeed([Option.none(), now] as const),
+            Kept: ({ ride }) =>
+              ride.rider.worktree.ticket !== ticket
+                ? Effect.succeed([Option.none(), now] as const)
+                : Effect.flatMap(Fiber.join(ride.fiber), ridden =>
+                    standsFor(ridden)
+                      ? Effect.succeed([Option.none(), now] as const)
+                      : leftToItsTurn(ride),
+                  ),
+            Stranded: given =>
+              Effect.succeed(
+                given.ticket === ticket
+                  ? ([Option.some(given.outcome), Carriage.Empty()] as const)
+                  : ([Option.none(), now] as const),
+              ),
+          }),
       )
     },
   )

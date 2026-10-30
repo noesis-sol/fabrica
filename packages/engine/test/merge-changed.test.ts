@@ -413,7 +413,7 @@ describe('the tracked files a merge check changed', () => {
   )
 
   it.live(
-    "by the check a ticket rode to aren't taken for its worker's: its ride's failure sets it aside as CHECKS_FAILED",
+    "by the check a ticket rode to aren't taken for its worker's: its own turn's failure after its ride's sets it aside as CHECKS_FAILED",
     () =>
       Effect.gen(function* () {
         const checkout = repository()
@@ -434,10 +434,12 @@ describe('the tracked files a merge check changed', () => {
             detail: expect.stringMatching(/^CHECKS_FAILED: /),
           }),
         )
-        // Its turn took its ride's failed check, which changed its files.
+        // Its ride's check failed, which changed its files; its own turn checked it again, and failed.
         expect(outcomes.checks(rider.worktree.ticket)).toEqual([
           expect.objectContaining({ result: 'failed', train: true }),
+          expect.objectContaining({ result: 'failed' }),
         ])
+        expect(outcomes.checks(rider.worktree.ticket)[1]?.train).toBeUndefined()
         expect(git(rider.worktree.path, 'status', '--porcelain')).toBe('')
         expect(yield* recorded(rider.worktree)).toEqual([])
       }).pipe(Effect.scoped, Effect.provide(services())),
