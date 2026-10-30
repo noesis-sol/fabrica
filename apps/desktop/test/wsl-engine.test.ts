@@ -9,6 +9,7 @@ import {
   InstallConsent,
   UbuntuInstall,
   WslSearch,
+  installedDistro,
 } from '@fabrica/client'
 import { DistributionSource } from '@fabrica/client/install'
 import { EngineId } from '@fabrica/contracts'
@@ -28,7 +29,7 @@ import {
   makeBroker,
 } from '../src/main/ports'
 import { EngineAddress, KnownEngine } from '../src/main/state'
-import { installedDistro, launchDistro } from '../src/main/wsl'
+import { launchDistro } from '../src/main/wsl'
 import { type PreloadIpc, channels, makeApi } from '../src/preload/api'
 
 // Adding and reaching an engine in WSL2 from the Windows app (spec §7.6, H31): the search for a

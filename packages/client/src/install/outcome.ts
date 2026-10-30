@@ -83,3 +83,32 @@ export const consentFor = (plan: InstallPlan): Option.Option<InstallConsent> =>
     Current: () => Option.none(),
     Newer: () => Option.none(),
   })
+
+// The engine the Windows app reaches in WSL2 once Add engine has installed it there or found it up to
+// date (§7.6): main reaches it, and the page keeps it among the known engines at its first hello.
+
+/** The distribution whose engine the app reaches once Add engine has installed or updated it there. */
+export const installedDistro = ({
+  host,
+  answer,
+}: {
+  readonly host: EngineHost
+  readonly answer: InstallAnswer
+}): Option.Option<WslDistro> =>
+  EngineHost.guards.Wsl(host) && InstallAnswer.guards.Installed(answer)
+    ? Option.some(host.distro)
+    : Option.none()
+
+/** The distribution whose engine the app reaches once Add engine's check has found it up to date there. */
+export const checkedDistro = ({
+  host,
+  answer,
+}: {
+  readonly host: EngineHost
+  readonly answer: CheckAnswer
+}): Option.Option<WslDistro> =>
+  EngineHost.guards.Wsl(host) &&
+  CheckAnswer.guards.Checked(answer) &&
+  InstallPlan.guards.Current(answer.check.plan)
+    ? Option.some(host.distro)
+    : Option.none()

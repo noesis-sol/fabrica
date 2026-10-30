@@ -7,6 +7,7 @@ import {
   type HostCheck,
   InstallPlan,
   KeepAnswer,
+  checkedDistro,
   wslEngineName,
 } from '@fabrica/client'
 import { EngineId } from '@fabrica/contracts'
@@ -20,7 +21,7 @@ import {
   type SecretBox,
   makeAppState,
 } from '../src/main/state'
-import { checkedDistro, launchDistro } from '../src/main/wsl'
+import { launchDistro } from '../src/main/wsl'
 
 // The engine Add engine installs in WSL2, or finds up to date there, kept among the known engines (spec
 // §7.6, §9.1): main reaches one found up to date as it does one installed, and the page keeps it, at

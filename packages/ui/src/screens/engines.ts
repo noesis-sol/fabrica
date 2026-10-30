@@ -34,8 +34,10 @@ import {
   UbuntuInstall,
   type WslDistro,
   WslSearch,
+  checkedDistro,
   consentFor,
   defaultEngineName,
+  installedDistro,
   parseTlsEndpoint,
   tlsEndpointText,
   windowsDriveWarning,
@@ -908,18 +910,8 @@ const startPairing = (
  */
 export const reachedInWslAfter = (message: Message): Option.Option<WslDistro> =>
   Match.value(message).pipe(
-    Match.tag('CompletedEngineInstall', ({ host, answer }) =>
-      EngineHost.guards.Wsl(host) && InstallAnswer.guards.Installed(answer)
-        ? Option.some(host.distro)
-        : Option.none(),
-    ),
-    Match.tag('CompletedEngineCheck', ({ host, answer }) =>
-      EngineHost.guards.Wsl(host) &&
-      CheckAnswer.guards.Checked(answer) &&
-      InstallPlan.guards.Current(answer.check.plan)
-        ? Option.some(host.distro)
-        : Option.none(),
-    ),
+    Match.tag('CompletedEngineInstall', installedDistro),
+    Match.tag('CompletedEngineCheck', checkedDistro),
     Match.orElse(() => Option.none()),
   )
 

@@ -21,14 +21,16 @@ import { AppImageUpdater, MacUpdater, NsisUpdater } from 'electron-updater'
 import { homedir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import type {
-  CheckAnswer,
-  EngineHost,
-  InstallAnswer,
-  InstallConsent,
-  UbuntuInstall,
-  WslDistro,
-  WslSearch,
+import {
+  type CheckAnswer,
+  type EngineHost,
+  type InstallAnswer,
+  type InstallConsent,
+  type UbuntuInstall,
+  type WslDistro,
+  type WslSearch,
+  checkedDistro,
+  installedDistro,
 } from '@fabrica/client'
 import { findDistribution } from '@fabrica/client/node'
 import { ReleaseVersion } from '@fabrica/contracts'
@@ -80,13 +82,7 @@ import {
   windowClose,
   windowOptions,
 } from './window'
-import {
-  checkedDistro,
-  installUbuntu,
-  installedDistro,
-  launchDistro,
-  reachWslEngine,
-} from './wsl'
+import { installUbuntu, launchDistro, reachWslEngine } from './wsl'
 
 // Electron main (spec §5): the window, its title bar and its confinement, the preload's API, the
 // connection process, to which it brokers each page's engine port, and a port to each known engine the

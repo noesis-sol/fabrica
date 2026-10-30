@@ -1,15 +1,7 @@
 import { Data, Effect, Option } from 'effect'
 import { spawn } from 'node:child_process'
 
-import {
-  CheckAnswer,
-  EngineHost,
-  InstallAnswer,
-  InstallPlan,
-  UbuntuInstall,
-  type WslDistro,
-  WslSearch,
-} from '@fabrica/client'
+import { UbuntuInstall, type WslDistro, WslSearch } from '@fabrica/client'
 import {
   type Held,
   type WslRunner,
@@ -125,30 +117,4 @@ export const launchDistro = ({
         known.map(({ address }) => address).find(EngineAddress.guards.Wsl)
           ?.distro,
       )
-    : Option.none()
-
-/** The distribution whose engine the app reaches once Add engine has installed or updated it there. */
-export const installedDistro = ({
-  host,
-  answer,
-}: {
-  readonly host: EngineHost
-  readonly answer: InstallAnswer
-}): Option.Option<WslDistro> =>
-  EngineHost.guards.Wsl(host) && InstallAnswer.guards.Installed(answer)
-    ? Option.some(host.distro)
-    : Option.none()
-
-/** The distribution whose engine the app reaches once Add engine's check has found it up to date there. */
-export const checkedDistro = ({
-  host,
-  answer,
-}: {
-  readonly host: EngineHost
-  readonly answer: CheckAnswer
-}): Option.Option<WslDistro> =>
-  EngineHost.guards.Wsl(host) &&
-  CheckAnswer.guards.Checked(answer) &&
-  InstallPlan.guards.Current(answer.check.plan)
-    ? Option.some(host.distro)
     : Option.none()
