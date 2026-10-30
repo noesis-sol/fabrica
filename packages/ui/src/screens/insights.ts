@@ -1,7 +1,7 @@
 import { Array, DateTime, Effect, Match, Option, Result, Schema } from 'effect'
-import { Command, type Update } from 'foldkit'
+import { Command, Update } from 'foldkit'
 import * as AsyncData from 'foldkit/asyncData'
-import type { Html, HtmlBuilder } from 'foldkit/html'
+import { type Html, type HtmlBuilder, childAttributes } from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
 import { modifyFields } from 'foldkit/struct'
 import { defineView } from 'foldkit/submodel'
@@ -14,6 +14,7 @@ import {
   InsightsSummary,
   InsightsTable,
 } from '@fabrica/contracts'
+import * as VirtualList from '@foldkit/ui/virtualList'
 
 import { sayDuration, sayMoment } from '../app/clock'
 import { EngineProject } from '../app/engine-project'
@@ -26,7 +27,8 @@ import { sayTokens, tokenTotal } from '../console/stats'
 // phase; check durations and failures; flaky tests; the maintainer's waits; hand-back and set-aside
 // rates; models compared on similar tickets. Each is asked as the screen opens, its scope changes or
 // Refresh is pressed, and drawn from the table the engine answers, each cell in its column's unit. An
-// answer for a query no longer shown (another scope, another grouping) is dropped.
+// answer for a query no longer shown (another scope, another grouping) is dropped. A table's rows are a
+// virtual list under its column headers, so a long one draws only the rows in view (§18.5).
 
 /** The panels, each one named query's answer. */
 export const Panel = Schema.Literals([
@@ -151,8 +153,16 @@ export const Model = Schema.Struct({
   tokensBy: TokensBy,
   summary: AsyncData.Schema(InsightsSummary, Schema.String).schema,
   tables: Schema.Record(Panel, TableData),
+  /** Each panel's rows: where they are scrolled to. */
+  lists: Schema.Record(Panel, VirtualList.Model),
 })
 export type Model = typeof Model.Type
+
+/** A table's row: a 16px line, 4px above and below, and its 1px rule. */
+export const rowHeightPx = 25
+
+/** The most rows a table shows before it scrolls. */
+export const rowsInView = 12
 
 const eachPanel = <A>(f: (panel: Panel) => A): Record<Panel, A> => ({
   tokens: f('tokens'),
@@ -170,10 +180,14 @@ export const init = (): Model => ({
   tokensBy: 'run',
   summary: AsyncData.Idle(),
   tables: eachPanel(() => AsyncData.Idle()),
+  lists: eachPanel(panel =>
+    VirtualList.init({ id: `insights-${panel}`, rowHeightPx }),
+  ),
 })
 
 export const Message = defineMessageUnion({
   SelectedTokensBy: { by: TokensBy },
+  GotListMessage: { panelId: Panel, message: VirtualList.Message },
   PressedRefresh: {},
   SucceededLoadSummary: {
     project: Schema.Option(EngineProject),
@@ -336,8 +350,20 @@ const regrouped = (model: Model, by: TokensBy): Return => {
   }
 }
 
+const foldList = Update.foldChildAt({
+  update: VirtualList.update,
+  readAt: (model: Model, panel: Panel) => Option.some(model.lists[panel]),
+  writeAt: (model: Model, panel: Panel, list: VirtualList.Model) =>
+    modifyFields(model, {
+      lists: lists => eachPanel(each => (each === panel ? list : lists[each])),
+    }),
+  toParentMessage: (panelId: Panel, message: VirtualList.Message) =>
+    Message.GotListMessage({ panelId, message }),
+})
+
 export const update = (model: Model, message: Message): Return =>
   Message.match<Return>(message, {
+    GotListMessage: ({ panelId, message }) => foldList(model, panelId, message),
     SelectedTokensBy: ({ by }) =>
       by === model.tokensBy ? { model } : regrouped(model, by),
     PressedRefresh: () => asked(model, model),
@@ -449,65 +475,81 @@ const staleLine = <A, M>(
 
 const numeric = (unit: ColumnUnit): boolean => unit !== 'text'
 
-/** A query's answer as a table: its columns as headers, each cell in its column's unit. */
-const tableView = <M>(
-  label: string,
+/** A column's share of a row: text twice a number's. */
+const columnWidth = (column: InsightsColumn): string =>
+  numeric(column.unit) ? 'minmax(0, 1fr)' : 'minmax(0, 2fr)'
+
+const cellClass = (column: InsightsColumn): string =>
+  `overflow-hidden text-ellipsis whitespace-nowrap pr-12 ${numeric(column.unit) ? 'text-right font-mono' : 'text-left'}`
+
+/**
+ * A query's answer as a table: its columns as headers over its rows, each cell in its column's unit. The
+ * rows are a virtual list `rowsInView` rows high at most, only those in view drawn.
+ */
+const tableView = (
+  model: Model,
+  panel: Panel,
   table: InsightsTable,
   today: Option.Option<DateTime.Zoned>,
-  h: HtmlBuilder<M>,
-): Html =>
-  table.rows.length === 0
+  h: HtmlBuilder<Message>,
+): Html => {
+  const columns = {
+    gridTemplateColumns: table.columns.map(columnWidth).join(' '),
+  }
+  return table.rows.length === 0
     ? quiet('Nothing recorded yet.', h)
     : h.div(
-        [h.Class('min-w-0 overflow-auto')],
+        [h.Class('flex min-w-0 flex-col text-xs')],
         [
-          h.table(
-            [h.AriaLabel(label), h.Class('w-full text-xs')],
+          h.div(
             [
-              h.thead(
-                [],
-                [
-                  h.tr(
-                    [],
-                    table.columns.map(column =>
-                      h.th(
-                        [
-                          h.Scope('col'),
-                          h.Class(
-                            `border-b border-line py-4 pr-12 font-bold text-muted ${numeric(column.unit) ? 'text-right' : 'text-left'}`,
-                          ),
-                        ],
-                        [column.name],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              h.tbody(
-                [],
-                table.rows.map(row =>
-                  h.tr(
-                    [],
-                    Array.zipWith(
-                      table.columns,
-                      row,
-                      (column: InsightsColumn, cell) =>
-                        h.td(
-                          [
-                            h.Class(
-                              `border-b border-line py-4 pr-12 ${numeric(column.unit) ? 'text-right font-mono' : 'text-left'}`,
-                            ),
-                          ],
-                          [sayCell(cell, column.unit, today)],
-                        ),
-                    ),
-                  ),
-                ),
-              ),
+              h.DataAttribute('columns', ''),
+              h.Class('grid border-b border-line py-4 font-bold text-muted'),
+              h.Style(columns),
             ],
+            table.columns.map(column =>
+              h.span([h.Class(cellClass(column))], [column.name]),
+            ),
           ),
+          h.submodel({
+            slotId: `insights-${panel}`,
+            model: model.lists[panel],
+            view: VirtualList.view<InsightsTable['rows'][number]>(),
+            viewInputs: {
+              items: table.rows,
+              itemToKey: (_, index) => String(index),
+              itemToView: row =>
+                h.div(
+                  [
+                    h.Class('grid border-b border-line'),
+                    h.Style({
+                      ...columns,
+                      height: `${rowHeightPx}px`,
+                      padding: '4px 0',
+                      lineHeight: '16px',
+                    }),
+                  ],
+                  Array.zipWith(table.columns, row, (column, cell) => {
+                    const said = sayCell(cell, column.unit, today)
+                    return h.span(
+                      [h.Title(said), h.Class(cellClass(column))],
+                      [said],
+                    )
+                  }),
+                ),
+              containerAttributes: childAttributes([
+                h.AriaLabel(panelTitle[panel]),
+                h.Style({
+                  height: `${Math.min(table.rows.length, rowsInView) * rowHeightPx}px`,
+                }),
+              ]),
+            },
+            toParentMessage: message =>
+              Message.GotListMessage({ panelId: panel, message }),
+          }),
         ],
       )
+}
 
 /** The tokens' grouping: one button per choice, the one shown pressed. */
 const tokensBySwitch = (model: Model, h: HtmlBuilder<Message>): Html =>
@@ -563,8 +605,7 @@ const panelView = (
             onEmpty: () => quiet('Asking the engine…', h),
             onFailure: reason =>
               problemLine(`It couldn't be read: ${reason}`, h),
-            onData: table =>
-              tableView(panelTitle[panel], table, inputs.today, h),
+            onData: table => tableView(model, panel, table, inputs.today, h),
           }),
       staleLine(model.tables[panel], h),
     ],

@@ -1,12 +1,14 @@
 import { DateTime, Option, Schema } from 'effect'
 import * as AsyncData from 'foldkit/asyncData'
 import {
+  Mount,
   Command as SceneCommand,
   click,
   expect as expectScene,
   given as givenScene,
   role,
   scene,
+  selector,
   text,
   within,
 } from 'foldkit/scene'
@@ -23,6 +25,7 @@ import {
   StreamEpoch,
   protocolVersion,
 } from '@fabrica/contracts'
+import * as VirtualList from '@foldkit/ui/virtualList'
 
 import { Connection, localEngineName } from '../src/app/connection'
 import type { EngineProject } from '../src/app/engine-project'
@@ -32,6 +35,7 @@ import { Screen } from '../src/app/screen'
 import { update } from '../src/app/update'
 import { view } from '../src/app/view'
 import * as Insights from '../src/screens/insights'
+import { measured, scrolled } from './virtual-list'
 
 // The Insights screen (spec §18.4, §21): the scope's telemetry, a summary and a panel per named query
 // of the Insights group, each drawn from the table the engine answers, its cells in their columns'
@@ -247,6 +251,31 @@ const namesAndArgs = (
 const panel = (name: Insights.Panel) =>
   role('region', { name: Insights.panelTitle[name] })
 
+/** A panel's rows, a list named as the panel is. */
+const rowsOf = (name: Insights.Panel) =>
+  within(panel(name), role('list', { name: Insights.panelTitle[name] }))
+
+/** A panel's column headers. */
+const columnsOf = (name: Insights.Panel) =>
+  within(panel(name), selector('[data-columns]'))
+
+const listId = (name: Insights.Panel) => `insights-${name}`
+
+/** A panel's rows measured again, drawn anew. */
+const measuredAgain = Mount.resolve(
+  { name: 'ObserveVirtualList' },
+  VirtualList.Message.ResizedContainer({
+    containerWidth: 400,
+    containerHeight: 300,
+  }),
+)
+
+/** The panels' rows measured, as the browser reports them, but for `except`'s, which have none. */
+const rowsMeasured = (except: ReadonlyArray<Insights.Panel> = []) =>
+  Insights.Panel.literals
+    .filter(name => !except.includes(name))
+    .map(name => measured(listId(name)))
+
 describe('the queries asked of the engine', () => {
   test("as the screen opens: the scope's summary and every panel's named query", () => {
     const opened = Insights.opened(Insights.init(), Option.some(scoped))
@@ -394,6 +423,7 @@ describe('tokens and cost, by run, ticket or project', () => {
     scene(
       { update, view },
       givenScene(onScreen()),
+      ...rowsMeasured(),
       expectScene(within(tokens, role('button', { name: 'Run' }))).toHaveAttr(
         'aria-pressed',
         'true',
@@ -410,6 +440,8 @@ describe('tokens and cost, by run, ticket or project', () => {
         within(tokens, role('button', { name: 'Ticket' })),
       ).toHaveAttr('aria-pressed', 'true'),
       expectScene(within(tokens, text('Asking the engine…'))).toExist(),
+      // A scene counts Mounts by their name and place, not their list: one of the lists' ended.
+      Mount.expectEnded({ name: 'ObserveVirtualList' }),
       SceneCommand.resolve(
         Insights.RunQuery({
           panel: 'tokens',
@@ -423,9 +455,12 @@ describe('tokens and cost, by run, ticket or project', () => {
           table: ticketTable,
         }),
       ),
-      expectScene(
-        within(tokens, role('table', { name: 'Tokens and cost' })),
-      ).toContainText('fa-11anthropic/claude-opus-5-5$0.75'),
+      // The list made again is measured, and keeps its place: its rows were measured before.
+      measuredAgain,
+      scrolled(1),
+      expectScene(rowsOf('tokens')).toContainText(
+        'fa-11anthropic/claude-opus-5-5$0.75',
+      ),
     )
     const late = update(
       update(
@@ -451,6 +486,7 @@ describe('each panel drawn from its query’s answer', () => {
     scene(
       { update, view },
       givenScene(onScreen()),
+      ...rowsMeasured(),
       expectScene(text('fabrica · all time')).toExist(),
       ...[
         'Runs 3',
@@ -467,12 +503,12 @@ describe('each panel drawn from its query’s answer', () => {
   })
 
   test('every table, each cell in its column’s unit', () => {
-    const tableOf = (name: Insights.Panel) =>
-      within(panel(name), role('table', { name: Insights.panelTitle[name] }))
+    const tableOf = rowsOf
     scene(
       { update, view },
       givenScene(onScreen()),
-      expectScene(tableOf('tokens')).toContainText(
+      ...rowsMeasured(),
+      expectScene(columnsOf('tokens')).toHaveText(
         'RunModelTokens inTokens outCost',
       ),
       expectScene(tableOf('tokens')).toContainText(
@@ -524,12 +560,11 @@ describe('each panel drawn from its query’s answer', () => {
     scene(
       { update, view },
       givenScene(failedAgain),
+      ...rowsMeasured(['flaky']),
       expectScene(
         within(panel('flaky'), text('Nothing recorded yet.')),
       ).toExist(),
-      expectScene(
-        within(panel('models'), role('table', { name: 'Models compared' })),
-      ).toContainText('anthropic/claude-opus-5-5'),
+      expectScene(rowsOf('models')).toContainText('anthropic/claude-opus-5-5'),
       expectScene(within(panel('models'), role('alert'))).toHaveText(
         "It couldn't be read again: the engine is not connected",
       ),

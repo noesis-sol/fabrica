@@ -35,6 +35,7 @@ import { view } from '../src/app/view'
 import { diffColoursOf, sidesOf } from '../src/mounts/diff'
 import * as Review from '../src/screens/review'
 import themesCss from '../src/theme/themes.css?raw'
+import { measured } from './virtual-list'
 
 // The Review screen (spec §18.4, §18.3): a set-aside ticket's Review opens its branch diff, each file
 // in Monaco's diff view, its sides rebuilt from the patch; the screen reached from navigation shows the
@@ -207,6 +208,7 @@ describe("a set-aside ticket's diff", () => {
       ),
       expectScene(role('heading', { name: "fa-11's branch" })).toExist(),
       expectScene(text('2 files · aaaaaaa → bbbbbbb')).toExist(),
+      measured('review-files'),
       expectScene(
         within(
           role('navigation', { name: 'Changed files' }),
@@ -354,6 +356,7 @@ describe('reports and the log', () => {
           diff: Diff.make({ base, head, files: [refresh] }),
         }),
       ),
+      measured('review-files'),
       Mount.expectExact(
         Review.ShowDiff({
           path: refresh.path,
@@ -364,7 +367,10 @@ describe('reports and the log', () => {
       Mount.resolve(Review.ShowDiff, Review.Message.CompletedShowDiff()),
       // The log's key shows it; Read again asks for it afresh.
       click(role('button', { name: 'Log' })),
-      Mount.expectEnded(Review.ShowDiff),
+      Mount.expectEnded(Review.ShowDiff, {
+        name: 'ObserveVirtualList',
+        args: { id: 'review-files' },
+      }),
       expectScene(text(/12:40 run r-7 ended/u)).toExist(),
       click(role('button', { name: 'Read again' })),
       SceneCommand.expectExact(Review.LoadLog({ project: scoped })),

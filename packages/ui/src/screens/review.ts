@@ -1,7 +1,7 @@
 import { Array, DateTime, Effect, Equal, Option, Schema } from 'effect'
-import { Command, Mount, type Update } from 'foldkit'
+import { Command, Mount, Update } from 'foldkit'
 import * as AsyncData from 'foldkit/asyncData'
-import type { Html, HtmlBuilder } from 'foldkit/html'
+import { type Html, type HtmlBuilder, childAttributes } from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
 import { defineTaggedUnion } from 'foldkit/schema'
 import { modifyFields } from 'foldkit/struct'
@@ -19,6 +19,7 @@ import {
   TicketDetail,
   TicketId,
 } from '@fabrica/contracts'
+import * as VirtualList from '@foldkit/ui/virtualList'
 
 import { sayMoment } from '../app/clock'
 import { EngineProject, sameProject } from '../app/engine-project'
@@ -56,6 +57,8 @@ export const Model = Schema.Struct({
   diff: AsyncData.Schema(Diff, Schema.String).schema,
   /** The file shown, by its path; the diff's first while none is chosen. */
   file: Schema.Option(Text),
+  /** The diff's files, a list of which only those in view are drawn (§18.5). */
+  files: VirtualList.Model,
   /** What the diff view said where Monaco couldn't draw the file: its patch is shown as text instead. */
   viewProblem: Schema.Option(Schema.String),
   /** A ticket's diff's ticket whole, for its notes; idle for a run's diff. */
@@ -69,12 +72,16 @@ export const Model = Schema.Struct({
 })
 export type Model = typeof Model.Type
 
+/** A changed file's row: its path and its change, a 16px line each, 4px above and below, a 4px gap. */
+export const fileRowHeightPx = 44
+
 export const init = (): Model => ({
   project: Option.none(),
   tab: 'diff',
   subject: Option.none(),
   diff: AsyncData.Idle(),
   file: Option.none(),
+  files: VirtualList.init({ id: 'review-files', rowHeightPx: fileRowHeightPx }),
   viewProblem: Option.none(),
   ticket: AsyncData.Idle(),
   runs: AsyncData.Idle(),
@@ -86,6 +93,7 @@ export const init = (): Model => ({
 export const Message = defineMessageUnion({
   SelectedTab: { tab: Tab },
   SelectedFile: { path: Text },
+  GotFilesMessage: { message: VirtualList.Message },
   SelectedRun: { run: RunId },
   RequestedRunDiff: { project: EngineProject, run: RunId },
   RequestedLog: {},
@@ -398,6 +406,15 @@ const showsReport = (
 export const selectTab = (model: Model, tab: Tab): Model =>
   model.tab === tab ? model : modifyFields(model, { tab: () => tab })
 
+const foldFiles = Update.foldChild({
+  update: VirtualList.update,
+  read: (model: Model) => Option.some(model.files),
+  write: (model: Model, files: VirtualList.Model) =>
+    modifyFields(model, { files: () => files }),
+  toParentMessage: (message: VirtualList.Message) =>
+    Message.GotFilesMessage({ message }),
+})
+
 export const update = (model: Model, message: Message): Return =>
   Message.match<Return>(message, {
     SelectedTab: ({ tab }) => ({ model: selectTab(model, tab) }),
@@ -407,6 +424,7 @@ export const update = (model: Model, message: Message): Return =>
         viewProblem: () => Option.none(),
       }),
     }),
+    GotFilesMessage: ({ message }) => foldFiles(model, message),
     // Another run's report, of the project shown.
     SelectedRun: ({ run }) =>
       Option.match(model.project, {
@@ -604,27 +622,36 @@ const tabs = (model: Model, h: HtmlBuilder<Message>): Html =>
     ),
   )
 
-const fileList = (diff: Diff, shown: FileDiff, h: HtmlBuilder<Message>): Html =>
-  h.nav(
+const fileRow = (
+  file: FileDiff,
+  shown: FileDiff,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.div(
+    [h.Style({ paddingBottom: '4px' })],
     [
-      h.AriaLabel('Changed files'),
-      h.Class('flex shrink-0 flex-col gap-4 overflow-auto'),
-      h.Style({ width: '260px' }),
-    ],
-    diff.files.map(file =>
       h.button(
         [
           h.Type('button'),
+          h.Title(file.path),
           h.AriaPressed(file.path === shown.path ? 'true' : 'false'),
           h.OnClick(Message.SelectedFile({ path: file.path })),
           h.Class(
-            `flex flex-col items-start rounded-button px-8 py-4 text-left font-mono text-xs hover:brightness-108 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-c1 ${file.path === shown.path ? 'bg-panel font-bold text-fg' : 'text-muted'}`,
+            `flex w-full min-w-0 flex-col items-start rounded-button px-8 py-4 text-left font-mono text-xs hover:brightness-108 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-c1 ${file.path === shown.path ? 'bg-panel font-bold text-fg' : 'text-muted'}`,
           ),
+          h.Style({ height: `${fileRowHeightPx - 4}px`, lineHeight: '16px' }),
         ],
         [
-          h.span([], [file.path]),
           h.span(
-            [h.Class('text-muted')],
+            [h.Class('w-full overflow-hidden text-ellipsis whitespace-nowrap')],
+            [file.path],
+          ),
+          h.span(
+            [
+              h.Class(
+                'w-full overflow-hidden text-ellipsis whitespace-nowrap text-muted',
+              ),
+            ],
             [
               Option.match(file.from, {
                 onNone: () => changeWord[file.change],
@@ -634,7 +661,36 @@ const fileList = (diff: Diff, shown: FileDiff, h: HtmlBuilder<Message>): Html =>
           ),
         ],
       ),
-    ),
+    ],
+  )
+
+const fileList = (
+  model: Model,
+  diff: Diff,
+  shown: FileDiff,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.nav(
+    [
+      h.AriaLabel('Changed files'),
+      h.Class('flex min-h-0 shrink-0 flex-col'),
+      h.Style({ width: '260px' }),
+    ],
+    [
+      h.submodel({
+        slotId: 'review-files',
+        model: model.files,
+        view: VirtualList.view<FileDiff>(),
+        viewInputs: {
+          items: diff.files,
+          itemToKey: file => file.path,
+          itemToView: file => fileRow(file, shown, h),
+          containerClassName: 'min-h-0 flex-1',
+          containerAttributes: childAttributes([h.AriaLabel('Files')]),
+        },
+        toParentMessage: message => Message.GotFilesMessage({ message }),
+      }),
+    ],
   )
 
 /** A patch as text, where Monaco can't show it: a binary file, or a view that failed to draw. */
@@ -802,7 +858,7 @@ const diffBody = (
                   h.div(
                     [h.Class('flex min-h-0 flex-1 gap-12')],
                     [
-                      fileList(diff, shown, h),
+                      fileList(model, diff, shown, h),
                       fileView(model, subject, shown, h),
                     ],
                   ),
