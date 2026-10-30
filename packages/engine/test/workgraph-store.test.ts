@@ -769,11 +769,14 @@ describe('list', () => {
         const graph = yield* WorkGraph
         // Brought in by one import, a millisecond apart: filed one by one, each in a transaction of
         // its own, they took most of the test's 15 s on a loaded machine (fab-adb), the list 60 ms.
+        // Their IDs run against their age, so only the order by age lists them oldest first.
         const filed = Array.from(
           { length: 1_203 },
           (_, n) =>
             new Ticket({
-              id: id(`fa-${String(n).padStart(ticketIdRandomLength, '0')}`),
+              id: id(
+                `fa-${String(1_202 - n).padStart(ticketIdRandomLength, '0')}`,
+              ),
               type: 'task',
               title: `Ticket ${n}`,
               description: Option.none(),
