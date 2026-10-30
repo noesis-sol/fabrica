@@ -53,6 +53,8 @@ export const SetAsideReason = Schema.Literals([
   'MERGE_CONFLICT',
   /** It reached the queue with uncommitted or untracked files (§13.7). */
   'CLOSED_UNCOMMITTED',
+  /** Its worktree had another branch or a detached HEAD checked out, not its own (§13.7). */
+  'OFF_BRANCH',
   /** A setup or check left tracked files changed in its worktree (§13.7). */
   'DIRTY_WORKTREE',
   /** A git read that steers its merge still failed after its retries (§13.7, H59). */

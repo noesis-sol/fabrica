@@ -179,6 +179,24 @@ export const makeMachine = Effect.fnUntraced(function* (
       { concurrency: 'unbounded' },
     )
 
+  /**
+   * The worktree checked out on another branch or a detached HEAD, as the set-aside that names it: the
+   * merge rebases and fast-forwards what its worktree has checked out, and deletes the ticket's branch
+   * once merged, so it never takes another branch or a commit for the ticket's.
+   */
+  const offBranch = (turn: MergeTurn) =>
+    Effect.map(
+      git.currentBranch({ repo: turn.worktree.path }),
+      (on): Option.Option<Aside> => {
+        const { path, branch } = turn.worktree
+        if (Option.contains(on, branch)) return Option.none()
+        return Option.some({
+          reason: 'OFF_BRANCH',
+          detail: `OFF_BRANCH: ${path} is on ${Option.getOrElse(on, () => 'a detached HEAD')}, not ${branch}`,
+        })
+      },
+    )
+
   const enter = Effect.fn('MergeQueue.enter')(function* (turn: MergeTurn) {
     const { ticket, path } = turn.worktree
     if (CommandSetting.guards.Unset(turn.config.checkFast))
@@ -186,6 +204,9 @@ export const makeMachine = Effect.fnUntraced(function* (
     const stranded = yield* train.arrive(turn)
     if (Option.isSome(stranded)) return done(stranded.value)
     yield* git.abortRebase({ worktree: path })
+    // Read once a rebase a killed run left is aborted, as a rebase under way detaches HEAD.
+    const off = yield* offBranch(turn)
+    if (Option.isSome(off)) return aside(turn, off.value)
     // What the queue's setups and checks changed, on an earlier turn or a ride, isn't its worker's either.
     yield* putBackChanged(git, { worktree: path })
     const { status, wrote } = yield* Effect.all(
@@ -416,16 +437,23 @@ export const makeMachine = Effect.fnUntraced(function* (
         ),
     })
 
-  /** The turn goes round again from `locate`, while its budget lets it. */
+  /**
+   * The turn goes round again from `locate`, while its budget lets it and its worktree is still on its
+   * branch: the branch that moved on may be another one checked out.
+   */
   const goRound = (turn: MergeTurn, rounds: number, moved: string) =>
-    Effect.map(mayGoRound({ turn, rounds: rounds + 1 }), may =>
-      may
-        ? Step.Locate({ rounds: rounds + 1 })
-        : aside(turn, {
-            reason: 'BASE_KEPT_MOVING',
-            detail: `BASE_KEPT_MOVING: ${moved} during each of ${rounds + 1} checks`,
-          }),
-    )
+    Effect.gen(function* () {
+      if (!(yield* mayGoRound({ turn, rounds: rounds + 1 })))
+        return aside(turn, {
+          reason: 'BASE_KEPT_MOVING',
+          detail: `BASE_KEPT_MOVING: ${moved} during each of ${rounds + 1} checks`,
+        })
+      const off = yield* offBranch(turn)
+      return Option.match(off, {
+        onNone: () => Step.Locate({ rounds: rounds + 1 }),
+        onSome: given => aside(turn, given),
+      })
+    })
 
   const confirm = Effect.fn('MergeQueue.confirm')(function* (
     turn: MergeTurn,

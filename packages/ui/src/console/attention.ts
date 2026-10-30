@@ -844,6 +844,7 @@ export const setAsideWords: Record<SetAsideReason, string> = {
   CHECKS_FAILED: 'Its merge check failed',
   MERGE_CONFLICT: 'Its merge conflicts outlasted the resolve hand-backs',
   CLOSED_UNCOMMITTED: 'It reached the queue with uncommitted files',
+  OFF_BRANCH: 'Its worktree was off its branch',
   DIRTY_WORKTREE: 'A setup or check left tracked files changed',
   GIT_FAILED: 'A git read that steers its merge kept failing',
   BASE_KEPT_MOVING: 'Base kept moving during every check',
