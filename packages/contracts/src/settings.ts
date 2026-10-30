@@ -825,6 +825,17 @@ export const EngineSettings = Schema.Struct({
 })
 export type EngineSettings = typeof EngineSettings.Type
 
+/** The workers live across every run: the engine's `machine_workers`, else defaultMachineWorkers of the host's cores. */
+export const machineWorkersOf = (
+  settings: EngineSettings,
+  cores: number,
+): number =>
+  Option.getOrElse(settings.machine_workers, () => defaultMachineWorkers(cores))
+
+/** A worker's and a check's share of the host's cores under the machine budget (spec §7.3): at least 1. */
+export const coresShare = (settings: EngineSettings, cores: number): number =>
+  Math.max(1, Math.floor(cores / machineWorkersOf(settings, cores)))
+
 // --- Decoding --------------------------------------------------------------------------------
 
 /** How settings files are decoded: every problem at once, and an unknown key is one. */

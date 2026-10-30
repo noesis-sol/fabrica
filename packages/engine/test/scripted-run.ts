@@ -264,7 +264,7 @@ const liveDeadlines = Layer.succeed(Deadlines, {
 })
 
 /** A loopback Anthropic that takes every key, closed with the scope. */
-const takingProvider = Effect.acquireRelease(
+export const takingProvider = Effect.acquireRelease(
   Effect.callback<{ readonly url: string; readonly close: () => void }>(
     resume => {
       const server = createServer((request, response) => {
@@ -295,7 +295,8 @@ const takingProvider = Effect.acquireRelease(
   provider => Effect.sync(provider.close),
 )
 
-const secrets = Secrets.of({
+/** The secret store: the loopback Anthropic's key, and no other. */
+export const testSecrets = Secrets.of({
   store: 'file',
   set: () => Effect.void,
   list: Effect.succeed([]),
@@ -306,7 +307,8 @@ const secrets = Secrets.of({
   remove: () => Effect.succeed(false),
 })
 
-const routesAt = (url: string): ReadonlyArray<ProviderRoute> => [
+/** The loopback provider's route, at `url`. */
+export const routesAt = (url: string): ReadonlyArray<ProviderRoute> => [
   {
     provider: 'anthropic',
     upstream: `${url}/anthropic`,
@@ -347,7 +349,9 @@ export const scriptedHosting = (
         ModelProxy,
         makeProxy({ routes: routesAt(provider.url) }),
       ).pipe(
-        Layer.provide(Layer.merge(Layer.succeed(Secrets)(secrets), layerOpen)),
+        Layer.provide(
+          Layer.merge(Layer.succeed(Secrets)(testSecrets), layerOpen),
+        ),
       )
       const services = yield* Layer.build(
         Layer.mergeAll(

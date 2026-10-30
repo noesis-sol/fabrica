@@ -34,7 +34,9 @@ export {
 export {
   type DaemonServices,
   type ListenSettings,
+  type RunHostingNeeds,
   type ServeOptions,
+  StartingSettings,
   serveEngine,
   startEngine,
 } from './serve'

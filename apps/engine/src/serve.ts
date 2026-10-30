@@ -1,8 +1,10 @@
 import { Effect } from 'effect'
+import { fileURLToPath } from 'node:url'
 
 import { Daemon, LoginService, Update } from '@fabrica/engine'
 
 import { engineHost, hostFacts, hostPaths } from './host'
+import { agentPlaces, onHost, runHosting } from './hosting'
 import { version } from './version'
 
 // `fabrica serve` (spec §19, §7.1, §9.2): runs the engine in the foreground, as the login service runs
@@ -12,7 +14,7 @@ import { version } from './version'
 // instead, with the code its manager restarts it on, and the manager starts the new release from the
 // link the update switched. `--listen <addr>` has it listen over TLS too (§9.3), with the certificate
 // `--listen-certificate` and `--listen-key` give, or its own; each flag over the engine's setting of the
-// same name.
+// same name. Its runs run on the host (`hosting.ts`): Pi beside the engine, through its model proxy.
 
 export const serve = (flags: Daemon.ListenSettings) =>
   Effect.gen(function* () {
@@ -32,6 +34,17 @@ export const serve = (flags: Daemon.ListenSettings) =>
         places: Update.installPlaces(facts.home),
         host: { platform: host.platform, arch: host.arch },
       }),
+      runs: runHosting(
+        onHost({
+          paths,
+          cores: facts.cores,
+          agents: agentPlaces({
+            self: fileURLToPath(import.meta.url),
+            node: process.execPath,
+          }),
+          environment: hostEnvironment,
+        }),
+      ),
     }).pipe(Effect.scoped)
     yield* Daemon.EngineEnd.$match(end, {
       Stop: () => Effect.void,

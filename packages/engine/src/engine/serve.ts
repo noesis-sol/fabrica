@@ -114,10 +114,20 @@ export interface ServeOptions extends EngineFacts {
   readonly talks?: Layer.Layer<TalkAgents | TalkModes>
   /**
    * What the engine's runs run on (§12, §13): its agents, the model proxy, the checks; where none is
-   * given, the engine refuses every run, saying why.
+   * given, the engine refuses every run, saying why. Built before the engine's scopes, so what it holds
+   * (the model proxy, the agents' service) outlives the runs as they wind down.
    */
-  readonly runs?: Layer.Layer<RunHosting>
+  readonly runs?: Layer.Layer<RunHosting, never, RunHostingNeeds>
 }
+
+/** The engine's settings as it starts, read once, for what is built from them then (its run hosting). */
+export class StartingSettings extends Context.Service<
+  StartingSettings,
+  EngineSettings
+>()('@fabrica/engine/StartingSettings') {}
+
+/** What the run hosting is built on: the daemon's projects (their settings), its Git, and the engine's settings as it starts. */
+export type RunHostingNeeds = Projects | Git | StartingSettings
 
 /** The engine's settings as it starts: as stored, or its defaults where they don't decode, saying so. */
 const startingSettings = storedEngineSettings().pipe(
@@ -208,6 +218,15 @@ export const startEngine = Effect.fn('Engine.start')(function* (
   const projects = yield* Layer.build(projectsLayer).pipe(
     Effect.provide(Context.mergeAll(database, files, git)),
   )
+  const runs = yield* Layer.build(options.runs ?? runsRefused).pipe(
+    Effect.provide(
+      Context.add(
+        Context.merge(projects, git),
+        StartingSettings,
+        StartingSettings.of(settings),
+      ),
+    ),
+  )
   const scopes = yield* Layer.build(engineScopesLayer)
   const servers = Context.get(scopes, EngineScopes).servers
   const tokens = yield* Layer.build(pairingTokensLayer).pipe(
@@ -234,7 +253,6 @@ export const startEngine = Effect.fn('Engine.start')(function* (
       layerRefusing('this engine was started with nowhere to install updates'),
   )
   const talks = yield* Layer.build(options.talks ?? talksRefused)
-  const runs = yield* Layer.build(options.runs ?? runsRefused)
   const facts = yield* Layer.build(options.facts ?? layerNodeHost)
   const services: Context.Context<DaemonServices> = Context.mergeAll(
     database,

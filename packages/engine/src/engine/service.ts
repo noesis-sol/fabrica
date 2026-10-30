@@ -19,7 +19,7 @@ import {
   EngineVersion,
   type ReleaseVersion,
   TlsListening,
-  defaultMachineWorkers,
+  machineWorkersOf,
   protocolVersion,
   supportedVersions,
 } from '@fabrica/contracts'
@@ -127,9 +127,7 @@ export const engineLayer = (
           // No run or worker is kept by the engine yet: the run loop's tickets count them here.
           runs: 0,
           liveWorkers: 0,
-          machineWorkers: Option.getOrElse(current.machine_workers, () =>
-            defaultMachineWorkers(facts.host.cores),
-          ),
+          machineWorkers: machineWorkersOf(current, facts.host.cores),
           clients: options.clients,
           stopping: isStopping,
         })
