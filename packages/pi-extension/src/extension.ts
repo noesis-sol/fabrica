@@ -5,21 +5,32 @@ import { CopilotProvider, copilotBaseUrl, copilotProvider } from './copilot'
 import type { ExtensionEnvironment } from './environment'
 import { GateDecision, GateEngine, decide, gateEngine } from './gate'
 import type { PiApi } from './pi'
-import { StandingRulesSection, readProjectRules, standingRules } from './rules'
 import {
-  NudgeText,
+  StandingRulesSection,
+  readProjectRules,
+  standingRules,
+  verifierRules,
+} from './rules'
+import {
   NudgeType,
   SettledType,
   Settling,
   freshTurn,
+  nudgeText,
   settle,
   settledEntry,
 } from './settle'
-import { type RunControl, WorkerToolNames, workerTools } from './tools'
+import {
+  type RunControl,
+  WorkerToolNames,
+  verifierTools,
+  workerTools,
+} from './tools'
 import { projectTrust } from './trust'
 
 // The first-party extension (spec §12.2), loaded into every agent's Pi: the worker's tools over the
-// control channel, the gate's place in `tool_call`, the standing rules in `before_agent_start`, the
+// control channel (the verifier's `verdict` alone for a verifier, §13.6), the gate's place in
+// `tool_call`, the standing rules in `before_agent_start` (the verifier's own for a verifier), the
 // settle nudge, the project's trust, and Copilot's provider pointed at the model proxy. Its facts
 // come from the environment, read once by the entry that Pi loads (`index.ts`).
 
@@ -41,16 +52,17 @@ export const makeExtension =
     if (Option.isSome(copilot))
       pi.registerProvider(CopilotProvider, copilotProvider(copilot.value))
 
-    for (const tool of workerTools({ run, turn })) pi.registerTool(tool)
+    const verifying = environment.role === 'verifier'
+    for (const tool of (verifying ? verifierTools : workerTools)({ run, turn }))
+      pi.registerTool(tool)
 
     pi.on('project_trust', () => projectTrust(environment.projectTrusted))
 
     pi.on('before_agent_start', async event => {
       const options = event.systemPromptOptions
-      const projectRules = await Effect.runPromise(
-        readProjectRules(options.cwd),
-      )
-      options.sections[StandingRulesSection] = standingRules(projectRules)
+      options.sections[StandingRulesSection] = verifying
+        ? verifierRules
+        : standingRules(await Effect.runPromise(readProjectRules(options.cwd)))
       return undefined
     })
 
@@ -99,7 +111,7 @@ export const makeExtension =
               {
                 type: 'custom_message' as const,
                 customType: NudgeType,
-                content: NudgeText,
+                content: nudgeText(environment.role),
                 display: false,
               },
             ],

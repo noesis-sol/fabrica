@@ -350,6 +350,7 @@ const setting = Effect.fn(function* (replies: ReadonlyArray<Reply>) {
         providers: [{ provider: model.provider, baseUrl: stub.baseUrl }],
         token: agentToken,
         model: Option.some(model),
+        tools: Option.none(),
         resume,
         env: {
           [ControlSocketVariable]: socket,

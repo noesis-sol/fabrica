@@ -72,6 +72,8 @@ export interface AgentStart {
   /** The agent's token for the model proxy, in place of every provider's key. */
   readonly token: string
   readonly model: Option.Option<ModelChoice>
+  /** The only tools Pi enables, built-in and the extension's (the verifier's, §13.6); none for all. */
+  readonly tools: Option.Option<ReadonlyArray<string>>
   /** A session file to resume with `switch_session`; none starts a new session. */
   readonly resume: Option.Option<string>
   /** Variables beyond the allowlisted ones: the control socket's path and token. */
@@ -336,6 +338,7 @@ export const make = Effect.fn('PiAgent.make')(function* (
             extension: config.extension,
             sessions,
             model: options.model,
+            tools: options.tools,
           }),
           cwd: options.worktree,
           env: piEnvironment({

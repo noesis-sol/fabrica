@@ -1,14 +1,14 @@
 import { Data, Option } from 'effect'
 
-import type { OutcomeToolNames } from '@fabrica/contracts'
+import type { AgentRole, OutcomeToolNames } from '@fabrica/contracts'
 
-// The settle nudge (spec §12.3): a turn about to end with no outcome tool gets one nudge, inside Pi,
-// an extra model call asking for one; a second settle with none ends the session as unfinished. A
-// turn runs from a prompt (the first, a hand-back, a maintainer's message, a resume) until Pi has
-// settled, and each turn starts with no outcome and no nudge.
+// The settle nudge (spec §12.3): a turn about to end with no outcome tool (a verifier's: `verdict`,
+// §13.6) gets one nudge, inside Pi, an extra model call asking for one; a second settle with none ends
+// the session as unfinished. A turn runs from a prompt (the first, a hand-back, a maintainer's
+// message, a resume) until Pi has settled, and each turn starts with no outcome and no nudge.
 
-/** An outcome tool, the call that ended the turn. */
-export type OutcomeTool = (typeof OutcomeToolNames)[number]
+/** An outcome tool, the call that ended the turn: a worker's, or the verifier's `verdict`. */
+export type OutcomeTool = (typeof OutcomeToolNames)[number] | 'verdict'
 
 /** The turn so far: the outcome tool that ended it, if one has, and whether it was nudged. */
 export interface Turn {
@@ -59,6 +59,16 @@ export const NudgeText =
   'work is done, defer when you cannot finish, wait_for when another ticket must merge first, or ' +
   'ask_question when only the maintainer can decide. A turn that ends without one ends your work ' +
   'on the ticket unfinished.'
+
+/** The verifier's nudge (§13.6). */
+export const VerifierNudgeText =
+  'Your turn is about to end with no verdict. End it through verdict: PASS when the change meets ' +
+  'its ticket, or FAIL with the gaps that affect correctness or its requirements. A turn that ends ' +
+  'without one gives the change no verdict.'
+
+/** The nudge an agent in `role` reads. */
+export const nudgeText = (role: AgentRole): string =>
+  role === 'verifier' ? VerifierNudgeText : NudgeText
 
 /** The custom type of the entry recording, in the session, how each turn settled. */
 export const SettledType = 'fabrica-settled'

@@ -1,13 +1,18 @@
 import { Data } from 'effect'
 
-import type { CheckOwnPass, TicketId, TicketResult } from '@fabrica/contracts'
+import type {
+  CheckOwnPass,
+  TicketId,
+  TicketResult,
+  Verdict,
+} from '@fabrica/contracts'
 
 import type { CheckRecord } from '../checks'
 
-// What a worker's session came to, as its control channel heard it (spec §12.3, §13.5, §12.8): the
-// run loop reads one stream of these per session and does what each asks of the run (the verifier and
-// the merge queue, a freed slot, a resume once a question is answered). The work graph already holds
-// each one's effect when it is published.
+// What a worker's session came to, as its control channel heard it (spec §12.3, §13.5, §12.8), and a
+// verifier's verdict (§13.6): the run loop reads one stream of these per session and does what each
+// asks of the run (the verifier and the merge queue, a freed slot, a resume once a question is
+// answered). The work graph already holds each one's effect when it is published.
 
 /** What a `finish` stood on: a `check_own` pass on HEAD's tree, or none, the project's `check_own` being `"none"` (H62). */
 export type OwnCheck = Data.TaggedEnum<{
@@ -31,6 +36,8 @@ export type Outcome = Data.TaggedEnum<{
   Unfinished: {}
   /** `check_own` ran (or couldn't): its record for the event stream (§13.12); the turn goes on. */
   Checked: { readonly check: CheckRecord }
+  /** The verifier's `verdict` on what the ticket's worker finished (§13.6). */
+  Verdict: { readonly verdict: Verdict }
   /** A tool failed in the engine (the work graph, git), not on its arguments: a `ToolDefect` (§12.8). */
   ToolFailed: { readonly tool: string; readonly reason: string }
 }>

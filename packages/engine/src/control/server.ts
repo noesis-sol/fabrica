@@ -38,7 +38,7 @@ import { WorkGraph } from '../workgraph'
 import type { Outcome } from './outcome'
 import { Attention, CheckOwnPasses } from './ports'
 import { drawToken, tokenMatches } from './token'
-import { type CheckOwnRun, makeTools } from './tools'
+import { type CheckOwnRun, type ControlRole, makeTools } from './tools'
 
 // The agent control server (spec §12.2, §12.3, §20.2): for each agent's session, a Unix socket of its
 // own, mode 0600 in a folder only the engine's user can enter, serving the control group in the
@@ -51,6 +51,8 @@ export interface ControlSession {
   readonly project: ProjectId
   readonly ticket: TicketId
   readonly session: SessionId
+  /** The ticket's worker, or its verifier (§13.6). */
+  readonly role: ControlRole
   readonly worktree: string
   /** The folder the socket is made in, created with mode 0700 where it isn't there. */
   readonly folder: string
@@ -160,6 +162,7 @@ export const make = Effect.gen(function* () {
         defer: tools.defer,
         wait_for: tools.waitFor,
         ask_and_wait: tools.askAndWait,
+        verdict: tools.verdict,
         request_permission: tools.requestPermission,
         merge_standing: () => tools.mergeStanding,
         report_gate_decision: tools.reportGateDecision,

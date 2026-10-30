@@ -256,6 +256,8 @@ export const settings = {
   model: 'anthropic/claude-test',
   check_own: 'check-pass',
   check_fast: 'check-pass',
+  // The stub plays a worker only: the verifier's rounds are verifier.test.ts's.
+  verifier: { enabled: false },
 }
 
 /** A test's own folders, and its project's checkout on `main` with its settings and `files` committed. */

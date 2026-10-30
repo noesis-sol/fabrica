@@ -106,17 +106,20 @@ export const configFolder = Effect.fn('PiAgent.configFolder')(function* ({
   return folder
 })
 
-/** Pi's arguments: RPC mode, the first-party extension, the ticket's session folder. */
+/** Pi's arguments: RPC mode, the first-party extension, the ticket's session folder, its model and tools. */
 export const piArguments = ({
   cli,
   extension,
   sessions,
   model,
+  tools,
 }: {
   readonly cli: string
   readonly extension: string
   readonly sessions: string
   readonly model: Option.Option<ModelChoice>
+  /** The only tools Pi enables (`--tools`); none for every tool. */
+  readonly tools: Option.Option<ReadonlyArray<string>>
 }): ReadonlyArray<string> => [
   cli,
   '--mode',
@@ -135,6 +138,10 @@ export const piArguments = ({
       '--model',
       modelId,
     ],
+  }),
+  ...Option.match(tools, {
+    onNone: () => [],
+    onSome: names => ['--tools', names.join(',')],
   }),
 ]
 

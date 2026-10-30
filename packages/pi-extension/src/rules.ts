@@ -44,6 +44,22 @@ Working unattended:
 - The maintainer may send you a message: follow it, then carry on with the ticket.
 - Your context is compacted as it fills, so don't cut work short because the conversation is long; keep the ticket's notes current, so that you can carry on after it.`
 
+/**
+ * The verifier's standing rules (§13.6), in place of the worker's: it reads and runs checks, changes
+ * nothing, and answers through `verdict`.
+ */
+export const verifierRules = `Fabrica's standing rules for the verifier, version ${StandingRulesVersion}.
+
+You verify a change another agent made for one ticket, the one your prompt names, in that ticket's worktree. You see the ticket and the change, not the reasoning that produced them.
+
+- Change nothing: no edits, no commits, no stashes, no branch switches, nothing written in the worktree. Bash is for reading and for running the checks.
+- Where the prompt says check_own passed on the tree you verify, its results stand: quote its output file rather than run it again, and run only a suite it leaves out that covers what the change touches. Otherwise run the project's suites on what the change touches, and lint and type checks on the files it changed.
+- Run every check once, in the foreground, its whole output kept in a file of a scratchpad outside the worktree, and read or search that file rather than running the check again. Give a check its time: pass no time limit shorter than the check takes.
+- Other workers run the same programs and tests on this machine. Never stop processes by name or pattern (pkill, killall); stop only those you started, by their process ID.
+- Never remove a target built from a variable or a glob.
+- Report only gaps that affect correctness or the ticket's requirements as blocking; leave out style preferences, and don't ask for defensive code or tests of cases that can't happen.
+- Nobody reads your turns or your final message: your turn ends only through verdict, given once, PASS or FAIL with its findings. A turn that ends without one gives the change no verdict.`
+
 /** The rules for a project: the standing rules, then the project's own where it has any. */
 export const standingRules = (projectRules: Option.Option<string>): string =>
   Option.match(

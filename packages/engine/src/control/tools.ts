@@ -1,4 +1,5 @@
 import {
+  Data,
   Deferred,
   type Duration,
   Effect,
@@ -36,6 +37,7 @@ import {
   type TicketResult,
   TicketView,
   ToolRefusal,
+  type Verdict,
 } from '@fabrica/contracts'
 
 import { CheckOutcome, type ChecksShape, notRunReason } from '../checks'
@@ -59,10 +61,18 @@ import { Outcome, OwnCheck } from './outcome'
 import type { AttentionShape, CheckOwnPassesShape } from './ports'
 import { inScope } from './token'
 
-// The worker's tools, the engine's side (spec §12.3, §13.5): what each does to the work graph, what
-// it refuses, and the outcome it publishes for the run loop. A tool acts for its session alone: on
-// its own ticket, or one linked to it. A refusal (`ToolRefusal`) is the agent's to correct; a failure
-// in the engine (the store, git) is a defect of the call, published as `ToolFailed` (§12.8).
+// The worker's tools, the engine's side (spec §12.3, §13.5), and the verifier's `verdict` (§13.6):
+// what each does to the work graph, what it refuses, and the outcome it publishes for the run loop. A
+// tool acts for its session alone: on its own ticket, or one linked to it; the verifier only reads
+// its ticket and gives its verdict. A refusal (`ToolRefusal`) is the agent's to correct; a failure in
+// the engine (the store, git) is a defect of the call, published as `ToolFailed` (§12.8).
+
+/** Whose session a channel serves: the ticket's worker, or its verifier in round `round` (§13.6). */
+export type ControlRole = Data.TaggedEnum<{
+  Worker: {}
+  Verifier: { readonly round: number }
+}>
+export const ControlRole = Data.taggedEnum<ControlRole>()
 
 /** How the session's `check_own` runs (spec §13.6, §7.3): the project's setting and the worker's share of the machine. */
 export interface CheckOwnRun {
@@ -83,6 +93,7 @@ export interface ToolContext {
   readonly project: ProjectId
   readonly ticket: TicketId
   readonly session: SessionId
+  readonly role: ControlRole
   readonly worktree: string
   /** How long `ask_and_wait` holds the agent for an answer, in time awake. */
   readonly questionWait: Duration.Input
@@ -571,16 +582,57 @@ export const makeTools = (context: ToolContext) => {
     Effect.withSpan('Control.report_unfinished'),
   )
 
+  /** The verifier's verdict, published for the run loop; a round disagrees only with an earlier one. */
+  const verdict = (input: { readonly verdict: Verdict }) =>
+    ControlRole.$match(context.role, {
+      Worker: () =>
+        refuse.invalid(
+          "verdict is the verifier's tool: end your turn through finish, defer, wait_for or ask_question",
+        ),
+      Verifier: ({ round }) => {
+        const later = input.verdict.findings.flatMap(finding =>
+          Option.toArray(
+            Option.filter(
+              finding.disagreesWithRound,
+              earlier => earlier >= round,
+            ),
+          ),
+        )
+        return later.length > 0
+          ? refuse.invalid(
+              `this is round ${round}: a finding disagrees only with an earlier round, not round ${later.join(', ')}`,
+            )
+          : Effect.as(
+              publish(Outcome.Verdict({ verdict: input.verdict })),
+              ended,
+            )
+      },
+    }).pipe(Effect.withSpan('Control.verdict'))
+
+  /** A worker's tool, refused to the verifier, which only reads its ticket and gives its verdict. */
+  const forWorker =
+    <Input, A>(
+      tool: string,
+      handler: (input: Input) => Effect.Effect<A, ToolRefusal>,
+    ) =>
+    (input: Input): Effect.Effect<A, ToolRefusal> =>
+      ControlRole.$is('Verifier')(context.role)
+        ? refuse.invalid(
+            `${tool} is a worker's tool: the verifier reads the change and gives its verdict`,
+          )
+        : handler(input)
+
   return {
     getTicket,
-    fileTicket,
-    askQuestion,
-    askAndWait,
-    addNote,
-    checkOwn,
-    finish,
-    defer,
-    waitFor,
+    fileTicket: forWorker('file_ticket', fileTicket),
+    askQuestion: forWorker('ask_question', askQuestion),
+    askAndWait: forWorker('ask_and_wait', askAndWait),
+    addNote: forWorker('add_note', addNote),
+    checkOwn: forWorker('check_own', checkOwn),
+    finish: forWorker('finish', finish),
+    defer: forWorker('defer', defer),
+    waitFor: forWorker('wait_for', waitFor),
+    verdict,
     requestPermission,
     mergeStanding,
     reportGateDecision,

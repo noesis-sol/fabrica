@@ -160,6 +160,8 @@ export const scriptedSettings = {
   model: 'anthropic/claude-test',
   check_own: 'check-pass',
   check_fast: 'check-pass',
+  // The stub plays a worker only: the verifier's rounds are verifier.test.ts's.
+  verifier: { enabled: false },
 }
 
 /** The folders and files a scripted run's engine works with. */

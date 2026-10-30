@@ -33,6 +33,7 @@ import { layer as checksLayer } from '../src/checks'
 import {
   Attention,
   CheckOwnPasses,
+  ControlRole,
   ControlServer,
   type Outcome,
   checkOwnPassesLayer,
@@ -174,6 +175,7 @@ const harness = (command: CommandSetting) =>
       project: ProjectId.make('project-1'),
       ticket: own.id,
       session: SessionId.make('session-1'),
+      role: ControlRole.Worker(),
       worktree,
       folder: folder('sockets'),
       questionWait: Duration.minutes(15),

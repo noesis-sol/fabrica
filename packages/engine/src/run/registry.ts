@@ -336,7 +336,7 @@ export const make = Effect.gen(function* () {
           Effect.provide(
             Layer.merge(
               keptLog,
-              controlLayer.pipe(Layer.provide(checkOwnPassesLayer)),
+              controlLayer.pipe(Layer.provideMerge(checkOwnPassesLayer)),
             ),
           ),
           Effect.provideService(WorkGraph, graph),

@@ -3,6 +3,7 @@ export * from './command'
 export * from './outcome'
 export {
   type CheckInput,
+  CheckOwnPassedAtVariable,
   Checks,
   type ChecksShape,
   layer,

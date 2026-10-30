@@ -54,6 +54,9 @@ export interface CheckInput {
   readonly nice: Option.Option<number>
 }
 
+/** The variable naming the tree a ticket's last `check_own` pass ran on, for a check or a verifier (spec §13.6). */
+export const CheckOwnPassedAtVariable = 'FABRICA_CHECK_OWN_PASSED_AT'
+
 export interface ChecksShape {
   readonly run: (input: CheckInput) => Effect.Effect<CheckOutcome>
 }
@@ -138,7 +141,7 @@ export const make = Effect.gen(function* () {
         ...coreShareVariables(input.cores),
         ...Option.match(input.passedAt, {
           onNone: () => ({}),
-          onSome: tree => ({ FABRICA_CHECK_OWN_PASSED_AT: tree }),
+          onSome: tree => ({ [CheckOwnPassedAtVariable]: tree }),
         }),
       },
       timeLimit: input.timeLimit,

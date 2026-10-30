@@ -286,6 +286,7 @@ const startOptions = (
   ],
   token: 'agent-token-1',
   model: Option.some({ provider: 'anthropic', modelId: 'claude-x' }),
+  tools: Option.none(),
   resume: Option.none(),
   env: { STUB_MODE: mode, STUB_LOG: log, FABRICA_SOCKET: '/tmp/s.sock' },
   projectTrusted: false,

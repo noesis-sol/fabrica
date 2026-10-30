@@ -61,14 +61,26 @@ import {
   slotsTaken,
 } from './state'
 import { makeSupervision } from './supervisor'
-import { Verdict, verifyFinished } from './verify'
+import {
+  Verified,
+  type VerifierRound,
+  handBackPrompt,
+  roundText,
+  verifyFinished,
+} from './verify'
 import { WakeReason, readsReady } from './wakes'
-import { type WorkerContext, WorkerEnd, dispatchWorker } from './worker'
+import {
+  type WorkerContext,
+  WorkerEnd,
+  WorkerTurn,
+  dispatchWorker,
+} from './worker'
 
 // The run loop (spec §13, §13.1, §13.2, §13.5, §13.9, H58): one run of a project. Its start checks
 // list every problem together; then it fills its free slots at once and on every change, each wake
-// carrying its reasons; each worker's outcome moves its ticket (to the merge queue, set aside, back in
-// the queue until another merges, waiting on a question), and each merge's; and when nothing is in
+// carrying its reasons; each worker's outcome moves its ticket (through the verifier to the merge
+// queue, set aside, back in the queue until another merges, waiting on a question), and each merge's;
+// a verifier's FAIL hands the change back to its worker (§13.6); and when nothing is in
 // progress and nothing more can be dispatched, it ends: supervision stopped first, sessions closed all
 // at once, its end line, and its exit code. The run's state has one owner (`state.ts`); the loop is
 // one fiber, woken by the workers, the merge queue, the work graph and its control (`control.ts`): a
@@ -339,34 +351,29 @@ const runStarted = Effect.fn('Run.started')(function* (
       text: settledLine({ ticket, how }),
     })
 
-  /** Moves the ticket as its worker's end asks (§13.5), then frees its slot. */
-  const workerEnded = (ticket: TicketId, end: WorkerEnd) =>
+  /**
+   * Moves the ticket as its worker's end asks (§13.5), then frees its slot; a finish, verified or
+   * past the verifier, goes to the merge queue for `finished`.
+   */
+  const workerEnded = (
+    ticket: TicketId,
+    end: WorkerEnd,
+    finished = 'finished',
+  ) =>
     Effect.gen(function* () {
       const title = titleOf(yield* state.current, ticket)
       yield* WorkerEnd.$match(end, {
         Finished: ({ worktree }) =>
           Effect.gen(function* () {
-            yield* settled(ticket, 'finish', 'finished')
+            // Its phase moves before it is in line, so the queue's first step comes after it.
+            const line = yield* merges.line
+            const place = line.waiting.length + 1
             yield* state.move({
               ticket,
-              to: Phase.cases.verifying.make({ round: 1 }),
-              cause: 'finished',
+              to: Phase.cases.waiting_to_merge.make({ place }),
+              cause: finished,
             })
-            const verdict = yield* verifyFinished({ ticket, worktree })
-            yield* Verdict.$match(verdict, {
-              Passed: () =>
-                Effect.gen(function* () {
-                  // Its phase moves before it is in line, so the queue's first step comes after it.
-                  const line = yield* merges.line
-                  const place = line.waiting.length + 1
-                  yield* state.move({
-                    ticket,
-                    to: Phase.cases.waiting_to_merge.make({ place }),
-                    cause: 'verified',
-                  })
-                  yield* merges.enqueue(worktree)
-                }),
-            })
+            yield* merges.enqueue(worktree)
           }),
         Deferred: ({ reason }) =>
           Effect.gen(function* () {
@@ -479,6 +486,121 @@ const runStarted = Effect.fn('Run.started')(function* (
           ? WakeReason.Requeued({ ticket })
           : WakeReason.Settled({ ticket }),
       )
+    })
+
+  /** A verifier round's verdict, noted on the ticket so it outlasts the session (§13.6), and in the log. */
+  const verdictNoted = (ticket: TicketId, round: VerifierRound) =>
+    Effect.gen(function* () {
+      const text = `Verifier ${roundText(round)}`
+      yield* tracked(graph.note({ id: ticket, body: text, actor }))
+      yield* record(log, {
+        kind: 'warn',
+        ticket,
+        text: warningLine({
+          tag: `VERIFIER_${round.verdict._tag}`,
+          about: 'ticket',
+          text: `${ticket} verifier round ${round.round}: ${round.verdict._tag}: ${round.verdict.summary}`,
+        }),
+      })
+    })
+
+  /**
+   * The ticket's worker, each finish verified (§13.6): a PASS to the merge queue; a FAIL handed back
+   * to the worker with the rounds' findings, at most `verifier.rounds` times, and a finish after the
+   * last to the merge queue unverified; a disagreement handed back for the worker to ask the
+   * maintainer. The verifier off, a finish goes to the merge queue as it is.
+   */
+  const workOn = (ticket: TicketId, session: SessionId) =>
+    Effect.gen(function* () {
+      const rounds: Array<VerifierRound> = []
+      let turn: WorkerTurn = WorkerTurn.First()
+      while (true) {
+        const end = yield* supervision.watch(
+          ticket,
+          dispatchWorker(context, ticket, session, turn),
+        )
+        if (!WorkerEnd.$is('Finished')(end))
+          return yield* Effect.uninterruptible(workerEnded(ticket, end))
+        yield* settled(ticket, 'finish', 'finished')
+        const verifier = project.verifier
+        if (!verifier.enabled)
+          return yield* Effect.uninterruptible(workerEnded(ticket, end))
+        if (rounds.length >= verifier.rounds)
+          return yield* Effect.uninterruptible(
+            workerEnded(
+              ticket,
+              end,
+              `finished past the verifier's last round, ${verifier.rounds}`,
+            ),
+          )
+        const round = rounds.length + 1
+        yield* state.move({
+          ticket,
+          to: Phase.cases.verifying.make({ round }),
+          cause: round === 1 ? 'finished' : 'finished again',
+        })
+        const verified = yield* verifyFinished({
+          context,
+          ticket,
+          worktree: end.worktree,
+          checkOwn: end.checkOwn,
+          round,
+          earlier: rounds,
+        })
+        if (Verified.$is('Passed')(verified)) {
+          yield* record(log, {
+            kind: 'info',
+            ticket,
+            text: `  ${ticket} verified in round ${round} on ${verified.tree}: ${verified.verdict.summary}`,
+          })
+          return yield* Effect.uninterruptible(
+            workerEnded(ticket, end, 'verified'),
+          )
+        }
+        if (Verified.$is('Unanswered')(verified))
+          return yield* Effect.uninterruptible(
+            Effect.andThen(
+              setAside(
+                ticket,
+                'UNFINISHED',
+                `its verifier settled with no verdict in round ${round}`,
+              ),
+              wakes.wake(WakeReason.Settled({ ticket })),
+            ),
+          )
+        if (Verified.$is('NotRun')(verified))
+          return yield* Effect.uninterruptible(
+            Effect.andThen(
+              setAside(
+                ticket,
+                'TOOL_DEFECT',
+                `its verifier couldn't run in round ${round}: ${verified.reason}`,
+              ),
+              wakes.wake(WakeReason.Settled({ ticket })),
+            ),
+          )
+        const given: VerifierRound = { round, verdict: verified.verdict }
+        yield* verdictNoted(ticket, given)
+        const prompt = handBackPrompt({
+          ticket,
+          round: given,
+          rounds: verifier.rounds,
+          earlier: rounds,
+        })
+        rounds.push(given)
+        yield* state.move({
+          ticket,
+          to: Phase.cases.working.make({}),
+          cause: Verified.$is('Disagrees')(verified)
+            ? `verifier round ${round} disagrees with round ${verified.rounds.join(', ')}`
+            : `verifier round ${round}: FAIL`,
+        })
+        turn = WorkerTurn.HandBack({
+          worktree: end.worktree,
+          session: end.session,
+          prompt,
+        })
+      }
     })
 
   /** Closes each epic whose children are all closed and merged, as a ticket merges (§13.3). */
@@ -698,18 +820,13 @@ const runStarted = Effect.fn('Run.started')(function* (
       const session = yield* drawSession
       yield* FiberSet.run(
         workers,
-        supervision
-          .watch(ticket.id, dispatchWorker(context, ticket.id, session))
-          .pipe(
-            Effect.flatMap(end =>
-              Effect.uninterruptible(workerEnded(ticket.id, end)),
-            ),
-            Effect.catchCause(cause =>
-              Cause.hasInterruptsOnly(cause)
-                ? Effect.void
-                : stop('PANIC', `${ticket.id}: ${Cause.pretty(cause)}`),
-            ),
+        workOn(ticket.id, session).pipe(
+          Effect.catchCause(cause =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.void
+              : stop('PANIC', `${ticket.id}: ${Cause.pretty(cause)}`),
           ),
+        ),
       )
     })
 

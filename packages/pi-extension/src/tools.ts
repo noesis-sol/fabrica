@@ -15,6 +15,7 @@ import {
   type TicketId,
   type Tool,
   ToolRefusal,
+  VerdictTool,
   WaitForTool,
   WorkerTools,
   decodeArguments,
@@ -25,17 +26,18 @@ import { Control } from './control'
 import type { PiTool } from './pi'
 import { type OutcomeTool, type Turn, ended } from './settle'
 
-// The worker's tools (spec §12.2, §12.3), registered with Pi: each one's arguments' JSON Schema from
-// `@fabrica/contracts`, wrapped as a TypeBox schema for Pi to check first; its handler decodes the
-// arguments again with the Effect Schema, which has the last word, and forwards them to the engine
-// over the control channel. An invalid payload, or the engine's refusal, fails the call inside Pi's
-// loop, so the agent reads why and tries again. A call that ends the turn says so to the settle
-// nudge, and asks Pi to stop after it.
+// The worker's tools (spec §12.2, §12.3), and the verifier's `verdict` (§13.6), registered with Pi:
+// each one's arguments' JSON Schema from `@fabrica/contracts`, wrapped as a TypeBox schema for Pi to
+// check first; its handler decodes the arguments again with the Effect Schema, which has the last
+// word, and forwards them to the engine over the control channel. An invalid payload, or the engine's
+// refusal, fails the call inside Pi's loop, so the agent reads why and tries again. A call that ends
+// the turn says so to the settle nudge, and asks Pi to stop after it.
 
-/** The names of the worker's tools, which the gate always allows. */
-export const WorkerToolNames: ReadonlySet<string> = new Set(
-  WorkerTools.map(tool => tool.name),
-)
+/** The names of the agent's own tools, the worker's and the verifier's `verdict`, which the gate always allows. */
+export const WorkerToolNames: ReadonlySet<string> = new Set([
+  ...WorkerTools.map(tool => tool.name),
+  VerdictTool.name,
+])
 
 /** A worker tool's call failed: its arguments didn't decode, the engine refused it, or it couldn't reach the engine. */
 export class ToolCallFailed extends Data.TaggedError('ToolCallFailed')<{
@@ -254,6 +256,21 @@ export const workerTools = (context: {
           params.blocks,
           Awaited.match({ answered: () => false, unanswered: () => true }),
         ),
+    },
+    context,
+  ),
+]
+
+/** The verifier's one tool, `verdict`, which ends its turn (§13.6). */
+export const verifierTools = (context: {
+  readonly run: RunControl
+  readonly turn: Ref.Ref<Turn>
+}): ReadonlyArray<PiTool> => [
+  piTool(
+    {
+      tool: VerdictTool,
+      forward: params => Effect.flatMap(Control, c => c.verdict(params)),
+      ends: () => always('verdict'),
     },
     context,
   ),

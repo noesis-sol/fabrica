@@ -20,12 +20,13 @@ import {
   Noted,
   TicketView,
   ToolRefusal,
+  VerdictParameters,
   WaitForParameters,
 } from './tools'
 
 // The worker's control channel (spec §12.2, §12.3, §20.2): what the first-party extension sends the
 // engine over its agent's own Unix socket, in the Schema RPC protocol. The worker's tools, one request
-// each, named and shaped as `tools.ts` has them; the gate's permission requests, its reading of the
+// each, named and shaped as `tools.ts` has them, and the verifier's `verdict` (§13.6); the gate's permission requests, its reading of the
 // merge queue and its reports of what it decided (§12.6); and the extension's report of a session
 // that settled twice with no outcome. The socket's path and the token arrive in the agent's
 // environment; every request carries the token in a header, which the engine checks before it acts on
@@ -45,6 +46,16 @@ export const ProjectTrustedVariable = 'FABRICA_PROJECT_TRUSTED'
 
 /** The variable holding the project's `permissions` (§12.6), the level the extension's gate enforces. */
 export const PermissionsVariable = 'FABRICA_PERMISSIONS'
+
+/**
+ * The variable naming the agent's role (§13.6): `verifier` for the verifier's read-only session, whose
+ * one tool is `verdict`; a worker's, otherwise.
+ */
+export const AgentRoleVariable = 'FABRICA_AGENT_ROLE'
+
+/** An agent's role, as `AgentRoleVariable` holds it. */
+export const AgentRole = Schema.Literals(['worker', 'verifier'])
+export type AgentRole = typeof AgentRole.Type
 
 /** The header every control request carries its token in. */
 export const ControlTokenHeader = 'x-fabrica-control-token'
@@ -151,6 +162,12 @@ export const ControlRpcs = RpcGroup.make(
   Rpc.make('ask_and_wait', {
     payload: AskQuestionParameters,
     success: Awaited,
+    error: ToolRefusal,
+  }),
+  /** The verifier's verdict on what its ticket's worker finished (§13.6). */
+  Rpc.make('verdict', {
+    payload: VerdictParameters,
+    success: Ended,
     error: ToolRefusal,
   }),
   /** The gate's request, answered once the maintainer decides. */

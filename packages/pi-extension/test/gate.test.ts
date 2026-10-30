@@ -474,6 +474,7 @@ describe('a gate that fails', () => {
       yield* Effect.promise(() =>
         makeExtension({
           control: Option.none(),
+          role: 'worker',
           projectTrusted: false,
           configFolder: Option.none(),
           permissions: 'full',
