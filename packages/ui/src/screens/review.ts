@@ -75,13 +75,17 @@ export type Model = typeof Model.Type
 /** A changed file's row: its path and its change, a 16px line each, 4px above and below, a 4px gap. */
 export const fileRowHeightPx = 44
 
+/** The changed files' list, at its top: a diff opened afresh is listed from its first file. */
+const filesList = (): VirtualList.Model =>
+  VirtualList.init({ id: 'review-files', rowHeightPx: fileRowHeightPx })
+
 export const init = (): Model => ({
   project: Option.none(),
   tab: 'diff',
   subject: Option.none(),
   diff: AsyncData.Idle(),
   file: Option.none(),
-  files: VirtualList.init({ id: 'review-files', rowHeightPx: fileRowHeightPx }),
+  files: filesList(),
   viewProblem: Option.none(),
   ticket: AsyncData.Idle(),
   runs: AsyncData.Idle(),
@@ -313,6 +317,7 @@ const show = (
       subject: () => subject,
       diff: () => diff,
       file: file => (keptSubject ? file : Option.none()),
+      files: files => (keptSubject ? files : filesList()),
       viewProblem: problem => (keptSubject ? problem : Option.none()),
       ticket: detail =>
         Option.isNone(ticket)
@@ -451,6 +456,7 @@ export const update = (model: Model, message: Message): Return =>
               subject: () => Option.some(subject),
               diff: () => AsyncData.Loading(),
               file: () => Option.none(),
+              files: filesList,
               viewProblem: () => Option.none(),
               ticket: () => AsyncData.Idle(),
             }),

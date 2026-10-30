@@ -511,42 +511,52 @@ const tableView = (
               h.span([h.Class(cellClass(column))], [column.name]),
             ),
           ),
-          h.submodel({
-            slotId: `insights-${panel}`,
-            model: model.lists[panel],
-            view: VirtualList.view<InsightsTable['rows'][number]>(),
-            viewInputs: {
-              items: table.rows,
-              itemToKey: (_, index) => String(index),
-              itemToView: row =>
-                h.div(
-                  [
-                    h.Class('grid border-b border-line'),
-                    h.Style({
-                      ...columns,
-                      height: `${rowHeightPx}px`,
-                      padding: '4px 0',
-                      lineHeight: '16px',
-                    }),
-                  ],
-                  Array.zipWith(table.columns, row, (column, cell) => {
-                    const said = sayCell(cell, column.unit, today)
-                    return h.span(
-                      [h.Title(said), h.Class(cellClass(column))],
-                      [said],
-                    )
-                  }),
-                ),
-              containerAttributes: childAttributes([
-                h.AriaLabel(panelTitle[panel]),
-                h.Style({
-                  height: `${Math.min(table.rows.length, rowsInView) * rowHeightPx}px`,
-                }),
-              ]),
-            },
-            toParentMessage: message =>
-              Message.GotListMessage({ panelId: panel, message }),
-          }),
+          // The list's own style makes it scroll: its height is its holder's.
+          h.div(
+            [
+              h.DataAttribute('rows', ''),
+              h.Class('flex flex-col'),
+              h.Style({
+                height: `${Math.min(table.rows.length, rowsInView) * rowHeightPx}px`,
+              }),
+            ],
+            [
+              h.submodel({
+                slotId: `insights-${panel}`,
+                model: model.lists[panel],
+                view: VirtualList.view<InsightsTable['rows'][number]>(),
+                viewInputs: {
+                  items: table.rows,
+                  itemToKey: (_, index) => String(index),
+                  itemToView: row =>
+                    h.div(
+                      [
+                        h.Class('grid border-b border-line'),
+                        h.Style({
+                          ...columns,
+                          height: `${rowHeightPx}px`,
+                          padding: '4px 0',
+                          lineHeight: '16px',
+                        }),
+                      ],
+                      Array.zipWith(table.columns, row, (column, cell) => {
+                        const said = sayCell(cell, column.unit, today)
+                        return h.span(
+                          [h.Title(said), h.Class(cellClass(column))],
+                          [said],
+                        )
+                      }),
+                    ),
+                  containerClassName: 'min-h-0 flex-1',
+                  containerAttributes: childAttributes([
+                    h.AriaLabel(panelTitle[panel]),
+                  ]),
+                },
+                toParentMessage: message =>
+                  Message.GotListMessage({ panelId: panel, message }),
+              }),
+            ],
+          ),
         ],
       )
 }

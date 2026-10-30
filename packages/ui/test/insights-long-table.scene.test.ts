@@ -57,9 +57,11 @@ describe('a long Insights table', () => {
     scene(
       { update: Insights.update, view: view() },
       given(answered),
+      // The list scrolls, in a holder `rowsInView` rows high.
+      expectScene(selector('[data-rows]')).toHaveStyle('height', `${height}px`),
       expectScene(
         role('list', { name: Insights.panelTitle.tokens }),
-      ).toHaveStyle('height', `${height}px`),
+      ).toHaveStyle('overflow', 'auto'),
       measured('insights-tokens', height),
       expectAll(rows).toHaveCount(drawnAtTop),
       expectScene(row(0)).toContainText('r-0'),
