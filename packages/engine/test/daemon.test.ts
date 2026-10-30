@@ -42,11 +42,7 @@ import {
   runBridge,
   startEngine,
 } from '../src/engine'
-import {
-  attentionHandlers,
-  secretsHandlers,
-  workersHandlers,
-} from '../src/rpc'
+import { attentionHandlers, secretsHandlers, workersHandlers } from '../src/rpc'
 
 // The engine daemon (spec §7.1, §7.2, §8.1, §8.2, §20.2): an engine started in a temporary data folder,
 // called over a real socket and through the bridge's stdio.

@@ -28,7 +28,7 @@ import {
   RunGoing,
   RunHeader,
   RunId,
-  type RunMode as RunModeWire,
+  RunMode as RunModeWire,
   RunNotFound,
   RunRefused,
   RunStatus,
@@ -111,19 +111,16 @@ export class Runs extends Context.Service<Runs, RunsShape>()(
   '@fabrica/engine/Runs',
 ) {}
 
-/** The engine's run mode for a mode a run can be started in, or the words for one it can't yet. */
-const modeOf = (mode: RunModeWire): Option.Option<RunMode> => {
-  switch (mode._tag) {
-    case 'tickets':
-      return Option.some(RunMode.Tickets())
-    case 'ticket':
-      return Option.some(RunMode.Ticket({ ticket: mode.ticket }))
-    case 'spec':
-    case 'feature':
-    case 'overnight':
-      return Option.none()
-  }
-}
+/** The engine's run mode for a mode a run can be started in; none for one it can't yet. */
+const modeOf: (mode: RunModeWire) => Option.Option<RunMode> = RunModeWire.match(
+  {
+    tickets: () => Option.some(RunMode.Tickets()),
+    ticket: ({ ticket }) => Option.some(RunMode.Ticket({ ticket })),
+    spec: () => Option.none(),
+    feature: () => Option.none(),
+    overnight: () => Option.none(),
+  },
+)
 
 /** A run's events stream items, from `epoch`, after `resume`, as its records come. */
 const eventItems = (epoch: StreamEpoch, resume: Option.Option<Resume>) => {

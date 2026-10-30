@@ -205,16 +205,12 @@ export const fixtureEnvironment = (places: ScriptedPlaces) => ({
   GIT_CONFIG_NOSYSTEM: '1',
 })
 
-let checkouts = 0
-
 /** A project's checkout on `main` with its settings committed, in a folder of its own. */
 export const makeCheckout = (
   places: ScriptedPlaces,
   settings: object = scriptedSettings,
 ): string => {
-  checkouts += 1
-  const checkout = join(places.root, `c${checkouts}`)
-  mkdirSync(checkout, { recursive: true })
+  const checkout = mkdtempSync(join(places.root, 'c'))
   const git = (...args: ReadonlyArray<string>) =>
     execFileSync('git', args, {
       cwd: checkout,
@@ -380,8 +376,7 @@ export const scriptedHosting = (
           DateTime.layerCurrentZoneOffset(0),
         ).pipe(Layer.provideMerge(gitServices)),
       ).pipe(Effect.orDie)
-      const sockets = join(places.root, `s${checkouts}`)
-      mkdirSync(sockets, { recursive: true })
+      const sockets = mkdtempSync(join(places.root, 's'))
       return RunHostingShape.Ready({
         services,
         sockets,
