@@ -112,6 +112,9 @@ const work = Effect.gen(function* () {
       cached: true,
       'url.full': `https://example.com/?token=${secret}`,
     })
+    yield* Effect.logWarning(
+      `Couldn't delete ${checkout}/.deleting, moved aside`,
+    )
     return yield* Effect.fail(
       new Error(`couldn't read ${windowsHome}\\secret.txt: ${secret}`),
     )

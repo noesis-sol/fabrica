@@ -9,7 +9,8 @@ import { OtlpSerialization } from 'effect/observability'
 // `metadataSerialization`. A number or a boolean is a count, a duration, a flag: metadata whatever it
 // is named (a model call's `output` is its tokens out). Text is kept only where its name isn't
 // content's and it is short and names no place (an absolute path, a home folder, a URL); a span's
-// status message, an exception's message and stack, and anything structured in an attribute go.
+// status message, its events but its exceptions (Effect makes every log inside a span an event named
+// by its message), an exception's message and stack, and anything structured in an attribute go.
 
 /**
  * Names of text that carries content, never metadata (§21): an export leaves out any text column or
@@ -45,7 +46,8 @@ export const contentFields: ReadonlySet<string> = new Set([
   'token',
   'secret',
   'password',
-  'key',
+  'api_key',
+  'private_key',
   'headers',
   'env',
 ])
@@ -95,10 +97,14 @@ const isMetadataAttribute = (attribute: unknown): boolean => {
   return isCount(value) || (isMetadataName(key) && isMetadataString(value))
 }
 
+/** A span event Effect made of a failure, whose attributes say what failed; any other is a log's message. */
+const isException = (event: unknown): boolean =>
+  Predicate.isObject(event) && event.name === 'exception'
+
 /**
  * An OTLP payload (traces, metrics or logs, as Effect's exporters build them) with only its metadata:
- * every `attributes` list keeps its metadata attributes, a status keeps only its code, and a log's
- * body only text `isMetadataText` keeps.
+ * every `attributes` list keeps its metadata attributes, a status keeps only its code, a span keeps
+ * only its exception events, and a log's body only text `isMetadataText` keeps.
  */
 export const metadataOnly = (payload: unknown): unknown => {
   if (Array.isArray(payload)) return payload.map(metadataOnly)
@@ -110,6 +116,8 @@ export const metadataOnly = (payload: unknown): unknown => {
           return [[name, value.filter(isMetadataAttribute)]]
         if (name === 'status' && Predicate.isObject(value))
           return [[name, { code: value.code }]]
+        if (name === 'events' && Array.isArray(value))
+          return [[name, metadataOnly(value.filter(isException))]]
         if (name === 'body')
           return Predicate.isObject(value) && isMetadataString(value)
             ? [[name, value]]

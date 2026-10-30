@@ -1003,6 +1003,12 @@ describe('an export', () => {
         )
         const names = columns.map(({ name }) => String(name))
         expect(names).not.toContain('source_row')
+        // Every column recorded today is metadata: none is left out (the daily aggregates' key with them).
+        const recorded = yield* db.rows(
+          `SELECT column_name AS name FROM duckdb_columns() WHERE table_name = $table AND column_name <> 'source_row' ORDER BY column_index`,
+          { table: NodePath.basename(file, '.parquet') },
+        )
+        expect(names).toEqual(recorded.map(({ name }) => String(name)))
         // Text is never named as content; a number named so is a count (a model call's tokens out).
         for (const { name, type } of columns)
           if (type === 'BYTE_ARRAY')
