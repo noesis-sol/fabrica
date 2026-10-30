@@ -18,7 +18,9 @@ import { record } from './records'
 // `phase` record (and, where the ticket's part in the run ends, its `ticket_end`) while it holds the
 // state, so the stream gives the phases in the order they were taken; a `ticket_end` carries what its
 // ticket spent in the run so far (§14.4). What a phase counts as is `phaseFacts`', read here and
-// nowhere restated.
+// nowhere restated. A ticket's part in the run ending where it goes (from in progress to a phase it
+// can end in) is told to `left`, once the move is made: its worker's transcript stops being watched
+// (§8.3).
 
 /** A ticket the run has taken up. */
 export interface TicketState {
@@ -45,11 +47,13 @@ export const slotsTaken = (snapshot: RunSnapshot): number =>
   [...snapshot.tickets.values()].filter(state => factsOf(state.phase).takesSlot)
     .length
 
+/** Whether a ticket in `phase` is in progress: its part in the run can't end there (working, merging, …). */
+const inProgressIn = (phase: Phase): boolean =>
+  Option.isNone(factsOf(phase).ends)
+
 /** The tickets in progress: their part in the run can't end where they are (working, merging, …). */
 export const inProgress = (snapshot: RunSnapshot): ReadonlyArray<TicketState> =>
-  [...snapshot.tickets.values()].filter(state =>
-    Option.isNone(factsOf(state.phase).ends),
-  )
+  [...snapshot.tickets.values()].filter(state => inProgressIn(state.phase))
 
 /** The tickets in a phase of the tag `tag`. */
 export const inPhase = (
@@ -119,10 +123,14 @@ export interface RunStateShape {
   readonly endLeft: Effect.Effect<void>
 }
 
-/** A run's state, empty, its records written through `log`, a ticket's spend read from `spent`. */
+/**
+ * A run's state, empty, its records written through `log`, a ticket's spend read from `spent`, each
+ * ticket whose part ends told to `left`.
+ */
 export const makeRunState = Effect.fn('RunState.make')(function* (
   log: RunLog['Service'],
   spent: (ticket: TicketId) => Effect.Effect<Spend>,
+  left: (ticket: TicketId) => Effect.Effect<void> = () => Effect.void,
 ) {
   const state = yield* SynchronizedRef.make<RunSnapshot>({
     tickets: new Map(),
@@ -210,9 +218,7 @@ export const makeRunState = Effect.fn('RunState.make')(function* (
       Effect.gen(function* () {
         const before = Option.fromUndefinedOr(current.tickets.get(input.ticket))
         const earlier = Option.flatMap(before, ({ n }) => n)
-        const busy = Option.exists(before, ({ phase }) =>
-          Option.isNone(factsOf(phase).ends),
-        )
+        const busy = Option.exists(before, ({ phase }) => inProgressIn(phase))
         const n = Option.getOrElse(earlier, () => current.dispatched + 1)
         const past =
           Option.isNone(earlier) && Option.exists(input.limit, most => n > most)
@@ -251,6 +257,13 @@ export const makeRunState = Effect.fn('RunState.make')(function* (
             return [Option.some(before), put(current, after)] as const
           }),
       }),
+    ).pipe(
+      Effect.tap(before =>
+        Option.exists(before, ({ phase }) => inProgressIn(phase)) &&
+        !inProgressIn(input.to)
+          ? left(input.ticket)
+          : Effect.void,
+      ),
     )
 
   const end = SynchronizedRef.modify(state, current => [

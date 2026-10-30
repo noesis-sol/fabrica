@@ -26,7 +26,8 @@ import { drawBase36 } from './workgraph/ids'
 // first of them (`stream_flush`), or at once when its writer asks, so tokens cross in batches. The
 // feed keeps its last patches for clients that reconnect (`planResume`); a client too far behind, or
 // of another epoch, gets a snapshot. A flush and a subscription take the same lock, so a subscriber
-// sees every patch after its first item, once. Ended, the feed flushes and every watch ends.
+// sees every patch after its first item, once. Ended, the feed flushes and every watch ends; a watch
+// begun after the end gets the transcript so far, and ends. Reopened, it takes writes again.
 
 /** How many patches a feed keeps for clients that reconnect. */
 const keptPatches = 256
@@ -68,6 +69,8 @@ export interface TranscriptFeed {
   ) => Stream.Stream<TranscriptItem>
   /** Flushes, and ends every watch. */
   readonly end: Effect.Effect<void>
+  /** Takes writes again after an end, for the watches begun after it. */
+  readonly reopen: Effect.Effect<void>
 }
 
 /** A feed whose flushes wait in `scope`, named `name` in its epochs. */
@@ -148,6 +151,10 @@ export const makeTranscriptFeed = Effect.fn('TranscriptFeed.make')(
       )
     })
 
+    const reopen = lock.withPermit(
+      Ref.update(state, current => ({ ...current, ended: false })),
+    )
+
     const watch = (resume: Option.Option<Resume>) =>
       Stream.unwrap(
         lock.withPermit(
@@ -189,6 +196,6 @@ export const makeTranscriptFeed = Effect.fn('TranscriptFeed.make')(
         ),
       )
 
-    return { write, flush, watch, end } satisfies TranscriptFeed
+    return { write, flush, watch, end, reopen } satisfies TranscriptFeed
   },
 )

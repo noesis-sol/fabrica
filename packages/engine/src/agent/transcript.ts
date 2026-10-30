@@ -2,6 +2,7 @@ import { DateTime, Effect, Option, Ref, Schema } from 'effect'
 
 import {
   MessageId,
+  Text,
   type Tokens,
   ToolCallId,
   TranscriptEntry,
@@ -11,15 +12,31 @@ import { drawBase36 } from '../workgraph/ids'
 import type { PiEvent, PiUsage } from './records'
 
 // A session's transcript as it happens (spec §8.3, §18.4), read from its agent's events: the model's
-// messages with their streamed text and thinking, its tool calls with their input whole and their
-// output, and each turn's end with what it spent. A turn ends when the agent settles, so one turn holds
-// every model call and tool call a prompt led to. The maintainer's and the engine's messages are the
-// caller's to write: Pi's echo of a prompt is not read.
+// messages with their streamed text and thinking, its tool calls with their input as the model writes
+// it (never drawn, §18.5), then whole, and their output, and each turn's end with what it spent. A
+// turn ends when the agent settles, so one turn holds every model call and tool call a prompt led to.
+// The maintainer's and the engine's messages are the caller's to write: Pi's echo of a prompt is not
+// read.
 
 /** A model's streamed event, as far as the transcript reads it. */
 const StreamedEvent = Schema.Struct({
   type: Schema.String,
   delta: Schema.optionalKey(Schema.String),
+})
+
+/** A tool call's input streamed, as far as the transcript reads it: the call is the message's part at `contentIndex`. */
+const ToolCallDelta = Schema.Struct({
+  type: Schema.Literal('toolcall_delta'),
+  contentIndex: Schema.Number,
+  delta: Schema.String,
+  partial: Schema.Struct({ content: Schema.Array(Schema.Unknown) }),
+})
+
+/** The tool call a message's part is, as far as the transcript reads it. */
+const PartialToolCall = Schema.Struct({
+  type: Schema.Literal('toolCall'),
+  id: Schema.String,
+  name: Schema.String,
 })
 
 /** A tool's result, as far as the transcript reads it: its text parts. */
@@ -33,6 +50,8 @@ const ToolResult = Schema.Struct({
 })
 
 const decodeStreamed = Schema.decodeUnknownOption(StreamedEvent)
+const decodeToolCallDelta = Schema.decodeUnknownOption(ToolCallDelta)
+const decodePartialToolCall = Schema.decodeUnknownOption(PartialToolCall)
 const decodeToolResult = Schema.decodeUnknownOption(ToolResult)
 const decodeJson = Schema.decodeUnknownOption(Schema.Json)
 
@@ -44,6 +63,18 @@ const resultText = (result: unknown): string =>
       content
         .flatMap(part => (part.type === 'text' ? [part.text ?? ''] : []))
         .join(''),
+  })
+
+/** The `tool_input` a streamed event is: more of a tool call's input, where it names the call and its tool. */
+const toolInputOf = (streamed: unknown): Option.Option<TranscriptEntry> =>
+  Option.gen(function* () {
+    const { contentIndex, delta, partial } =
+      yield* decodeToolCallDelta(streamed)
+    const call = yield* decodePartialToolCall(partial.content[contentIndex])
+    const id = yield* ToolCallId.makeOption(call.id)
+    const tool = yield* Option.liftPredicate(call.name, Schema.is(Text))
+    if (delta === '') return yield* Option.none()
+    return TranscriptEntry.cases.tool_input.make({ id, tool, delta })
   })
 
 /** A turn's tokens so far, with one more model response's. */
@@ -111,6 +142,8 @@ export const makeTranscriptReader = Effect.fn('Transcript.makeReader')(
             ]
           }
           case 'message_update': {
+            const input = toolInputOf(event.assistantMessageEvent)
+            if (Option.isSome(input)) return [input.value]
             const streamed = decodeStreamed(event.assistantMessageEvent)
             if (Option.isNone(current.message) || Option.isNone(streamed))
               return none

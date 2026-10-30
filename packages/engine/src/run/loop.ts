@@ -391,7 +391,8 @@ const runStarted = Effect.fn('Run.started')(function* (
   /** A record's fields for what `ticket` spent in the run so far. */
   const spentBy = (ticket: TicketId) =>
     Effect.map(cost.ticket(ticket), spendFields)
-  const state = yield* makeRunState(log, cost.ticket)
+  // A ticket's part in the run ended, its worker's transcript stops being watched.
+  const state = yield* makeRunState(log, cost.ticket, view.workers.leave)
   // The holds, one state (§14, H58): the merge queue's hand-backs and the workers' quiet are counted
   // on its clock, in time awake (§7.7), stopped while they hold.
   const holds = yield* makeHolds({

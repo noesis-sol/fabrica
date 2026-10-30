@@ -142,7 +142,7 @@ export interface RunsShape {
   readonly release: (
     input: WorkerAt,
   ) => Effect.Effect<void, ProjectNotFound | WorkerNotFound>
-  /** The worker's transcript, sent only to a client that asks for it (§8.3). */
+  /** The worker's transcript, sent only to a client that asks for it (§8.3); ends as its part in the run ends. */
   readonly watchTranscript: (
     input: WorkerAt & { readonly resume: Option.Option<Resume> },
   ) => Stream.Stream<TranscriptItem, ProjectNotFound | WorkerNotFound>

@@ -7,7 +7,7 @@ import {
   Queue,
   Ref,
   Schema,
-  type Scope,
+  Scope,
   Stream,
 } from 'effect'
 
@@ -40,7 +40,9 @@ import { type TranscriptFeed, makeTranscriptFeed } from '../transcript-feed'
 // so does any message that comes while no turn runs. An interrupt aborts the running turn and steers
 // the worker. A worker's turns with its agent go through `converse`, which takes the maintainer's
 // turns before the engine's prompt while the worker is steered, and after it until the worker settles
-// its ticket or is released.
+// its ticket or is released. A worker's transcript is watched while its part in the run goes: its
+// watches end as its ticket reaches a phase its part can end in (finished, asked, set aside, stopped)
+// and as the run ends, and a later dispatch of the ticket takes its transcript up again.
 
 /** What the maintainer asks of a worker, in the order asked. */
 type Steer = Data.TaggedEnum<{
@@ -101,6 +103,8 @@ export interface WorkerDesk {
     readonly released: string
     readonly settled: Effect.Effect<boolean>
   }) => Effect.Effect<void, AgentSendFailed, Scope.Scope>
+  /** The worker's part in the run has ended: its transcript's watches end until it is entered again. */
+  readonly leave: (ticket: TicketId) => Effect.Effect<void>
   /** The workers, in the order dispatched. */
   readonly current: Effect.Effect<ReadonlyArray<WorkerLive>>
   /** Messages the worker; `merging` (its ticket in the merge queue) holds it. None: no such worker. */
@@ -203,7 +207,11 @@ export const makeWorkerDesk = Effect.fn('WorkerDesk.make')(function* (options: {
     readonly session: SessionId
     readonly model: ModelName
   }) {
-    if (Option.isSome(yield* slotOf(input.ticket))) return
+    const entered = yield* slotOf(input.ticket)
+    if (Option.isSome(entered)) {
+      yield* entered.value.feed.reopen
+      return
+    }
     const slot: Slot = {
       entry: yield* Ref.make<Entry>({
         live: {
@@ -384,6 +392,23 @@ export const makeWorkerDesk = Effect.fn('WorkerDesk.make')(function* (options: {
     return true
   })
 
+  const leave = (ticket: TicketId) =>
+    Effect.flatMap(
+      slotOf(ticket),
+      Option.match({
+        onNone: () => Effect.void,
+        onSome: slot => slot.feed.end,
+      }),
+    )
+
+  // The run's end ends every transcript's watches.
+  yield* Scope.addFinalizer(
+    options.scope,
+    Effect.flatMap(Ref.get(slots), all =>
+      Effect.forEach(all.values(), slot => slot.feed.end, { discard: true }),
+    ),
+  )
+
   const watchTranscript = (ticket: TicketId, resume: Option.Option<Resume>) =>
     Effect.map(
       slotOf(ticket),
@@ -393,6 +418,7 @@ export const makeWorkerDesk = Effect.fn('WorkerDesk.make')(function* (options: {
   return {
     enter,
     converse,
+    leave,
     current,
     message,
     interrupt,
