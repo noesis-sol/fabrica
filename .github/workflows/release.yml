@@ -165,6 +165,10 @@ jobs:
         with:
           version: 2026.10.22
 
+      # scripts/release-notes.ts and scripts/sign-checksums.ts read with effect.
+      - name: Install dependencies
+        run: mise exec -- pnpm install --frozen-lockfile
+
       - name: Check the notes
         run: mise exec -- node scripts/release-notes.ts "$VERSION" > /dev/null
 
@@ -218,9 +222,6 @@ jobs:
         run: |
           echo probe > "$RUNNER_TEMP/probe"
           mise exec -- node scripts/sign-checksums.ts "$RUNNER_TEMP/probe"
-
-      - name: Install dependencies
-        run: mise exec -- pnpm install --frozen-lockfile
 
       - name: Check
         run: scripts/check-full.sh
@@ -356,7 +357,7 @@ jobs:
       always() && needs.prepare.result == 'success' && needs.build.result == 'success' &&
       (needs.sign-macos.result == 'success' || needs.sign-macos.result == 'skipped')
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -383,6 +384,11 @@ jobs:
           fi
           sha256sum "fabrica-$VERSION"-*.tar.gz > checksums.txt
           cat checksums.txt
+
+      # scripts/sign-checksums.ts reads with effect.
+      - name: Install dependencies
+        if: needs.prepare.outputs.signed == 'true'
+        run: mise exec -- pnpm install --frozen-lockfile
 
       - name: Sign
         if: needs.prepare.outputs.signed == 'true'
