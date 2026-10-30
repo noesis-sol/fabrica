@@ -12,7 +12,7 @@ import {
   attentionKey,
 } from '@fabrica/contracts'
 
-import { EngineProject } from './engine-project'
+import { EngineAttentionRef, EngineProject } from './engine-project'
 
 // The app's system notifications (spec §18.5, §7.7, §15.2): a question, a permission request, a run's
 // end, a hold, and the battery at 10%, each told once, as it arrives; nothing for what was already
@@ -25,7 +25,7 @@ import { EngineProject } from './engine-project'
 
 /** What a click on a notification focuses: an attention request on an engine, or a project's run. */
 export const NotificationTarget = Schema.TaggedUnion({
-  Request: { engine: Schema.String, ref: AttentionRef },
+  Request: EngineAttentionRef.fields,
   Project: EngineProject.fields,
 })
 export type NotificationTarget = typeof NotificationTarget.Type

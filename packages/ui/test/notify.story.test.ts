@@ -737,7 +737,9 @@ describe('a click on a notification', () => {
         expect(shown.scope).toEqual(
           Option.some({ engine: localEngineName, project }),
         )
-        expect(shown.focusedRequest).toEqual(Option.some(questionRef))
+        expect(shown.focusedRequest).toEqual(
+          Option.some({ engine: localEngineName, ref: questionRef }),
+        )
       }),
     )
   })
@@ -757,7 +759,9 @@ describe('a click on a notification', () => {
       model(shown => {
         expect(shown.screen).toEqual(Screen.Console())
         expect(shown.scope).toEqual(Option.none())
-        expect(shown.focusedRequest).toEqual(Option.some(permissionRef))
+        expect(shown.focusedRequest).toEqual(
+          Option.some({ engine: localEngineName, ref: permissionRef }),
+        )
       }),
     )
   })
@@ -765,7 +769,13 @@ describe('a click on a notification', () => {
   test('on a run’s end, a hold or the battery, shows that project’s console', () => {
     story(
       update,
-      given({ ...elsewhere, focusedRequest: Option.some(questionRef) }),
+      given({
+        ...elsewhere,
+        focusedRequest: Option.some({
+          engine: localEngineName,
+          ref: questionRef,
+        }),
+      }),
       message(Message.ClickedNotification({ target: toProject })),
       model(shown => {
         expect(shown.screen).toEqual(Screen.Console())

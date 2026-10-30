@@ -4,7 +4,6 @@ import { modifyFields } from 'foldkit/struct'
 
 import { KeepAnswer, KnownEnginesAnswer } from '@fabrica/client'
 import {
-  type AttentionRef,
   type NoRun,
   RunId,
   type Ticket,
@@ -27,7 +26,12 @@ import * as Talks from '../screens/talks'
 import { themeTitle, themes } from '../theme/theme'
 import { dayOf, sameDay } from './clock'
 import { Connection, isLive, retryAfter } from './connection'
-import { EngineProject, projectKey, sameProject } from './engine-project'
+import {
+  type EngineAttentionRef,
+  EngineProject,
+  projectKey,
+  sameProject,
+} from './engine-project'
 import { type EngineServices, scopeEngine } from './engine-route'
 import { commandFor, commandsFor, keyLabel, paletteCommands } from './keys'
 import { Message } from './message'
@@ -467,7 +471,7 @@ const focusOn = (
     request,
   }: {
     readonly project: EngineProject
-    readonly request: Option.Option<AttentionRef>
+    readonly request: Option.Option<EngineAttentionRef>
   },
 ): Return => {
   const scoped = Option.match(model.scope, {
@@ -1204,7 +1208,7 @@ const receive = (model: Model, message: Message): Return =>
         Request: ({ engine, ref }) =>
           focusOn(model, {
             project: { engine, project: ref.project },
-            request: Option.some(ref),
+            request: Option.some({ engine, ref }),
           }),
         Project: ({ engine, project }) =>
           focusOn(model, {

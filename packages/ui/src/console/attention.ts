@@ -38,7 +38,11 @@ import {
 } from '@fabrica/contracts'
 
 import { sayElapsed } from '../app/clock'
-import { EngineProject } from '../app/engine-project'
+import {
+  type EngineAttentionRef,
+  EngineProject,
+  namesRequest,
+} from '../app/engine-project'
 import {
   type EngineNotConnected,
   type EngineServices,
@@ -721,6 +725,8 @@ export const sessionTicket = (
 export interface ViewInputs {
   /** The scope's open requests, each engine's apart: under All projects every connected engine's. */
   readonly requests: ReadonlyArray<EngineAttention>
+  /** The request a clicked notification focused, named with its engine: its card is drawn focused. */
+  readonly focused: Option.Option<EngineAttentionRef>
   /** The time now, in the viewer's zone. */
   readonly now: Option.Option<DateTime.Zoned>
   /** Whether the engine's client is held, so answers can be sent. */
@@ -1318,7 +1324,11 @@ const taskBody = (
   ]
 }
 
-/** A request's card, keyed by its engine and its key: one key may be open on two engines. */
+/**
+ * A request's card, keyed by its engine and its key: one key may be open on two engines. The focused
+ * request's card, the one of its key on its own engine, carries the focus outline and is marked so,
+ * not by colour alone (§18.2).
+ */
 const card = (
   model: Model,
   open: EngineRequest,
@@ -1326,13 +1336,15 @@ const card = (
   h: HtmlBuilder<Message>,
 ): Html => {
   const { engine, request } = open
+  const focused = Option.exists(inputs.focused, ref => namesRequest(ref, open))
   return h.keyed('li')(
     `${engine}/${attentionKey(request)}`,
     [
       h.DataAttribute('card', kindOf(request)),
+      ...(focused ? [h.DataAttribute('focused', '')] : []),
       h.AriaLabel(`${kindWords[kindOf(request)]} ${cardTicket(request)}`),
       h.Class(
-        'flex flex-col gap-8 rounded-card border border-line bg-panel hover:border-muted',
+        `flex flex-col gap-8 rounded-card border border-line bg-panel hover:border-muted${focused ? ' outline-2 outline-offset-2 outline-c1' : ''}`,
       ),
       h.Style({ padding: '12px 14px' }),
     ],

@@ -2,7 +2,6 @@ import { Option, Schema } from 'effect'
 import { defineTaggedUnion } from 'foldkit/schema'
 
 import {
-  AttentionRef,
   AttentionRequest,
   HostLoad,
   Platform,
@@ -30,7 +29,7 @@ import * as Talks from '../screens/talks'
 import * as Worker from '../screens/worker'
 import { Theme } from '../theme/theme'
 import { Connection } from './connection'
-import { EngineProject } from './engine-project'
+import { EngineAttentionRef, EngineProject } from './engine-project'
 import * as Notify from './notify'
 import * as RemoteEngines from './remote-engines'
 import { Screen } from './screen'
@@ -115,8 +114,11 @@ export const Model = Schema.Struct({
   attention: Schema.Option(Schema.Array(AttentionRequest)),
   /** Each engine's open attention requests, kept apart: an engine is missing until its first snapshot. */
   engineAttention: Schema.Array(EngineAttention),
-  /** The request a clicked notification focused, which the attention column shows focused (§18.5). */
-  focusedRequest: Schema.Option(AttentionRef),
+  /**
+   * The request a clicked notification focused, named with its engine, which the attention column shows
+   * focused (§18.5): under All projects one ref can be open on two engines.
+   */
+  focusedRequest: Schema.Option(EngineAttentionRef),
   /** What the app's notifications have been told of (§18.5). */
   notify: Notify.Model,
   /** The scoped project's tickets, while the Backlog screen shows them. */

@@ -168,6 +168,7 @@ const lazyAttention = createLazy()
 const attentionPart = (
   attention: Attention.Model,
   requests: Model['engineAttention'],
+  focused: Model['focusedRequest'],
   now: Model['now'],
   live: boolean,
   scope: Model['scope'],
@@ -180,6 +181,7 @@ const attentionPart = (
     view: Attention.view,
     viewInputs: {
       requests,
+      focused,
       now,
       live,
       chip: project =>
@@ -323,6 +325,7 @@ const consoleView = (model: Model, h: HtmlBuilder<Message>): Html => {
                   lazyAttention(attentionPart, [
                     parts.attention,
                     model.engineAttention,
+                    model.focusedRequest,
                     model.now,
                     isLive(model.connection),
                     model.scope,
