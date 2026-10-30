@@ -73,6 +73,14 @@ describe('the folders a command may run in', () => {
       ).toBe(expected)
     })
 
+  it('stops following folders past the many a chain of brace cds makes', () => {
+    const findings = commandFindings(`${'cd {a,b}; '.repeat(30)}rm -rf x`, {
+      worktree,
+      home: Option.some('/home/agent'),
+    })
+    expect(outcome(findings)).toBe('asked')
+  })
+
   it('places a path outside from any brace alternative, whatever the others', () => {
     expect(
       outcome(

@@ -254,6 +254,9 @@ const joined = (folders: Folders, more: Folders): Folders =>
 
 const unknownFolder: Folders = [Option.none()]
 
+/** How many folders the gate follows; past them, it can't tell where commands run. */
+const maxFolders = 64
+
 /** A `cd` target bash looks up in `CDPATH`: relative, its first segment neither `.` nor `..`. */
 const searched = (target: string): boolean =>
   !target.startsWith('/') &&
@@ -422,8 +425,10 @@ class Policy {
       this.refuse(`${name}: commands never run as another user`)
       return cwd
     }
-    if (name === 'cd' || name === 'pushd')
-      return joined(cwd, this.changeFolder(name, args, cwd))
+    if (name === 'cd' || name === 'pushd') {
+      const folders = joined(cwd, this.changeFolder(name, args, cwd))
+      return folders.length > maxFolders ? unknownFolder : folders
+    }
     if (name === 'popd') return joined(cwd, unknownFolder)
 
     const wrapped = this.wrapped(name, args)
