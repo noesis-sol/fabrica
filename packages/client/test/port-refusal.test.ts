@@ -34,10 +34,10 @@ const ports = Effect.acquireRelease(
 
 const refusal = 'the host key of u@server-1 has changed'
 
-/** The page's first connection over a relay whose handler ends with `ending`: what its read fails with. */
 /** The relay's link to the engine, lost. */
 class LinkLost extends Data.TaggedError('LinkLost') {}
 
+/** The page's first connection over a relay whose handler ends with `ending`: what its read fails with. */
 const firstRead = (ending: Effect.Effect<void, Error>) =>
   Effect.gen(function* () {
     const { page, relay } = yield* ports
