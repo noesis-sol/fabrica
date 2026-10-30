@@ -310,6 +310,7 @@ export const minimalAgent = (input: {
       Stream.runForEach(event =>
         ProxyEvent.$match(event, {
           Used: () => Ref.set(answered, Option.none()),
+          Windowed: () => Effect.void,
           Refused: ({ provider, refusal }) =>
             Ref.set(
               answered,

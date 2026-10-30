@@ -242,6 +242,7 @@ const next = (events: Stream.Stream<ProxyEvent>, n: number) =>
       ProxyEvent.$match(event, {
         Used: ({ latency: _latency, firstToken: _firstToken, ...used }) => used,
         Refused: refused => refused,
+        Windowed: windowed => windowed,
       }),
     ),
   )

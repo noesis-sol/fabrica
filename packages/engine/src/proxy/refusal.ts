@@ -30,7 +30,7 @@ const resetHeaders: ReadonlyArray<string> = [
 ]
 
 /** A header's one value, where it has one. */
-const headerOf = (
+export const headerOf = (
   headers: IncomingHttpHeaders,
   name: string,
 ): Option.Option<string> => {
@@ -38,7 +38,8 @@ const headerOf = (
   return typeof value === 'string' ? Option.some(value.trim()) : Option.none()
 }
 
-const epochSeconds = (text: string): Option.Option<DateTime.Utc> =>
+/** A time given in epoch seconds, where the text is one. */
+export const epochSeconds = (text: string): Option.Option<DateTime.Utc> =>
   /^\d+(?:\.\d+)?$/u.test(text)
     ? Option.some(DateTime.fromEpochSeconds(Number(text)))
     : Option.none()

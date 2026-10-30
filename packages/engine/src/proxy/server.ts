@@ -35,7 +35,7 @@ import {
 import type { ModelName, ProviderName, RunId, Tokens } from '@fabrica/contracts'
 
 import { drawToken } from '../control/token'
-import { Secrets } from '../secrets'
+import { type SecretName, Secrets } from '../secrets'
 import { type Caller, Permits } from './permits'
 import { ProbeOutcome, probeRequest } from './probe'
 import { type Refusal, classify, credentialRefusal } from './refusal'
@@ -49,6 +49,7 @@ import {
   upstreamUrl,
 } from './routes'
 import { usageReader } from './usage'
+import { type UsageWindowFigure, windowChanged, windowsOf } from './windows'
 
 // The model proxy (spec §12.9, H29): a loopback HTTP listener on 127.0.0.1, on a port of its own
 // choosing, that every agent's model calls go through, so no agent holds a credential. Each agent's
@@ -56,7 +57,9 @@ import { usageReader } from './usage'
 // checked for its token, takes a permit (§14.2, §14.4), has the token swapped for the provider's
 // credential from the secret store (§20.3), and has the provider's response streamed back unchanged,
 // its bytes as they came, while the proxy reads the call's usage from it and what a refusal means.
-// Usage and refusals are published, for telemetry and the holds.
+// Usage and refusals are published, for telemetry and the holds. Every response's usage windows, an
+// allowed one's too (H90), are kept as each account's latest figures, served, and published as they
+// change, for the run's `usage_window` records (§13.12) and the console (§18.3).
 
 /** What the proxy saw of a model call, for telemetry (§14.4, §21) and the holds (§14.2, §14.6). */
 export type ProxyEvent = Data.TaggedEnum<{
@@ -75,6 +78,11 @@ export type ProxyEvent = Data.TaggedEnum<{
     readonly provider: ProviderName
     readonly caller: Caller
     readonly refusal: Refusal
+  }
+  /** One of an account's usage windows moved, as the call's response reported it. */
+  Windowed: {
+    readonly caller: Caller
+    readonly figure: UsageWindowFigure
   }
 }>
 export const ProxyEvent = Data.taggedEnum<ProxyEvent>()
@@ -105,6 +113,8 @@ export interface ModelProxyShape {
   ) => Effect.Effect<AgentProxy, never, Scope.Scope>
   /** What the proxy sees from now on, for as long as the scope is open. */
   readonly events: Effect.Effect<Stream.Stream<ProxyEvent>, never, Scope.Scope>
+  /** Each account's usage windows, their latest figures, by provider, account and window. */
+  readonly windows: Effect.Effect<ReadonlyArray<UsageWindowFigure>>
   /** One small call to `provider`'s `model`, counted to `run`, past every permit. */
   readonly probe: (options: {
     readonly provider: ProviderName
@@ -212,6 +222,14 @@ const outgoing = (
       }),
   })
 }
+
+/** The account a route's calls are made as: its credential's name, none for a provider with none. */
+const accountOf = (authentication: Authentication): Option.Option<SecretName> =>
+  Authentication.$match(authentication, {
+    Header: ({ credential }) => Option.some(credential),
+    Bearer: ({ credential }) => Option.some(credential),
+    None: () => Option.none(),
+  })
 
 /** The token a request carries: as a bearer, or as one of the key headers providers use. */
 const tokensOf = (headers: IncomingHttpHeaders): ReadonlyArray<string> =>
@@ -390,6 +408,44 @@ export const make = Effect.fn('ModelProxy.make')(function* (
   const wentThrough = new Map<RunId, Set<ProviderName>>()
   const hasGoneThrough = (run: RunId, provider: ProviderName) =>
     wentThrough.get(run)?.has(provider) ?? false
+  /** Each account's usage windows, their latest figures, by provider, account and window. */
+  const figures = new Map<string, UsageWindowFigure>()
+
+  /** Keeps the windows `headers` report as their account's latest, and publishes those that moved. */
+  const readWindows = (options: {
+    readonly route: ProviderRoute
+    readonly caller: Caller
+    readonly headers: IncomingHttpHeaders
+  }) => {
+    const { route, caller } = options
+    const account = accountOf(route.authentication)
+    const moved = Effect.sync(() =>
+      windowsOf(options.headers).flatMap(reading => {
+        const key = JSON.stringify([
+          route.provider,
+          Option.getOrNull(account),
+          reading.window,
+        ])
+        const kept = figures.get(key)
+        if (kept !== undefined && !windowChanged(kept, reading)) return []
+        const figure: UsageWindowFigure = {
+          provider: route.provider,
+          account,
+          ...reading,
+        }
+        figures.set(key, figure)
+        return [figure]
+      }),
+    )
+    return Effect.flatMap(moved, changed =>
+      Effect.forEach(
+        changed,
+        figure =>
+          PubSub.publish(published, ProxyEvent.Windowed({ caller, figure })),
+        { discard: true },
+      ),
+    )
+  }
 
   const credentialOf = (authentication: Authentication) =>
     Authentication.$match(authentication, {
@@ -453,6 +509,7 @@ export const make = Effect.fn('ModelProxy.make')(function* (
       wentThrough.set(caller.run, providers.add(route.provider))
     }
     if (Option.isSome(refusal)) yield* refused(refusal.value)
+    yield* readWindows({ route, caller, headers: upstream.headers })
     return Exchanged.Answered({ upstream, refusal, sentAt })
   })
 
@@ -645,6 +702,7 @@ export const make = Effect.fn('ModelProxy.make')(function* (
     address,
     grant,
     events: Effect.map(PubSub.subscribe(published), Stream.fromSubscription),
+    windows: Effect.sync(() => [...figures.values()]),
     probe,
   })
 })

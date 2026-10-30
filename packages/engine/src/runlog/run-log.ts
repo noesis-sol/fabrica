@@ -69,6 +69,8 @@ export class RunLog extends Context.Service<
   {
     /** The run whose records these are. */
     readonly run: RunId
+    /** The zone its records are dated in, for the times they carry too (a usage window's reset). */
+    readonly zone: DateTime.TimeZone
     /**
      * Writes `draft`'s record, dated now, and its `text`, where it has one, as its line in the log,
      * then `details`, the lines under it; all together or not at all. Where the record is cut, nothing
@@ -148,6 +150,7 @@ export const makeRunLog = Effect.fn('RunLog.make')(function* (options: {
 
   return RunLog.of({
     run,
+    zone,
     emit,
     say,
     subscribe: PubSub.subscribe(written),

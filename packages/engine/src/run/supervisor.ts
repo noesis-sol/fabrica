@@ -334,6 +334,7 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
           return
         yield* ProxyEvent.$match(event, {
           Used: () => Ref.set(attempt.refused, Option.none()),
+          Windowed: () => Effect.void,
           Refused: ({ provider, refusal }) =>
             Refusal.$is('StartFailed')(refusal)
               ? fail(

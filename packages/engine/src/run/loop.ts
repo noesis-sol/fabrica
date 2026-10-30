@@ -55,6 +55,7 @@ import {
   mergedLine,
   mergesWaitLine,
   recordBattery,
+  recordUsageWindows,
   settledLine,
   shortCommit,
   warningLine,
@@ -487,6 +488,8 @@ const runStarted = Effect.fn('Run.started')(function* (
   const runScope = yield* Effect.scope
   const agents = yield* PiAgent
   const proxy = yield* ModelProxy
+  // Each move of a usage window the run's calls see is recorded (§12.9, H90).
+  yield* recordUsageWindows(yield* proxy.events)
   // The tickets an environment hold put back while their worker still ran: put back as it ends.
   const toReopen = yield* Ref.make<ReadonlySet<TicketId>>(new Set())
   /** When each ticket was last dispatched, in epoch ms: a quick settle is counted for the environment hold. */

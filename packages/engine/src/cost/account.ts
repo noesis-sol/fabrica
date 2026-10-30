@@ -87,6 +87,7 @@ export const makeCostAccount = Effect.fn('CostAccount.make')(function* (
   const count = (event: ProxyEvent): Effect.Effect<void> =>
     ProxyEvent.$match(event, {
       Refused: () => Effect.void,
+      Windowed: () => Effect.void,
       Used: used => {
         const { caller, provider, tokens } = used
         if (caller.run !== options.run) return Effect.void
