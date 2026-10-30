@@ -14,6 +14,7 @@ import {
   type DoneKind,
   type EndKind,
   type ExitCode,
+  type HoldBack,
   type MergeStep,
   Phase,
   SessionId,
@@ -24,6 +25,7 @@ import {
   exitCodeOf,
 } from '@fabrica/contracts'
 
+import { footprintParts } from '../footprints'
 import { Git, ticketBranch } from '../git'
 import {
   type MergeQueueShape,
@@ -33,6 +35,7 @@ import {
 import {
   RunLog,
   dispatchingLine,
+  footprintLine,
   mergedLine,
   settledLine,
   shortCommit,
@@ -43,7 +46,7 @@ import { drawBase36 } from '../workgraph/ids'
 import { carriedOver } from './carryover'
 import { type RunConfig, RunMode } from './config'
 import { endSteps } from './end'
-import { gateReady } from './footprints-gate'
+import { type Gated, type Taken, makeFootprintsGate } from './footprints-gate'
 import { MayTake, mayTake } from './holds'
 import { record } from './records'
 import { StartChecked, type Started, runStartChecks } from './start-checks'
@@ -127,6 +130,24 @@ const dispatchable = (snapshot: RunSnapshot, ticket: TicketId): boolean => {
     taken.phase._tag === 'held_back' ||
     taken.phase._tag === 'waiting'
   )
+}
+
+/** What the queue holds back, on a `dispatch` record: how many, by reason, and the solo ticket in line. */
+const heldIn = (gated: Gated) => {
+  const byReason: Partial<Record<HoldBack, number>> = {}
+  for (const { reason } of gated.held)
+    byReason[reason] = (byReason[reason] ?? 0) + 1
+  return {
+    ...(gated.held.length === 0
+      ? {}
+      : { held: gated.held.length, held_by: byReason }),
+    ...Option.match(gated.solo, {
+      onNone: () => ({}),
+      onSome: ({ ticket, next }) => ({
+        solo: next ? { ticket, next: true as const } : { ticket },
+      }),
+    }),
+  }
 }
 
 /** The words of a merge's step on its phase record. */
@@ -222,6 +243,14 @@ const runStarted = Effect.fn('Run.started')(function* (
   })
 
   const state = yield* makeRunState(log)
+  const footprints = yield* makeFootprintsGate({
+    checkout: config.checkout,
+    home: config.home,
+    base: started.base,
+    concurrent: project.concurrent,
+    checks: [project.check_own, project.check_fast, project.check_full],
+    sharedFiles: project.shared_files,
+  })
   const wakes = yield* makeWakes
   const supervision = yield* makeSupervision
   const workers = yield* FiberSet.make<void>()
@@ -602,9 +631,14 @@ const runStarted = Effect.fn('Run.started')(function* (
       })
     })
 
-  /** Dispatches `ticket`: its record, then its worker, forked under its supervision. */
-  const dispatchOne = (ticket: Ticket, n: number, queued: number) =>
+  /**
+   * Dispatches the ticket: its record, with what the queue holds, its footprint line and any files it
+   * shares with a ticket in progress that may conflict (§13.4), then its worker, forked under its
+   * supervision.
+   */
+  const dispatchOne = (taken: Taken, n: number, queued: number, gated: Gated) =>
     Effect.gen(function* () {
+      const { ticket } = taken
       yield* record(log, {
         kind: 'dispatch',
         ticket: ticket.id,
@@ -623,10 +657,33 @@ const runStarted = Effect.fn('Run.started')(function* (
           limit,
           ticket: ticket.id,
           title: ticket.title,
-          solo: false,
+          solo: taken.solo,
         }),
         queued,
+        ...heldIn(gated),
       })
+      yield* record(log, {
+        kind: 'info',
+        ticket: ticket.id,
+        text: footprintLine({
+          ticket: ticket.id,
+          parts: footprintParts(taken.footprint),
+        }),
+      })
+      yield* Effect.forEach(
+        taken.likely,
+        likely =>
+          record(log, {
+            kind: 'warn',
+            ticket: ticket.id,
+            text: warningLine({
+              tag: 'LIKELY_CONFLICT',
+              about: 'ticket',
+              text: `${ticket.id} changes ${likely.files.join(', ')}, as ${likely.with} does: the second to merge may conflict`,
+            }),
+          }),
+        { discard: true },
+      )
       const session = yield* drawSession
       yield* FiberSet.run(
         workers,
@@ -642,6 +699,56 @@ const runStarted = Effect.fn('Run.started')(function* (
                 : stop('PANIC', `${ticket.id}: ${Cause.pretty(cause)}`),
             ),
           ),
+      )
+    })
+
+  /**
+   * Keeps each held ticket's reason on its phase, in words, and says it in the log as it changes
+   * (H81); a ticket no longer held, and not taken now, goes back to queued.
+   */
+  const keepHeld = (candidates: ReadonlyArray<Ticket>, gated: Gated) =>
+    Effect.gen(function* () {
+      const current = yield* state.current
+      const held = new Map(gated.held.map(entry => [entry.ticket, entry]))
+      const taken = new Set(gated.take.map(({ ticket }) => ticket.id))
+      yield* Effect.forEach(
+        candidates.filter(ticket => !taken.has(ticket.id)),
+        ticket => {
+          const phase = current.tickets.get(ticket.id)?.phase
+          const entry = held.get(ticket.id)
+          if (entry === undefined)
+            return phase?._tag === 'held_back'
+              ? Effect.asVoid(
+                  state.move({
+                    ticket: ticket.id,
+                    to: Phase.cases.queued.make({}),
+                    cause: 'no longer held back',
+                  }),
+                )
+              : Effect.void
+          if (
+            phase?._tag === 'held_back' &&
+            phase.reason === entry.reason &&
+            phase.detail === entry.detail
+          )
+            return Effect.void
+          return Effect.andThen(
+            state.move({
+              ticket: ticket.id,
+              to: Phase.cases.held_back.make({
+                reason: entry.reason,
+                detail: entry.detail,
+              }),
+              cause: entry.detail,
+            }),
+            record(log, {
+              kind: 'info',
+              ticket: ticket.id,
+              text: `  ${ticket.id} held back: ${entry.detail}`,
+            }),
+          )
+        },
+        { discard: true },
       )
     })
 
@@ -670,27 +777,31 @@ const runStarted = Effect.fn('Run.started')(function* (
             cause: 'ready again',
           })
       }
-      const gated = yield* gateReady({ ready: candidates, snapshot: before })
       const may = yield* mayTake(before)
-      let free = project.concurrent - slotsTaken(before)
+      const gated = yield* footprints.gate({
+        ready: candidates,
+        snapshot: before,
+        free: MayTake.$is('Yes')(may)
+          ? project.concurrent - slotsTaken(before)
+          : 0,
+      })
+      yield* keepHeld(candidates, gated)
       const dispatched = new Set<TicketId>()
-      if (MayTake.$is('Yes')(may))
-        for (const ticket of gated.take) {
-          if (free <= 0) break
-          const n = yield* state.dispatch({
-            ticket: ticket.id,
-            title: ticket.title,
-            limit,
-          })
-          if (Option.isNone(n)) continue
-          dispatched.add(ticket.id)
-          free -= 1
-          yield* dispatchOne(
-            ticket,
-            n.value,
-            candidates.length - dispatched.size,
-          )
-        }
+      for (const taken of gated.take) {
+        const n = yield* state.dispatch({
+          ticket: taken.ticket.id,
+          title: taken.ticket.title,
+          limit,
+        })
+        if (Option.isNone(n)) continue
+        dispatched.add(taken.ticket.id)
+        yield* dispatchOne(
+          taken,
+          n.value,
+          candidates.length - dispatched.size,
+          gated,
+        )
+      }
       // Dispatched tickets leave the ready set the look keeps: they are the run's now.
       ready = ready.filter(ticket => !dispatched.has(ticket.id))
       const after = yield* state.current
