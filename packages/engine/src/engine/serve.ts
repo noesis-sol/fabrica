@@ -156,14 +156,22 @@ const listenSettings = (
   listen_key: Option.orElse(flags.listen_key, () => settings.listen_key),
 })
 
-/**
- * The listener's certificate: the user's, where both its files are given (a relative path is taken
- * from where the engine runs), else the engine's own.
- */
-const listenerCertificate = (paths: EnginePaths, settings: ListenSettings) => {
+/** The listener's settings with their files' paths absolute: a relative path is taken from where the engine runs. */
+export const absoluteListenPaths = (
+  settings: ListenSettings,
+): ListenSettings => {
   const absolute = Option.map((path: string) => NodePath.resolve(path))
-  const certificate = absolute(settings.listen_certificate)
-  const key = absolute(settings.listen_key)
+  return {
+    listen: settings.listen,
+    listen_certificate: absolute(settings.listen_certificate),
+    listen_key: absolute(settings.listen_key),
+  }
+}
+
+/** The listener's certificate: the user's, where both its files are given, else the engine's own. */
+const listenerCertificate = (paths: EnginePaths, settings: ListenSettings) => {
+  const { listen_certificate: certificate, listen_key: key } =
+    absoluteListenPaths(settings)
   if (Option.isSome(certificate) && Option.isSome(key))
     return readCertificate({ certificate: certificate.value, key: key.value })
   if (Option.isSome(certificate) || Option.isSome(key))

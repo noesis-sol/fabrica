@@ -86,6 +86,11 @@ describe('the restart into an update under the login service', () => {
             launcher: '/nonexistent/fabrica',
             cwd: '/',
             hostEnvironment: { PATH: '/usr/bin:/bin' },
+            listen: {
+              listen: Option.none(),
+              listen_certificate: Option.none(),
+              listen_key: Option.none(),
+            },
             service: Option.some('systemd'),
           }),
         )
@@ -114,6 +119,11 @@ describe('the restart into an update under the login service', () => {
         launcher: fabrica,
         cwd: root,
         hostEnvironment: { PATH: '/usr/bin:/bin', HOME: root },
+        listen: {
+          listen: Option.none(),
+          listen_certificate: Option.none(),
+          listen_key: Option.none(),
+        },
         service: Option.none(),
       })
       yield* appears(said)

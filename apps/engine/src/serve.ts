@@ -14,7 +14,7 @@ import { version } from './version'
 // instead, with the code its manager restarts it on, and the manager starts the new release from the
 // link the update switched. `--listen <addr>` has it listen over TLS too (§9.3), with the certificate
 // `--listen-certificate` and `--listen-key` give, or its own; each flag over the engine's setting of the
-// same name. Its runs run on the host (`hosting.ts`): Pi beside the engine, through its model proxy.
+// same name, and given again to the release it restarts as, with the engine's environment. Its runs run on the host (`hosting.ts`): Pi beside the engine, through its model proxy.
 
 export const serve = (flags: Daemon.ListenSettings) =>
   Effect.gen(function* () {
@@ -53,6 +53,7 @@ export const serve = (flags: Daemon.ListenSettings) =>
           launcher,
           cwd: facts.home,
           hostEnvironment,
+          listen: flags,
           service,
         }).pipe(
           Effect.andThen(

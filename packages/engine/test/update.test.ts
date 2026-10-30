@@ -471,9 +471,16 @@ const appears = (file: string): Effect.Effect<void> =>
     return Effect.sync(() => watcher.close())
   })
 
+/** `fabrica serve` with none of its flags. */
+const noFlags = {
+  listen: Option.none(),
+  listen_certificate: Option.none(),
+  listen_key: Option.none(),
+}
+
 describe('the restart into an update', () => {
   it.live(
-    'starts the new launcher’s serve, detached, in the allowlisted environment',
+    'starts the new launcher’s serve, detached, in the engine’s own environment',
     () =>
       Effect.gen(function* () {
         const root = yield* tempFolder('relaunch')
@@ -494,12 +501,13 @@ describe('the restart into an update', () => {
           hostEnvironment: {
             PATH: '/usr/bin:/bin',
             HOME: root,
-            SECRET: 'never',
+            SECRET: 'kept',
           },
+          listen: noFlags,
         })
         yield* appears(said)
         expect(yield* Effect.promise(() => readFile(said, 'utf8'))).toBe(
-          `serve|${root}|unset\n`,
+          `serve|${root}|kept\n`,
         )
       }).pipe(Effect.scoped),
   )
@@ -512,6 +520,7 @@ describe('the restart into an update', () => {
           launcher: NodePath.join(root, 'missing'),
           cwd: root,
           hostEnvironment: { PATH: '/usr/bin:/bin', HOME: root },
+          listen: noFlags,
         }),
       )
       expect(failed._tag).toBe('RelaunchFailed')
