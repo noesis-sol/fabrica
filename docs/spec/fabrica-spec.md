@@ -319,7 +319,7 @@ The engine samples its host's load every few seconds for the console's system st
 
 ### 8.1 Protocol
 
-\[DECISION\] Effect RPC (`effect/unstable/rpc`: `RpcServer`, `RpcClient`, `RpcSerialization`) with JSON serialisation, framed as NDJSON on byte streams (the local socket, the SSH and WSL2 bridges). Every request, stream and error is an Effect Schema in `packages/contracts`, decoded on arrival. The schemas are also exported as JSON Schema for clients in other languages.
+\[DECISION\] Effect RPC (`effect/rpc`: `RpcServer`, `RpcClient`, `RpcSerialization`) with JSON serialisation, framed as NDJSON on byte streams (the local socket, the SSH and WSL2 bridges). Every request, stream and error is an Effect Schema in `packages/contracts`, decoded on arrival. The schemas are also exported as JSON Schema for clients in other languages.
 
 **Groups**
 
@@ -1234,7 +1234,7 @@ Settled with the maintainer on 2026-10-21 (H29–H49), except where marked; the 
 
 - [x] **Pi's APIs** (§12, §16, §20.3): `pi --mode rpc` (JSONL, correlated by `id`); `before_agent_start` for the standing rules; `agent_before_settle` for the nudge; `tool_call` blocking; `project_trust`; `--session-dir` and `switch_session`; organs through a forced `answer` tool (`pi-ai` has no JSON-schema mode); subscription sign-ins through `pi-ai`'s `models.login`. `before_provider_request` is no longer needed (the model proxy, H29). Still to verify in M0: base URL overrides, a per-process configuration folder, usage fields, a stub provider for tests, native code.
 - [x] **Agents' credentials** (§12.9): a model proxy in the engine (H29).
-- [x] **Effect RPC transports** (§8): `effect/unstable/rpc`, NDJSON over Effect's `Socket`, `RpcServer.makeProtocolWebsocket`. M0 verifies the stdio pipe and the MessagePort relay; the fallback stays a thin tagged protocol with Schema-encoded frames.
+- [x] **Effect RPC transports** (§8): `effect/rpc`, NDJSON over Effect's `Socket`, `RpcServer.makeProtocolWebsocket`. M0 verifies the stdio pipe and the MessagePort relay; the fallback stays a thin tagged protocol with Schema-encoded frames.
 - [x] **SSH** (§8.2, §9.1): a stdio bridge, no forwarding (H30).
 - [x] **WSL2** (§7.6, §22.2): automated, through the same bridge (H31).
 - [x] **Ticket-file clocks** (§11.3): a hybrid logical clock per field (H32).
