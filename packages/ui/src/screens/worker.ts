@@ -1314,7 +1314,7 @@ const composerView = (
             h.Value(model.composer.draft),
             h.OnInput(text => Message.TypedDraft({ text })),
             h.Class(
-              'min-w-0 flex-1 bg-transparent text-fg placeholder:text-muted focus-visible:outline-none',
+              'min-w-0 flex-1 bg-transparent text-fg placeholder:text-muted',
             ),
             h.Style({ fontSize: '13px' }),
           ]),

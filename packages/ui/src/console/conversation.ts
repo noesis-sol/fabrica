@@ -339,9 +339,7 @@ const composerView = <Message>(
         h.Value(options.composer.draft),
         h.Disabled(!enabled),
         h.OnInput(options.typed),
-        h.Class(
-          'min-w-0 flex-1 bg-transparent text-fg placeholder:text-muted focus-visible:outline-none',
-        ),
+        h.Class('min-w-0 flex-1 bg-transparent text-fg placeholder:text-muted'),
         h.Style({ fontSize: '13px' }),
       ]),
       h.button(
