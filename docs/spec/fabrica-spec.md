@@ -395,6 +395,8 @@ Either way the engine checks the project as `orchestra init` and a run's start d
 
 `init` is atomic (H62): it writes `settings.json` first, or stages its files and renames them in together, so a failure leaves the project as it was or set up, never half set up; a project counts as set up only once its settings exist, and on an error `init` lists what it had written. tutti wrote its worker prompt first and its settings last, and a failure between left a project that counted as set up with no merge check, whose next run merged unchecked.
 
+Removing a project forgets it and the engine's folder for it, a clone with it; a registered checkout stays where it is. The removal is refused while the project has a run going (`RunGoing`), as its work graph, checkout and workers' worktrees are the run's, and no run starts on a project being removed.
+
 ### 10.2 The project's files
 
 ```text

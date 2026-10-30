@@ -7,6 +7,7 @@ import { ProjectSettings } from '../settings'
 import { Text } from '../ticket'
 import { Count, Moment, Ordinal, optional } from './common'
 import { ProjectNotFound } from './errors'
+import { RunGoing } from './runs'
 import { keyedPatch, resume, streamItem } from './stream'
 
 // The Projects group (spec §8.1, §10): adding a checkout on the engine's host or a clone of a URL,
@@ -162,10 +163,13 @@ export const ProjectRpcs = RpcGroup.make(
     error: FolderUnreadable,
   }),
   Rpc.make('projects.list', { success: Schema.Array(ProjectInfo) }),
-  /** Forgets the project; a registered checkout stays where it is. */
+  /**
+   * Forgets the project; a registered checkout stays where it is. Refused while the project has a
+   * run going: its work graph and worktrees are the run's (§7.1).
+   */
   Rpc.make('projects.remove', {
     payload: { project: ProjectId },
-    error: ProjectNotFound,
+    error: Schema.Union([ProjectNotFound, RunGoing]),
   }),
   /**
    * Gives or takes back the user's trust in the project (§12.1, §20.2): its agents started from then

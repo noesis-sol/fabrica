@@ -167,7 +167,15 @@ const remove = Command.make(
       yield* withEngine(client =>
         client.rpc['projects.remove']({ project: id }),
       ).pipe(
-        Effect.catchTag('ProjectNotFound', () => Effect.fail(noProject(id))),
+        Effect.catchTags({
+          ProjectNotFound: () => Effect.fail(noProject(id)),
+          RunGoing: ({ run }) =>
+            Effect.fail(
+              new ProjectRefused({
+                reason: `${sanitiseLine(id)} has a run going, ${sanitiseLine(run)}: stop it with \`fabrica run stop\` before removing it`,
+              }),
+            ),
+        }),
       )
       yield* printAnswer({
         schema: RemovedAnswer,

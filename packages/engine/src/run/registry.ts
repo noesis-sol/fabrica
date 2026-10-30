@@ -328,6 +328,10 @@ export const make = Effect.gen(function* () {
           Effect.orDie,
         )
         const viewScope = yield* Scope.fork(runsScope)
+        // The run's row is said idle once, as it ends; the view's word on it, held by the same lock,
+        // comes before that or not at all.
+        const rowLock = yield* Semaphore.make(1)
+        const over = yield* Ref.make(false)
         const view = yield* makeRunView({
           header: Effect.map(
             control.state,
@@ -338,20 +342,25 @@ export const make = Effect.gen(function* () {
           graph,
           // The project's row waits on the maintainer while a ticket of the run needs them.
           needsYou: count =>
-            Effect.ignore(
-              projects.setRun({
-                project,
-                run:
-                  count > 0
-                    ? ProjectRunState.cases.waiting.make({
-                        run,
-                        overnight: input.mode._tag === 'overnight',
-                        needsYou: count,
-                      })
-                    : ProjectRunState.cases.running.make({
-                        run,
-                        overnight: input.mode._tag === 'overnight',
-                      }),
+            rowLock.withPermit(
+              Effect.gen(function* () {
+                if (yield* Ref.get(over)) return
+                yield* Effect.ignore(
+                  projects.setRun({
+                    project,
+                    run:
+                      count > 0
+                        ? ProjectRunState.cases.waiting.make({
+                            run,
+                            overnight: input.mode._tag === 'overnight',
+                            needsYou: count,
+                          })
+                        : ProjectRunState.cases.running.make({
+                            run,
+                            overnight: input.mode._tag === 'overnight',
+                          }),
+                  }),
+                )
               }),
             ),
           scope: viewScope,
@@ -397,8 +406,18 @@ export const make = Effect.gen(function* () {
         ).pipe(Layer.provide(layerRunLog({ root: record.path, run })))
 
         const finished = Effect.gen(function* () {
-          yield* SubscriptionRef.update(feed, now => ({ ...now, ended: true }))
-          yield* Scope.close(viewScope, Exit.void)
+          // Idle before the next run can start, so its row isn't set idle under it.
+          yield* rowLock.withPermit(
+            Effect.andThen(
+              Ref.set(over, true),
+              Effect.ignore(
+                projects.setRun({
+                  project,
+                  run: ProjectRunState.cases.idle.make({}),
+                }),
+              ),
+            ),
+          )
           yield* Ref.update(going, map => {
             const next = new Map(map)
             if (next.get(project)?.header.run === run) next.delete(project)
@@ -409,12 +428,9 @@ export const make = Effect.gen(function* () {
             next.delete(project)
             return next
           })
-          yield* Effect.ignore(
-            projects.setRun({
-              project,
-              run: ProjectRunState.cases.idle.make({}),
-            }),
-          )
+          yield* Scope.close(viewScope, Exit.void)
+          // Its events stream ends once the run is gone: a status asked then says how it ended.
+          yield* SubscriptionRef.update(feed, now => ({ ...now, ended: true }))
           // A run that ended before its start checks answered (a defect): its start hears so.
           yield* Deferred.die(
             control.checked,
@@ -423,6 +439,17 @@ export const make = Effect.gen(function* () {
           yield* Deferred.succeed(done, undefined)
         })
 
+        // The project's row says the run goes before it does: from then on the project isn't removed
+        // under it, and a project being removed refuses it.
+        yield* projects
+          .setRun({
+            project,
+            run: ProjectRunState.cases.running.make({
+              run,
+              overnight: input.mode._tag === 'overnight',
+            }),
+          })
+          .pipe(Effect.tapError(() => Scope.close(viewScope, Exit.void)))
         yield* runProject(config, control, view.sources).pipe(
           Effect.provide(
             Layer.merge(
@@ -454,13 +481,6 @@ export const make = Effect.gen(function* () {
           }),
         )
         yield* Ref.update(ended, map => new Map(map).set(project, done))
-        yield* projects.setRun({
-          project,
-          run: ProjectRunState.cases.running.make({
-            run,
-            overnight: input.mode._tag === 'overnight',
-          }),
-        })
         return { control, run, done }
       }),
     )

@@ -25,6 +25,7 @@ import {
   ProjectStatus,
   type ProjectStatusItem,
   type Resume,
+  RunGoing,
   type TicketId,
 } from '@fabrica/contracts'
 
@@ -71,7 +72,9 @@ import { makeStatusFeed } from './status'
 // refused with every problem, and a clone it made is removed again. Each project's work graph is
 // opened once, in a scope of its own that its removal closes, and every change to it updates the
 // project's row in the status stream. Removing a project forgets it and the engine's folder for it;
-// a registered checkout stays where it is.
+// a registered checkout stays where it is. A project with a run going isn't removed, and no run
+// starts on one being removed: its work graph, checkout and worktrees are the run's (§7.1). A project
+// removed isn't opened again, nor its row sent again, by a change or a refresh that was under way.
 
 /** A project's work graph couldn't be opened: its checkout is gone, its database is newer than the engine. */
 export class WorkGraphUnopened extends Data.TaggedError('WorkGraphUnopened')<{
@@ -90,8 +93,13 @@ export interface ProjectsShape {
   }) => Effect.Effect<ProjectInfo, AddFailed>
   /** Every project, oldest first. */
   readonly list: Effect.Effect<ReadonlyArray<ProjectInfo>>
-  /** Forgets the project and removes the engine's folder for it (a clone with it); a registered checkout stays. */
-  readonly remove: (project: ProjectId) => Effect.Effect<void, ProjectNotFound>
+  /**
+   * Forgets the project and removes the engine's folder for it (a clone with it); a registered checkout
+   * stays. Refused while its row says a run goes.
+   */
+  readonly remove: (
+    project: ProjectId,
+  ) => Effect.Effect<void, ProjectNotFound | RunGoing>
   readonly find: (
     project: ProjectId,
   ) => Effect.Effect<ProjectRecord, ProjectNotFound>
@@ -104,7 +112,10 @@ export interface ProjectsShape {
     readonly project: ProjectId
     readonly trusted: boolean
   }) => Effect.Effect<void, ProjectNotFound>
-  /** Keeps the project's run as its row says it (§18.3), and sends the row again with it. */
+  /**
+   * Keeps the project's run as its row says it (§18.3), and sends the row again with it. A run goes
+   * from the row saying so until it says idle again: a project being removed is not found.
+   */
   readonly setRun: (options: {
     readonly project: ProjectId
     readonly run: ProjectRunState
@@ -174,6 +185,12 @@ export const make = Effect.gen(function* () {
   const runs = yield* Ref.make<ReadonlyMap<ProjectId, ProjectRunState>>(
     new Map(),
   )
+  /** The projects removed, from the start of their removal until the ID is added again. */
+  const removed = yield* Ref.make<ReadonlySet<ProjectId>>(new Set())
+  /** Held to mark a project removed, to change its run and to send its row, so none of them crosses another. */
+  const removeLock = yield* Semaphore.make(1)
+  const isRemoved = (project: ProjectId) =>
+    Effect.map(Ref.get(removed), set => set.has(project))
 
   const find = (project: ProjectId) =>
     withSql(findRecord(project)).pipe(
@@ -203,9 +220,17 @@ export const make = Effect.gen(function* () {
 
   const statusFeed = yield* makeStatusFeed([])
 
-  /** Sends the project's row again, as it is now. */
+  /** Sends the project's row again, as it is now; a removed project's isn't. */
   const refresh = (record: ProjectRecord): Effect.Effect<void> =>
-    Effect.flatMap(statusOf(record), statusFeed.upsert)
+    Effect.gen(function* () {
+      if (yield* isRemoved(record.id)) return
+      const row = yield* statusOf(record)
+      yield* removeLock.withPermit(
+        Effect.gen(function* () {
+          if (!(yield* isRemoved(record.id))) yield* statusFeed.upsert(row)
+        }),
+      )
+    })
 
   /** Opens the project's work graph where it isn't open, with a watcher that sends its row on each change. */
   const open = (
@@ -215,6 +240,11 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const held = (yield* Ref.get(opened)).get(record.id)
         if (held !== undefined) return held.graph
+        if (yield* isRemoved(record.id))
+          return yield* new WorkGraphUnopened({
+            project: record.id,
+            reason: 'the project is removed',
+          })
         const own = yield* Scope.fork(scope)
         const built = yield* Layer.buildWithScope(
           sqliteLayer({
@@ -346,6 +376,12 @@ export const make = Effect.gen(function* () {
     yield* makeFabricaFolder(place.top).pipe(
       Effect.mapError(error => refused(error.message)),
     )
+    // An ID removed before is the new project's.
+    yield* Ref.update(removed, set => {
+      const next = new Set(set)
+      next.delete(options.id)
+      return next
+    })
     const record: ProjectRecord = {
       id: options.id,
       name: options.name,
@@ -441,13 +477,30 @@ export const make = Effect.gen(function* () {
     Effect.forEach(records, infoOf, { concurrency: 'unbounded' }),
   ).pipe(Effect.withSpan('Projects.list'))
 
+  // A removal takes the add's lock, so no add takes its ID, or its folder, until it is done; once it is
+  // marked removed, its work graph closed stays closed and its row removed stays removed.
   const remove = Effect.fn('Projects.remove')(function* (project: ProjectId) {
-    yield* find(project)
-    yield* close(project)
-    yield* withSql(deleteRecord(project))
-    yield* statusFeed.remove(project)
-    yield* Effect.promise(() =>
-      rm(projectFolder({ data, project }), { recursive: true, force: true }),
+    yield* addLock.withPermit(
+      Effect.gen(function* () {
+        yield* find(project)
+        yield* removeLock.withPermit(
+          Effect.gen(function* () {
+            const run = (yield* Ref.get(runs)).get(project)
+            if (run !== undefined && run._tag !== 'idle')
+              return yield* new RunGoing({ project, run: run.run })
+            yield* Ref.update(removed, set => new Set(set).add(project))
+          }),
+        )
+        yield* close(project)
+        yield* withSql(deleteRecord(project))
+        yield* statusFeed.remove(project)
+        yield* Effect.promise(() =>
+          rm(projectFolder({ data, project }), {
+            recursive: true,
+            force: true,
+          }),
+        )
+      }),
     )
   })
 
@@ -465,8 +518,14 @@ export const make = Effect.gen(function* () {
     readonly run: ProjectRunState
   }) {
     const record = yield* find(options.project)
-    yield* Ref.update(runs, map =>
-      new Map(map).set(options.project, options.run),
+    yield* removeLock.withPermit(
+      Effect.gen(function* () {
+        if (yield* isRemoved(options.project))
+          return yield* new ProjectNotFound({ project: options.project })
+        yield* Ref.update(runs, map =>
+          new Map(map).set(options.project, options.run),
+        )
+      }),
     )
     yield* refresh(record)
   })

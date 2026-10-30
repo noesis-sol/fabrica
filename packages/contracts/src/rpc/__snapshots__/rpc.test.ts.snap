@@ -8330,7 +8330,14 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
     },
     {
       "error": {
-        "$ref": "#/$defs/ProjectNotFoundEncoded",
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ProjectNotFoundEncoded",
+          },
+          {
+            "$ref": "#/$defs/RunGoingEncoded",
+          },
+        ],
       },
       "group": "projects",
       "payload": {

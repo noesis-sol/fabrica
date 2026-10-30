@@ -431,7 +431,10 @@ const samples: Record<string, Samples> = {
     ],
   },
   'projects.list': { success: [[projectInfo]] },
-  'projects.remove': { payload: [{ project }], error: [notFound] },
+  'projects.remove': {
+    payload: [{ project }],
+    error: [notFound, { _tag: 'RunGoing', project, run }],
+  },
   'projects.trust': {
     payload: [
       { project, trusted: true },
