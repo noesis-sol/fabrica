@@ -24,6 +24,7 @@ import {
   QuestionChoices,
   QuestionOption,
   SessionId,
+  Ticket,
   type TicketEvent,
   TicketId,
   TicketMetadata,
@@ -766,20 +767,38 @@ describe('list', () => {
     () =>
       Effect.gen(function* () {
         const graph = yield* WorkGraph
-        const filed = yield* Effect.forEach(
-          Array.from({ length: 1_203 }, (_, n) => n),
-          n =>
-            Effect.andThen(
-              TestClock.adjust(Duration.millis(1)),
-              graph.create({
-                ticket: {
-                  ...task(`Ticket ${n}`),
-                  priority: n % 3 === 0 ? 1 : 2,
-                },
-                actor: maintainer,
-              }),
-            ),
+        // Brought in by one import, a millisecond apart: filed one by one, each in a transaction of
+        // its own, they took most of the test's 15 s on a loaded machine (fab-adb), the list 60 ms.
+        const filed = Array.from(
+          { length: 1_203 },
+          (_, n) =>
+            new Ticket({
+              id: id(`fa-${String(n).padStart(ticketIdRandomLength, '0')}`),
+              type: 'task',
+              title: `Ticket ${n}`,
+              description: Option.none(),
+              design: Option.none(),
+              acceptance: Option.none(),
+              status: 'open',
+              resolution: Option.none(),
+              priority: n % 3 === 0 ? 1 : 2,
+              deferUntil: Option.none(),
+              assignee: Option.none(),
+              model: Option.none(),
+              metadata: Schema.decodeUnknownSync(TicketMetadata)({}),
+              result: Option.none(),
+              question: Option.none(),
+              mergedCommit: Option.none(),
+              closeReason: Option.none(),
+              createdAt: DateTime.makeUnsafe(1_793_000_000_000 + n),
+              updatedAt: DateTime.makeUnsafe(1_793_000_000_000 + n),
+            }),
         )
+        yield* graph.importTickets({
+          tickets: filed.map(ticket => ({ ticket, labels: [], notes: [] })),
+          edges: [],
+          actor: maintainer,
+        })
         const all = yield* graph.list()
         expect(all).toHaveLength(1_203)
         expect(all.map(ticket => ticket.id)).toEqual([
