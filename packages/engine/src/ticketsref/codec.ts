@@ -174,17 +174,17 @@ const recordCodec = <Value, Record_>({
       kind,
       issue: Schema.isSchemaError(error) ? error.message : String(error),
     })
+  const unencodable = (cause: unknown) =>
+    new RecordUnencodable({ kind, issue: String(cause) })
   return {
     encode: (value: Value): Effect.Effect<string, RecordUnencodable> =>
       encodeRecord(toRecord(value)).pipe(
+        Effect.mapError(unencodable),
         Effect.flatMap(encoded =>
           Effect.try({
             try: () => canonicalJson(encoded),
-            catch: cause => cause,
+            catch: unencodable,
           }),
-        ),
-        Effect.mapError(
-          cause => new RecordUnencodable({ kind, issue: String(cause) }),
         ),
       ),
     decodeJson: (
