@@ -6,7 +6,7 @@ import type { StopKind, TicketId } from '@fabrica/contracts'
 // only what its reasons can have changed. A worker settling frees a slot and moves nothing in the
 // work graph that the ready set reads, unless its ticket went back in the queue; a merge moves Base,
 // and a change of the work graph by anyone but the run itself (a worker filing a ticket, the
-// maintainer) moves the ready set.
+// maintainer) moves the ready set; a hold's change can free tickets to dispatch.
 
 export type WakeReason = Data.TaggedEnum<{
   /** The run started: the first look. */
@@ -19,6 +19,8 @@ export type WakeReason = Data.TaggedEnum<{
   MergeEnded: { readonly ticket: TicketId }
   /** The work graph changed by another's hand than the run's. */
   TicketsChanged: {}
+  /** The holds changed (§14): one was raised or lifted, and the tickets a probe freed are back in the queue. */
+  HoldsChanged: {}
   /** The run was asked to drain (no new tickets), or the drain was taken back (§13.10). */
   Drain: { readonly draining: boolean }
   /** Something stops the run: merging stopped, the work graph or git failed under it, a defect. */
@@ -39,6 +41,7 @@ export const readsReady = (reasons: ReadonlyArray<WakeReason>): boolean =>
       Requeued: () => true,
       MergeEnded: () => true,
       TicketsChanged: () => true,
+      HoldsChanged: () => true,
       Drain: () => false,
       Stopped: () => false,
     }),

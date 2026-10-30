@@ -115,7 +115,8 @@ export interface SupervisorHolds {
 }
 
 /**
- * The holds until they are one state (fab-mgi.4.11, .12, .13): a usage limit waited out to its reset,
+ * Holds that only wait, for a supervision outside a run (a run routes its workers' trouble to its holds,
+ * `run/holds.ts`): a usage limit waited out to its reset,
  * one at or before now taken as unknown and waited `retry`; a refused credential waited `retry`; a
  * start failure counted nowhere.
  */

@@ -1,5 +1,6 @@
 import {
   Cause,
+  Clock,
   Data,
   Deferred,
   Duration,
@@ -31,9 +32,11 @@ import {
   factsOf,
 } from '@fabrica/contracts'
 
+import { PiAgent } from '../agent'
 import { Checks } from '../checks'
 import { footprintParts } from '../footprints'
-import { Git, Worktrees, ticketBranch } from '../git'
+import { Git, Worktrees, isClean, ticketBranch } from '../git'
+import { QUICK_SETTLE, makeHolds, stopping } from '../holds'
 import {
   type MergeQueueShape,
   MergeSetup,
@@ -74,7 +77,17 @@ import { type RunConfig, RunMode, overnightMode } from './config'
 import { type RunControl, makeRunControl } from './control'
 import { endSteps } from './end'
 import { type Gated, type Taken, makeFootprintsGate } from './footprints-gate'
-import { MayTake, mayTake } from './holds'
+import {
+  MayTake,
+  heldClock,
+  makeEnvironmentHold,
+  mayTake,
+  minimalAgent,
+  providerHeld,
+  settleOf,
+  supervisorHolds,
+  waitsOnHold,
+} from './holds'
 import { record } from './records'
 import {
   SetupRetry,
@@ -82,7 +95,6 @@ import {
   setupRetries,
   setupWaiting,
   setupWaitsLines,
-  waitsForSetup,
 } from './setup'
 import { StartChecked, type Started, runStartChecks } from './start-checks'
 import {
@@ -93,7 +105,7 @@ import {
   makeRunState,
   slotsTaken,
 } from './state'
-import { makeSupervision, toolFollowUp, waitingHolds } from './supervisor'
+import { makeSupervision, toolFollowUp } from './supervisor'
 import {
   Verified,
   type VerifierRound,
@@ -174,8 +186,9 @@ const descendants = (
 }
 
 /**
- * The phases a ticket can be dispatched from: back in the queue, but not until a merge where its setup
- * failed; or waiting on its question, which a ready ticket's answer closed.
+ * The phases a ticket can be dispatched from: back in the queue, but not until a merge or a probe where
+ * its setup failed, nor until the probe where an environment hold put it back; or waiting on its
+ * question, which a ready ticket's answer closed.
  */
 const dispatchable = (snapshot: RunSnapshot, ticket: TicketId): boolean => {
   const taken = snapshot.tickets.get(ticket)
@@ -184,7 +197,7 @@ const dispatchable = (snapshot: RunSnapshot, ticket: TicketId): boolean => {
     taken.phase._tag === 'queued' ||
     taken.phase._tag === 'held_back' ||
     taken.phase._tag === 'asked' ||
-    (taken.phase._tag === 'waiting' && !waitsForSetup(taken.phase))
+    (taken.phase._tag === 'waiting' && taken.phase.for._tag === 'merge')
   )
 }
 
@@ -349,6 +362,15 @@ const runStarted = Effect.fn('Run.started')(function* (
   // The tickets whose merge's setup failed: a merge puts them back in line, not in the queue.
   const failedAtMerge = yield* Ref.make<ReadonlySet<TicketId>>(new Set())
 
+  const state = yield* makeRunState(log)
+  // The holds, one state (§14, H58): the merge queue's hand-backs and the workers' quiet are counted
+  // on its clock, stopped while they hold.
+  const holds = yield* makeHolds({
+    log,
+    running: Effect.map(state.current, slotsTaken),
+  })
+  const clock = heldClock(holds, (yield* HandBackClock).sleep)
+
   // The merge queue lives in a scope of its own, so the end stops it before writing its records.
   const mergeScope = yield* Scope.make()
   const merges = yield* makeMergeQueue({
@@ -367,6 +389,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     actor,
   }).pipe(
     Effect.provideService(MergeSetup, MergeSetup.of(setup)),
+    Effect.provideService(HandBackClock, clock),
     Scope.provide(mergeScope),
   )
   const mergeUpdates = yield* merges.updates.pipe(Scope.provide(mergeScope))
@@ -413,7 +436,6 @@ const runStarted = Effect.fn('Run.started')(function* (
     })
   yield* recordBattery
 
-  const state = yield* makeRunState(log)
   // Why the ticket merging waits (`MERGES_WAIT`, H72), on the console until its turn's outcome comes.
   const mergesWait = yield* Ref.make(
     Option.none<{ readonly ticket: TicketId; readonly detail: string }>(),
@@ -462,10 +484,41 @@ const runStarted = Effect.fn('Run.started')(function* (
     sharedFiles: project.shared_files,
   })
   const wakes = control.wakes
+  const runScope = yield* Effect.scope
+  const agents = yield* PiAgent
+  const proxy = yield* ModelProxy
+  // The tickets an environment hold put back while their worker still ran: put back as it ends.
+  const toReopen = yield* Ref.make<ReadonlySet<TicketId>>(new Set())
+  /** When each ticket was last dispatched, in epoch ms: a quick settle is counted for the environment hold. */
+  const dispatchedAt = new Map<TicketId, number>()
+  const environment = yield* makeEnvironmentHold({
+    holds,
+    log,
+    sleep: clock.sleep,
+    agent: minimalAgent({
+      config,
+      run,
+      model: Option.map(project.model, choice => ({
+        provider: choice.provider,
+        modelId: choice.model,
+      })),
+    }).pipe(
+      Effect.provideService(PiAgent, agents),
+      Effect.provideService(ModelProxy, proxy),
+    ),
+    reopen: tickets => Effect.forEach(tickets, reopened, { discard: true }),
+    probed: Effect.suspend(() => probeFreed),
+  })
   const supervision = yield* makeSupervision({
-    proxy: yield* (yield* ModelProxy).events,
-    holds: waitingHolds(project.usage_limit_retry),
-    clock: yield* HandBackClock,
+    proxy: yield* proxy.events,
+    holds: supervisorHolds({
+      holds,
+      environment,
+      retry: project.usage_limit_retry,
+      sleep: clock.sleep,
+      fork: effect => Effect.asVoid(Effect.forkIn(effect, runScope)),
+    }),
+    clock,
     ticketLimit: project.ticket_limit,
     fallbacks: project.model_fallbacks.map(choice => ({
       provider: choice.provider,
@@ -570,11 +623,11 @@ const runStarted = Effect.fn('Run.started')(function* (
     )
 
   /**
-   * A merge, of `merged`, frees the tickets whose setup failed (§13.8): one its worker's setup failed
-   * goes back in the queue, and one its merge's setup failed back in line to merge, each set up again
-   * as it comes round.
+   * A merge or a probe frees the tickets whose setup failed (§13.8), for `cause`: one its worker's setup
+   * failed goes back in the queue, and one its merge's setup failed back in line to merge, each set up
+   * again as it comes round.
    */
-  const setupsRetried = (merged: TicketId) =>
+  const setupsRetried = (cause: string) =>
     Effect.gen(function* () {
       const waiting = setupWaiting(yield* state.current)
       if (waiting.length === 0) return
@@ -593,7 +646,6 @@ const runStarted = Effect.fn('Run.started')(function* (
               ),
             )
         : []
-      const cause = `${merged} merged: its setup runs again`
       yield* Effect.forEach(
         setupRetries({ waiting, failedAtMerge: atMerge, worktrees: listed }),
         SetupRetry.$match({
@@ -633,6 +685,106 @@ const runStarted = Effect.fn('Run.started')(function* (
     })
 
   /**
+   * An environment hold puts the ticket back to wait for its probe (§14.1): one set aside for failing at
+   * once is undeferred, its worktree and session kept; one whose worker still runs is put back as it ends.
+   */
+  const reopened = (ticket: TicketId): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const taken = (yield* state.current).tickets.get(ticket)
+      if (taken === undefined) return
+      if (factsOf(taken.phase).takesSlot) {
+        yield* Ref.update(toReopen, kept => new Set([...kept, ticket]))
+        return
+      }
+      if (taken.phase._tag !== 'set_aside') return
+      yield* tracked(graph.undefer({ id: ticket, actor }))
+      const detail = `the environment hold put it back: it waits for the probe (it was set aside ${taken.phase.reason})`
+      yield* state.move({
+        ticket,
+        to: Phase.cases.waiting.make({ for: WaitFor.cases.probe.make({}) }),
+        cause: detail,
+      })
+      yield* record(log, {
+        kind: 'reopened',
+        ticket,
+        detail,
+        text: `  ${ticket} back in the queue for the probe: ${detail}`,
+      })
+    })
+
+  /**
+   * `PROBE_OK` frees the tickets waiting for the probe and those whose setup failed (§14.1, §13.8),
+   * before the environment hold lifts: its lift wakes the run to take them.
+   */
+  const probeFreed = Effect.gen(function* () {
+    const cause = 'PROBE_OK: the environment probe passed'
+    yield* Effect.forEach(
+      inPhase(yield* state.current, 'waiting').filter(
+        taken =>
+          taken.phase._tag === 'waiting' && taken.phase.for._tag === 'probe',
+      ),
+      taken =>
+        state.move({
+          ticket: taken.ticket,
+          to: Phase.cases.queued.make({}),
+          cause,
+        }),
+      { discard: true },
+    )
+    yield* setupsRetried(`${cause}: its setup runs again`)
+  })
+
+  /** Whether the ticket's branch or worktree has changes; one that can't tell is taken as changed. */
+  const hasChanges = (ticket: TicketId) =>
+    Effect.gen(function* () {
+      const listed = yield* worktrees.list({ home: config.home })
+      const kept = listed.find(entry => entry.ticket === ticket)
+      const [branch, status] = yield* Effect.all(
+        [
+          git.changedFiles({
+            repo: config.checkout,
+            branch: ticketBranch(ticket),
+            base: started.base,
+          }),
+          kept === undefined
+            ? Effect.succeed(Option.none())
+            : Effect.map(git.status({ worktree: kept.path }), Option.some),
+        ],
+        { concurrency: 2 },
+      )
+      return (
+        branch.length > 0 || Option.exists(status, found => !isClean(found))
+      )
+    }).pipe(Effect.orElseSucceed(() => true))
+
+  /** Counts the ticket's turn, ended as `end`, for the environment hold (§14.1). */
+  const countedFor = (ticket: TicketId, end: WorkerEnd) =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis
+      const at = dispatchedAt.get(ticket)
+      const quick =
+        at !== undefined && now - at < Duration.toMillis(QUICK_SETTLE)
+      const held = providerHeld(yield* holds.current)
+      const changed =
+        WorkerEnd.$is('Unfinished')(end) && quick && !held
+          ? yield* hasChanges(ticket)
+          : false
+      yield* environment.settled(
+        settleOf({ ticket, end, quick, changed, providerHeld: held }),
+      )
+    })
+
+  /** Puts the ticket back for the probe where an environment hold asked for it while its worker ran. */
+  const reopenedOnceEnded = (ticket: TicketId) =>
+    Effect.gen(function* () {
+      const reopen = yield* Ref.modify(toReopen, kept => [
+        kept.has(ticket),
+        new Set([...kept].filter(id => id !== ticket)),
+      ])
+      if (reopen) yield* reopened(ticket)
+    })
+
+  /**
    * Moves the ticket as its worker's end asks (§13.5), then frees its slot; a finish, verified or
    * past the verifier, goes to the merge queue for `finished`.
    */
@@ -643,6 +795,8 @@ const runStarted = Effect.fn('Run.started')(function* (
   ) =>
     Effect.gen(function* () {
       const title = titleOf(yield* state.current, ticket)
+      // Counted while it still holds its slot, so a hold it trips is on before the run can see it ended.
+      yield* countedFor(ticket, end)
       yield* WorkerEnd.$match(end, {
         Finished: ({ worktree }) =>
           Effect.gen(function* () {
@@ -801,6 +955,7 @@ const runStarted = Effect.fn('Run.started')(function* (
             ),
           ),
       })
+      yield* reopenedOnceEnded(ticket)
       // A ticket released back to the queue moves the ready set: it may be ready already (§13.5).
       yield* wakes.wake(
         WorkerEnd.$is('WaitsFor')(end) || WorkerEnd.$is('SetupFailed')(end)
@@ -1046,7 +1201,7 @@ const runStarted = Effect.fn('Run.started')(function* (
                 }),
               })
               yield* closeEpics
-              yield* setupsRetried(ticket)
+              yield* setupsRetried(`${ticket} merged: its setup runs again`)
             }),
           ),
         NoChange: () =>
@@ -1324,6 +1479,7 @@ const runStarted = Effect.fn('Run.started')(function* (
         { discard: true },
       )
       const session = yield* drawSession
+      dispatchedAt.set(ticket.id, yield* Clock.currentTimeMillis)
       const turn = yield* turnOf(ticket.id)
       if (WorkerTurn.$is('Resume')(turn))
         yield* record(log, {
@@ -1452,15 +1608,16 @@ const runStarted = Effect.fn('Run.started')(function* (
                 : 'ready again',
           })
       }
-      const may = yield* mayTake(before)
+      // Whether the run may take work: one snapshot of plain values, read once for this look (§14).
+      const held = yield* holds.current
       const draining = yield* control.draining
+      const may = mayTake({ holds: held, draining })
       const gated = yield* footprints.gate({
         ready: candidates,
         snapshot: before,
-        free:
-          MayTake.$is('Yes')(may) && !draining
-            ? project.concurrent - slotsTaken(before)
-            : 0,
+        free: MayTake.$is('Yes')(may)
+          ? project.concurrent - slotsTaken(before)
+          : 0,
       })
       yield* keepHeld(candidates, gated)
       const solo = new Set([
@@ -1490,6 +1647,10 @@ const runStarted = Effect.fn('Run.started')(function* (
       ready = ready.filter(ticket => !dispatched.has(ticket.id))
       const after = yield* state.current
       if (inProgress(after).length > 0) return Option.none<Ending>()
+      // A hold that can lift keeps the run, unless it drains: the tickets it holds back are to come.
+      // Read after the state: a ticket's turn counts toward a hold before it leaves its slot.
+      if (waitsOnHold(yield* holds.current) && !draining)
+        return Option.none<Ending>()
       const limitReached = Option.exists(
         limit,
         most => after.dispatched >= most,
@@ -1516,6 +1677,17 @@ const runStarted = Effect.fn('Run.started')(function* (
         : wakes.wake(WakeReason.TicketsChanged()),
     ),
     Effect.catch(error => Effect.logWarning(error.message)),
+    Effect.forkScoped,
+  )
+  // Each change of the holds after the first: a lift wakes the run, and one that gave up stops it.
+  yield* holds.changes.pipe(
+    Stream.drop(1),
+    Stream.runForEach(snapshot =>
+      Option.match(stopping(snapshot), {
+        onNone: () => wakes.wake(WakeReason.HoldsChanged()),
+        onSome: gaveUp => stop(gaveUp.kind, gaveUp.detail, gaveUp.ticket),
+      }),
+    ),
     Effect.forkScoped,
   )
   yield* wakes.wake(WakeReason.Started())

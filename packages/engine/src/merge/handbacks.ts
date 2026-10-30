@@ -155,7 +155,7 @@ export interface HandBackClockShape {
   readonly held: Stream.Stream<boolean>
 }
 
-/** The hand-backs' clock; until the holds are one state (fab-mgi.4.11, .12), the run never holds. */
+/** The hand-backs' clock: a run gives its queue its holds' (`run/holds.ts`); by default the run never holds. */
 export const HandBackClock = Context.Reference<HandBackClockShape>(
   '@fabrica/engine/merge/HandBackClock',
   {
