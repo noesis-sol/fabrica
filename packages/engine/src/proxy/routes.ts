@@ -31,6 +31,11 @@ export interface ProviderRoute {
   readonly provider: ProviderName
   /** The provider's base URL, as Pi's own for it: a call's path past the provider's name is appended to it. */
   readonly upstream: string
+  /**
+   * The base URL for a call of an API, where the provider's models of that API have a base URL of
+   * their own in Pi's catalog: Pi is given one base URL per provider, so such a call comes in on it too.
+   */
+  readonly upstreamByApi?: Partial<Record<ModelApi, string>>
   /** The API its probe call speaks. */
   readonly api: ModelApi
   readonly authentication: Authentication
@@ -75,6 +80,8 @@ export const knownRoutes: ReadonlyArray<ProviderRoute> = [
   {
     provider: 'openrouter',
     upstream: 'https://openrouter.ai/api/v1',
+    // Its Anthropic models speak Anthropic Messages at `/api`, whose client adds `/v1/messages`.
+    upstreamByApi: { 'anthropic-messages': 'https://openrouter.ai/api' },
     api: 'openai-completions',
     authentication: Authentication.Bearer({
       credential: SecretName.make('openrouter'),
@@ -110,9 +117,16 @@ export const targetOf = (url: string): Option.Option<Target> => {
     : Option.some({ provider, path: path ?? '/' })
 }
 
-/** The provider URL a call's path is sent to: the path appended to the provider's base URL. */
-export const upstreamUrl = (route: ProviderRoute, path: string): URL =>
-  new URL(`${route.upstream.replace(/\/+$/u, '')}${path}`)
+/** The provider URL a call's path is sent to: the path appended to the base URL for the API it speaks. */
+export const upstreamUrl = (route: ProviderRoute, path: string): URL => {
+  const base = Option.getOrElse(
+    Option.flatMap(apiOf(path), api =>
+      Option.fromNullishOr(route.upstreamByApi?.[api]),
+    ),
+    () => route.upstream,
+  )
+  return new URL(`${base.replace(/\/+$/u, '')}${path}`)
+}
 
 /** The API a call's path speaks, read from the path without its query; none for another path (listing models). */
 export const apiOf = (path: string): Option.Option<ModelApi> => {

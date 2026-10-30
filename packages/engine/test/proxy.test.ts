@@ -16,8 +16,10 @@ import {
   type ProviderRoute,
   ProxyEvent,
   Refusal,
+  knownRoutes,
   layerOpen,
   make,
+  upstreamUrl,
 } from '../src/proxy'
 import { SecretMissing, SecretName, Secrets } from '../src/secrets'
 import {
@@ -630,4 +632,37 @@ describe('model proxy', () => {
         ).toBe(true)
       }).pipe(Effect.scoped),
   )
+})
+
+describe('known routes', () => {
+  const routeOf = (provider: string) => {
+    const route = knownRoutes.find(known => known.provider === provider)
+    if (route === undefined) throw new Error(`no route for ${provider}`)
+    return route
+  }
+  const cases: ReadonlyArray<readonly [string, string, string]> = [
+    ['anthropic', '/v1/messages', 'https://api.anthropic.com/v1/messages'],
+    ['openai', '/responses', 'https://api.openai.com/v1/responses'],
+    [
+      'google',
+      '/models/gemini-2.5-pro:streamGenerateContent?alt=sse',
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse',
+    ],
+    [
+      'openrouter',
+      '/chat/completions',
+      'https://openrouter.ai/api/v1/chat/completions',
+    ],
+    // OpenRouter's Anthropic models come in on the same base URL, and go to `/api`.
+    ['openrouter', '/v1/messages', 'https://openrouter.ai/api/v1/messages'],
+    [
+      'ollama',
+      '/chat/completions',
+      'http://127.0.0.1:11434/v1/chat/completions',
+    ],
+  ]
+  for (const [provider, path, url] of cases)
+    it(`sends ${provider}'s ${path} to ${url}`, () => {
+      expect(upstreamUrl(routeOf(provider), path).href).toBe(url)
+    })
 })
