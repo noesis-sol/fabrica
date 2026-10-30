@@ -5,3 +5,5 @@
   test start their windows side by side: Electron's package installs its binary the first time it is
   loaded, and two files doing so at once in a freshly set-up worktree had one fail outside its tests. Their
   windows' quit has a minute, as their start has two.
+- The look test's and the Monaco diff test's Electron runs on a profile folder of its own in the temp folder,
+  removed at its quit, rather than Electron's default in the home folder that every test's Electron shared.

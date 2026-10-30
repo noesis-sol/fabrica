@@ -1,13 +1,13 @@
 // @vitest-environment node
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { type ElectronApplication, type Page, _electron } from 'playwright-core'
+import { type ElectronApplication, type Page } from 'playwright-core'
 import { PNG } from 'pngjs'
 import { type Rollup, build } from 'vite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { type Theme, themes } from '../src/theme/theme'
-import { electronBinary } from './electron'
+import { launchElectron } from './electron'
 
 // The console's look (spec §18.2, §24): the console scene (test/fixtures/console-scene.ts) drawn in an
 // Electron window, as the app's, through Playwright's Electron support, at the handoff's 1280 × 800
@@ -554,6 +554,7 @@ const underEachOther = (images: ReadonlyArray<PNG>): PNG => {
 
 let electron: ElectronApplication
 let page: Page
+let quit: () => Promise<void> = () => Promise.resolve()
 
 beforeAll(async () => {
   const built = await build({
@@ -576,18 +577,17 @@ beforeAll(async () => {
       ]),
     ),
   )
-  electron = await _electron.launch({
-    executablePath: electronBinary(),
-    // One pixel to a CSS pixel and sRGB whatever the screen, as the handoff's references are drawn.
-    // Unsandboxed: Ubuntu's AppArmor refuses Chromium's sandbox to a process without privileges, and
-    // the window loads nothing but the scene, from memory.
-    args: [
-      '--force-device-scale-factor=1',
-      '--force-color-profile=srgb',
-      '--no-sandbox',
-      `${uiRoot}test/fixtures/look-window.cjs`,
-    ],
-  })
+  // One pixel to a CSS pixel and sRGB whatever the screen, as the handoff's references are drawn.
+  // Unsandboxed: Ubuntu's AppArmor refuses Chromium's sandbox to a process without privileges, and
+  // the window loads nothing but the scene, from memory.
+  const launched = await launchElectron([
+    '--force-device-scale-factor=1',
+    '--force-color-profile=srgb',
+    '--no-sandbox',
+    `${uiRoot}test/fixtures/look-window.cjs`,
+  ])
+  electron = launched.app
+  quit = launched.quit
   page = await electron.firstWindow()
   await page.route(`${origin}/**`, async route => {
     const path = new URL(route.request().url()).pathname
@@ -603,9 +603,7 @@ beforeAll(async () => {
 }, 120_000)
 
 // Electron's quit, as its start, can take longer than Vitest's 10 s for a hook on a loaded machine.
-afterAll(async () => {
-  await electron?.close()
-}, 60_000)
+afterAll(() => quit(), 60_000)
 
 const contentTypeOf = (path: string): string =>
   path.endsWith('.html')

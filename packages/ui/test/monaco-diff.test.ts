@@ -6,12 +6,11 @@ import {
   type ElectronApplication,
   type Page,
   type Worker,
-  _electron,
 } from 'playwright-core'
 import { type Plugin, build } from 'vite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { electronBinary } from './electron'
+import { launchElectron } from './electron'
 
 // The Review screen's diff view as the packaged app loads it (spec §18.1): the Monaco Mount
 // (src/mounts/monaco.ts) built by Vite with the app's base, from a file, under the app's
@@ -50,6 +49,7 @@ const withAppPolicy = (policy: string): Plugin => ({
 
 let electron: ElectronApplication
 let page: Page
+let quit: () => Promise<void> = () => Promise.resolve()
 let worker: Promise<Worker>
 const messages: Array<ConsoleMessage> = []
 
@@ -67,12 +67,14 @@ beforeAll(async () => {
       rollupOptions: { input: `${uiRoot}${pagePath}` },
     },
   })
-  electron = await _electron.launch({
-    executablePath: electronBinary(),
-    // Unsandboxed: Ubuntu's AppArmor refuses Chromium's sandbox to a process without privileges; the
-    // page's own sandbox is the window's.
-    args: ['--no-sandbox', `${uiRoot}test/fixtures/monaco-window.cjs`],
-  })
+  // Unsandboxed: Ubuntu's AppArmor refuses Chromium's sandbox to a process without privileges; the
+  // page's own sandbox is the window's.
+  const launched = await launchElectron([
+    '--no-sandbox',
+    `${uiRoot}test/fixtures/monaco-window.cjs`,
+  ])
+  electron = launched.app
+  quit = launched.quit
   page = await electron.firstWindow()
   page.on('console', message => messages.push(message))
   worker = page.waitForEvent('worker')
@@ -80,9 +82,7 @@ beforeAll(async () => {
 }, 120_000)
 
 // Electron's quit, as its start, can take longer than Vitest's 10 s for a hook on a loaded machine.
-afterAll(async () => {
-  await electron?.close()
-}, 60_000)
+afterAll(() => quit(), 60_000)
 
 describe('the diff view, loaded from a file', () => {
   it('computes the diff in Monaco’s editor worker', async () => {
