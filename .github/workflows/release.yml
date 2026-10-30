@@ -618,6 +618,10 @@ jobs:
         with:
           version: 2026.10.22
 
+      # scripts/earlier-app.ts reads with effect, and the test runs with Playwright.
+      - name: Install dependencies
+        run: mise exec -- pnpm install --frozen-lockfile
+
       # The earlier release's AppImage, checked against its release's checksums.txt.
       - name: Find the earlier app
         id: earlier
@@ -670,10 +674,6 @@ jobs:
           done
           echo "::error::GitHub doesn't serve v$VERSION as its latest release with latest-linux.yml"
           exit 1
-
-      - name: Install dependencies
-        if: steps.earlier.outputs.skip == ''
-        run: mise exec -- pnpm install --frozen-lockfile
 
       # FUSE 2 to mount the AppImage, and Chromium's sandbox let use unprivileged user namespaces, as
       # app.yml's smoke test has them.
