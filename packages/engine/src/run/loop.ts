@@ -75,6 +75,7 @@ import {
   mergedLine,
   mergesWaitLine,
   recordBattery,
+  recordSleeps,
   recordUsageWindows,
   settledLine,
   shortCommit,
@@ -470,8 +471,8 @@ const runStarted = Effect.fn('Run.started')(function* (
     }),
     permissions: project.permissions,
   })
-  // While the run goes, its host is kept from idle sleep and its battery watched, both ending with
-  // the run's scope (§7.7, §15.6).
+  // While the run goes, its host is kept from idle sleep, its battery watched and its sleeps recorded
+  // from the Wake that counts its limits, all ending with the run's scope (§7.7, §15.6).
   const kept = yield* keepAwake({
     keepAwake: started.settings.engine.keep_awake,
     overnight: overnightMode(config.options.mode),
@@ -488,6 +489,7 @@ const runStarted = Effect.fn('Run.started')(function* (
       }),
     })
   yield* recordBattery
+  yield* recordSleeps
 
   // Why the ticket merging waits (`MERGES_WAIT`, H72), on the console until its turn's outcome comes.
   const mergesWait = yield* Ref.make(
