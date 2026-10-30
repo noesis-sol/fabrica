@@ -96,6 +96,7 @@ export const runKeyCommand = Effect.fn('Secrets.runKeyCommand')(
       command: '/bin/sh',
       args: ['-c', options.command],
       cwd: options.cwd,
+      secrets: true,
       timeLimit: KEY_COMMAND_LIMIT,
       outputLimit: KEY_COMMAND_OUTPUT_LIMIT,
     })

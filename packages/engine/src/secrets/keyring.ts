@@ -100,6 +100,7 @@ export const makeKeyringCli = Effect.fn('KeyringCli.make')(function* (
         command: call.command,
         args: call.args,
         cwd,
+        secrets: true,
         timeLimit: CALL_LIMIT,
         outputLimit: OUTPUT_LIMIT,
       }),
@@ -119,6 +120,7 @@ export const makeKeyringCli = Effect.fn('KeyringCli.make')(function* (
           command: call.command,
           args: call.args,
           cwd,
+          secrets: true,
           stdin: 'pipe',
         })
         // A CLI that exits before reading its stdin closes the pipe: its exit status says why.

@@ -56,6 +56,11 @@ interface Invocation {
   readonly env?: Readonly<Record<string, string>>
   /** Whether it reaches a remote (git's clone, fetch and push): it also gets the host's transport. */
   readonly network?: boolean
+  /**
+   * Whether it reaches the host's secret stores (a keyring CLI, a key's command): it also gets the
+   * host's desktop session and its password managers' sessions.
+   */
+  readonly secrets?: boolean
   /** The nice value a worker's command runs at (`worker_nice`); without one, the engine's own. */
   readonly nice?: number
 }
@@ -320,6 +325,7 @@ export const make = Effect.fn('ProcessRunner.make')(function* (
       host: config.hostEnvironment,
       extra: invocation.env ?? {},
       network: invocation.network === true,
+      secrets: invocation.secrets === true,
     })
     const path = environment['PATH'] ?? ''
     const file = yield* findOnPath({

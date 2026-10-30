@@ -59,6 +59,32 @@ const NETWORK: ReadonlySet<string> = new Set([
  */
 const SSH_VARIANT = 'GIT_SSH_VARIANT'
 
+/**
+ * What a command reaching the host's secret stores also gets, where the engine has it (spec §20.2,
+ * §20.3): a keyring's CLI (`security`, `secret-tool`), or a key's command (a password manager's CLI).
+ * The desktop session the keyring answers on: its D-Bus session bus, which the Secret Service is
+ * reached over where no systemd user bus sits at `$XDG_RUNTIME_DIR/bus`, and its display, which a
+ * keyring that asks its user to unlock it shows its prompt on. The password managers' sessions and
+ * stores: 1Password's service account, Connect server and account (its signed-in sessions are
+ * `OP_SESSION_<account>`), Bitwarden's session, pass's store and GnuPG's home. Only these commands
+ * get them, never an agent's, a check's or git's.
+ */
+const SECRET_STORES: ReadonlySet<string> = new Set([
+  'DBUS_SESSION_BUS_ADDRESS',
+  'DISPLAY',
+  'WAYLAND_DISPLAY',
+  'OP_SERVICE_ACCOUNT_TOKEN',
+  'OP_CONNECT_HOST',
+  'OP_CONNECT_TOKEN',
+  'OP_ACCOUNT',
+  'BW_SESSION',
+  'PASSWORD_STORE_DIR',
+  'GNUPGHOME',
+])
+
+/** 1Password's signed-in sessions, one per account: `OP_SESSION_<account>`. */
+const OP_SESSION = /^OP_SESSION_\w+$/
+
 /** The locale's categories: `LC_ALL`, `LC_CTYPE` and the rest. */
 const LOCALE = /^LC_[A-Z]+$/
 
@@ -88,33 +114,40 @@ export const GIT_LOCAL_VARIABLES: ReadonlySet<string> = new Set([
 
 const allowed = (
   name: string,
-  network: boolean,
+  {
+    network,
+    secrets,
+  }: { readonly network: boolean; readonly secrets: boolean },
   host: Readonly<Record<string, string | undefined>>,
 ): boolean =>
   ALLOWED.has(name) ||
   LOCALE.test(name) ||
   (network &&
     (NETWORK.has(name) ||
-      (name === SSH_VARIANT && host['GIT_SSH_COMMAND'] !== undefined)))
+      (name === SSH_VARIANT && host['GIT_SSH_COMMAND'] !== undefined))) ||
+  (secrets && (SECRET_STORES.has(name) || OP_SESSION.test(name)))
 
 /**
  * A command's environment: the allowlisted variables of `host` (the engine's environment, read once
- * where the engine starts), with those a `network` command gets, then the caller's `extra` over them,
- * less git's local variables.
+ * where the engine starts), with those a `network` command and a `secrets` command get, then the
+ * caller's `extra` over them, less git's local variables.
  */
 export const commandEnvironment = ({
   host,
   extra,
   network = false,
+  secrets = false,
 }: {
   readonly host: Readonly<Record<string, string | undefined>>
   readonly extra: Readonly<Record<string, string>>
   /** Whether the command reaches a remote: git's clone, fetch and push. */
   readonly network?: boolean
+  /** Whether the command reaches the host's secret stores: a keyring CLI, a key's command. */
+  readonly secrets?: boolean
 }): Readonly<Record<string, string>> => {
   const environment: Record<string, string> = {}
   for (const [name, value] of Object.entries(host)) {
-    if (value !== undefined && allowed(name, network, host))
+    if (value !== undefined && allowed(name, { network, secrets }, host))
       environment[name] = value
   }
   for (const [name, value] of Object.entries(extra)) environment[name] = value
