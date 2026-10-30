@@ -81,7 +81,7 @@ interface Ride {
   readonly onto: CommitHash
   /** The rider's turn, for its worktree and its check. */
   readonly rider: MergeTurn
-  /** The rider's head before the ride: where its branch is put back. */
+  /** The rider's branch's head before the ride, read from the branch: where it is put back. */
   readonly from: CommitHash
   /** The setup files the ride set the worktree up for: set up again when it is put back, or recorded as waited for. */
   readonly setUp: Ref.Ref<ReadonlyArray<string>>
@@ -251,6 +251,19 @@ export const makeTrain = Effect.fn('MergeTrain.make')(function* ({
     return Ridden.Checked({ head, outcome })
   })
 
+  /** The carriage of a ride whose rider's branch couldn't be put back, for `reason`: its turn is set aside. */
+  const stranded = (ride: Ride, reason: string) => {
+    const { ticket, branch } = ride.rider.worktree
+    return Carriage.Stranded({
+      ticket,
+      outcome: MergeOutcome.SetAside({
+        ticket,
+        reason: 'GIT_FAILED',
+        detail: `GIT_FAILED: the merge train couldn't put ${branch} back at ${ride.from}: ${reason}`,
+      }),
+    })
+  }
+
   /**
    * Ends a ride and puts its rider's branch back where it was, any rebase aborted; set up again for the
    * files the ride set it up for where `setUpAgain`, and else recorded as waiting for that setup. Empty,
@@ -260,7 +273,7 @@ export const makeTrain = Effect.fn('MergeTrain.make')(function* ({
     ride: Ride,
     { setUpAgain }: { readonly setUpAgain: boolean },
   ) => {
-    const { ticket, path } = ride.rider.worktree
+    const { ticket, path, branch } = ride.rider.worktree
     return Effect.gen(function* () {
       yield* Fiber.interrupt(ride.fiber)
       const files = yield* Ref.get(ride.setUp)
@@ -275,8 +288,19 @@ export const makeTrain = Effect.fn('MergeTrain.make')(function* ({
           ),
         )
       yield* git.abortRebase({ worktree: path })
-      if ((yield* headOf(path)) !== ride.from)
+      const [at, on] = yield* Effect.all(
+        [headOf(path), git.currentBranch({ repo: path })],
+        { concurrency: 'unbounded' },
+      )
+      if (!Option.contains(on, branch))
+        return stranded(ride, 'its worktree is off its branch')
+      // Only the ride's rebased head, on top of its first's, is reset: a branch moved elsewhere is left as
+      // it is, its turn set aside.
+      if (at !== ride.from) {
+        if (!(yield* git.isOnBase({ repo: path, branch: ride.onto, base: at })))
+          return stranded(ride, `its branch moved to ${at}`)
         yield* git.resetTo({ worktree: path, to: ride.from })
+      }
       if (!setUpAgain || files.length === 0) return Carriage.Empty()
       const { ready } = yield* setUpRecorded(git, setup, {
         ticket,
@@ -293,16 +317,7 @@ export const makeTrain = Effect.fn('MergeTrain.make')(function* ({
       })
     }).pipe(
       Effect.catch((error: CantTell | GitFailed) =>
-        Effect.succeed(
-          Carriage.Stranded({
-            ticket,
-            outcome: MergeOutcome.SetAside({
-              ticket,
-              reason: 'GIT_FAILED',
-              detail: `GIT_FAILED: the merge train couldn't put ${ride.rider.worktree.branch} back at ${ride.from}: ${error.message}`,
-            }),
-          }),
-        ),
+        Effect.succeed(stranded(ride, error.message)),
       ),
     )
   }
@@ -325,8 +340,25 @@ export const makeTrain = Effect.fn('MergeTrain.make')(function* ({
     const waiting = yield* next
     if (Option.isNone(waiting)) return current
     const rider: MergeTurn = { ...turn, worktree: waiting.value }
-    const from = yield* Effect.option(headOf(rider.worktree.path))
-    if (Option.isNone(from)) return current
+    const { path, branch } = waiting.value
+    const found = yield* Effect.option(
+      Effect.all(
+        {
+          from: git.commitHash({
+            repo: path,
+            revision: `refs/heads/${branch}`,
+          }),
+          on: git.currentBranch({ repo: path }),
+          rebasing: git.isRebasing({ worktree: path }),
+        },
+        { concurrency: 'unbounded' },
+      ),
+    )
+    if (Option.isNone(found)) return current
+    // A worktree rebasing, or off its branch, is left to its own turn: its HEAD isn't its branch's head.
+    const { from, on, rebasing } = found.value
+    if (rebasing || !Option.contains(on, branch) || Option.isNone(from))
+      return current
     const setUp = yield* Ref.make<ReadonlyArray<string>>([])
     const fiber = yield* ride({
       rider,
