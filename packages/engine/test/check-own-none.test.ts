@@ -174,6 +174,7 @@ const harness = (command: CommandSetting) =>
       worktree,
       folder: folder('sockets'),
       questionWait: Duration.minutes(15),
+      mergeStanding: Effect.succeed('not_queued'),
       checkOwn: {
         command,
         checkout,

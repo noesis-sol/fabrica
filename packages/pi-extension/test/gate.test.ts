@@ -1,4 +1,4 @@
-import { Effect, Option, Ref } from 'effect'
+import { Data, Effect, Option, Ref } from 'effect'
 
 import type {
   AgentBeforeSettleEvent,
@@ -58,6 +58,11 @@ interface PiHandlers {
 const worktree = '/work/fa-1'
 const home = '/home/agent'
 
+/** The engine's failure to take a report. */
+class EngineGone extends Data.TaggedError('EngineGone')<{
+  readonly message: string
+}> {}
+
 /** An engine standing `standing` in the merge queue and answering every request with `answer`. */
 const engine = ({
   standing = 'not_queued',
@@ -85,7 +90,7 @@ const engine = ({
           ),
     report: decided =>
       failing === 'report'
-        ? Effect.fail(new Error('the engine is gone'))
+        ? Effect.fail(new EngineGone({ message: 'the engine is gone' }))
         : Ref.update(reports, all => [...all, decided]),
   }
   return { shape, asked, reports, standingReads }
