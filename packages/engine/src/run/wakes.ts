@@ -4,14 +4,17 @@ import type { StopKind, TicketId } from '@fabrica/contracts'
 
 // What wakes the run (spec §13.2, tutti-rvzn.5, -gr4z.9): each change records why, and a look reads
 // only what its reasons can have changed. A worker settling frees a slot and moves nothing in the
-// work graph that the ready set reads; a merge moves Base, and a change of the work graph by anyone
-// but the run itself (a worker filing a ticket, the maintainer) moves the ready set.
+// work graph that the ready set reads, unless its ticket went back in the queue; a merge moves Base,
+// and a change of the work graph by anyone but the run itself (a worker filing a ticket, the
+// maintainer) moves the ready set.
 
 export type WakeReason = Data.TaggedEnum<{
   /** The run started: the first look. */
   Started: {}
   /** A ticket's worker settled, or failed: its slot is free. */
   Settled: { readonly ticket: TicketId }
+  /** A ticket's worker settled and the ticket went back in the queue, released: the ready set moved. */
+  Requeued: { readonly ticket: TicketId }
   /** A ticket's turn in the merge queue ended: Base may have moved. */
   MergeEnded: { readonly ticket: TicketId }
   /** The work graph changed by another's hand than the run's. */
@@ -31,6 +34,7 @@ export const readsReady = (reasons: ReadonlyArray<WakeReason>): boolean =>
     WakeReason.$match(reason, {
       Started: () => true,
       Settled: () => false,
+      Requeued: () => true,
       MergeEnded: () => true,
       TicketsChanged: () => true,
       Stopped: () => false,

@@ -50,7 +50,7 @@ import {
   worktreePath,
   worktreesLayer,
 } from '../src/git'
-import { noSetup } from '../src/merge'
+import { MergeWaits, noSetup } from '../src/merge'
 import {
   Deadlines,
   type RunnerConfig,
@@ -314,6 +314,12 @@ const liveDeadlines = Layer.succeed(Deadlines, {
   sleep: duration => TestClock.withLive(Effect.sleep(duration)),
 })
 
+/** The merge queue's waits (a refused fast-forward's retry, a dirty checkout's poll) on the live clock, as git's are. */
+const liveMergeWaits = Layer.succeed(MergeWaits, {
+  beforeRetry: TestClock.withLive(Effect.sleep('3 seconds')),
+  poll: TestClock.withLive(Effect.sleep('2 seconds')),
+})
+
 const engine = EngineId.make('engine-1')
 const maintainer: Actor = { _tag: 'maintainer' }
 const run = RunId.make('run-1')
@@ -416,6 +422,7 @@ const services = (
     Layer.provide(layerWake, noSleepCauses),
     attentionLayer,
     noSetup,
+    liveMergeWaits,
     agentLayer({
       node: process.execPath,
       cli: stub,

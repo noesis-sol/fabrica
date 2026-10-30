@@ -432,7 +432,12 @@ const runStarted = Effect.fn('Run.started')(function* (
             ),
           ),
       })
-      yield* wakes.wake(WakeReason.Settled({ ticket }))
+      // A ticket released back to the queue moves the ready set: it may be ready already (§13.5).
+      yield* wakes.wake(
+        WorkerEnd.$is('WaitsFor')(end) || WorkerEnd.$is('SetupFailed')(end)
+          ? WakeReason.Requeued({ ticket })
+          : WakeReason.Settled({ ticket }),
+      )
     })
 
   /** Closes each epic whose children are all closed and merged, as a ticket merges (§13.3). */
