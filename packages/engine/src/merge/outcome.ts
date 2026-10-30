@@ -97,3 +97,21 @@ export type MergeOutcome = Exclude<
   { readonly _tag: 'Step' | 'Check' | 'Wrote' | 'MergesWait' | 'Requeued' }
 >
 export const MergeOutcome = Data.taggedEnum<MergeOutcome>()
+
+/** Whether `update` is its turn's outcome, not its progress: a `MERGES_WAIT` it said is over with it. */
+export const isOutcome = (update: MergeUpdate): update is MergeOutcome =>
+  MergeUpdate.$match(update, {
+    Step: () => false,
+    Check: () => false,
+    Wrote: () => false,
+    Requeued: () => false,
+    MergesWait: () => false,
+    Merged: () => true,
+    NoChange: () => true,
+    SetAside: () => true,
+    HandedBack: () => true,
+    NoMergeCheck: () => true,
+    SetupFailed: () => true,
+    Interrupted: () => true,
+    Stopped: () => true,
+  })

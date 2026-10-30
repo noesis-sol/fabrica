@@ -39,6 +39,8 @@ import {
   MergeSetup,
   type MergeSetupShape,
   MergeUpdate,
+  clearAside,
+  isOutcome,
   make as makeMergeQueue,
 } from '../merge'
 import { HandBackClock } from '../merge/handbacks'
@@ -48,10 +50,12 @@ import {
   dispatchingLine,
   footprintLine,
   mergedLine,
+  mergesWaitLine,
   recordBattery,
   settledLine,
   shortCommit,
   warningLine,
+  wroteLine,
 } from '../runlog'
 import { KeptAwake, keepAwake } from '../time'
 import { type RunViewSources, makeRunViewSources } from '../view'
@@ -298,6 +302,9 @@ const runStarted = Effect.fn('Run.started')(function* (
   const actor: Actor = { _tag: 'engine', engine: config.engine }
   const { limit } = config.options
 
+  // What an earlier run moved aside and left is deleted beside the start, which doesn't wait on it (§13.7).
+  yield* Effect.forkDetach(clearAside(config.home))
+
   // Getting ready (H80): each of the start's steps said as it ends. The carry-over first, before
   // anything writes the run's state (§13.10): a stop during it cuts it short.
   const carried = yield* view.steps.during('carry_over')(
@@ -407,7 +414,19 @@ const runStarted = Effect.fn('Run.started')(function* (
   yield* recordBattery
 
   const state = yield* makeRunState(log)
-  yield* view.attach({ state, line: merges.line, slots: project.concurrent })
+  // Why the ticket merging waits (`MERGES_WAIT`, H72), on the console until its turn's outcome comes.
+  const mergesWait = yield* Ref.make(
+    Option.none<{ readonly ticket: TicketId; readonly detail: string }>(),
+  )
+  yield* view.attach({
+    state,
+    line: merges.line,
+    mergesWait: Effect.map(
+      Ref.get(mergesWait),
+      Option.map(({ detail }) => detail),
+    ),
+    slots: project.concurrent,
+  })
   // The carried tickets that had finished go back in line to merge, taking no slot (§13.7).
   yield* Effect.forEach(
     carried.toMerge,
@@ -931,6 +950,11 @@ const runStarted = Effect.fn('Run.started')(function* (
       const title = titleOf(yield* state.current, ticket)
       const ended = (effect: Effect.Effect<void>) =>
         Effect.andThen(effect, wakes.wake(WakeReason.MergeEnded({ ticket })))
+      if (isOutcome(update))
+        yield* Ref.update(
+          mergesWait,
+          Option.filter(wait => wait.ticket !== ticket),
+        )
       yield* MergeUpdate.$match(update, {
         Step: ({ step }) =>
           Effect.asVoid(
@@ -941,9 +965,22 @@ const runStarted = Effect.fn('Run.started')(function* (
             }),
           ),
         Check: ({ record: check }) => record(log, check),
-        // The run's log of what a merge wrote and why it waits comes with fab-mgi.30.
-        Wrote: () => Effect.void,
-        MergesWait: () => Effect.void,
+        Wrote: ({ by, files }) =>
+          record(log, {
+            kind: 'info',
+            ticket,
+            text: wroteLine({ ticket, by, files }),
+          }),
+        MergesWait: ({ checkout, files, detail }) =>
+          Effect.andThen(
+            Ref.set(mergesWait, Option.some({ ticket, detail })),
+            record(log, {
+              kind: 'warn',
+              ticket,
+              detail,
+              text: mergesWaitLine({ ticket, checkout, files }),
+            }),
+          ),
         // Its worker has it, in a slot of the run's (§13.7): the queue goes on meanwhile.
         HandedBack: ({ kind, attempt, detail }) =>
           ended(

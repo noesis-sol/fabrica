@@ -90,6 +90,7 @@ const inputsOf = (overrides: Partial<ViewInputs> = {}): ViewInputs => ({
   facts: new Map(),
   slots: 2,
   line: { merging: Option.none(), waiting: [] },
+  mergesWait: Option.none(),
   workers: [],
   steps: [],
   doneToday: 0,
@@ -447,6 +448,7 @@ describe('the run view', () => {
         yield* view.sources.attach({
           state,
           line: Effect.succeed({ merging: Option.none(), waiting: [] }),
+          mergesWait: Effect.succeed(Option.none()),
           slots: 3,
         })
         yield* TestClock.adjust(interval)

@@ -104,6 +104,34 @@ export const warningLine = (warning: {
   return warning.about === 'ticket' ? ticketLine(line) : line
 }
 
+/**
+ * `  fa-a1b2: the merge check wrote untracked dist/a.js, recorded; removed with its worktree`: what a
+ * merge's setup or check wrote in the worktree (§13.7).
+ */
+export const wroteLine = (wrote: {
+  readonly ticket: TicketId
+  readonly by: 'setup' | 'check'
+  readonly files: ReadonlyArray<string>
+}): string =>
+  ticketLine(
+    `${wrote.ticket}: ${wrote.by === 'setup' ? "the merge's setup" : 'the merge check'} wrote untracked ${wrote.files.join(', ')}, recorded; removed with its worktree`,
+  )
+
+/**
+ * `  MERGES_WAIT: <checkout> has uncommitted changes to a, b; fa-a1b2 merges once it is clean` (H72):
+ * the fast-forward waits on Base's checkout.
+ */
+export const mergesWaitLine = (wait: {
+  readonly ticket: TicketId
+  readonly checkout: string
+  readonly files: ReadonlyArray<string>
+}): string =>
+  warningLine({
+    tag: 'MERGES_WAIT',
+    about: 'ticket',
+    text: `${wait.checkout} has uncommitted changes to ${wait.files.join(', ')}; ${wait.ticket} merges once it is clean`,
+  })
+
 /** How long a span is, as the log says it: `42s` under a minute, `34m` under an hour, else `2h05m`. */
 export const spanText = (span: Duration.Duration): string => {
   const seconds = Math.max(1, Math.round(Duration.toSeconds(span)))

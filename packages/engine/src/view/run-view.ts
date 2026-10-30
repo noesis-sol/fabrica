@@ -28,12 +28,11 @@ import { type Steps, makeSteps } from './steps'
 export interface RunViewSources {
   readonly steps: Steps
   readonly workers: WorkerDesk
-  /** The run's state, its merge queue's line and its slots, once its start checks pass. */
-  readonly attach: (parts: {
-    readonly state: RunStateShape
-    readonly line: Effect.Effect<MergeLine>
-    readonly slots: number
-  }) => Effect.Effect<void>
+  /**
+   * The run's state, its merge queue's line, why the ticket merging waits (`MERGES_WAIT`) and its
+   * slots, once its start checks pass.
+   */
+  readonly attach: (parts: Attached) => Effect.Effect<void>
   /** The work graph's facts of tickets the run reads: their type, priority and whether solo. */
   readonly seen: (
     tickets: ReadonlyArray<Ticket>,
@@ -54,6 +53,7 @@ export interface RunViewHandle {
 interface Attached {
   readonly state: RunStateShape
   readonly line: Effect.Effect<MergeLine>
+  readonly mergesWait: Effect.Effect<Option.Option<string>>
   readonly slots: number
 }
 
@@ -191,30 +191,43 @@ export const makeRunView = Effect.fn('RunView.make')(function* (options: {
   /** Every input of one write, each read once, side by side. */
   const inputs: Effect.Effect<ViewInputs> = Effect.gen(function* () {
     const parts = yield* Ref.get(attached)
-    const [header, now, snapshot, line, workers, steps, doneNow, known] =
-      yield* Effect.all(
-        [
-          options.header,
-          DateTime.now,
-          Option.match(parts, {
-            onNone: () => Effect.succeed(Option.none()),
-            onSome: ({ state }) => Effect.map(state.current, Option.some),
-          }),
-          Option.match(parts, {
-            onNone: () =>
-              Effect.succeed<MergeLine>({
-                merging: Option.none(),
-                waiting: [],
-              }),
-            onSome: ({ line: read }) => read,
-          }),
-          sources.workers.current,
-          sources.steps.current,
-          Ref.get(done),
-          Ref.get(facts),
-        ],
-        { concurrency: 'unbounded' },
-      )
+    const [
+      header,
+      now,
+      snapshot,
+      line,
+      mergesWait,
+      workers,
+      steps,
+      doneNow,
+      known,
+    ] = yield* Effect.all(
+      [
+        options.header,
+        DateTime.now,
+        Option.match(parts, {
+          onNone: () => Effect.succeed(Option.none()),
+          onSome: ({ state }) => Effect.map(state.current, Option.some),
+        }),
+        Option.match(parts, {
+          onNone: () =>
+            Effect.succeed<MergeLine>({
+              merging: Option.none(),
+              waiting: [],
+            }),
+          onSome: ({ line: read }) => read,
+        }),
+        Option.match(parts, {
+          onNone: () => Effect.succeed(Option.none<string>()),
+          onSome: ({ mergesWait: read }) => read,
+        }),
+        sources.workers.current,
+        sources.steps.current,
+        Ref.get(done),
+        Ref.get(facts),
+      ],
+      { concurrency: 'unbounded' },
+    )
     return {
       header,
       now,
@@ -234,6 +247,7 @@ export const makeRunView = Effect.fn('RunView.make')(function* (options: {
         onSome: ({ slots }) => slots,
       }),
       line,
+      mergesWait,
       workers,
       steps,
       doneToday: doneNow,

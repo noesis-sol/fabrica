@@ -62,6 +62,8 @@ export interface ViewInputs {
   /** The run's slots: `concurrent`; 0 until the start's checks pass. */
   readonly slots: number
   readonly line: LineInput
+  /** Why the ticket merging waits: `MERGES_WAIT: <checkout> has uncommitted changes to …` (H72). */
+  readonly mergesWait: Option.Option<string>
   readonly workers: ReadonlyArray<WorkerLive>
   readonly steps: ReadonlyArray<EngineStep>
   readonly doneToday: number
@@ -158,10 +160,14 @@ const rowOf = (
   })
 }
 
-/** The banners a run's state puts over its stats row: a hold's, and a drain's or a stop's. */
+/**
+ * The banners a run's state puts over its stats row: a hold's, a drain's or a stop's, and a warning
+ * while its merges wait on Base's checkout.
+ */
 const bannersOf = (
   header: RunHeader,
   holds: ReadonlyArray<Hold>,
+  mergesWait: Option.Option<string>,
 ): ReadonlyArray<Banner> => [
   ...holds.map(
     hold => new Banner({ tone: 'hold', text: hold.reason, lifts: hold.lifts }),
@@ -183,6 +189,12 @@ const bannersOf = (
           }),
         ]
       : []),
+  ...Option.match(mergesWait, {
+    onNone: () => [],
+    onSome: text => [
+      new Banner({ tone: 'warning', text, lifts: Option.none() }),
+    ],
+  }),
 ]
 
 /** The view of `inputs`, every part that says what it said in `before` kept as it was. */
@@ -275,7 +287,10 @@ export const projectView = (
       }),
     ),
     holds: keptRows(part('holds'), inputs.holds, hold => hold.kind),
-    banners: kept(part('banners'), bannersOf(inputs.header, inputs.holds)),
+    banners: kept(
+      part('banners'),
+      bannersOf(inputs.header, inputs.holds, inputs.mergesWait),
+    ),
     attention: keptRows(part('attention'), inputs.attention, attentionKey),
     load: kept(part('load'), inputs.load),
     steps: keptList(
