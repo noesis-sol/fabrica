@@ -40,6 +40,7 @@ import { makeSubscriptions } from '../src/app/subscriptions'
 import { update } from '../src/app/update'
 import { view } from '../src/app/view'
 import * as Worker from '../src/screens/worker'
+import { measured, scrolled } from './virtual-list'
 
 // The Worker view (spec §18.4, §18.5, H91): opened from a card on its project, it shows the ticket on
 // top with the whole ticket a key away, the figures that move during a turn, the transcript drawn at
@@ -264,6 +265,13 @@ const said = (id: string, text: string) => ({
 
 const blocksOf = (shown: Model) => shown.screens.worker.transcript.blocks
 
+/** The transcript's list measured, its blocks in view drawn, and its scroll to its end done. */
+const transcriptShown = (shown: Model) =>
+  [
+    measured('transcript'),
+    scrolled(shown.screens.worker.list.pendingScrollVersion + 1),
+  ] as const
+
 describe('opening a worker view', () => {
   test("a card's worker opens on its project, its ticket read", () => {
     story(
@@ -450,7 +458,8 @@ describe('the transcript', () => {
     expect(blocksOf(first.model)).toMatchObject([
       { _tag: 'said', role: 'assistant', text: 'Running', thinking: '' },
     ])
-    expect(commandNames(first)).toEqual(['WaitToDraw'])
+    // The list is told of the block that came, to follow it.
+    expect(commandNames(first)).toEqual(['WaitToDraw', 'ApplyScroll'])
     const during = received(
       first.model,
       frame(patch(1, { _tag: 'text', message: 'm-1', delta: ' the' })),
@@ -517,6 +526,7 @@ describe('the transcript', () => {
     scene(
       { update, view },
       givenScene(streaming),
+      ...transcriptShown(streaming),
       expectScene(text('bash …')).toExist(),
       expectScene(text('Writing its input…')).toExist(),
       expectScene(role('log', { name: 'Transcript' })).not.toContainText(
@@ -553,6 +563,7 @@ describe('the transcript', () => {
     scene(
       { update, view },
       givenScene(whole),
+      ...transcriptShown(whole),
       expectScene(text('Writing its input…')).toBeAbsent(),
       expectScene(role('log', { name: 'Transcript' })).toContainText(
         '"command": "make check"',
@@ -592,6 +603,7 @@ describe('the transcript', () => {
     scene(
       { update, view },
       givenScene(shown),
+      ...transcriptShown(shown),
       expectScene(
         role('link', { name: 'https://example.com/spec' }),
       ).toHaveAttr('href', 'https://example.com/spec'),

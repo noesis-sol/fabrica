@@ -7,9 +7,9 @@ import {
   Option,
   Schema,
 } from 'effect'
-import { Command, Mount, type Update } from 'foldkit'
+import { Command, Mount, Update } from 'foldkit'
 import * as AsyncData from 'foldkit/asyncData'
-import type { Html, HtmlBuilder } from 'foldkit/html'
+import { type Html, type HtmlBuilder, childAttributes } from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
 import { defineTaggedUnion } from 'foldkit/schema'
 import { modifyFields } from 'foldkit/struct'
@@ -31,6 +31,7 @@ import {
   type WorkerRow,
   edgeWords,
 } from '@fabrica/contracts'
+import * as VirtualList from '@foldkit/ui/virtualList'
 
 import { sayElapsed } from '../app/clock'
 import { EngineProject, sameProject } from '../app/engine-project'
@@ -53,7 +54,10 @@ import { outputAttribute, showOutput, terminalRows } from '../mounts/terminal'
 // The transcript is drawn at most every `drawEvery` (§18.5): a frame that arrives while a draw's wait
 // runs waits for its end, then goes on with every frame that came meanwhile. A tool call's input is
 // never drawn while it streams, only once its `tool_call` brings it whole. Only the worker shown has its
-// transcript watched, so an inactive worker costs nothing (§18.5).
+// transcript watched, so an inactive worker costs nothing (§18.5). The transcript is a virtual list
+// (§18.5): only the blocks in view are drawn, each measured as it is, so a tool call's terminal and an
+// edit's diff view are made as their block comes into view and disposed of as it leaves. It follows
+// its end while it is scrolled there, and stays where it is read otherwise.
 
 // MODEL
 
@@ -143,8 +147,19 @@ export const Model = Schema.Struct({
   filing: Filing,
   /** What a terminal or a diff view said where it couldn't draw. */
   viewProblem: Schema.Option(Schema.String),
+  /** The transcript's list: where it is scrolled to, and the heights of the blocks drawn so far. */
+  list: VirtualList.Model,
 })
 export type Model = typeof Model.Type
+
+/** A block's height before it is drawn and measured: a line of text with the gap below it. */
+export const blockHeightPx = 40
+
+/** The height of an edit's or a write's diff view. */
+const changeHeightPx = 200
+
+/** The height of a tool call's terminal: its rows, and the padding around them. */
+const outputHeightPx = terminalRows * 17 + 8
 
 export const init = (): Model => ({
   shown: Option.none(),
@@ -157,6 +172,12 @@ export const init = (): Model => ({
   steered: false,
   filing: Filing.None(),
   viewProblem: Option.none(),
+  list: VirtualList.init({
+    id: 'transcript',
+    rowHeightPx: blockHeightPx,
+    initialScroll: { target: VirtualList.ScrollTarget.End() },
+    followEnd: { thresholdPx: 8 },
+  }),
 })
 
 // MESSAGE
@@ -183,6 +204,7 @@ export const Message = defineMessageUnion({
   /** A terminal or a diff view drew, or couldn't. */
   CompletedShowView: {},
   FailedShowView: { reason: Schema.String },
+  GotListMessage: { message: VirtualList.Message },
 })
 export type Message = typeof Message.Type
 
@@ -480,6 +502,42 @@ export const opened = (model: Model, worker: Shown): Return =>
         commands: [LoadTicket({ worker })],
       }
 
+/** A block's key in the transcript's list. */
+export const blockKey = (block: Block): string => `${block._tag}:${block.id}`
+
+const foldList = Update.foldChild({
+  update: VirtualList.update,
+  read: (model: Model) => Option.some(model.list),
+  write: (model: Model, list: VirtualList.Model) =>
+    modifyFields(model, { list: () => list }),
+  toParentMessage: (message: VirtualList.Message) =>
+    Message.GotListMessage({ message }),
+})
+
+const foldBlocksChanged = Update.foldChild({
+  update: VirtualList.informItemsChanged,
+  read: (model: Model) => Option.some(model.list),
+  write: (model: Model, list: VirtualList.Model) =>
+    modifyFields(model, { list: () => list }),
+  toParentMessage: (message: VirtualList.Message) =>
+    Message.GotListMessage({ message }),
+})
+
+/**
+ * The list told of the blocks drawn since `before`, where one came or a snapshot took their place, so
+ * that it follows the end or keeps the block read in place. A block that only grew is measured anew.
+ */
+const informList =
+  (before: Model) =>
+  (model: Model): Return => {
+    const was = before.transcript.blocks.map(blockKey)
+    const keys = model.transcript.blocks.map(blockKey)
+    return was.length === keys.length &&
+      was.every((key, index) => key === keys[index])
+      ? { model }
+      : foldBlocksChanged(model, keys)
+  }
+
 /** The worker shown's transcript changed by `change`; another worker's leaves the Model as it is. */
 const changeTranscript = (
   model: Model,
@@ -500,15 +558,18 @@ export const receivedTranscript = (
   !showing(model, worker)
     ? { model }
     : model.transcript.draw === 'Idle'
-      ? {
-          model: changeTranscript(model, worker, transcript =>
-            modifyFields(drawItems(transcript, items), {
-              draw: () => waitingDraw,
-              failure: () => Option.none(),
-            }),
-          ),
-          commands: [WaitToDraw()],
-        }
+      ? Update.combine(model, [
+          shown => ({
+            model: changeTranscript(shown, worker, transcript =>
+              modifyFields(drawItems(transcript, items), {
+                draw: () => waitingDraw,
+                failure: () => Option.none(),
+              }),
+            ),
+            commands: [WaitToDraw()],
+          }),
+          informList(model),
+        ])
       : {
           model: changeTranscript(model, worker, transcript =>
             modifyFields(transcript, {
@@ -592,15 +653,18 @@ export const update = (model: Model, message: Message): Return =>
     }),
     CompletedWaitToDraw: () =>
       Array.isReadonlyArrayNonEmpty(model.transcript.waiting)
-        ? {
-            model: modifyFields(model, {
-              transcript: transcript =>
-                modifyFields(drawItems(transcript, transcript.waiting), {
-                  waiting: () => [],
-                }),
+        ? Update.combine(model, [
+            shown => ({
+              model: modifyFields(shown, {
+                transcript: transcript =>
+                  modifyFields(drawItems(transcript, transcript.waiting), {
+                    waiting: () => [],
+                  }),
+              }),
+              commands: [WaitToDraw()],
             }),
-            commands: [WaitToDraw()],
-          }
+            informList(model),
+          ])
         : {
             model: modifyFields(model, {
               transcript: transcript =>
@@ -717,6 +781,7 @@ export const update = (model: Model, message: Message): Return =>
     FailedShowView: ({ reason }) => ({
       model: modifyFields(model, { viewProblem: () => Option.some(reason) }),
     }),
+    GotListMessage: ({ message }) => foldList(model, message),
   })
 
 // VIEW
@@ -1137,7 +1202,7 @@ const inputView = (
         h.Role('region'),
         h.AriaLabel(`Change to ${change.path}`),
         h.Class('overflow-hidden rounded-card bg-panel'),
-        h.Style({ height: '200px' }),
+        h.Style({ height: `${changeHeightPx}px` }),
         h.OnMount(
           ShowChange({
             path: change.path,
@@ -1180,7 +1245,7 @@ const toolView = (
             h.AriaLabel(`Output of ${block.tool}`),
             h.Attribute(outputAttribute, block.output),
             h.Class('overflow-hidden rounded-card bg-panel'),
-            h.Style({ height: `${terminalRows * 17 + 8}px`, padding: '4px' }),
+            h.Style({ height: `${outputHeightPx}px`, padding: '4px' }),
             h.OnMount(ShowOutput()),
           ]),
     ],
@@ -1188,45 +1253,82 @@ const toolView = (
 ]
 
 const blockView = (model: Model, block: Block, h: HtmlBuilder<Message>): Html =>
-  h.keyed('div')(
-    block.id,
+  h.div(
     [
       h.DataAttribute('block', block._tag),
       h.Class('grid gap-8'),
-      h.Style({ gridTemplateColumns: '64px minmax(0,1fr)' }),
+      h.Style({
+        gridTemplateColumns: '64px minmax(0,1fr)',
+        padding: '4px 12px',
+      }),
     ],
     block._tag === 'said' ? saidView(model, block, h) : toolView(block, h),
   )
+
+/**
+ * A block's height before it is measured: a tool call's from its input and output, whose diff view and
+ * terminal have heights of their own; a message's a line.
+ */
+export const estimatedHeightPx = (block: Block): number =>
+  block._tag === 'said'
+    ? blockHeightPx
+    : blockHeightPx +
+      Option.match(block.input, {
+        onNone: () => 0,
+        onSome: input =>
+          Option.isSome(changeOf(block.tool, input)) ? changeHeightPx : 0,
+      }) +
+      (block.output === '' ? 0 : outputHeightPx)
 
 const transcriptView = (model: Model, h: HtmlBuilder<Message>): Html =>
   h.div(
     [
       h.Role('log'),
       h.AriaLabel('Transcript'),
-      h.Class('flex min-h-0 flex-1 flex-col-reverse overflow-auto'),
-      h.Style({ padding: '8px 12px', fontSize: '12.5px', lineHeight: '1.35' }),
+      h.Class('flex min-h-0 flex-1 flex-col'),
+      h.Style({ fontSize: '12.5px', lineHeight: '1.35' }),
     ],
     [
-      h.div(
-        [h.Class('flex flex-col'), h.Style({ gap: '8px' })],
-        [
-          ...(model.transcript.blocks.length === 0
-            ? [note('Nothing yet.', h)]
-            : model.transcript.blocks.map(block => blockView(model, block, h))),
-          ...(model.transcript.ended
-            ? [note('The worker has finished.', h)]
-            : []),
-          Option.match(model.transcript.failure, {
-            onNone: () => h.empty,
-            onSome: reason =>
-              problem(`The transcript couldn't be read: ${reason}`, h),
+      model.transcript.blocks.length === 0
+        ? h.div([h.Style({ padding: '8px 12px' })], [note('Nothing yet.', h)])
+        : h.submodel({
+            slotId: 'transcript-list',
+            model: model.list,
+            view: VirtualList.view<Block>(),
+            viewInputs: {
+              items: model.transcript.blocks,
+              itemToKey: blockKey,
+              itemToView: block => blockView(model, block, h),
+              dynamicRowHeights: true,
+              itemToEstimatedRowHeightPx: estimatedHeightPx,
+              contentAlignment: 'End',
+              overscan: 2,
+              containerClassName: 'min-h-0 flex-1',
+              containerAttributes: childAttributes([h.AriaLabel('Blocks')]),
+            },
+            toParentMessage: message => Message.GotListMessage({ message }),
           }),
-          Option.match(model.viewProblem, {
-            onNone: () => h.empty,
-            onSome: reason => problem(`Couldn't draw it: ${reason}`, h),
-          }),
-        ],
-      ),
+      model.transcript.ended ||
+      Option.isSome(model.transcript.failure) ||
+      Option.isSome(model.viewProblem)
+        ? h.div(
+            [h.Class('flex flex-col gap-4'), h.Style({ padding: '4px 12px' })],
+            [
+              model.transcript.ended
+                ? note('The worker has finished.', h)
+                : h.empty,
+              Option.match(model.transcript.failure, {
+                onNone: () => h.empty,
+                onSome: reason =>
+                  problem(`The transcript couldn't be read: ${reason}`, h),
+              }),
+              Option.match(model.viewProblem, {
+                onNone: () => h.empty,
+                onSome: reason => problem(`Couldn't draw it: ${reason}`, h),
+              }),
+            ],
+          )
+        : h.empty,
     ],
   )
 
