@@ -506,7 +506,7 @@ describe('the graph', () => {
     const graph = graphOf({
       tickets,
       edges: facts().edges,
-      roleOf: shown => Backlog.markOf(shown, readiness).role,
+      markOf: shown => Backlog.markOf(shown, readiness),
     })
     expect(graph.nodes.map(node => [node.id, node.role])).toEqual([
       ['fa-1', 'c5'],
@@ -532,17 +532,17 @@ describe('the graph', () => {
     const graph = graphOf({
       tickets,
       edges: facts().edges,
-      roleOf: () => 'c5',
+      markOf: () => ({ role: 'c5', glyph: '○', word: 'ready' }),
     })
     const same = graphOf({
       tickets,
       edges: facts().edges,
-      roleOf: () => 'c5',
+      markOf: () => ({ role: 'c5', glyph: '○', word: 'ready' }),
     })
     const fewer = graphOf({
       tickets,
       edges: facts().edges.slice(1),
-      roleOf: () => 'c5',
+      markOf: () => ({ role: 'c5', glyph: '○', word: 'ready' }),
     })
     expect(graphKey(same)).toBe(graphKey(graph))
     expect(graphKey(fewer)).not.toBe(graphKey(graph))

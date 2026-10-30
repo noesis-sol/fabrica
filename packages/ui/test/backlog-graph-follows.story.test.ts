@@ -21,9 +21,21 @@ const id = (ticket: string) => TicketId.make(ticket)
 
 const graph: Graph = {
   nodes: [
-    { id: id('fa-1'), title: 'Sign-in', role: 'c5' },
-    { id: id('fa-2'), title: 'Login form', role: 'c1' },
-    { id: id('fa-3'), title: 'Session store', role: 'c3' },
+    { id: id('fa-1'), title: 'Sign-in', role: 'c5', glyph: '○', word: 'ready' },
+    {
+      id: id('fa-2'),
+      title: 'Login form',
+      role: 'c1',
+      glyph: '●',
+      word: 'in progress',
+    },
+    {
+      id: id('fa-3'),
+      title: 'Session store',
+      role: 'c3',
+      glyph: '‖',
+      word: 'deferred',
+    },
   ],
   edges: [
     { from: id('fa-1'), to: id('fa-2'), kind: 'parent' },

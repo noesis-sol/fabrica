@@ -887,7 +887,7 @@ const backlogView = (
     graphOf({
       tickets,
       edges,
-      roleOf: ticket => markOf(ticket, readiness).role,
+      markOf: ticket => markOf(ticket, readiness),
     }),
   )
   return h.div(

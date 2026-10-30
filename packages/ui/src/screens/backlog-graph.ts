@@ -13,13 +13,28 @@ import { themeAttribute } from '../theme/theme'
 // the graph is selected and centred in it. Cytoscape and its layout are loaded only as the graph is
 // first drawn, so the renderer's first paint doesn't wait for them.
 
-/** A ticket as the graph draws it: its ID, its title on hover, and its status mark's role. */
+/**
+ * A ticket as the graph draws it: its ID labelled with its status mark's glyph and filled with its role,
+ * and its mark's word and title on hover, so its status isn't told by colour alone (H63, §18.2).
+ */
 export const GraphNode = Schema.Struct({
   id: TicketId,
   title: Schema.String,
   role: Schema.Literals(['c1', 'c2', 'c3', 'c4', 'c5']),
+  glyph: Schema.String,
+  word: Schema.String,
 })
 export type GraphNode = typeof GraphNode.Type
+
+/** A ticket's status mark, as the graph draws it. */
+export type NodeMark = Pick<GraphNode, 'role' | 'glyph' | 'word'>
+
+/** A node's label: its mark's glyph, then its ID. */
+export const nodeLabel = (node: GraphNode): string => `${node.glyph} ${node.id}`
+
+/** What a node shows on hover: its ID, its mark's word and its title. */
+export const nodeTitle = (node: GraphNode): string =>
+  `${node.id} · ${node.word}: ${node.title}`
 
 export const GraphEdge = Schema.Struct({
   from: TicketId,
@@ -41,11 +56,11 @@ export type Graph = typeof Graph.Type
 export const graphOf = ({
   tickets,
   edges,
-  roleOf,
+  markOf,
 }: {
   readonly tickets: ReadonlyArray<Ticket>
   readonly edges: ReadonlyArray<Edge>
-  readonly roleOf: (ticket: Ticket) => Role
+  readonly markOf: (ticket: Ticket) => NodeMark
 }): Graph => {
   const open = HashSet.fromIterable(
     tickets
@@ -64,11 +79,10 @@ export const graphOf = ({
       ticket =>
         HashSet.has(open, ticket.id) || HashSet.has(linkedToOpen, ticket.id),
     )
-    .map((ticket): GraphNode => ({
-      id: ticket.id,
-      title: ticket.title,
-      role: roleOf(ticket),
-    }))
+    .map((ticket): GraphNode => {
+      const { role, glyph, word } = markOf(ticket)
+      return { id: ticket.id, title: ticket.title, role, glyph, word }
+    })
   const drawn = HashSet.fromIterable(nodes.map(node => node.id))
   return {
     nodes,
@@ -83,7 +97,13 @@ export const graphOf = ({
 /** A short key of the graph's content: the element drawing it is drawn afresh when it changes. */
 export const graphKey = (graph: Graph): string => {
   const text = JSON.stringify([
-    graph.nodes.map(node => [node.id, node.role, node.title]),
+    graph.nodes.map(node => [
+      node.id,
+      node.role,
+      node.glyph,
+      node.word,
+      node.title,
+    ]),
     graph.edges.map(edge => [edge.from, edge.to, edge.kind]),
   ])
   // FNV-1a, 32 bits: a key, not a check.
@@ -133,9 +153,9 @@ const styleOf = (
     selector: 'node',
     style: {
       shape: 'round-rectangle',
-      width: 72,
+      width: 92,
       height: 20,
-      label: 'data(id)',
+      label: 'data(label)',
       'font-family': tokens.mono,
       'font-size': 10,
       color: tokens.ink,
@@ -235,7 +255,12 @@ export const drawGraph = ({
         elements: [
           ...graph.nodes.map(node => ({
             group: 'nodes' as const,
-            data: { id: node.id, title: node.title, role: node.role },
+            data: {
+              id: node.id,
+              role: node.role,
+              label: nodeLabel(node),
+              title: nodeTitle(node),
+            },
           })),
           ...graph.edges.map(edge => ({
             group: 'edges' as const,
@@ -252,6 +277,13 @@ export const drawGraph = ({
       })
       instance.on('tap', 'node', event => {
         Option.map(decodeTicketId(event.target.id()), onTap)
+      })
+      // The canvas has no element per node: the node hovered lends its title to the graph's element.
+      instance.on('mouseover', 'node', event => {
+        element.setAttribute('title', String(event.target.data('title')))
+      })
+      instance.on('mouseout', 'node', () => {
+        element.removeAttribute('title')
       })
       instance.ready(() => {
         Option.map(selected, ticket => focusNode(instance, ticket))
