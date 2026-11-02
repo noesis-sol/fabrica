@@ -5,7 +5,14 @@ import * as NodePath from 'node:path'
 
 import { describe, expect, layer, test } from '@effect/vitest'
 import { ReleaseVersion } from '@fabrica/contracts'
-import { Toolbox, layerToolbox, shStub, tempFolder } from '@fabrica/testkit'
+import {
+  Toolbox,
+  layerToolbox,
+  notePid,
+  shStub,
+  stopNotedProcess,
+  tempFolder,
+} from '@fabrica/testkit'
 import { ServiceInstall, appHostOf } from '@fabrica/ui/host'
 
 import { loginServiceChannels } from '../src/main/features/login-service'
@@ -33,7 +40,7 @@ const fixtureEngine = `
 const net = require('node:net')
 const fs = require('node:fs')
 const [socket, pidFile] = process.argv.slice(2)
-fs.writeFileSync(pidFile, String(process.pid))
+${notePid('pidFile')}
 net.createServer(connection => connection.end()).listen(socket)
 // Never outlives a test that failed to stop it.
 setTimeout(() => process.exit(0), 60_000).unref()
@@ -87,13 +94,7 @@ const bundle = (vars: Readonly<Record<string, string>> = {}) =>
       await writeFile(engine, fixtureEngine)
     })
     // The fixture engine was started here, detached: the test stops it by the PID it noted.
-    yield* Effect.addFinalizer(() =>
-      Effect.promise(() =>
-        readFile(pid, 'utf8')
-          .then(text => process.kill(Number(text), 'SIGTERM'))
-          .catch(() => undefined),
-      ),
-    )
+    yield* Effect.addFinalizer(() => stopNotedProcess(pid))
     return {
       bundled: Option.some(bundled),
       socket,
