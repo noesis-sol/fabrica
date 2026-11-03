@@ -594,20 +594,52 @@ export const failedTranscript = (
   ),
 })
 
-/** The view's keys (§18.5): the whole ticket, interrupting the worker, releasing it. */
-export const Key = Schema.Literals(['ticket', 'interrupt', 'release'])
-export type Key = typeof Key.Type
+/** The worker steered: messaged or interrupted from here, or so its run view says. */
+export const isSteered = (model: Model, inputs: Pick<ViewInputs, 'row'>) =>
+  model.steered || Option.exists(inputs.row, row => row.steered)
 
-/** A key of the view's, as its button's click. */
-export const pressedKey = (model: Model, key: Key): Return =>
-  update(
-    model,
-    key === 'ticket'
-      ? Message.ToggledWholeTicket()
-      : key === 'interrupt'
-        ? Message.ClickedInterrupt()
-        : Message.ClickedRelease(),
-  )
+/**
+ * A control the view offers now, enabled: its keys, their hints and the palette run the same ones
+ * (§18.4, §18.5), so a key acts only where its button would.
+ */
+export const Offer = defineTaggedUnion({
+  /** Show or hide the whole ticket. */
+  WholeTicket: {},
+  Interrupt: {},
+  Release: {},
+})
+export type Offer = typeof Offer.Type
+
+/**
+ * The controls the view offers enabled, in its order: the whole ticket once it is read; interrupting
+ * the worker, and releasing it while it is steered, until it has finished, while its engine is
+ * connected and no request to it is going.
+ */
+export const offers = (
+  model: Model,
+  inputs: Pick<ViewInputs, 'live' | 'row'>,
+): ReadonlyArray<Offer> =>
+  Option.isNone(model.shown)
+    ? []
+    : [
+        ...(AsyncData.hasData(model.ticket) ? [Offer.WholeTicket()] : []),
+        ...(inputs.live &&
+        !model.transcript.ended &&
+        !Request.guards.Pending(model.request)
+          ? [
+              Offer.Interrupt(),
+              ...(isSteered(model, inputs) ? [Offer.Release()] : []),
+            ]
+          : []),
+      ]
+
+/** The Message an offered control's button sends. */
+export const offerMessage = (offer: Offer): Message =>
+  Offer.match(offer, {
+    WholeTicket: () => Message.ToggledWholeTicket(),
+    Interrupt: () => Message.ClickedInterrupt(),
+    Release: () => Message.ClickedRelease(),
+  })
 
 /** The worker shown, where its view has one, with `use`'s result; else nothing changes. */
 const withShown = (model: Model, use: (worker: Shown) => Return): Return =>
@@ -1029,7 +1061,7 @@ const ticketView = (
               [
                 h.Type('button'),
                 h.AriaExpanded(model.wholeTicket),
-                h.OnClick(Message.ToggledWholeTicket()),
+                h.OnClick(offerMessage(Offer.WholeTicket())),
                 h.Class(
                   'ml-auto rounded-button border border-line px-6 text-xs text-fg',
                 ),
@@ -1343,14 +1375,13 @@ const composerView = (
   h: HtmlBuilder<Message>,
 ): Html => {
   const finished = model.transcript.ended
-  const steered = model.steered || Option.exists(inputs.row, row => row.steered)
+  const steered = isSteered(model, inputs)
+  const offered = offers(model, inputs)
   const canSend =
     inputs.live &&
     !finished &&
     Option.isSome(Conversation.sendable(model.composer.draft)) &&
     model.composer.sending._tag !== 'sending'
-  const canAct =
-    inputs.live && !finished && !Request.guards.Pending(model.request)
   return h.div(
     [
       h.Class('flex flex-col gap-6 border-t border-line'),
@@ -1426,9 +1457,21 @@ const composerView = (
                   ],
                   ['⏎'],
                 ),
-                button('Interrupt', Message.ClickedInterrupt(), canAct, h),
+                button(
+                  'Interrupt',
+                  offerMessage(Offer.Interrupt()),
+                  offered.some(Offer.guards.Interrupt),
+                  h,
+                ),
                 ...(steered
-                  ? [button('Release', Message.ClickedRelease(), canAct, h)]
+                  ? [
+                      button(
+                        'Release',
+                        offerMessage(Offer.Release()),
+                        offered.some(Offer.guards.Release),
+                        h,
+                      ),
+                    ]
                   : []),
               ]),
         ],

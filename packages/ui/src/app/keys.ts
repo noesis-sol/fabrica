@@ -227,24 +227,41 @@ const reviewKeys: ReadonlyArray<KeyCommand> = (
   message: Message.PressedReviewTab({ tab }),
 }))
 
-/** The Worker view's keys (§18.4, §18.5): the whole ticket, and interrupting or releasing the worker. */
-const workerKeys: ReadonlyArray<KeyCommand> = (
-  [
-    { action: 'ticket', key: 't', title: 'Show or hide the whole ticket' },
-    { action: 'interrupt', key: 'i', title: 'Interrupt the worker' },
-    { action: 'release', key: 'r', title: 'Release the worker' },
-  ] satisfies ReadonlyArray<{
-    readonly action: Worker.Key
-    readonly key: string
-    readonly title: string
-  }>
-).map(({ action, key, title }) => ({
-  id: `worker.${action}`,
-  title,
-  chord: plain(key),
-  hint: true,
-  message: Message.PressedWorkerKey({ key: action }),
-}))
+/**
+ * The Worker view's keys the view offers now, each as its button is (§18.4, §18.5): the whole ticket,
+ * and interrupting or releasing the worker.
+ */
+const workerKeys = (
+  offers: ReadonlyArray<Worker.Offer>,
+): ReadonlyArray<KeyCommand> =>
+  offers.map(offer => {
+    const { id, key, title } = Worker.Offer.match(offer, {
+      WholeTicket: () => ({
+        id: 'worker.ticket',
+        key: 't',
+        title: 'Show or hide the whole ticket',
+      }),
+      Interrupt: () => ({
+        id: 'worker.interrupt',
+        key: 'i',
+        title: 'Interrupt the worker',
+      }),
+      Release: () => ({
+        id: 'worker.release',
+        key: 'r',
+        title: 'Release the worker',
+      }),
+    })
+    return {
+      id,
+      title,
+      chord: plain(key),
+      hint: true,
+      message: Message.GotWorkerMessage({
+        message: Worker.offerMessage(offer),
+      }),
+    }
+  })
 
 /** Each screen's own commands; the screens' tickets add theirs here. */
 const ofScreen = (
@@ -252,6 +269,7 @@ const ofScreen = (
   options: KeyedOptions,
   approval: Option.Option<Attention.KeyedApproval>,
   offers: ReadonlyArray<Stats.Offer>,
+  workerOffers: ReadonlyArray<Worker.Offer>,
 ): ReadonlyArray<KeyCommand> =>
   Screen.match(screen, {
     Console: () => [
@@ -260,7 +278,7 @@ const ofScreen = (
       answerTalk,
       ...runKeys(offers),
     ],
-    Worker: () => [...workerKeys, backToConsole],
+    Worker: () => [...workerKeys(workerOffers), backToConsole],
     Talks: () => [backToConsole],
     Backlog: () => [backToConsole],
     Review: () => [...reviewKeys, backToConsole],
@@ -323,6 +341,8 @@ export const commandsFor = (options: {
   readonly approval?: Option.Option<Attention.KeyedApproval>
   /** The run controls the console's stats row offers now (`Stats.offers`). */
   readonly offers?: ReadonlyArray<Stats.Offer>
+  /** The controls the Worker view offers now (`Worker.offers`). */
+  readonly workerOffers?: ReadonlyArray<Worker.Offer>
 }): ReadonlyArray<KeyCommand> => [
   ...(options.overlayOpen && options.paletteOpen === true ? paletteKeys : []),
   ...(options.overlayOpen ? [closeOverlay] : []),
@@ -331,6 +351,7 @@ export const commandsFor = (options: {
     options.overlayOpen ? Option.none() : (options.options ?? Option.none()),
     options.overlayOpen ? Option.none() : (options.approval ?? Option.none()),
     options.offers ?? [],
+    options.workerOffers ?? [],
   ),
   ...everywhere,
 ]

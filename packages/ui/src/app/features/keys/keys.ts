@@ -27,6 +27,7 @@ import {
 import { Message } from '../../message'
 import { type Model, Overlay } from '../../model'
 import type { SubscriptionEnvironment } from '../../subscriptions'
+import { workerOffers } from '../worker/worker'
 import type { messages } from './message'
 
 // The keys (spec §18.5): each key pressed runs the command the screen's list binds it to (keys.ts), and
@@ -53,6 +54,7 @@ export const modelCommands = (model: Model) =>
     options: Attention.keyedOptions(model.console.attention),
     approval: Attention.keyedApproval(model.console.attention),
     offers: runOffers(model),
+    workerOffers: workerOffers(model),
   })
 
 /** The screen's command list as it stands with no overlay open: what the palette runs and the key help names. */
@@ -63,6 +65,7 @@ export const screenCommands = (model: Model) =>
     options: Attention.keyedOptions(model.console.attention),
     approval: Attention.keyedApproval(model.console.attention),
     offers: runOffers(model),
+    workerOffers: workerOffers(model),
   })
 
 /**

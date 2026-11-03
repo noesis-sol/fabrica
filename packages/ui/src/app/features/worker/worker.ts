@@ -48,8 +48,6 @@ export const opened = (model: Model, worker: Worker.Shown): Return =>
 export const update = (model: Model): Handlers<keyof typeof messages> => ({
   GotWorkerMessage: ({ message }) =>
     step(model, worker => Worker.update(worker, message)),
-  PressedWorkerKey: ({ key }) =>
-    step(model, worker => Worker.pressedKey(worker, key)),
   ReceivedWorkerTranscript: ({ worker, items }) =>
     step(model, shown => Worker.receivedTranscript(shown, worker, items)),
   EndedWorkerTranscript: ({ worker }) =>
@@ -99,6 +97,27 @@ const workerInputs = (
     runTokens: Option.map(run, view => view.totals.tokens),
   }
 }
+
+/**
+ * The controls the shown worker's view offers now (`Worker.offers`), from the inputs its view draws
+ * with: what its keys, their hints and the palette run (§18.5).
+ */
+export const workerOffers = (model: Model): ReadonlyArray<Worker.Offer> =>
+  Screen.guards.Worker(model.screen)
+    ? Worker.offers(
+        model.screens.worker,
+        workerInputs(
+          { project: model.screen.project, ticket: model.screen.ticket },
+          {
+            ...model,
+            live: RemoteEngines.isEngineLive(
+              model,
+              model.screen.project.engine,
+            ),
+          },
+        ),
+      )
+    : []
 
 const lazyWorker = createLazy()
 
