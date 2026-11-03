@@ -374,11 +374,12 @@ const routesAt = (url: string): ReadonlyArray<ProviderRoute> => [
  * A stub of `pi --mode rpc` that logs how it was started, and answers as its prompt's first word says:
  * `good` answers; `bad-then-good` gives an answer that doesn't decode, then one that does; `bad-twice`
  * two that don't, then waits; `pi-refuses-twice` reports two calls Pi's own check refused, which never
- * reach the engine, then waits; `hang-please` calls the model proxy, then answers; `silent` settles with none; `unfinished` reports the session unfinished; `refused`
+ * reach the engine, then waits; `hang-please` calls the model proxy, then answers;
+ * `settles-held` calls the model proxy, then settles with none once the test writes its `release` file; `silent` settles with none; `unfinished` reports the session unfinished; `refused`
  * calls the model proxy, then settles with none, and answers on the prompt after; `tools` tries a
  * worker's tool and the verifier's, then answers.
  */
-const STUB = `import { appendFileSync, readFileSync } from 'node:fs'
+const STUB = `import { appendFileSync, existsSync, readFileSync } from 'node:fs'
 import { connect } from 'node:net'
 import { join } from 'node:path'
 const args = process.argv.slice(2)
@@ -468,6 +469,18 @@ const work = async message => {
     toolEnd('answer', true)
     toolEnd('answer', true)
     return new Promise(() => undefined)
+  }
+  if (/\\bsettles-held\\b/.test(message)) {
+    await callProxy()
+    const release = join(sessions, '..', 'release')
+    return new Promise(resolve => {
+      const polling = setInterval(() => {
+        if (!existsSync(release)) return
+        clearInterval(polling)
+        note({ event: 'released' })
+        resolve()
+      }, 10)
+    })
   }
   if (/\\bhang-please\\b/.test(message)) {
     await callProxy()
@@ -1416,6 +1429,70 @@ describe("an organ's refused call", () => {
         expect(yield* Fiber.join(asking)).toMatchObject({
           _tag: 'NoResult',
           reason: expect.stringContaining('within'),
+        })
+      }),
+    sessionTimeout,
+  )
+
+  it.live(
+    "a session's turn that a hold outlasts settles with no refusal of its own: it waits for the lift and carries on",
+    () =>
+      Effect.gen(function* () {
+        const { provider, place, context } = yield* setting([
+          called(goodAnswer),
+        ])
+        const { held, holds } = yield* heldBy
+        yield* (yield* Effect.provide(Permits, context)).hold({
+          run,
+          held: holds.held,
+        })
+        const runtime = yield* runtimeOf(place, {
+          holds: Option.some(holds),
+        }).pipe(Effect.provide(context))
+        const reached = yield* Deferred.make<void>()
+        provider.came.push(() => Deferred.doneUnsafe(reached, Exit.void))
+        const asking = yield* Effect.forkChild(
+          runtime.session({
+            ...question(one, { prompt: Effect.succeed('settles-held') }),
+            cores: 1,
+          }),
+        )
+        yield* Deferred.await(reached)
+        yield* settled
+        yield* SubscriptionRef.set(held, new Set(['anthropic']))
+        yield* settled
+        const sessions = join(place.data, 'projects', project, 'sessions')
+        writeFileSync(join(sessions, 'release'), '')
+        // Its turn is ending, and the session waits on the hold, not giving up its answer.
+        yield* Effect.repeat(
+          Effect.sync(() =>
+            stubLog(place).some(entry => entry['event'] === 'released'),
+          ),
+          { until: released => released },
+        )
+        expect(asking.pollUnsafe()).toBeUndefined()
+        expect(
+          stubLog(place).filter(entry => entry['event'] === 'prompt'),
+        ).toHaveLength(1)
+        yield* SubscriptionRef.set(held, new Set<string>())
+        expect(yield* Fiber.join(asking)).toMatchObject({
+          _tag: 'Answered',
+          answer: { cause: 'ticket' },
+        })
+        const prompts = stubLog(place).filter(
+          entry => entry['event'] === 'prompt',
+        )
+        expect(prompts).toHaveLength(2)
+        expect(prompts[1]?.['message']).toContain('carry on')
+        // With no hold in its turn, a session that settles with no answer has lost it.
+        expect(
+          yield* runtime.session({
+            ...question(two, { prompt: Effect.succeed('silent') }),
+            cores: 1,
+          }),
+        ).toMatchObject({
+          _tag: 'NoResult',
+          reason: 'its session settled with no answer',
         })
       }),
     sessionTimeout,

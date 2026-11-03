@@ -781,11 +781,25 @@ export const makeOrganRuntime = Effect.fn('Organs.make')(function* (
           ),
           Effect.forkScoped,
         )
+        // Whether the provider was held during the turn: a hold on another caller's refusal outlasting
+        // Pi's own retries ends the turn with no refusal of this session's, and no answer lost by it.
+        const heldInTurn = yield* Ref.make(false)
+        yield* Option.match(config.holds, {
+          onNone: () => Effect.void,
+          onSome: ({ held }) =>
+            held.pipe(
+              Stream.filter(providers => providers.has(provider)),
+              Stream.runForEach(() => Ref.set(heldInTurn, true)),
+              Effect.forkScoped,
+              Effect.asVoid,
+            ),
+        })
         const waitOut = yield* waitsOn(provider)
         const turns = Effect.gen(function* () {
           let message = `${question.instructions}\n\n${prompt}`
           for (;;) {
             yield* Ref.set(asking.refused, Option.none())
+            yield* Ref.set(heldInTurn, false)
             const came = yield* within(
               Effect.raceFirst(
                 Effect.as(agent.prompt(message), Option.none<A>()),
@@ -799,12 +813,14 @@ export const makeOrganRuntime = Effect.fn('Organs.make')(function* (
             const polled = yield* Deferred.poll(answered)
             if (Option.isSome(polled)) return yield* polled.value
             const refusal = yield* Ref.get(asking.refused)
-            if (Option.isNone(refusal) || !(yield* waitOut(refusal.value)))
+            const waited =
+              Option.isSome(refusal) && (yield* waitOut(refusal.value))
+            if (!waited && !(yield* Ref.get(heldInTurn)))
               return yield* new AnswerLost({
                 reason: 'its session settled with no answer',
               })
             yield* permitted(asking)
-            message = `Your turn ended as ${provider} refused its call, and it may be called again: carry on, and end through ${AnswerToolName}.`
+            message = `Your turn ended as ${provider} couldn't be called, and it may be called again: carry on, and end through ${AnswerToolName}.`
           }
         })
         const ended = yield* Effect.exit(turns)
