@@ -345,7 +345,7 @@ export const project = (
 
 export type Project = ReturnType<typeof project>
 
-const runnerConfig = (): RunnerConfig => ({
+export const runnerConfig = (): RunnerConfig => ({
   hostEnvironment: {
     PATH: `${shared.bin}:${shared.gitFolder}:/usr/bin:/bin`,
     HOME: shared.home,
@@ -360,7 +360,7 @@ const runnerConfig = (): RunnerConfig => ({
   outputGrace: Duration.millis(200),
 })
 
-const gitConfig: GitConfig = {
+export const gitConfig: GitConfig = {
   timeLimit: Duration.minutes(1),
   readRetries: { times: 1, spacing: Duration.zero },
 }
@@ -369,7 +369,7 @@ const gitConfig: GitConfig = {
  * The process boundary's deadlines (a tree's kill grace, a command's output grace) on the live clock:
  * the stub and git are real processes, exiting in real time, while the run itself runs on TestClock.
  */
-const liveDeadlines = Layer.succeed(Deadlines, {
+export const liveDeadlines = Layer.succeed(Deadlines, {
   sleep: duration => TestClock.withLive(Effect.sleep(duration)),
 })
 

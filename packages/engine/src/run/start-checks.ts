@@ -1,8 +1,9 @@
-import { Cause, Data, Effect, Option, Result } from 'effect'
+import { Cause, Data, Duration, Effect, Option, Result } from 'effect'
 
 import type { CommitHash, ModelChoice, RunId } from '@fabrica/contracts'
 
 import { Git, GitVersion } from '../git'
+import { refusedWhy } from '../holds'
 import { BaseSynced, syncBase, syncedNote } from '../projects/base-sync'
 import { ModelProxy, ProbeOutcome, Refusal } from '../proxy'
 import type { RunLog } from '../runlog'
@@ -15,7 +16,7 @@ import type { RunConfig } from './config'
 import { record, recordBaseNote } from './records'
 
 // The run's start checks (spec §13.1, H80): git 2.38 or later, the project's checkout clean and on a
-// branch (Base then fetched and fast-forwarded from its upstream, §10.3), the settings valid, and each model's credential tried with the proxy's probe (H60). Every
+// branch (Base then fetched and fast-forwarded from its upstream, §10.3), the settings valid, and each model's credential tried with the proxy's probe (H60), a subscription's token refreshed first where it expires within the hour (H69). Every
 // problem is listed together, and the run ends `SETUP`, exit 2. Each check's end is streamed as an
 // `info` record as it comes, so a client shows what the start is doing; a defect inside a check is a
 // problem line of its own (`Internal error in <check>: …`), never an end with nothing said (tutti-kq5).
@@ -176,6 +177,9 @@ const modelsOf = (settings: ResolvedSettings): ReadonlyArray<ModelChoice> => {
   })
 }
 
+/** How long a subscription's token is to have left as a run starts, or it is refreshed first (H69). */
+const TOKEN_VALID_FOR = Duration.hours(1)
+
 const credentialsCheck = (settings: ResolvedSettings, run: RunId) =>
   Effect.gen(function* () {
     const proxy = yield* ModelProxy
@@ -184,8 +188,25 @@ const credentialsCheck = (settings: ResolvedSettings, run: RunId) =>
       return problems<undefined>(
         'no model is set: set `model` in .fabrica/settings.json (`anthropic/claude-…`)',
       )
+    // Each provider once, however many of its models the run uses: a token is the account's.
+    const refreshed = yield* Effect.forEach(
+      [...new Set(models.map(({ provider }) => provider))],
+      provider =>
+        Effect.map(
+          Effect.result(proxy.refresh({ provider, validFor: TOKEN_VALID_FOR })),
+          result => ({ provider, result }),
+        ),
+      { concurrency: 'unbounded' },
+    )
+    const unrefreshed = refreshed.flatMap(({ provider, result }) =>
+      Result.isFailure(result)
+        ? [{ provider, reason: result.failure.reason }]
+        : [],
+    )
     const outcomes = yield* Effect.forEach(
-      models,
+      models.filter(({ provider }) =>
+        unrefreshed.every(failed => failed.provider !== provider),
+      ),
       choice =>
         Effect.map(
           proxy.probe({ provider: choice.provider, model: choice.model, run }),
@@ -193,15 +214,20 @@ const credentialsCheck = (settings: ResolvedSettings, run: RunId) =>
         ),
       { concurrency: 'unbounded' },
     )
-    const refused = outcomes.flatMap(({ name, outcome }) =>
-      ProbeOutcome.$match(outcome, {
-        Passed: () => [],
-        Refused: ({ refusal }) => [
-          `${name}: the credential was refused: ${refusalWords(refusal)}`,
-        ],
-        Failed: ({ reason }) => [`${name}: ${reason}`],
-      }),
-    )
+    const refused = [
+      ...unrefreshed.map(({ provider, reason }) =>
+        refusedWhy({ provider, account: Option.none(), reason }),
+      ),
+      ...outcomes.flatMap(({ name, outcome }) =>
+        ProbeOutcome.$match(outcome, {
+          Passed: () => [],
+          Refused: ({ refusal }) => [
+            `${name}: the credential was refused: ${refusalWords(refusal)}`,
+          ],
+          Failed: ({ reason }) => [`${name}: ${reason}`],
+        }),
+      ),
+    ]
     return refused.length > 0
       ? problems<undefined>(...refused)
       : found(undefined, `${models.map(modelName).join(', ')} answered`)

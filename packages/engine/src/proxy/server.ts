@@ -39,6 +39,7 @@ import type { ProviderEntry } from '../agent/launch'
 import { drawToken } from '../control/token'
 import { Held, Kept, type SecretName, Secrets } from '../secrets'
 import {
+  type RefreshFailed,
   type SubscriptionAuth,
   makeSubscriptions,
   subscriptionEntry,
@@ -135,6 +136,14 @@ export interface ModelProxyShape {
     readonly model: ModelName
     readonly run: RunId
   }) => Effect.Effect<ProbeOutcome>
+  /**
+   * Refreshes `provider`'s subscription token where it expires within `validFor`. A provider on a key,
+   * or whose credential can't be read, has nothing to refresh: its probe says how it stands.
+   */
+  readonly refresh: (options: {
+    readonly provider: ProviderName
+    readonly validFor: Duration.Duration
+  }) => Effect.Effect<void, RefreshFailed>
 }
 
 export class ModelProxy extends Context.Service<ModelProxy, ModelProxyShape>()(
@@ -831,12 +840,28 @@ export const make = Effect.fn('ModelProxy.make')(function* (
     })
   }, Effect.scoped)
 
+  const refresh = Effect.fn('ModelProxy.refresh')(function* (options: {
+    readonly provider: ProviderName
+    readonly validFor: Duration.Duration
+  }) {
+    const route = routes.get(options.provider)
+    if (route === undefined) return
+    const account = accountOf(route.authentication)
+    if (Option.isNone(account)) return
+    const kept = yield* Effect.orElseSucceed(secrets.read(account.value), () =>
+      Option.none<Kept>(),
+    )
+    if (Option.isSome(kept) && Kept.$is('OAuth')(kept.value))
+      yield* subscriptions.refresh(kept.value.provider, options.validFor)
+  })
+
   return ModelProxy.of({
     address,
     grant,
     events: Effect.map(PubSub.subscribe(published), Stream.fromSubscription),
     windows: Effect.sync(() => [...figures.values()]),
     probe,
+    refresh,
   })
 })
 

@@ -22,6 +22,7 @@ import { type ModelApi, isModelApi } from './routes'
 // lock, checking again once it holds it: agents sharing an account wait for one refresh and use its token,
 // and it is written back before the lock goes. A refresh that fails keeps the credential, for the next
 // call to try again, and says only that it failed: what `pi-ai` says of it can quote the provider's answer.
+// A run's start refreshes a token with under an hour left the same way (§13.1, H69).
 //
 // What an agent's Pi is given differs per provider, as the providers spike and fab-mgi.11 found: Pi builds
 // a subscription's request where its key is of that kind, and the proxy swaps only the token.
@@ -82,6 +83,21 @@ const noAmbient = {
   env: () => Promise.resolve(undefined),
   fileExists: () => Promise.resolve(false),
 }
+
+/** A failure of `pi-ai`'s auth resolution, in words that say nothing of the provider's answer. */
+const refreshFailedOf = (error: unknown): RefreshFailed =>
+  new RefreshFailed({
+    reason:
+      error instanceof ModelsError && error.code !== 'oauth'
+        ? "the secret store couldn't keep the sign-in's token"
+        : 'the OAuth session expired and could not be refreshed',
+  })
+
+const noSignIn = () =>
+  new RefreshFailed({ reason: 'the sign-in is no longer kept' })
+
+/** The refresh went through and its token is kept, but it lasts less than `pi-ai` was asked for. */
+class RefreshedTooShort extends Data.TaggedError('RefreshedTooShort') {}
 
 /**
  * The stable ID ChatGPT's sign-in asks of an installation, as its agent host: a UUID drawn from the
@@ -144,32 +160,17 @@ export const makeSubscriptions = (options: {
         ),
       }
     },
-    /** The subscription's current token, refreshed first where it expires within `validFor` (or five minutes). */
+    /** The subscription's current token, refreshed first where it is about to expire. */
     current: (
       provider: ProviderName,
-      validFor?: Duration.Duration,
     ): Effect.Effect<SubscriptionAuth, RefreshFailed> =>
       Effect.tryPromise({
-        try: signal =>
-          models.getAuth(provider, {
-            signal,
-            ...(validFor === undefined
-              ? {}
-              : { minOAuthValidityMs: Duration.toMillis(validFor) }),
-          }),
-        catch: error =>
-          new RefreshFailed({
-            reason:
-              error instanceof ModelsError && error.code !== 'oauth'
-                ? "the secret store couldn't keep the sign-in's token"
-                : 'the OAuth session expired and could not be refreshed',
-          }),
+        try: signal => models.getAuth(provider, { signal }),
+        catch: refreshFailedOf,
       }).pipe(
         Effect.flatMap(result =>
           result === undefined
-            ? Effect.fail(
-                new RefreshFailed({ reason: 'the sign-in is no longer kept' }),
-              )
+            ? Effect.fail(noSignIn())
             : Effect.succeed({
                 token: Option.map(
                   Option.fromUndefinedOr(result.auth.apiKey),
@@ -179,6 +180,32 @@ export const makeSubscriptions = (options: {
                 headers: presentHeaders(result.auth.headers),
               }),
         ),
+      ),
+    /**
+     * Refreshes the subscription's token now where it expires within `validFor`. A refresh that went
+     * through is all it asks, however long its token lasts: GitHub Copilot's last under half an hour.
+     */
+    refresh: (
+      provider: ProviderName,
+      validFor: Duration.Duration,
+    ): Effect.Effect<void, RefreshFailed> =>
+      Effect.tryPromise({
+        try: signal =>
+          models.getAuth(provider, {
+            signal,
+            minOAuthValidityMs: Duration.toMillis(validFor),
+          }),
+        catch: error =>
+          error instanceof ModelsError &&
+          error.code === 'oauth' &&
+          error.message.includes('expires too soon')
+            ? new RefreshedTooShort()
+            : refreshFailedOf(error),
+      }).pipe(
+        Effect.flatMap(result =>
+          result === undefined ? Effect.fail(noSignIn()) : Effect.void,
+        ),
+        Effect.catchTag('RefreshedTooShort', () => Effect.void),
       ),
   }
 }

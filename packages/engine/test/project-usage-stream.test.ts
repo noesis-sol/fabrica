@@ -197,6 +197,7 @@ const fakeProxy = (figures: ReadonlyArray<UsageWindowFigure>) =>
       ).pipe(Effect.tap(() => Deferred.succeed(subscribed, undefined))),
       windows: Ref.get(kept),
       probe: () => Effect.die('no probes here'),
+      refresh: () => Effect.die('no refreshes here'),
     }
     const publish = (event: ProxyEvent) => PubSub.publish(published, event)
     return { proxy, publish, subscribed: Deferred.await(subscribed) }
