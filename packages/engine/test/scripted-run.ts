@@ -44,15 +44,15 @@ import { anthropicAnswer } from './proxy-streams'
 // A test engine's runs on a scripted agent (spec §13, §24): the run hosting a daemon is started with,
 // over the live agents, checks, git, worktrees and model proxy, whose only stand-ins are at the
 // boundary: Pi's CLI is a stub speaking its RPC protocol, which does what its ticket's description
-// says (`stub: finish`, `stub: hang`, `stub: wait <file>`) through the real control socket, and the
+// says (`stub: finish`, `stub: hang`, `stub: wait <file>`, `stub: defer <file>`) through the real control socket, and the
 // model provider is a loopback server that takes every key. Shared by the Runs group's tests and the
 // CLI's `fabrica run` and `fabrica follow` tests.
 
 /**
  * A stub of `pi --mode rpc`. On its prompt it reads its ticket with `get_ticket` over the control
  * socket and does what the ticket's `stub:` line says: `finish` (commits a file, runs `check_own`,
- * finishes with its pass), `wait <file>` (finishes once the file is there), or `hang` (works until it
- * is stopped).
+ * finishes with its pass), `wait <file>` (finishes once the file is there), `defer <file>` (defers,
+ * or finishes where the file is there), or `hang` (works until it is stopped).
  */
 const STUB = `import { execFileSync } from 'node:child_process'
 import { existsSync, writeFileSync } from 'node:fs'
@@ -104,6 +104,8 @@ const work = async () => {
   const ticket = view.ticket
   const [action, target] = ((ticket.description ?? '').match(/stub: (.*)/)?.[1] ?? 'finish').split(' ')
   if (action === 'hang') return new Promise(() => {})
+  if (action === 'defer' && !existsSync(target))
+    return call('defer', { reason: 'it needs a decision first' })
   if (action === 'wait')
     await new Promise(resolve => {
       const timer = setInterval(() => {

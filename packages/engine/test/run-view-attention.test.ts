@@ -132,6 +132,7 @@ describe("the run view's attention requests", () => {
           },
           attention: Stream.fromQueue(requests),
           needsYou: count => Queue.offer(told, count),
+          reviews: () => Effect.void,
           scope,
         }).pipe(
           Effect.provideService(

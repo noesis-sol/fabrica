@@ -66,6 +66,12 @@ export const AttentionRequest = Schema.TaggedUnion({
 }).annotate({ identifier: 'AttentionRequest' })
 export type AttentionRequest = typeof AttentionRequest.Type
 
+/** A ticket set aside, as a request. */
+export type ReviewRequest = Extract<
+  AttentionRequest,
+  { readonly _tag: 'review' }
+>
+
 /** Which request: a permission request by its ID, the others by their ticket. */
 export const AttentionRef = Schema.TaggedUnion({
   question: { project: ProjectId, ticket: TicketId },

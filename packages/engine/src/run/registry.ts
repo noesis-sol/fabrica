@@ -336,8 +336,8 @@ export const make = Effect.gen(function* () {
           Effect.orDie,
         )
         const viewScope = yield* Scope.fork(runsScope)
-        // The run's row is said idle once, as it ends; the view's word on it, held by the same lock,
-        // comes before that or not at all.
+        // The run's row is said idle and its review requests closed once, as it ends; the view's word
+        // on them, held by the same lock, comes before that or not at all.
         const rowLock = yield* Semaphore.make(1)
         const over = yield* Ref.make(false)
         const view = yield* makeRunView({
@@ -373,6 +373,14 @@ export const make = Effect.gen(function* () {
                           }),
                   }),
                 )
+              }),
+            ),
+          // The tickets the run has set aside wait on the maintainer's review while they stay there.
+          reviews: open =>
+            rowLock.withPermit(
+              Effect.gen(function* () {
+                if (yield* Ref.get(over)) return
+                yield* attention.reviews({ project, open })
               }),
             ),
           scope: viewScope,
@@ -419,17 +427,18 @@ export const make = Effect.gen(function* () {
         ).pipe(Layer.provide(layerRunLog({ root: record.path, run })))
 
         const finished = Effect.gen(function* () {
-          // Idle before the next run can start, so its row isn't set idle under it.
+          // Before the next run can start, so its row isn't set idle under it, nor its requests closed.
           yield* rowLock.withPermit(
-            Effect.andThen(
-              Ref.set(over, true),
-              Effect.ignore(
+            Effect.gen(function* () {
+              yield* Ref.set(over, true)
+              yield* attention.reviews({ project, open: [] })
+              yield* Effect.ignore(
                 projects.setRun({
                   project,
                   run: ProjectRunState.cases.idle.make({}),
                 }),
-              ),
-            ),
+              )
+            }),
           )
           yield* Ref.update(going, map => {
             const next = new Map(map)

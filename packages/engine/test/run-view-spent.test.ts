@@ -146,6 +146,7 @@ describe("the run view's spending", () => {
           },
           attention: Stream.never,
           needsYou: () => Effect.void,
+          reviews: () => Effect.void,
           scope,
         }).pipe(
           Effect.provideService(

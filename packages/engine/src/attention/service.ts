@@ -31,6 +31,7 @@ import {
   type ProjectNotFound,
   type QuestionAnswer,
   type Resume,
+  type ReviewRequest,
   Revised,
   type Ticket,
   type TicketEvent,
@@ -50,9 +51,10 @@ import { withAnswer } from './design'
 // The attention requests (spec §15.1, §15.2, §8.5): what waits on the maintainer, across the engine's
 // projects. Questions (from workers, organs, talks or the maintainer) and maintainer tasks are read
 // from each project's work graph, followed as it changes; permission requests come from the gate,
-// through each run's side of the service, and live as long as their agent waits. Every client lists
-// the same requests and watches them change. The first answer wins: answers are taken one at a time,
-// and a later one is told who answered and when.
+// through each run's side of the service, and live as long as their agent waits; review requests are
+// the tickets a going run has set aside (§18.3), which the run's registry entry says as they change,
+// and none once the run ends. Every client lists the same requests and watches them change. The first
+// answer wins: answers are taken one at a time, and a later one is told who answered and when.
 //
 // A question's answer is written into the design of each ticket it blocks, then recorded on the
 // question, closing it as `answered`, as the maintainer's change: the tickets it blocks become ready,
@@ -101,6 +103,11 @@ export interface AttentionRequestsShape {
     readonly answer: QuestionAnswer
     readonly by: ClientName
   }) => Effect.Effect<Revised, AttentionNotFound | InvalidAnswer>
+  /** Brings the project's review requests to `open`: the tickets its run has set aside now (§18.3). */
+  readonly reviews: (input: {
+    readonly project: ProjectId
+    readonly open: ReadonlyArray<ReviewRequest>
+  }) => Effect.Effect<void>
   /** A run's side, as its control server asks: its own allow-for-this-run rules, gone with it. */
   readonly forRun: Effect.Effect<AttentionShape>
 }
@@ -201,6 +208,10 @@ const linksOf = (question: TicketId, edges: ReadonlyArray<Edge>) => ({
     )?.to,
   ),
 })
+
+/** Whether the request is read from its project's work graph. */
+const fromWorkGraph = (request: AttentionRequest): boolean =>
+  request._tag === 'question' || request._tag === 'task'
 
 /** A work graph's questions and maintainer tasks, as requests. */
 const requestsOf = (
@@ -366,34 +377,36 @@ export const make = (
         }),
       )
 
+    /** The project's requests that `held` picks made `now`: those no longer in it closed. */
+    const bringTo = (
+      project: ProjectId,
+      held: (request: AttentionRequest) => boolean,
+      now: ReadonlyArray<AttentionRequest>,
+    ) =>
+      Effect.gen(function* () {
+        const keys = new Set(now.map(attentionKey))
+        const before = [...(yield* Ref.get(requests)).values()].filter(
+          request => request.project === project && held(request),
+        )
+        yield* Effect.forEach(
+          before.filter(request => !keys.has(attentionKey(request))),
+          close,
+          { discard: true },
+        )
+        yield* Effect.forEach(now, put, { discard: true })
+      })
+
     /** Brings the project's questions and tasks up to its work graph. */
     const sync = (project: ProjectId, graph: WorkGraphShape) =>
       syncLock.withPermit(
-        Effect.gen(function* () {
-          const now = yield* requestsOf(project, graph)
-          const keys = new Set(now.map(attentionKey))
-          const before = [...(yield* Ref.get(requests)).values()].filter(
-            request =>
-              request.project === project && request._tag !== 'permission',
-          )
-          yield* Effect.forEach(
-            before.filter(request => !keys.has(attentionKey(request))),
-            close,
-            { discard: true },
-          )
-          yield* Effect.forEach(now, put, { discard: true })
-        }),
+        Effect.flatMap(requestsOf(project, graph), now =>
+          bringTo(project, fromWorkGraph, now),
+        ),
       )
 
     /** Drops a project's questions and tasks: it is gone. */
     const forgetRequests = (project: ProjectId) =>
-      Effect.gen(function* () {
-        const gone = [...(yield* Ref.get(requests)).values()].filter(
-          request =>
-            request.project === project && request._tag !== 'permission',
-        )
-        yield* Effect.forEach(gone, close, { discard: true })
-      })
+      bringTo(project, fromWorkGraph, [])
 
     /** Follows the project's work graph: its requests now, and again on each change. */
     const follow = (project: ProjectId) =>
@@ -886,6 +899,8 @@ export const make = (
       watch,
       answer,
       revise: input => answerLock.withPermit(revise(input)),
+      reviews: ({ project, open }) =>
+        bringTo(project, request => request._tag === 'review', open),
       forRun,
     } satisfies AttentionRequestsShape
   })

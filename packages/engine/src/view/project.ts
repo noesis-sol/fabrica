@@ -2,7 +2,7 @@ import { type DateTime, Option } from 'effect'
 
 import {
   AttentionRef,
-  type AttentionRequest,
+  AttentionRequest,
   Banner,
   type Counts,
   type CountsAs,
@@ -12,6 +12,7 @@ import {
   MergeQueue,
   type Phase,
   type Priority,
+  type ReviewRequest,
   type RunHeader,
   type RunView,
   type TicketId,
@@ -158,6 +159,22 @@ export const needsYouOf = (view: RunView): number =>
           ],
     ),
   ]).size
+
+/** The run's tickets set aside, as review requests, set aside since their row says (§18.3). */
+export const reviewsOf = (view: RunView): ReadonlyArray<ReviewRequest> =>
+  view.tickets.flatMap(row =>
+    row.phase._tag === 'set_aside'
+      ? [
+          AttentionRequest.cases.review.make({
+            project: view.header.project,
+            ticket: row.ticket,
+            title: row.title,
+            reason: row.phase.reason,
+            openedAt: row.since,
+          }),
+        ]
+      : [],
+  )
 
 /** The ticket's row, its times and hand-backs kept from its row before. */
 const rowOf = (
