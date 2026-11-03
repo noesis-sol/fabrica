@@ -35,3 +35,24 @@ export const secretsIn = (text: string): ReadonlyArray<string> =>
   secretPatterns.flatMap(([name, pattern]) =>
     pattern.test(text) ? [name] : [],
   )
+
+/** Every string a JSON value holds, its keys too. */
+const stringsIn = (value: unknown): ReadonlyArray<string> =>
+  typeof value === 'string'
+    ? [value]
+    : Array.isArray(value)
+      ? value.flatMap(stringsIn)
+      : typeof value === 'object' && value !== null
+        ? Object.entries(value).flatMap(([key, inner]) => [
+            key,
+            ...stringsIn(inner),
+          ])
+        : []
+
+/**
+ * The patterns a file of the ref matches, by name, each once. Its strings are read decoded: encoded, a
+ * newline before a secret is the two characters `\n`, whose `n` hides the word boundary a pattern opens with.
+ */
+export const secretsInFile = (json: string): ReadonlyArray<string> => [
+  ...new Set(stringsIn(JSON.parse(json)).flatMap(secretsIn)),
+]

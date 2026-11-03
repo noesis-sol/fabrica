@@ -27,5 +27,5 @@ export {
   commitChanges,
   makeTicketsSync,
 } from './sync'
-export { isOverCap, resultCap, secretsIn } from './privacy'
+export { isOverCap, resultCap, secretsIn, secretsInFile } from './privacy'
 export type { SyncState } from './local'

@@ -58,7 +58,7 @@ import {
   mergeLease,
   mergeMeta,
 } from './merge'
-import { isOverCap, secretsIn } from './privacy'
+import { isOverCap, secretsInFile } from './privacy'
 import {
   type Listing,
   type RefFailure,
@@ -508,7 +508,7 @@ export const makeTicketsSync = Effect.fn('TicketsSync.make')(function* ({
       }
 
       const secrets = files.flatMap(({ path, text }) =>
-        secretsIn(text).map(name => `${name} in ${path}`),
+        secretsInFile(text).map(name => `${name} in ${path}`),
       )
       if (isNonEmpty(secrets)) {
         yield* local.warnBlocked(secrets)

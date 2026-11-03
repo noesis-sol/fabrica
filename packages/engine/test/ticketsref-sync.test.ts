@@ -53,6 +53,7 @@ import {
   encodeMeta,
   makeTicketsSync,
   secretsIn,
+  secretsInFile,
   ticketsRef,
 } from '../src/ticketsref'
 import { WaitReason, WorkGraph, sqliteLayer } from '../src/workgraph'
@@ -1185,6 +1186,61 @@ describe('privacy', () => {
       expect(a.files()).toContain(`tickets/${id}.json`)
     }).pipe(Effect.scoped),
   )
+
+  const placings: ReadonlyArray<readonly [string, () => string]> = [
+    ['at the start of a line', () => `the key:\n${awsKey()}`],
+    ['after a tab', () => `the key:\t${awsKey()}`],
+    ['after a carriage return', () => `the key:\r\n${awsKey()}`],
+    ['after a quote', () => `the key: "${awsKey()}"`],
+    [
+      'a GitHub token on its own line',
+      () => `\n${['ghp', 'a'.repeat(36)].join('_')}\n`,
+    ],
+  ]
+  for (const [name, text] of placings) {
+    it.effect(`blocks the commit, nothing reaching the remote: ${name}`, () =>
+      Effect.gen(function* () {
+        const { remote, a } = yield* twoEngines
+        const id = yield* a.create('Secret')
+        yield* a.graph.update({
+          id,
+          changes: { description: Option.some(text()) },
+          actor: maintainer,
+        })
+        const stopped = yield* Effect.flip(a.sync.sync('origin'))
+        expect(stopped._tag).toBe('ExportBlocked')
+        expect(a.head()).toBe('')
+        expect(() =>
+          git(remote, 'rev-parse', '--verify', '--quiet', ticketsRef),
+        ).toThrow()
+      }).pipe(Effect.scoped),
+    )
+  }
+
+  it.effect('finds a secret in a note, on a line of its own', () =>
+    Effect.gen(function* () {
+      const { a } = yield* twoEngines
+      const id = yield* a.create('Noted')
+      yield* a.graph.note({
+        id,
+        body: `first line\n${awsKey()}`,
+        actor: maintainer,
+      })
+      const stopped = yield* Effect.flip(a.sync.commit)
+      expect(stopped._tag).toBe('ExportBlocked')
+      expect(a.head()).toBe('')
+    }).pipe(Effect.scoped),
+  )
+
+  it("reads a file's strings decoded, each pattern named once", () => {
+    const file = JSON.stringify({
+      description: `one\n${awsKey()}`,
+      notes: [{ body: `two\t${awsKey()}` }],
+      [awsKey()]: 1,
+    })
+    expect(secretsInFile(file)).toEqual(['an AWS access key'])
+    expect(secretsInFile(JSON.stringify({ title: 'plain\ntext' }))).toEqual([])
+  })
 
   it('knows the secrets it looks for, and passes what only looks like one', () => {
     const named: ReadonlyArray<readonly [string, string]> = [
