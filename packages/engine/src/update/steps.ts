@@ -15,6 +15,7 @@ import * as NodePath from 'node:path'
 
 import type { ReleaseVersion } from '@fabrica/contracts'
 
+import { closeQuietly, writeAll } from '../files/open'
 import { CommandOutcome, ExitStatus, ProcessRunner } from '../process'
 import { UpdateFailure } from './failure'
 import {
@@ -59,6 +60,12 @@ export const CHECKSUMS_LIMIT = 1024 * 1024
 /** The most an engine archive may hold: past it, the download is cut and refused. */
 export const ARCHIVE_LIMIT = 2 * 1024 * 1024 * 1024
 
+/** How long checksums.txt or its signature has to download, from the request to the body's end. */
+export const REQUEST_LIMIT = Duration.seconds(30)
+
+/** How long the engine archive has to download, from the request to the body's end. */
+export const DOWNLOAD_LIMIT = Duration.minutes(5)
+
 /** How long tar has to unpack the archive. */
 const UNPACK_TIME = Duration.minutes(5)
 
@@ -81,37 +88,63 @@ export interface Downloaded {
   readonly sha256: string
 }
 
-/** Downloads `url` into the new file `to`, refusing it past `limit` bytes. */
+/**
+ * Downloads `url` into the new file `to`, refusing it past `limit` bytes, and giving it up where the
+ * request and its body take longer than `timeLimit`: a stalled server can't hold the update.
+ */
 export const download = Effect.fn('Update.download')(function* ({
   url,
   to,
   limit,
+  timeLimit,
 }: {
   readonly url: string
   readonly to: string
   readonly limit: number
+  readonly timeLimit: Duration.Duration
 }) {
   const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk)
   const failed = (error: unknown) =>
     UpdateFailure.DownloadFailed({ url, message: message(error) })
-  const response = yield* client.get(url).pipe(Effect.mapError(failed))
-  const handle = yield* placing(to, () =>
-    open(to, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600),
-  )
-  const hash = createHash('sha256')
-  let bytes = 0
-  yield* response.stream.pipe(
-    Stream.mapError(failed),
-    Stream.runForEach((chunk): Effect.Effect<void, UpdateFailure> => {
-      bytes += chunk.byteLength
-      if (bytes > limit)
-        return Effect.fail(UpdateFailure.TooLarge({ url, limit }))
-      hash.update(chunk)
-      return Effect.asVoid(placing(to, () => handle.write(chunk)))
+  const fetched = Effect.gen(function* () {
+    const response = yield* client.get(url).pipe(Effect.mapError(failed))
+    const hash = createHash('sha256')
+    let bytes = 0
+    // Opened uninterruptibly and closed however the download ends, its time limit included.
+    yield* Effect.acquireUseRelease(
+      placing(to, () =>
+        open(
+          to,
+          constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+          0o600,
+        ),
+      ),
+      handle =>
+        response.stream.pipe(
+          Stream.mapError(failed),
+          Stream.runForEach((chunk): Effect.Effect<void, UpdateFailure> => {
+            bytes += chunk.byteLength
+            if (bytes > limit)
+              return Effect.fail(UpdateFailure.TooLarge({ url, limit }))
+            hash.update(chunk)
+            return writeAll(to, handle, chunk).pipe(
+              Effect.mapError(error =>
+                UpdateFailure.PlaceFailed({ path: to, message: error.message }),
+              ),
+            )
+          }),
+        ),
+      handle => closeQuietly(handle),
+    )
+    return { bytes, sha256: hash.digest('hex') } satisfies Downloaded
+  })
+  return yield* fetched.pipe(
+    Effect.timeoutOrElse({
+      duration: timeLimit,
+      orElse: () =>
+        Effect.fail(UpdateFailure.DownloadTimedOut({ url, limit: timeLimit })),
     }),
-    Effect.ensuring(Effect.promise(() => handle.close()).pipe(Effect.ignore)),
   )
-  return { bytes, sha256: hash.digest('hex') } satisfies Downloaded
 })
 
 /** Whether `signature` verifies `checksums` with one of `keys`. */
@@ -230,11 +263,13 @@ export const fetchRelease = Effect.fn('Update.fetchRelease')(function* ({
         url: url(CHECKSUMS),
         to: checksumsFile,
         limit: CHECKSUMS_LIMIT,
+        timeLimit: REQUEST_LIMIT,
       }),
       download({
         url: url(SIGNATURE),
         to: signatureFile,
         limit: SIGNATURE_BYTES,
+        timeLimit: REQUEST_LIMIT,
       }),
     ],
     { concurrency: 'unbounded' },
@@ -268,6 +303,7 @@ export const fetchRelease = Effect.fn('Update.fetchRelease')(function* ({
     url: archiveUrl,
     to: archive,
     limit: ARCHIVE_LIMIT,
+    timeLimit: DOWNLOAD_LIMIT,
   })
   if (got.sha256 !== chosen.sha256)
     return yield* Effect.fail(

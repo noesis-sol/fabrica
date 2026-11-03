@@ -1,4 +1,4 @@
-import { Data } from 'effect'
+import { Data, Duration } from 'effect'
 
 import { UpdateFailed } from '@fabrica/contracts'
 
@@ -19,6 +19,8 @@ export type UpdateFailure = Data.TaggedEnum<{
   Refused: { readonly why: string }
   /** A file of the release couldn't be downloaded. */
   DownloadFailed: { readonly url: string; readonly message: string }
+  /** A file of the release didn't download within its time limit. */
+  DownloadTimedOut: { readonly url: string; readonly limit: Duration.Duration }
   /** A file of the release was larger than it may be. */
   TooLarge: { readonly url: string; readonly limit: number }
   /** checksums.txt.sig doesn't verify checksums.txt with any release key. */
@@ -55,6 +57,8 @@ export const describeFailure = UpdateFailure.$match({
     `the latest release, ${latest}, is older than this engine's ${current}: name a release to go back to it`,
   Refused: ({ why }) => why,
   DownloadFailed: ({ url, message }) => `cannot download ${url}: ${message}`,
+  DownloadTimedOut: ({ url, limit }) =>
+    `cannot download ${url}: it took longer than ${Duration.format(limit)}, and nothing was installed`,
   TooLarge: ({ url, limit }) =>
     `${url} is larger than the ${limit} bytes it may be: nothing was installed`,
   BadSignature: () =>

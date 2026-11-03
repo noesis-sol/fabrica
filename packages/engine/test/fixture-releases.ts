@@ -149,13 +149,24 @@ export interface Served {
   readonly asked: Array<string>
 }
 
-/** The fixture `root` served over HTTP on the loopback, `latest/download/<name>` from the `latest` version's. */
+/** A path the fixture server stalls on: it sends the headers and half the body, then nothing more, telling `asked`. */
+export interface Stall {
+  readonly path: string
+  readonly asked: () => void
+}
+
+/**
+ * The fixture `root` served over HTTP on the loopback, `latest/download/<name>` from the `latest`
+ * version's, stalling on the `stalls`' paths.
+ */
 export const serveReleases = ({
   root,
   latest,
+  stalls = [],
 }: {
   readonly root: string
   readonly latest: string
+  readonly stalls?: ReadonlyArray<Stall>
 }) =>
   Effect.acquireRelease(
     Effect.callback<Served & { readonly server: Server }>(resume => {
@@ -171,12 +182,18 @@ export const serveReleases = ({
               path.slice('/latest/download/'.length),
             )
           : NodePath.join(root, path)
+        const stall = stalls.find(each => each.path === path)
         readFile(file).then(
           bytes => {
             response.writeHead(200, {
               'content-type': 'application/octet-stream',
+              'content-length': String(bytes.byteLength),
             })
-            response.end(bytes)
+            if (stall === undefined) response.end(bytes)
+            else {
+              response.write(bytes.subarray(0, bytes.byteLength >> 1))
+              stall.asked()
+            }
           },
           () => {
             response.writeHead(404)

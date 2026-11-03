@@ -1,4 +1,4 @@
-import { Data, Effect, Option, Result, type Scope } from 'effect'
+import { Data, Duration, Effect, Option, Result, type Scope } from 'effect'
 import type { HttpClient } from 'effect/http'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import * as NodePath from 'node:path'
@@ -9,8 +9,10 @@ import {
   CHECKSUMS,
   CHECKSUMS_LIMIT,
   type ChosenArchive,
+  DOWNLOAD_LIMIT,
   ENGINE_TARGETS,
   type EngineTarget,
+  REQUEST_LIMIT,
   type ReleaseChoice,
   SIGNATURE,
   SIGNATURE_BYTES,
@@ -86,22 +88,29 @@ const downloadStage = (stage: string) =>
       Effect.promise(() => rm(folder, { recursive: true, force: true })),
   )
 
-/** Downloads `url` into a file of a new folder under `stage`, refused past `limit` bytes. */
+/**
+ * Downloads `url` into a file of a new folder under `stage`, refused past `limit` bytes and given up
+ * past `timeLimit`.
+ */
 const fetchFile = ({
   stage,
   url,
   name,
   limit,
+  timeLimit,
 }: {
   readonly stage: string
   readonly url: string
   readonly name: string
   readonly limit: number
+  readonly timeLimit: Duration.Duration
 }) =>
   Effect.gen(function* () {
     const folder = yield* downloadStage(stage)
     const file = NodePath.join(folder, name)
-    yield* download({ url, to: file, limit }).pipe(Effect.mapError(release))
+    yield* download({ url, to: file, limit, timeLimit }).pipe(
+      Effect.mapError(release),
+    )
     return file
   })
 
@@ -123,6 +132,7 @@ const manifestOf = (source: DistributionSource) =>
           url: assetUrl({ releases, release: choice, name }),
           name,
           limit,
+          timeLimit: REQUEST_LIMIT,
         }).pipe(Effect.flatMap(readLocal))
       return Effect.all(
         [
@@ -214,6 +224,7 @@ export const deliveryOf = ({
             url,
             name: offered.archive.name,
             limit: ARCHIVE_LIMIT,
+            timeLimit: DOWNLOAD_LIMIT,
           }).pipe(Effect.map(file => Delivery.Upload({ file })))
     },
   })
