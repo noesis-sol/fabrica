@@ -19,9 +19,9 @@ import { NodeSocket } from '@effect/platform-node'
 import { beforeAll, describe, expect, it } from '@effect/vitest'
 import {
   Actor,
+  Answered,
   type AttentionAnswer,
   AttentionRequest,
-  Answered,
   EngineHost,
   FabricaRpcs,
   PermissionId,
