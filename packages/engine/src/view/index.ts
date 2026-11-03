@@ -20,6 +20,7 @@ export {
   type TicketFacts,
   type TicketTaken,
   type ViewInputs,
+  needsYouOf,
   projectView,
 } from './project'
 export {

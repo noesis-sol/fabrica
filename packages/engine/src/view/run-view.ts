@@ -1,21 +1,30 @@
 import { DateTime, Duration, Effect, Option, Ref, Scope, Stream } from 'effect'
 
 import {
+  type AttentionRequest,
   type Phase,
+  type ProjectNotFound,
   type Resume,
   type RunHeader,
   type Ticket,
   type TicketId,
+  applyAttentionPatch,
   factsOf,
 } from '@fabrica/contracts'
 
+import type { AttentionItem } from '../attention/service'
 import { type Spent, noTokens, tokensOf } from '../cost'
 import type { MergeLine } from '../merge'
 import type { RunStateShape } from '../run/state'
 import { type WorkGraphShape, doneToday } from '../workgraph'
 import { type WorkerDesk, makeWorkerDesk } from './desk'
 import { type RunViewItem, makeViewFeed } from './feed'
-import { type TicketFacts, type ViewInputs, projectView } from './project'
+import {
+  type TicketFacts,
+  type ViewInputs,
+  needsYouOf,
+  projectView,
+} from './project'
 import { type Steps, makeSteps } from './steps'
 
 // A run's view (spec §8.3, H40, H80): what the run writes into it (its state, merge line and cost
@@ -23,8 +32,9 @@ import { type Steps, makeSteps } from './steps'
 // workers), and the fiber that writes the view from them: each `view_interval`, it reads every input
 // once, projects the view keeping each part that says what it said, and publishes only a view that
 // changed. Done today is read from the work graph as the view starts, on each change of the work
-// graph, and again as the host's day changes, under its zone. The view lives in the scope it is made
-// in, and ends with it.
+// graph, and again as the host's day changes, under its zone. The project's open attention requests
+// are followed as they change, and each write reads them as they are. The view lives in the scope it
+// is made in, and ends with it.
 
 /** What a run writes into its view. */
 export interface RunViewSources {
@@ -144,14 +154,16 @@ const untilMidnight = Effect.map(DateTime.nowInCurrentZone, now =>
 
 /**
  * The run's view, in the scope: its header read from `header`, written at most every `interval`
- * (`view_interval`), Done today read from `graph`, transcripts crossing once per `flush`; `needsYou`
- * is told how many of its tickets need the maintainer as that changes (the project's row, §18.3).
+ * (`view_interval`), Done today read from `graph`, the open attention requests followed from
+ * `attention` (the project's, as a snapshot then patches), transcripts crossing once per `flush`;
+ * `needsYou` is told how many things wait on the maintainer as that changes (the project's row, §18.3).
  */
 export const makeRunView = Effect.fn('RunView.make')(function* (options: {
   readonly header: Effect.Effect<RunHeader>
   readonly interval: Duration.Duration
   readonly flush: Duration.Duration
   readonly graph: Pick<WorkGraphShape, 'doneSince' | 'changes'>
+  readonly attention: Stream.Stream<AttentionItem, ProjectNotFound>
   readonly needsYou: (count: number) => Effect.Effect<void>
   readonly scope: Scope.Scope
 }) {
@@ -191,6 +203,26 @@ export const makeRunView = Effect.fn('RunView.make')(function* (options: {
     options.scope,
   )
 
+  // The project's open attention requests, as the attention service has them.
+  const requests = yield* Ref.make<ReadonlyArray<AttentionRequest>>([])
+  yield* Effect.forkIn(
+    options.attention.pipe(
+      Stream.runForEach(item =>
+        Ref.update(requests, now =>
+          item._tag === 'snapshot'
+            ? item.value
+            : applyAttentionPatch(now, item.value),
+        ),
+      ),
+      Effect.catch(error =>
+        Effect.logWarning(
+          `The run view won't follow the attention requests: no project ${error.project}`,
+        ),
+      ),
+    ),
+    options.scope,
+  )
+
   /** Every input of one write, each read once, side by side. */
   const inputs: Effect.Effect<ViewInputs> = Effect.gen(function* () {
     const parts = yield* Ref.get(attached)
@@ -205,6 +237,7 @@ export const makeRunView = Effect.fn('RunView.make')(function* (options: {
       doneNow,
       known,
       spent,
+      attention,
     ] = yield* Effect.all(
       [
         options.header,
@@ -233,6 +266,7 @@ export const makeRunView = Effect.fn('RunView.make')(function* (options: {
           onNone: () => Effect.succeed(Option.none<Spent>()),
           onSome: ({ spent: read }) => Effect.map(read, Option.some),
         }),
+        Ref.get(requests),
       ],
       { concurrency: 'unbounded' },
     )
@@ -269,21 +303,22 @@ export const makeRunView = Effect.fn('RunView.make')(function* (options: {
         onNone: () => noTokens,
         onSome: ({ run }) => tokensOf(run.workers),
       }),
-      // The holds as one state, the attention requests and the host's load come with their services.
+      // The holds as one state and the host's load come with their services.
       holds: [],
-      attention: [],
+      attention,
       load: Option.none(),
     } satisfies ViewInputs
   })
 
   const feed = yield* makeViewFeed(projectView(yield* inputs, Option.none()))
-  // The tickets that need the maintainer, told as their count changes.
+  // What waits on the maintainer, told as its count changes.
   const told = yield* Ref.make(0)
   const tell = Effect.gen(function* () {
-    const count = (yield* feed.current).totals.counts.needs_you
+    const count = needsYouOf(yield* feed.current)
     if ((yield* Ref.getAndSet(told, count)) !== count)
       yield* options.needsYou(count)
   })
+  yield* tell
   yield* Effect.forkIn(
     Effect.forever(
       Effect.gen(function* () {

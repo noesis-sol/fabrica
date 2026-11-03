@@ -144,6 +144,7 @@ describe("the run view's spending", () => {
             doneSince: () => Effect.succeed(0),
             changes: Effect.succeed(Stream.never),
           },
+          attention: Stream.never,
           needsYou: () => Effect.void,
           scope,
         }).pipe(

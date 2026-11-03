@@ -348,7 +348,11 @@ export const make = Effect.gen(function* () {
           interval: intervals.view_interval,
           flush: intervals.stream_flush,
           graph,
-          // The project's row waits on the maintainer while a ticket of the run needs them.
+          attention: attention.watch({
+            project: Option.some(project),
+            resume: Option.none(),
+          }),
+          // The project's row waits on the maintainer while something of the project needs them.
           needsYou: count =>
             rowLock.withPermit(
               Effect.gen(function* () {

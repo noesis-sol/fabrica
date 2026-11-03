@@ -1,6 +1,7 @@
 import { type DateTime, Option } from 'effect'
 
 import {
+  AttentionRef,
   type AttentionRequest,
   Banner,
   type Counts,
@@ -134,6 +135,29 @@ const countsOf = (tickets: ReadonlyArray<TicketTaken>): Counts => {
   for (const { phase } of tickets) counts[factsOf(phase).counts] += 1
   return counts
 }
+
+/**
+ * How many things wait on the maintainer in the run (the project's row, §18.3): its open attention
+ * requests and its tickets that need them, a question its asked tickets wait on counted once.
+ */
+export const needsYouOf = (view: RunView): number =>
+  new Set([
+    ...view.attention.map(attentionKey),
+    ...view.tickets.flatMap(row =>
+      factsOf(row.phase).counts !== 'needs_you'
+        ? []
+        : [
+            row.phase._tag === 'asked'
+              ? attentionKey(
+                  AttentionRef.cases.question.make({
+                    project: view.header.project,
+                    ticket: row.phase.question,
+                  }),
+                )
+              : `ticket:${row.ticket}`,
+          ],
+    ),
+  ]).size
 
 /** The ticket's row, its times and hand-backs kept from its row before. */
 const rowOf = (

@@ -126,6 +126,7 @@ const viewIn = Effect.fn(function* (
     interval: every,
     flush: interval,
     graph,
+    attention: Stream.never,
     needsYou,
     scope,
   }).pipe(
