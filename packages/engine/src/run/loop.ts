@@ -160,7 +160,9 @@ import {
 // stop ends it `INTERRUPTED`; a drain dispatches nothing more, and the run ends `DRAINED` once nothing
 // is in progress. Its start takes up what an earlier run left (`carryover.ts`, §13.10): each ticket
 // with a saved session, carried over, answered or undeferred, resumes it as a dispatch does, in a free
-// slot (H76); a ticket merged by hand is noticed as Base moves.
+// slot (H76); a ticket merged by hand is noticed as Base moves. A defect in the loop, its end or a fiber
+// that wakes it ends the run `PANIC`, its end record written (§13.11), so a run never waits on a fiber
+// gone, nor ends with nothing said.
 
 /** How a run ended, and the exit code the CLI exits with (§13.11). */
 export interface RunEnd {
@@ -180,6 +182,37 @@ type Ending = Data.TaggedEnum<{
   }
 }>
 const Ending = Data.taggedEnum<Ending>()
+
+/**
+ * A cause's handler where the run can't go on past it: anything but an interruption is a panic, given
+ * to `panicked` in its words (§13.11); an interruption goes on being one.
+ */
+const onPanic =
+  <A>(panicked: (detail: string) => Effect.Effect<A>) =>
+  <E>(cause: Cause.Cause<E>): Effect.Effect<A> =>
+    Cause.hasInterruptsOnly(cause)
+      ? Effect.interrupt
+      : panicked(Cause.pretty(cause))
+
+/**
+ * The end of a run that couldn't go through its own, what's escaped it having closed its scope: its
+ * stop and its `end` record, so its status and `run --wait` say how it ended (§13.11).
+ */
+const endedShort = (
+  log: RunLog['Service'],
+  kind: StopKind,
+  detail: string,
+): Effect.Effect<RunEnd> =>
+  Effect.gen(function* () {
+    yield* record(log, {
+      kind: 'stop',
+      detail: kind,
+      text: `${kind}: ${detail}`,
+    })
+    const code = exitCodeOf(kind)
+    yield* record(log, { kind: 'end', code })
+    return { kind, code }
+  })
 
 /** A worker's session, as its claim and its control channel name it. */
 const drawSession = Effect.map(drawBase36(16), random =>
@@ -322,9 +355,18 @@ const runViewed = Effect.fn('Run.viewed')(function* (
     yield* record(log, { kind: 'end', code })
     return { kind: 'SETUP', code } satisfies RunEnd
   }
-  return yield* Effect.scoped(
-    runStarted(config, checked.started, control, view),
+  // The exit is read once the scope closed: the workers and the merge queue are gone before the end's records.
+  const exit = yield* Effect.scoped(
+    Effect.exit(runStarted(config, checked.started, control, view)),
   )
+  return yield* Exit.match(exit, {
+    onSuccess: Effect.succeed,
+    onFailure: cause =>
+      Result.match(Cause.findError(cause), {
+        onSuccess: error => endedShort(log, 'TRACKER_FAILED', error.message),
+        onFailure: onPanic(detail => endedShort(log, 'PANIC', detail)),
+      }),
+  })
 })
 
 /** The run once its start checks passed: until it ends, within its scope. */
@@ -453,8 +495,9 @@ const runStarted = Effect.fn('Run.started')(function* (
     say: note => recordBaseNote(log, note),
   })
 
-  // The merge queue lives in a scope of its own, so the end stops it before writing its records.
-  const mergeScope = yield* Scope.make()
+  // The merge queue lives in a scope of its own, so the end stops it before writing its records; the
+  // run's scope closes it where the run never reached its end.
+  const mergeScope = yield* Scope.fork(yield* Effect.scope)
   const merges = yield* makeMergeQueue({
     home: config.home,
     base: started.base,
@@ -684,6 +727,13 @@ const runStarted = Effect.fn('Run.started')(function* (
     detail: string,
     ticket = Option.none<TicketId>(),
   ) => wakes.wake(WakeReason.Stopped({ kind, ticket, detail }))
+
+  /** A fiber that wakes the run, forked with it: where it dies the run stops, not waiting on it for good. */
+  const watched = (what: string) => (watcher: Effect.Effect<void>) =>
+    watcher.pipe(
+      Effect.catchCause(onPanic(detail => stop('PANIC', `${what}: ${detail}`))),
+      Effect.forkScoped,
+    )
 
   /** A change of the work graph the run made failed: the run stops, `TRACKER_FAILED`. */
   const tracked = <A, E extends { readonly message: string }>(
@@ -1640,10 +1690,8 @@ const runStarted = Effect.fn('Run.started')(function* (
       yield* FiberSet.run(
         workers,
         workOn(ticket, session, turn).pipe(
-          Effect.catchCause(cause =>
-            Cause.hasInterruptsOnly(cause)
-              ? Effect.void
-              : stop('PANIC', `${ticket.id}: ${Cause.pretty(cause)}`),
+          Effect.catchCause(
+            onPanic(detail => stop('PANIC', `${ticket.id}: ${detail}`)),
           ),
         ),
       )
@@ -1816,7 +1864,22 @@ const runStarted = Effect.fn('Run.started')(function* (
       )
     })
 
-  yield* mergeUpdates.pipe(Stream.runForEach(mergeUpdated), Effect.forkScoped)
+  yield* mergeUpdates.pipe(
+    Stream.runForEach(update =>
+      mergeUpdated(update).pipe(
+        Effect.catchCause(
+          onPanic(detail =>
+            stop(
+              'PANIC',
+              `${update.ticket}'s merge: ${detail}`,
+              Option.some(update.ticket),
+            ),
+          ),
+        ),
+      ),
+    ),
+    watched("the merge queue's updates"),
+  )
   yield* graphChanges.pipe(
     Stream.runForEach(event =>
       Option.exists(
@@ -1826,8 +1889,9 @@ const runStarted = Effect.fn('Run.started')(function* (
         ? Effect.void
         : wakes.wake(WakeReason.TicketsChanged()),
     ),
-    Effect.catch(error => Effect.logWarning(error.message)),
-    Effect.forkScoped,
+    // The work graph can't be watched: the run stops (§13.11), as new tickets and answers wouldn't wake it.
+    Effect.catch(error => stop('TRACKER_FAILED', error.message)),
+    watched("the work graph's changes"),
   )
   // Each change of the holds after the first: a lift wakes the run, and one that gave up stops it.
   yield* holds.changes.pipe(
@@ -1838,7 +1902,7 @@ const runStarted = Effect.fn('Run.started')(function* (
         onSome: gaveUp => stop(gaveUp.kind, gaveUp.detail, gaveUp.ticket),
       }),
     ),
-    Effect.forkScoped,
+    watched("the holds' changes"),
   )
   yield* wakes.wake(WakeReason.Started())
 
@@ -1868,19 +1932,47 @@ const runStarted = Effect.fn('Run.started')(function* (
                 ),
               ),
             ),
+            Effect.catchCause(
+              onPanic(detail =>
+                Effect.succeed(
+                  Option.some(
+                    Ending.Stop({
+                      kind: 'PANIC',
+                      ticket: Option.none(),
+                      detail: `the run's look: ${detail}`,
+                    }),
+                  ),
+                ),
+              ),
+            ),
           )
   }
-  return yield* endRun({
-    ending: ending.value,
-    state,
-    supervision,
-    workers,
-    mergeScope,
-    merges,
-    log,
-    cost,
-    afterFullCheck: pushes.after_run,
-  })
+  const ended = (last: Ending) =>
+    endRun({
+      ending: last,
+      state,
+      supervision,
+      workers,
+      mergeScope,
+      merges,
+      log,
+      cost,
+      afterFullCheck: pushes.after_run,
+    })
+  // A defect in the end goes through the end again as what it is: what it had done, it finds done.
+  return yield* ended(ending.value).pipe(
+    Effect.catchCause(
+      onPanic(detail =>
+        ended(
+          Ending.Stop({
+            kind: 'PANIC',
+            ticket: Option.none(),
+            detail: `the run's end: ${detail}`,
+          }),
+        ),
+      ),
+    ),
+  )
 })
 
 /**
