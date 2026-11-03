@@ -172,7 +172,7 @@ const connected: Model = {
 }
 
 const key = (pressed: string, { mod = false, inField = false } = {}) =>
-  Message.PressedKey({ key: pressed, mod, alt: false, inField })
+  Message.PressedKey({ key: pressed, mod, alt: false, inField, repeat: false })
 
 /** A key pressed in the palette's search field, where focus starts. */
 const fieldKey = (pressed: string) => key(pressed, { inField: true })

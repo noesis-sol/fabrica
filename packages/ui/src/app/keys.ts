@@ -23,6 +23,12 @@ export interface Chord {
    * Enter do from its search field: Enter on a focused entry is that entry's own click.
    */
   readonly onlyInField?: boolean
+  /**
+   * The key runs its command again on each auto-repeat while held, as the palette's arrows move on
+   * through its entries; any other key runs once per press, so holding `x` can't give Stop its
+   * confirmation on the same key (§13.10).
+   */
+  readonly repeats?: boolean
 }
 
 /** One command: what it says, its key where it has one, whether the screen hints at it, and what it sends. */
@@ -41,6 +47,8 @@ const withMod = (key: string): Option.Option<Chord> =>
   Option.some({ key, mod: true })
 const fieldKey = (key: string): Option.Option<Chord> =>
   Option.some({ key, mod: false, onlyInField: true })
+const heldFieldKey = (key: string): Option.Option<Chord> =>
+  Option.some({ key, mod: false, onlyInField: true, repeats: true })
 
 const goTo = (
   screen: Screen,
@@ -262,14 +270,14 @@ const paletteKeys: ReadonlyArray<KeyCommand> = [
   {
     id: 'palette.next',
     title: 'Next',
-    chord: fieldKey('ArrowDown'),
+    chord: heldFieldKey('ArrowDown'),
     hint: false,
     message: Message.MovedPaletteSelection({ by: 1 }),
   },
   {
     id: 'palette.previous',
     title: 'Previous',
-    chord: fieldKey('ArrowUp'),
+    chord: heldFieldKey('ArrowUp'),
     hint: false,
     message: Message.MovedPaletteSelection({ by: -1 }),
   },
@@ -322,12 +330,15 @@ export interface Pressed {
   readonly alt: boolean
   /** Focus is in a text field: its plain keys are typing, not commands. */
   readonly inField: boolean
+  /** The key is held down and this is the system's auto-repeat of it, not a press of its own. */
+  readonly repeat: boolean
 }
 
 const matches = (chord: Chord, pressed: Pressed): boolean =>
   chord.key.toLowerCase() === pressed.key.toLowerCase() &&
   chord.mod === pressed.mod &&
   !pressed.alt &&
+  (chord.repeats === true || !pressed.repeat) &&
   (chord.onlyInField === true
     ? pressed.inField
     : chord.mod || chord.key === 'Escape' || !pressed.inField)

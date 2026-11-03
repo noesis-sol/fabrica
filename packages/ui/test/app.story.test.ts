@@ -77,7 +77,13 @@ const connected: Model = {
 }
 
 const key = (pressed: string, mod = false) =>
-  Message.PressedKey({ key: pressed, mod, alt: false, inField: false })
+  Message.PressedKey({
+    key: pressed,
+    mod,
+    alt: false,
+    inField: false,
+    repeat: false,
+  })
 
 /** The Insights screen's requests as it opens, each answered that the engine doesn't serve it. */
 const insightsUnserved = [
@@ -178,13 +184,25 @@ describe('routing', () => {
       update,
       given(start),
       message(
-        Message.PressedKey({ key: '?', mod: false, alt: false, inField: true }),
+        Message.PressedKey({
+          key: '?',
+          mod: false,
+          alt: false,
+          inField: true,
+          repeat: false,
+        }),
       ),
       model(shown => {
         expect(shown.overlay).toEqual(Overlay.Closed())
       }),
       message(
-        Message.PressedKey({ key: 'k', mod: true, alt: false, inField: true }),
+        Message.PressedKey({
+          key: 'k',
+          mod: true,
+          alt: false,
+          inField: true,
+          repeat: false,
+        }),
       ),
       model(shown => {
         expect(shown.overlay).toEqual(Overlay.Palette())

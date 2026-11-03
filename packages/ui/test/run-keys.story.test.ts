@@ -102,8 +102,8 @@ const withStats = (base: Model, stats: Partial<Stats.Model>): Model => ({
   console: { ...base.console, stats: { ...base.console.stats, ...stats } },
 })
 
-const key = (pressed: string, { inField = false } = {}) =>
-  Message.PressedKey({ key: pressed, mod: false, alt: false, inField })
+const key = (pressed: string, { inField = false, repeat = false } = {}) =>
+  Message.PressedKey({ key: pressed, mod: false, alt: false, inField, repeat })
 
 /** The run commands of the model's list, each with its key as macOS writes it. */
 const runCommands = (shown: Model) =>

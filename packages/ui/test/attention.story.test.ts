@@ -224,7 +224,13 @@ const attentionMessage = (child: Attention.Message) =>
   Message.GotAttentionMessage({ message: child })
 
 const key = (pressed: string) =>
-  Message.PressedKey({ key: pressed, mod: false, alt: false, inField: false })
+  Message.PressedKey({
+    key: pressed,
+    mod: false,
+    alt: false,
+    inField: false,
+    repeat: false,
+  })
 
 const questionKey = 'question:p-1:fa-q1'
 

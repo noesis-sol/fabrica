@@ -142,6 +142,7 @@ const pressed = (key: string, mod: boolean): Pressed => ({
   mod,
   alt: false,
   inField: false,
+  repeat: false,
 })
 
 describe('the console against an engine that serves little yet', () => {

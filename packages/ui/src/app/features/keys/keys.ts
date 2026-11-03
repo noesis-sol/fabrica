@@ -149,7 +149,7 @@ export const keyHelpView = (model: Model, h: HtmlBuilder<Message>): Html =>
     h,
   )
 
-/** The keys going down in `target`'s window, each with whether focus was in a text field. */
+/** The keys going down in `target`'s window, each with whether focus was in a text field and whether it is held. */
 export const documentKeys = (target: Document): Stream.Stream<Pressed> =>
   Stream.fromEventListener<KeyboardEvent>(target, 'keydown').pipe(
     Stream.map(event => ({
@@ -160,6 +160,7 @@ export const documentKeys = (target: Document): Stream.Stream<Pressed> =>
         event.target instanceof HTMLInputElement ||
         event.target instanceof HTMLTextAreaElement ||
         (event.target instanceof HTMLElement && event.target.isContentEditable),
+      repeat: event.repeat,
     })),
   )
 

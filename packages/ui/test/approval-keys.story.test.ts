@@ -139,7 +139,13 @@ const passed = (drawing: number) =>
   attentionMessage(Attention.Message.PassedGuard({ drawing }))
 
 const key = (pressed: string) =>
-  Message.PressedKey({ key: pressed, mod: false, alt: false, inField: false })
+  Message.PressedKey({
+    key: pressed,
+    mod: false,
+    alt: false,
+    inField: false,
+    repeat: false,
+  })
 
 /** `messages` through update one after another, as the runtime sends them, with the last one's Commands. */
 const sent = (start: Model, ...messages: ReadonlyArray<Message>) =>

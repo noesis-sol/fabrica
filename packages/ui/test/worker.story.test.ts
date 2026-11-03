@@ -376,7 +376,13 @@ describe('the ticket on top', () => {
     )
     const pressed = received(
       opened,
-      Message.PressedKey({ key: 't', mod: false, alt: false, inField: false }),
+      Message.PressedKey({
+        key: 't',
+        mod: false,
+        alt: false,
+        inField: false,
+        repeat: false,
+      }),
     )
     expect(pressed.screens.worker.wholeTicket).toBe(true)
   })
@@ -680,6 +686,7 @@ describe('the composer', () => {
           mod: false,
           alt: false,
           inField: false,
+          repeat: false,
         }),
       ),
       Command.resolve(

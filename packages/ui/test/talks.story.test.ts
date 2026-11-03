@@ -449,6 +449,7 @@ describe('the answer talk', () => {
           mod: false,
           alt: false,
           inField: false,
+          repeat: false,
         }),
       ),
       Command.resolve(
