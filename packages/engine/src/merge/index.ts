@@ -17,6 +17,8 @@ export {
   wroteRecorded,
 } from './hygiene'
 export {
+  AfterMerge,
+  type AfterMergeShape,
   type MergeLine,
   MergeQueue,
   type MergeQueueShape,

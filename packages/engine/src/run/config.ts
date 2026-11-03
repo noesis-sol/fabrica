@@ -1,6 +1,11 @@
 import { Data, type Option } from 'effect'
 
-import type { EngineId, ProjectId, TicketId } from '@fabrica/contracts'
+import type {
+  EngineId,
+  ProjectId,
+  ProjectOrigin,
+  TicketId,
+} from '@fabrica/contracts'
 
 import type { WorktreeHome } from '../git'
 import type { KeepAwakeHost } from '../time'
@@ -50,6 +55,8 @@ export interface RunConfig {
   readonly version: string
   /** The project's checkout: Base is the branch checked out in it. */
   readonly checkout: string
+  /** How the project came to the engine, which sets its default `push` (§10.3). */
+  readonly origin: ProjectOrigin
   /** Where the tickets' worktrees are. */
   readonly home: WorktreeHome
   /** The folder the workers' control sockets are made in. */

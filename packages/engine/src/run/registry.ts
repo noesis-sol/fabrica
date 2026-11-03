@@ -382,6 +382,7 @@ export const make = Effect.gen(function* () {
           engine: engine.id,
           version: engine.version.release,
           checkout: record.path,
+          origin: record.origin,
           home,
           sockets: hosting.sockets,
           options: {

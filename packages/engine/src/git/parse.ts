@@ -2,6 +2,8 @@ import { Option } from 'effect'
 
 import { CommitHash, FileChange, FileDiff, TreeHash } from '@fabrica/contracts'
 
+import { PushOutcome } from './outcomes'
+
 // How git's output is read: the one place each of its formats is parsed. Every format read is one git
 // keeps stable for scripts (`-z`, `--porcelain`), under `LC_ALL=C`.
 
@@ -176,10 +178,87 @@ export interface WorktreeEntry {
 }
 
 const HEADS = 'refs/heads/'
+const REMOTES = 'refs/remotes/'
 
 /** A branch's short name from its full ref, none for a ref outside `refs/heads/`. */
 export const shortBranch = (ref: string): Option.Option<string> =>
   ref.startsWith(HEADS) ? Option.some(ref.slice(HEADS.length)) : Option.none()
+
+/** Where a branch's upstream is: the remote it is fetched from and pushed to, and the remote's branch. */
+export interface Upstream {
+  /** The remote's name (`origin`); `.` for a branch of the same repository. */
+  readonly remote: string
+  /** The branch's full name on the remote (`refs/heads/main`). */
+  readonly ref: string
+  /** The ref the remote's branch is kept in here (`refs/remotes/origin/main`). */
+  readonly tracking: string
+}
+
+/**
+ * `git for-each-ref --format=%(refname)%00%(upstream)%00%(upstream:remotename)%00%(upstream:remoteref)`:
+ * a line per ref. `branch`'s upstream, none where it has none (or git names no ref that keeps it); output
+ * in another shape is none, as a whole.
+ */
+export const parseUpstream = (
+  output: string,
+  branch: string,
+): Option.Option<Option.Option<Upstream>> => {
+  const lines = output.split('\n').filter(line => line !== '')
+  const fields = lines.map(line => line.split('\0'))
+  if (fields.some(line => line.length !== 4)) return Option.none()
+  const own = fields.find(([ref]) => ref === `${HEADS}${branch}`)
+  if (own === undefined) return Option.some(Option.none())
+  const [, tracking = '', remote = '', ref = ''] = own
+  return Option.some(
+    tracking === '' || remote === '' || ref === ''
+      ? Option.none()
+      : Option.some({ remote, ref, tracking }),
+  )
+}
+
+/** The short name of a ref that keeps a remote's branch, as git shows it: `origin/main`, or the branch's. */
+export const trackingName = (tracking: string): string =>
+  tracking.startsWith(REMOTES)
+    ? tracking.slice(REMOTES.length)
+    : Option.getOrElse(shortBranch(tracking), () => tracking)
+
+/** The reasons git gives for a push it refused as not a fast-forward. */
+const NOT_FAST_FORWARD = new Set([
+  'non-fast-forward',
+  'fetch first',
+  'needs force',
+  'stale info',
+  'already exists',
+])
+
+/**
+ * `git push --porcelain`: a line per ref, `<flag>\t<from>:<to>\t<summary>`. How the ref `to` was
+ * updated; none where no line names it, or its line reads as none of these.
+ */
+export const parsePushed = (
+  output: string,
+  to: string,
+): Option.Option<PushOutcome> => {
+  const line = output
+    .split('\n')
+    .map(entry => entry.split('\t'))
+    .find(
+      fields => fields.length === 3 && fields[1]?.endsWith(`:${to}`) === true,
+    )
+  if (line === undefined) return Option.none()
+  const [flag = '', , summary = ''] = line
+  const reason = /\((.*)\)$/u.exec(summary)?.[1] ?? summary
+  if (flag === ' ' || flag === '*') return Option.some(PushOutcome.Pushed())
+  if (flag === '=') return Option.some(PushOutcome.UpToDate())
+  if (flag !== '!') return Option.none()
+  if (summary.startsWith('[remote rejected]'))
+    return Option.some(PushOutcome.Rejected({ reason }))
+  return Option.some(
+    NOT_FAST_FORWARD.has(reason)
+      ? PushOutcome.NotFastForward({ reason })
+      : PushOutcome.Rejected({ reason }),
+  )
+}
 
 /**
  * `git worktree list --porcelain -z`: records of NUL-terminated lines, each record ended by an empty

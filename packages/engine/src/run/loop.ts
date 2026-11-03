@@ -54,6 +54,7 @@ import {
   stopping,
 } from '../holds'
 import {
+  AfterMerge,
   type MergeQueueShape,
   MergeSetup,
   type MergeSetupShape,
@@ -67,6 +68,14 @@ import {
   HandBackWorker,
   type HandBackWorkerShape,
 } from '../merge/handbacks'
+import {
+  BaseNote,
+  BaseSynced,
+  basePushes,
+  pushSetting,
+  syncBase,
+  syncedNote,
+} from '../projects/base-sync'
 import { ModelProxy, Permits } from '../proxy'
 import {
   RunLog,
@@ -320,10 +329,33 @@ const runViewed = Effect.fn('Run.viewed')(function* (
     yield* record(log, { kind: 'end', code })
     return { kind: 'SETUP', code } satisfies RunEnd
   }
-  return yield* Effect.scoped(
-    runStarted(config, checked.started, control, view),
-  )
+  // Base fetched from its upstream and fast-forwarded where it moved, or the run starts on it as it
+  // is, saying why (§10.3).
+  const synced = yield* syncBase({
+    checkout: config.checkout,
+    base: checked.started.base,
+  })
+  yield* Option.match(syncedNote(synced, checked.started.base), {
+    onNone: () => Effect.void,
+    onSome: note => recordNote(log, note),
+  })
+  const started: Started = BaseSynced.$is('FastForwarded')(synced)
+    ? { ...checked.started, baseCommit: synced.to }
+    : checked.started
+  return yield* Effect.scoped(runStarted(config, started, control, view))
 })
+
+/** A note of Base's sync or push as the run's record: a warning under its tag, or progress. */
+const recordNote = (log: RunLog['Service'], note: BaseNote) =>
+  BaseNote.$match(note, {
+    Warning: ({ tag, text }) =>
+      record(log, {
+        kind: 'warn',
+        detail: tag,
+        text: warningLine({ tag, about: 'run', text }),
+      }),
+    Progress: ({ text }) => record(log, { kind: 'info', text }),
+  })
 
 /** The run once its start checks passed: until it ends, within its scope. */
 const runStarted = Effect.fn('Run.started')(function* (
@@ -443,6 +475,14 @@ const runStarted = Effect.fn('Run.started')(function* (
       ),
   }
 
+  // Base pushed as the project's `push` says: after each merge, or once the full check passed (§10.3).
+  const pushes = yield* basePushes({
+    checkout: config.checkout,
+    base: started.base,
+    push: pushSetting(project.push, config.origin),
+    say: note => recordNote(log, note),
+  })
+
   // The merge queue lives in a scope of its own, so the end stops it before writing its records.
   const mergeScope = yield* Scope.make()
   const merges = yield* makeMergeQueue({
@@ -463,6 +503,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     Effect.provideService(MergeSetup, MergeSetup.of(setup)),
     Effect.provideService(HandBackClock, clock),
     Effect.provideService(HandBackWorker, handBacksTo),
+    Effect.provideService(AfterMerge, { merged: () => pushes.after_merge }),
     Scope.provide(mergeScope),
   )
   const mergeUpdates = yield* merges.updates.pipe(Scope.provide(mergeScope))
@@ -1867,6 +1908,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     merges,
     log,
     cost,
+    afterFullCheck: pushes.after_run,
   })
 })
 
@@ -1885,6 +1927,8 @@ const endRun = Effect.fn('Run.end')(function* (input: {
   readonly merges: MergeQueueShape
   readonly log: RunLog['Service']
   readonly cost: CostAccount
+  /** What follows the full check's pass: `push: after_run` pushes Base (§10.3). */
+  readonly afterFullCheck: Effect.Effect<void>
 }) {
   const { ending, state, log } = input
   yield* state.end
@@ -1906,6 +1950,7 @@ const endRun = Effect.fn('Run.end')(function* (input: {
   yield* endSteps({
     kind,
     merged: inPhase(left, 'merged').length,
+    afterFullCheck: input.afterFullCheck,
   })
   const waits = [
     ...setupWaitsLines(left),

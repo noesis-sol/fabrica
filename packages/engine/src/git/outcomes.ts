@@ -61,3 +61,26 @@ export type CloneOutcome = Data.TaggedEnum<{
   Refused: { readonly message: string }
 }>
 export const CloneOutcome = Data.taggedEnum<CloneOutcome>()
+
+/** Fetching a branch from its remote (spec §10.3). */
+export type FetchOutcome = Data.TaggedEnum<{
+  Fetched: {}
+  /** Git couldn't: the remote unreachable, the credentials refused; `message` is git's. */
+  Failed: { readonly message: string }
+}>
+export const FetchOutcome = Data.taggedEnum<FetchOutcome>()
+
+/** Pushing a commit to a remote's branch, never forced (spec §10.3). */
+export type PushOutcome = Data.TaggedEnum<{
+  /** The remote's branch is at the commit now: fast-forwarded, or made. */
+  Pushed: {}
+  /** The remote's branch was at the commit already. */
+  UpToDate: {}
+  /** Not made, as it isn't a fast-forward (`non-fast-forward`, `fetch first`): `reason` is git's. */
+  NotFastForward: { readonly reason: string }
+  /** The remote refused it (a hook, a protected branch): `reason` is the remote's. */
+  Rejected: { readonly reason: string }
+  /** Git couldn't push: the remote unreachable, the credentials refused; `message` is git's. */
+  Failed: { readonly message: string }
+}>
+export const PushOutcome = Data.taggedEnum<PushOutcome>()

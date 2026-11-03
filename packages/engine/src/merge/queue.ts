@@ -12,7 +12,7 @@ import {
   SynchronizedRef,
 } from 'effect'
 
-import type { MergeStep, TicketId } from '@fabrica/contracts'
+import type { CommitHash, MergeStep, TicketId } from '@fabrica/contracts'
 
 import type { Checks } from '../checks'
 import { Git, type Worktree, type Worktrees } from '../git'
@@ -66,6 +66,21 @@ export class MergeQueue extends Context.Service<MergeQueue, MergeQueueShape>()(
   '@fabrica/engine/MergeQueue',
 ) {}
 
+/** What follows each merge, once its ticket is closed and its worktree removed (§13.7 step 6). */
+export interface AfterMergeShape {
+  /** Called with the ticket merged and the commit Base is at: `push: after_merge` pushes Base (§10.3). */
+  readonly merged: (input: {
+    readonly ticket: TicketId
+    readonly commit: CommitHash
+  }) => Effect.Effect<void>
+}
+
+/** What follows each merge; nothing unless the run gives its own. */
+export const AfterMerge = Context.Reference<AfterMergeShape>(
+  '@fabrica/engine/merge/AfterMerge',
+  { defaultValue: () => ({ merged: () => Effect.void }) },
+)
+
 /** The ticket is in the line, merging or waiting. */
 const inLine = (line: Held, ticket: TicketId) =>
   Option.contains(line.merging, ticket) ||
@@ -99,6 +114,7 @@ export const make = Effect.fn('MergeQueue.make')(function* (
   const graph = yield* WorkGraph
   const worker = yield* HandBackWorker
   const clock = yield* HandBackClock
+  const afterMerge = yield* AfterMerge
   const handBacks = yield* FiberSet.make<void>()
 
   const publish = (update: MergeUpdate) =>
@@ -226,8 +242,12 @@ export const make = Effect.fn('MergeQueue.make')(function* (
       ...current,
       merging: Option.none(),
     }))
-    // The rechecks are said before the merge, so the run never takes their tickets for done.
-    if (MergeOutcome.$is('Merged')(outcome)) yield* recheck
+    // What follows the merge comes before the run hears of it, so the run's end never cuts it short;
+    // the rechecks are said before the merge, so the run never takes their tickets for done.
+    if (MergeOutcome.$is('Merged')(outcome)) {
+      yield* afterMerge.merged({ ticket, commit: outcome.commit })
+      yield* recheck
+    }
     yield* publish(outcome)
     if (MergeOutcome.$is('HandedBack')(outcome))
       yield* FiberSet.run(handBacks, handBack(worktree))

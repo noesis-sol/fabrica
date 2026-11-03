@@ -524,6 +524,7 @@ export const configOf = (
   engine,
   version: '0.0.0-test',
   checkout: fixture.checkout,
+  origin: 'registered',
   home: besideCheckout(fixture.checkout),
   sockets: fixture.sockets,
   options: runOptions,

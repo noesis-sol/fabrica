@@ -17,13 +17,16 @@ import {
   AbortOutcome,
   CloneOutcome,
   FastForwardOutcome,
+  FetchOutcome,
   GitVersion,
+  PushOutcome,
   RebaseOutcome,
 } from './outcomes'
 import {
   CHECK_ATTR_SOURCE_GIT,
   type CheckoutPlace,
   MINIMUM_GIT,
+  type Upstream,
   type WorktreeEntry,
   type WorktreeStatus,
   gitAtLeast,
@@ -33,8 +36,10 @@ import {
   parseDiff,
   parseGitVersion,
   parseHash,
+  parsePushed,
   parseStatus,
   parseTreeHash,
+  parseUpstream,
   parseWorktrees,
   shortBranch,
 } from './parse'
@@ -207,6 +212,30 @@ export interface GitShape {
   readonly checkoutOf: (input: {
     readonly folder: string
   }) => Effect.Effect<Option.Option<CheckoutPlace>, CantTell>
+  /** Where the branch `branch` is fetched from and pushed to (spec §10.3); none where it has no upstream. */
+  readonly upstream: (input: {
+    readonly repo: string
+    readonly branch: string
+  }) => Effect.Effect<Option.Option<Upstream>, CantTell>
+  /**
+   * Fetches the branch `ref` from `remote`, with the host's git credentials, the ref that keeps it here
+   * updated as the remote's configuration says; no tags.
+   */
+  readonly fetch: (input: {
+    readonly repo: string
+    readonly remote: string
+    readonly ref: string
+  }) => Effect.Effect<FetchOutcome, GitFailed>
+  /**
+   * Pushes the commit `commit` to the branch `ref` of `remote`, with the host's git credentials; never
+   * forced, so a push that isn't a fast-forward is not made.
+   */
+  readonly push: (input: {
+    readonly repo: string
+    readonly remote: string
+    readonly commit: CommitHash
+    readonly ref: string
+  }) => Effect.Effect<PushOutcome, GitFailed>
   /**
    * Clones `url` into the new folder `into`, with the host's git credentials (spec §10.1): its git
    * configuration, credential helpers, keys and ssh-agent.
@@ -1082,6 +1111,90 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     )
   })
 
+  const upstream = Effect.fn('Git.upstream')(function* ({
+    repo,
+    branch,
+  }: {
+    readonly repo: string
+    readonly branch: string
+  }) {
+    return yield* readExit(
+      'upstream',
+      {
+        cwd: repo,
+        args: [
+          'for-each-ref',
+          '--format=%(refname)%00%(upstream)%00%(upstream:remotename)%00%(upstream:remoteref)',
+          '--end-of-options',
+          `refs/heads/${branch}`,
+        ],
+      },
+      exit =>
+        exit.code === 0 ? parseUpstream(exit.stdout, branch) : Option.none(),
+    )
+  })
+
+  const fetch = Effect.fn('Git.fetch')(function* ({
+    repo,
+    remote,
+    ref,
+  }: {
+    readonly repo: string
+    readonly remote: string
+    readonly ref: string
+  }) {
+    const exit = yield* network({
+      cwd: repo,
+      args: [
+        'fetch',
+        '--quiet',
+        '--no-tags',
+        '--no-recurse-submodules',
+        '--end-of-options',
+        remote,
+        ref,
+      ],
+    })
+    return exit.code === 0
+      ? FetchOutcome.Fetched()
+      : FetchOutcome.Failed({
+          message: exit.stderr.trim() || `git fetch exited ${exit.code}`,
+        })
+  })
+
+  const push = Effect.fn('Git.push')(function* ({
+    repo,
+    remote,
+    commit,
+    ref,
+  }: {
+    readonly repo: string
+    readonly remote: string
+    readonly commit: CommitHash
+    readonly ref: string
+  }) {
+    // No `+` and no `--force`: git refuses a push that isn't a fast-forward.
+    const exit = yield* network({
+      cwd: repo,
+      args: [
+        'push',
+        '--porcelain',
+        '--no-follow-tags',
+        '--end-of-options',
+        remote,
+        `${commit}:${ref}`,
+      ],
+    })
+    return Option.getOrElse(parsePushed(exit.stdout, ref), () =>
+      PushOutcome.Failed({
+        message:
+          exit.stderr.trim() ||
+          exit.stdout.trim() ||
+          `git push exited ${exit.code}`,
+      }),
+    )
+  })
+
   const clone = Effect.fn('Git.clone')(function* ({
     url,
     into,
@@ -1129,6 +1242,9 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     pruneWorktrees,
     deleteBranch,
     checkoutOf,
+    upstream,
+    fetch,
+    push,
     clone,
   })
 })
