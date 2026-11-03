@@ -478,6 +478,14 @@ export const OrganEvent = record('organ', {
   duration_ms: Count,
 })
 
+/** The run talk acted on the maintainer's instructions (§15.4, H44): `tool` is the command, `text` History's line. */
+export const TalkActionEvent = record('talk_action', {
+  actor: Schema.Literal('run_talk'),
+  tool: Text,
+  ticket: optional(TicketId),
+  text: Text,
+})
+
 /** The run's last record (§13.11). */
 export const EndEvent = record('end', {
   code: ExitCode,
@@ -693,6 +701,7 @@ export const RunEvent = Schema.Union([
   CheckEvent,
   FullCheckEvent,
   OrganEvent,
+  TalkActionEvent,
   EndEvent,
   PhaseEvent,
   QueueEvent,

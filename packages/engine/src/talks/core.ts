@@ -56,7 +56,9 @@ import { drawBase36 } from '../workgraph/ids'
 // the file the engine keeps for it. A talk runs on the project's model unless it is given one.
 // A mode's tools carry the engine's side of a call (`talkTool`): the agent hands a call over by the
 // tool's name, and the engine decodes its arguments, acts as the talk's session (on the project's
-// work graph, for the ticket tools) and answers with the result encoded, or refuses it.
+// work graph, for the ticket tools) and answers with the result encoded, or refuses it. A tool that
+// takes the maintainer's word first asks whether it has it (`confirmed`), from what the maintainer has
+// sent the talk since it asked.
 // The talk's agent is a port (`TalkAgents`), so the talks' rules are tested on a scripted session.
 
 /** A talk's agent couldn't start, or refused a message. */
@@ -82,6 +84,8 @@ export interface TalkAgentStart {
   readonly instructions: string
   /** The engine's tools the agent is given. */
   readonly tools: ReadonlyArray<AnyTool>
+  /** Whether it has Pi's built-in readers beside them: without, `tools` are all it has. It never has Pi's shell or writers. */
+  readonly readsCode: boolean
   /** The engine's side of a call to one of `tools`: its answer, encoded, or why it was refused. */
   readonly call: (options: {
     readonly tool: string
@@ -135,6 +139,16 @@ export interface TalkToolContext<M extends TalkMode> {
   readonly context: TalkContextOf<M>
   readonly graph: Effect.Effect<WorkGraphShape>
   readonly actor: Actor
+  /**
+   * Whether the maintainer has just been asked `action` and answered: true where it was asked once,
+   * and they have sent one message since, the agent having read it; false asks it from now on, and
+   * another message afterwards lapses it, so what the agent acts on is the answer to its question.
+   */
+  readonly confirmed: (action: string) => Effect.Effect<boolean>
+  /** Opens another talk of the project, on the project's model. */
+  readonly openTalk: (
+    context: TalkContext,
+  ) => Effect.Effect<OpenedTalk, ProjectNotFound | TalkNotOpened>
 }
 
 /** A talk's tool: the tool its agent is given, and the engine's side of a call to it. */
@@ -181,6 +195,8 @@ export interface TalkModeOf<M extends TalkMode> {
   readonly keep: boolean
   readonly instructions: string
   readonly tools: ReadonlyArray<TalkTool<M>>
+  /** Whether its agent reads the project's code with Pi's built-in readers; yes when left out. */
+  readonly readsCode?: boolean
   /**
    * The prompt a new session opens with, the engine's message in the transcript; none waits for the
    * maintainer's first message.
@@ -265,6 +281,8 @@ interface OpenTalk {
   readonly scope: Scope.Closeable
   /** Whether a turn runs, so a message goes into it. */
   readonly turning: Ref.Ref<boolean>
+  /** How many messages the maintainer has sent it. */
+  readonly heard: Ref.Ref<number>
   readonly lock: Semaphore.Semaphore
 }
 
@@ -444,6 +462,19 @@ export const make = Effect.fn('Talks.make')(function* (config: TalksConfig) {
       : yield* definition.opening({ context, project })
     // The talk's session is its tools' actor, known once its agent has started.
     const session = yield* Deferred.make<SessionId>()
+    const heard = yield* Ref.make(0)
+    // What it has asked the maintainer, each with how many messages it had heard by then.
+    const asked = yield* Ref.make<ReadonlyMap<string, number>>(new Map())
+    const confirmed = (action: string) =>
+      Effect.flatMap(Ref.get(heard), now =>
+        Ref.modify(asked, current => {
+          const next = new Map(current)
+          const answered = current.get(action) === now - 1
+          if (answered) next.delete(action)
+          else next.set(action, now)
+          return [answered, next]
+        }),
+      )
     const call = ({
       tool,
       input,
@@ -470,6 +501,13 @@ export const make = Effect.fn('Talks.make')(function* (config: TalksConfig) {
                 // The work graph failing to open is a defect of the call, as the store failing is.
                 graph: Effect.orDie(projects.workGraph(project.id)),
                 actor: Actor.cases.talk.make({ session: id }),
+                confirmed,
+                openTalk: other =>
+                  openOn({
+                    project: project.id,
+                    context: other,
+                    model: Option.none(),
+                  }),
               }),
             ),
         },
@@ -486,6 +524,7 @@ export const make = Effect.fn('Talks.make')(function* (config: TalksConfig) {
           model,
           instructions: definition.instructions,
           tools: definition.tools.map(({ tool }) => tool),
+          readsCode: definition.readsCode ?? true,
           call,
           sessions: NodePath.join(
             talksFolder({ data: config.data, project: project.id }),
@@ -535,6 +574,7 @@ export const make = Effect.fn('Talks.make')(function* (config: TalksConfig) {
       feed,
       scope,
       turning: yield* Ref.make(false),
+      heard,
       lock: yield* Semaphore.make(1),
     }
     const reader = yield* makeTranscriptReader()
@@ -574,7 +614,9 @@ export const make = Effect.fn('Talks.make')(function* (config: TalksConfig) {
     return open.opened
   })
 
-  const open = (options: TalkOpen) =>
+  const openOn = (
+    options: TalkOpen,
+  ): Effect.Effect<OpenedTalk, ProjectNotFound | TalkNotOpened> =>
     turns.withPermit(start(options, options.context._tag, options.context))
 
   const send = Effect.fn('Talks.send')(function* ({
@@ -594,6 +636,7 @@ export const make = Effect.fn('Talks.make')(function* (config: TalksConfig) {
       }),
     ])
     yield* found.feed.flush
+    yield* Ref.update(found.heard, count => count + 1)
     yield* deliver(found, text)
   })
 
@@ -616,7 +659,7 @@ export const make = Effect.fn('Talks.make')(function* (config: TalksConfig) {
     readonly resume: Option.Option<Resume>
   }) => Stream.unwrap(Effect.map(find(talk), found => found.feed.watch(resume)))
 
-  return Talks.of({ open, send, close, watchTranscript })
+  return Talks.of({ open: openOn, send, close, watchTranscript })
 })
 
 /** The service over `config`, on the projects, the talks' agents and the modes. */

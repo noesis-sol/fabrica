@@ -68,7 +68,7 @@ const reply = (message: string): ReadonlyArray<Agent.PiEvent> => [
 
 /**
  * Talks whose agents play the script, counting those closed and saying when one is gone; the feature
- * talk waits for the maintainer, the refine talk opens on its spec, no other is served. The prompt
+ * talk waits for the maintainer, the refine talk opens on its spec, and of the rest only the engine's own run talk is served. The prompt
  * "bye" ends the agent, as Pi exiting by itself does.
  */
 const scriptedTalks = (options: {
@@ -328,14 +328,14 @@ layer(layerToolbox({ tools: ['git'] }), { excludeTestServices: true })(
           socket,
           '',
           'talk',
-          'run',
+          'answer',
           '--project',
           'work',
           '--model',
           'anthropic/claude-opus-5-5',
         )
         expect(notServed.err).toStrictEqual([
-          "fabrica: the talk couldn't be opened: the run talk isn't in this engine's release yet",
+          "fabrica: the talk couldn't be opened: the answer talk isn't in this engine's release yet",
         ])
         const badModel = yield* talk(
           socket,

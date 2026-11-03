@@ -7,6 +7,7 @@ import { NodeSocketServer } from '@effect/platform-node'
 import { FabricaRpcs, layerNdjson } from '@fabrica/contracts'
 
 import { layer as runsLayer } from '../run/registry'
+import { withRunTalk } from '../talks'
 import { attentionHandlers } from './attention'
 import { backlogHandlers } from './backlog'
 import { engineHandlers } from './engine'
@@ -26,7 +27,7 @@ import { workersHandlers } from './workers'
 // server, beside the local socket's. A request's defect (a group not served yet, a fault) ends that
 // request, never its client's connection.
 
-/** Every group's handlers, on one Runs service: the Runs and Workers groups serve it, the engine's status counts it. */
+/** Every group's handlers, on one Runs service: the Runs and Workers groups serve it, the engine's status counts it, the run talk acts on it. */
 export const protocolHandlers = Layer.mergeAll(
   engineHandlers,
   tokensHandlers,
@@ -39,7 +40,7 @@ export const protocolHandlers = Layer.mergeAll(
   talksHandlers,
   reviewHandlers,
   insightsHandlers,
-).pipe(Layer.provide(runsLayer))
+).pipe(Layer.provide(withRunTalk), Layer.provide(runsLayer))
 
 /** A socket server listening at `path`, a socket only its user can connect to. */
 const localSocketServer = (path: string) =>

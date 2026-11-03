@@ -54,7 +54,7 @@ type GraphError =
 const maintainer = Actor.cases.maintainer.make({})
 
 /** The object with `key` set where `value` is given, without it where it isn't. */
-const given = <K extends string, A>(
+export const given = <K extends string, A>(
   key: K,
   value: Option.Option<A>,
 ): Partial<Record<K, A>> => {

@@ -66,6 +66,8 @@ export const describeRefusal = ToolRefusal.match({
     `check_own has no pass recorded on the tree ${tree}: run check_own on what you finish, and finish with the tree it passed on`,
   wrong_result_kind: ({ expected, given }) =>
     `your ticket's result is a ${expected}, not a ${given}`,
+  confirm_first: ({ action }) =>
+    `ask the maintainer in one line first, and call this again once they say yes: ${action}?`,
 })
 
 const isRefusal = Schema.is(ToolRefusal)

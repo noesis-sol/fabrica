@@ -4391,6 +4391,56 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
           {
             "additionalProperties": true,
             "properties": {
+              "actor": {
+                "enum": [
+                  "run_talk",
+                ],
+                "type": "string",
+              },
+              "kind": {
+                "enum": [
+                  "talk_action",
+                ],
+                "type": "string",
+              },
+              "run": {
+                "pattern": "^\\S+$",
+                "type": "string",
+              },
+              "text": {
+                "type": "string",
+              },
+              "ticket": {
+                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)+(?:\\.[1-9][0-9]*)*$",
+                "type": "string",
+              },
+              "time": {
+                "type": "string",
+              },
+              "tool": {
+                "type": "string",
+              },
+              "v": {
+                "enum": [
+                  1,
+                ],
+                "type": "number",
+              },
+            },
+            "required": [
+              "v",
+              "time",
+              "run",
+              "kind",
+              "actor",
+              "tool",
+              "text",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": true,
+            "properties": {
               "code": {
                 "enum": [
                   0,

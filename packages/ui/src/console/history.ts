@@ -81,6 +81,7 @@ export const historyLine = (event: RunEvent): Option.Option<HistoryLine> =>
         'c5',
         `${organ}${ticket === undefined ? '' : ` on ${ticket}`}: ${outcome === 'answered' ? 'answered' : 'no result'}`,
       ),
+    talk_action: ({ text }) => line('c5', text),
 
     usage_window: () => Option.none(),
     check: () => Option.none(),

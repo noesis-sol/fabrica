@@ -51,7 +51,13 @@ import { storedSettingsDocument } from '../engine/database'
 import { EngineScopes } from '../engine/scopes'
 import { Engine } from '../engine/service'
 import { Projects } from '../projects/service'
-import { RunLog, layerRunLog, readEvents } from '../runlog'
+import {
+  type EventDraft,
+  RunLog,
+  layerRunLog,
+  openRunLog,
+  readEvents,
+} from '../runlog'
 import { variableOf } from '../settings'
 import { Telemetry } from '../telemetry'
 import { localNow } from '../time'
@@ -91,6 +97,8 @@ interface Going {
   readonly checkout: string
   /** Its view (§8.3), and its workers as the maintainer reaches them. */
   readonly view: RunViewHandle
+  /** Its log's `emit`, kept for its events stream, while its files are open. */
+  readonly emit: Ref.Ref<Option.Option<RunLog['Service']['emit']>>
 }
 
 /** A worker of a project's run, as the Workers group names it. */
@@ -114,6 +122,15 @@ export interface RunsShape {
     readonly mode: RunModeWire
     readonly flags: RunFlags
   }) => Effect.Effect<RunId, ProjectNotFound | RunGoing | RunRefused>
+  /**
+   * Writes a record from outside the run (the run talk's actions, §15.4): on the run going's log, or
+   * with none going on the project's stream under its last run. It never fails what it records: a
+   * record that can't be written is logged.
+   */
+  readonly record: (
+    project: ProjectId,
+    draft: EventDraft,
+  ) => Effect.Effect<void>
   /** Stops the project's run now: it ends `INTERRUPTED`. */
   readonly stop: (
     project: ProjectId,
@@ -322,6 +339,9 @@ export const make = Effect.gen(function* () {
         })
         const done = yield* Deferred.make<void>()
         const epoch = yield* drawEpoch
+        const emitOf = yield* Ref.make<
+          Option.Option<RunLog['Service']['emit']>
+        >(Option.none())
         const header: Going['header'] = {
           run,
           project,
@@ -423,18 +443,21 @@ export const make = Effect.gen(function* () {
         /** The run's log, each record kept for its events stream as it is written. */
         const keptLog = Layer.effect(
           RunLog,
-          Effect.map(RunLog, log =>
-            RunLog.of({
-              ...log,
-              emit: (draft, details) =>
-                Effect.tap(log.emit(draft, details), event =>
-                  SubscriptionRef.update(feed, now => ({
-                    ...now,
-                    events: [...now.events, event],
-                  })),
-                ),
-            }),
-          ),
+          Effect.gen(function* () {
+            const log = yield* RunLog
+            const emit: RunLog['Service']['emit'] = (draft, details) =>
+              Effect.tap(log.emit(draft, details), event =>
+                SubscriptionRef.update(feed, now => ({
+                  ...now,
+                  events: [...now.events, event],
+                })),
+              )
+            yield* Effect.acquireRelease(
+              Ref.set(emitOf, Option.some(emit)),
+              () => Ref.set(emitOf, Option.none()),
+            )
+            return RunLog.of({ ...log, emit })
+          }),
         ).pipe(Layer.provide(layerRunLog({ root: record.path, run })))
 
         const finished = Effect.gen(function* () {
@@ -511,6 +534,7 @@ export const make = Effect.gen(function* () {
             epoch,
             checkout: record.path,
             view,
+            emit: emitOf,
           }),
         )
         yield* Ref.update(ended, map => new Map(map).set(project, done))
@@ -536,6 +560,42 @@ export const make = Effect.gen(function* () {
           ),
         )
       },
+    })
+  })
+
+  /** Writes `draft` on the project's stream with no run's log open: under its last run, or a new ID where it has had none. */
+  const recordIdle = Effect.fn('Runs.recordIdle')(function* (
+    root: string,
+    draft: EventDraft,
+  ) {
+    const { events } = yield* readEvents({ root, run: Option.none() })
+    const run = yield* Option.match(Option.fromUndefinedOr(events.at(-1)), {
+      onSome: ({ run }) => Effect.succeed(run),
+      onNone: () => Effect.map(localNow, now => RunId.make(now)),
+    })
+    const log = yield* openRunLog({ root, run })
+    yield* log.emit(draft)
+  }, Effect.scoped)
+
+  /** In the zone runs' records are dated in: with no run hosted, the host's. */
+  const inRunsZone = <A, E>(
+    effect: Effect.Effect<A, E, DateTime.CurrentTimeZone>,
+  ): Effect.Effect<A, E> =>
+    RunHostingShape.$is('Ready')(hosting)
+      ? Effect.provideContext(effect, hosting.services)
+      : Effect.provide(effect, DateTime.layerCurrentZoneLocal)
+
+  const recordOn = Effect.fn('Runs.record')(function* (
+    project: ProjectId,
+    draft: EventDraft,
+  ) {
+    const { path } = yield* projects.find(project)
+    const run = (yield* Ref.get(going)).get(project)
+    const emit = run === undefined ? Option.none() : yield* Ref.get(run.emit)
+    yield* Option.match(emit, {
+      onSome: write => Effect.asVoid(write(draft)),
+      // Under the start lock, so a run starting opens its files after this record.
+      onNone: () => startLock.withPermit(inRunsZone(recordIdle(path, draft))),
     })
   })
 
@@ -684,6 +744,14 @@ export const make = Effect.gen(function* () {
 
   return Runs.of({
     start,
+    record: (project, draft) =>
+      recordOn(project, draft).pipe(
+        Effect.catch(error =>
+          Effect.logWarning(
+            `a record of ${project} couldn't be written: ${error.message}`,
+          ),
+        ),
+      ),
     stop: project => Effect.flatMap(goingRun(project), run => run.control.stop),
     drain: project =>
       Effect.flatMap(goingRun(project), run => run.control.drain),

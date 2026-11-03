@@ -134,6 +134,8 @@ export const ToolRefusal = Schema.TaggedUnion({
   check_own_not_passed: { tree: TreeHash },
   /** The result isn't the one the ticket's `result_kind` asks for (§13.5). */
   wrong_result_kind: { expected: ResultKind, given: ResultKind },
+  /** It takes the maintainer's word first (the run talk, §15.4): ask them `action` in one line, and call again once they answer. */
+  confirm_first: { action: Text },
 })
 export type ToolRefusal = typeof ToolRefusal.Type
 

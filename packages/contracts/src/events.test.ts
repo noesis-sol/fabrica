@@ -184,6 +184,13 @@ const samples: { readonly [K in EventKind]: Extract<RunEvent, { kind: K }> } = {
     session,
     duration_ms: 4100,
   }),
+  talk_action: RunEvent.cases.talk_action.make({
+    ...at,
+    actor: 'run_talk',
+    tool: 'drain_run',
+    ticket,
+    text: 'Run talk drained the run',
+  }),
   end: RunEvent.cases.end.make({
     ...at,
     code: 0,
