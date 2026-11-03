@@ -11,14 +11,15 @@ import {
 } from '@fabrica/contracts'
 
 import { Engine } from '../engine/service'
+import { Runs } from '../run/registry'
 import { UpdateFailure, updateFailed } from '../update/failure'
 import { Updater } from '../update/service'
 import { nameClient } from './clients'
 import { notImplemented } from './not-implemented'
 
-// The Engine group's handlers (spec §8.1, §8.4, §7.1, §9.2): the handshake, the engine's version,
-// status and settings, its stop, and its update, on the daemon's Engine service, its Updater and the
-// server's connections. An update installs the release (verified, unpacked, linked) and answers once it
+// The Engine group's handlers (spec §8.1, §8.4, §7.1, §7.3, §9.2): the handshake, the engine's version,
+// status and settings, its stop, and its update, on the daemon's Engine service, its Updater, its runs
+// and the server's connections. An update installs the release (verified, unpacked, linked) and answers once it
 // has, then restarts the engine as a stop would, its runs wound down first; one update at a time, and
 // none once the engine is stopping. The status and load streams are their own tickets'.
 
@@ -26,6 +27,7 @@ import { notImplemented } from './not-implemented'
 export const engineHandlers = EngineRpcs.toLayer(
   Effect.gen(function* () {
     const engine = yield* Engine
+    const runs = yield* Runs
     const updater = yield* Updater
     const protocol = yield* RpcServer.Protocol
     const updates = yield* Semaphore.make(1)
@@ -79,8 +81,12 @@ export const engineHandlers = EngineRpcs.toLayer(
         ),
       'engine.version': () => Effect.succeed(engine.version),
       'engine.status': () =>
-        protocol.clientIds.pipe(
-          Effect.flatMap(clients => engine.status({ clients: clients.size })),
+        Effect.all([protocol.clientIds, runs.hosted], {
+          concurrency: 'unbounded',
+        }).pipe(
+          Effect.flatMap(([clients, hosted]) =>
+            engine.status({ clients: clients.size, ...hosted }),
+          ),
           Effect.orDie,
         ),
       'engine.settings': () => Effect.orDie(engine.settings),

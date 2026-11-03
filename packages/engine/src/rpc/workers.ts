@@ -1,8 +1,8 @@
-import { Effect, Layer } from 'effect'
+import { Effect } from 'effect'
 
 import { WorkerRpcs } from '@fabrica/contracts'
 
-import { Runs, layer as runsLayer } from '../run/registry'
+import { Runs } from '../run/registry'
 
 // The Workers group's handlers (spec §8.1, §18.4) on the Runs service, the same the Runs group is
 // served on: messaging (steering) a worker of a project's run, which holds the message while its ticket
@@ -24,4 +24,4 @@ export const workersHandlers = WorkerRpcs.toLayer(
         runs.watchTranscript({ project, ticket, resume }),
     }),
   ),
-).pipe(Layer.provide(runsLayer))
+)

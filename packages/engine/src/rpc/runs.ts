@@ -1,14 +1,13 @@
-import { Effect, Layer } from 'effect'
+import { Effect } from 'effect'
 
 import { RunRpcs } from '@fabrica/contracts'
 
-import { Runs, layer as runsLayer } from '../run/registry'
+import { Runs } from '../run/registry'
 import { notImplemented } from './not-implemented'
 
-// The Runs group's handlers (spec §8.1, §13, §13.10, §13.12) on the Runs service, which this file
-// provides on the daemon's projects, its scopes and what its runs run on: starting a run in a mode with
-// its flags, stopping, draining and undraining it, its status, its view's stream (§8.3) and its events
-// stream. An overnight run's pre-flight (§15.6) answers `NotImplemented` until the ticket that builds it.
+// The Runs group's handlers (spec §8.1, §13, §13.10, §13.12) on the daemon's Runs service: starting a
+// run in a mode with its flags, stopping, draining and undraining it, its status, its view's stream
+// (§8.3) and its events stream. An overnight run's pre-flight (§15.6) answers `NotImplemented` until the ticket that builds it.
 
 /** The Runs group's handlers. */
 export const runsHandlers = RunRpcs.toLayer(
@@ -27,4 +26,4 @@ export const runsHandlers = RunRpcs.toLayer(
         runs.watchEvents({ project, run, resume }),
     }),
   ),
-).pipe(Layer.provide(runsLayer))
+)

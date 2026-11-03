@@ -40,15 +40,25 @@ export type EngineEnd = Data.TaggedEnum<{
 }>
 export const EngineEnd = Data.taggedEnum<EngineEnd>()
 
+/** What the engine's status is told, by the services that keep it. */
+export interface EngineLoad {
+  readonly clients: number
+  readonly runs: number
+  readonly liveWorkers: number
+}
+
 export interface EngineShape {
   readonly id: EngineId
   readonly version: EngineVersion
   /** Where the engine listens over TLS, besides its local socket (§9.3); none where it doesn't. */
   readonly listening: Option.Option<TlsEndpoint>
-  /** The engine's status; `clients` is how many the RPC server has connected. */
-  readonly status: (options: {
-    readonly clients: number
-  }) => Effect.Effect<EngineStatus, StoredSettingsInvalid | SqlError.SqlError>
+  /**
+   * The engine's status; `clients` is how many the RPC server has connected, `runs` and `liveWorkers`
+   * what the Runs service, built on this one, hosts.
+   */
+  readonly status: (
+    options: EngineLoad,
+  ) => Effect.Effect<EngineStatus, StoredSettingsInvalid | SqlError.SqlError>
   readonly settings: Effect.Effect<
     EngineSettings,
     StoredSettingsInvalid | SqlError.SqlError
@@ -110,9 +120,9 @@ export const engineLayer = (
         endpoint => new TlsListening(endpoint),
       )
 
-      const status = Effect.fn('Engine.status')(function* (options: {
-        readonly clients: number
-      }) {
+      const status = Effect.fn('Engine.status')(function* (
+        options: EngineLoad,
+      ) {
         const [current, projects, isStopping] = yield* Effect.all(
           [settings, withSql(projectCount()), Ref.get(stopping)],
           { concurrency: 'unbounded' },
@@ -124,9 +134,8 @@ export const engineLayer = (
           host: facts.host,
           listening: listener,
           projects,
-          // No run or worker is kept by the engine yet: the run loop's tickets count them here.
-          runs: 0,
-          liveWorkers: 0,
+          runs: options.runs,
+          liveWorkers: options.liveWorkers,
           machineWorkers: machineWorkersOf(current, facts.host.cores),
           clients: options.clients,
           stopping: isStopping,

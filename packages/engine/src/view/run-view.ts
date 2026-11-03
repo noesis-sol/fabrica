@@ -16,7 +16,7 @@ import {
 import type { AttentionItem } from '../attention/service'
 import { type Spent, noTokens, tokensOf } from '../cost'
 import type { MergeLine } from '../merge'
-import type { RunStateShape } from '../run/state'
+import { type RunStateShape, slotsTaken } from '../run/state'
 import { type WorkGraphShape, doneToday } from '../workgraph'
 import { type WorkerDesk, makeWorkerDesk } from './desk'
 import { type RunViewItem, makeViewFeed } from './feed'
@@ -57,6 +57,8 @@ export interface RunViewSources {
   readonly inLine: (ticket: TicketId) => Effect.Effect<boolean>
   /** Whether the ticket is the run's and in progress: its part in the run can't end where it is. */
   readonly inProgress: (ticket: TicketId) => Effect.Effect<boolean>
+  /** The slots the run's tickets take, as its scheduler counts them (§13.4): its live workers; none before it has a state. */
+  readonly slotsTaken: Effect.Effect<number>
 }
 
 /** A run's view: what its run writes into, and its stream. */
@@ -127,6 +129,15 @@ export const makeRunViewSources = Effect.fn('RunView.sources')(
         }),
       )
 
+    const taken = Effect.flatMap(
+      Ref.get(attached),
+      Option.match({
+        onNone: () => Effect.succeed(0),
+        onSome: ({ state, slots }) =>
+          Effect.map(state.current, snapshot => slotsTaken(snapshot, slots)),
+      }),
+    )
+
     const sources: RunViewSources = {
       steps,
       workers,
@@ -134,6 +145,7 @@ export const makeRunViewSources = Effect.fn('RunView.sources')(
       seen,
       inLine,
       inProgress,
+      slotsTaken: taken,
     }
     return { sources, attached, facts }
   },

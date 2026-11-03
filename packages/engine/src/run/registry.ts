@@ -67,8 +67,9 @@ import { StartChecked } from './start-checks'
 // The engine's runs (spec §7.3, §8.1, §13.1, §13.10, §13.12): at most one run per project, started in
 // the engine's runs scope on what the engine's run hosting gives, with a control server on its project's
 // work graph (and its `check_own` passes) and the engine's telemetry, and stopped, drained or undrained
-// through its control. A start answers once the run's start checks have: with their problems, all
-// together, or with the run. Each run's records are kept as its log writes them, so its events stream
+// through its control. The engine's status counts them: the runs going, and their live workers, the
+// slots each run's scheduler counts. A start answers once the run's start checks have: with their
+// problems, all together, or with the run. Each run's records are kept as its log writes them, so its events stream
 // sends those written so far, then each as it is written, and ends with the run; an earlier run's are
 // read from the project's event stream. The project's row says whether a run goes. As the engine
 // stops, every run is stopped and waited for before its scope closes, so each ends `INTERRUPTED`.
@@ -98,6 +99,14 @@ interface WorkerAt {
   readonly ticket: TicketId
 }
 
+/** What the engine hosts, across every project (§7.3). */
+export interface RunsHosted {
+  /** The runs going. */
+  readonly runs: number
+  /** The workers live across them, against `machine_workers`. */
+  readonly liveWorkers: number
+}
+
 export interface RunsShape {
   /** Starts a run of the project; its ID once its start checks pass. */
   readonly start: (input: {
@@ -120,6 +129,8 @@ export interface RunsShape {
   readonly status: (
     project: ProjectId,
   ) => Effect.Effect<RunStatus, ProjectNotFound>
+  /** The runs going, and their live workers. */
+  readonly hosted: Effect.Effect<RunsHosted>
   /** The run's records: the run going, or an earlier one by its ID; ends with the run. */
   readonly watchEvents: (input: {
     readonly project: ProjectId
@@ -555,6 +566,19 @@ export const make = Effect.gen(function* () {
     return RunStatus.cases.idle.make({ last: read })
   })
 
+  const hosted = Effect.gen(function* () {
+    const runs = [...(yield* Ref.get(going)).values()]
+    const slots = yield* Effect.forEach(
+      runs,
+      run => run.view.sources.slotsTaken,
+      { concurrency: 'unbounded' },
+    )
+    return {
+      runs: runs.length,
+      liveWorkers: slots.reduce((sum, taken) => sum + taken, 0),
+    }
+  }).pipe(Effect.withSpan('Runs.hosted'))
+
   const watchEvents = (input: {
     readonly project: ProjectId
     readonly run: Option.Option<RunId>
@@ -666,6 +690,7 @@ export const make = Effect.gen(function* () {
     undrain: project =>
       Effect.flatMap(goingRun(project), run => run.control.undrain),
     status,
+    hosted,
     watchEvents,
     watchView,
     message,
