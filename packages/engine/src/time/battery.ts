@@ -78,8 +78,9 @@ export const batteryBanner: (notice: BatteryNotice) => Option.Option<Banner> =
   })
 
 /**
- * The notice the run's banner shows after a reading of `power`: the last of `said` with a banner, else
- * the one `before`, at the charge read; none once the host no longer runs on the battery.
+ * The notice the run's banner shows after a reading of `power`, at the charge read, while the host runs
+ * on the battery: the lowest threshold it is at, else that it started on battery, said in `said` or
+ * shown `before`.
  */
 export const shownNotice = (
   power: Power,
@@ -88,23 +89,24 @@ export const shownNotice = (
 ): Option.Option<BatteryNotice> =>
   Power.$match(power, {
     NoBattery: () => Option.none(),
-    Battery: ({ level, discharging }) =>
-      discharging
-        ? Option.flatMap(
+    Battery: ({ level, discharging }) => {
+      if (!discharging) return Option.none()
+      const low = Array.last(
+        batteryThresholds.filter(threshold => level <= threshold),
+      )
+      return Option.match(low, {
+        onSome: threshold =>
+          Option.some(BatteryNotice.Low({ level, threshold })),
+        onNone: () =>
+          Option.map(
             Option.orElse(
-              Array.findLast(said, notice =>
-                Option.isSome(batteryBanner(notice)),
-              ),
+              Array.findFirst(said, BatteryNotice.$is('OnBattery')),
               () => before,
             ),
-            BatteryNotice.$match({
-              LidSleeps: () => Option.none<BatteryNotice>(),
-              OnBattery: () => Option.some(BatteryNotice.OnBattery({ level })),
-              Low: ({ threshold }) =>
-                Option.some(BatteryNotice.Low({ level, threshold })),
-            }),
-          )
-        : Option.none(),
+            () => BatteryNotice.OnBattery({ level }),
+          ),
+      })
+    },
   })
 
 /** What a run's start says of `power`. */

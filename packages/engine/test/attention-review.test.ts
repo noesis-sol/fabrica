@@ -225,6 +225,7 @@ describe("the run view's set-aside tickets", () => {
         const tickets = yield* Ref.make<RunSnapshot['tickets']>(new Map())
         yield* view.sources.attach({
           state: stateOf(Ref.get(tickets)),
+          holds: Effect.succeed({ on: [], gaveUp: Option.none() }),
           line: Effect.succeed({ merging: Option.none(), waiting: [] }),
           mergesWait: Effect.succeed(Option.none()),
           slots: 2,

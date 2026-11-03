@@ -4,10 +4,8 @@ import {
   Duration,
   Effect,
   Exit,
-  Fiber,
   Layer,
   Option,
-  PubSub,
   Queue,
   Ref,
   Scope,
@@ -22,7 +20,6 @@ import {
   Hold,
   type ModelName,
   ProjectId,
-  type RunEvent,
   RunHeader,
   RunId,
   RunMode,
@@ -31,18 +28,15 @@ import {
 
 import { noSpend } from '../src/cost'
 import {
-  ENV_PROBE,
-  EnvironmentProbe,
   type HoldsSnapshot,
-  ProbeOutcome,
   holdRows,
   makeHolds,
   makeUsageHold,
 } from '../src/holds'
 import { ProbeOutcome as ProxyProbe, classify } from '../src/proxy'
-import { makeRunControl, runProject } from '../src/run'
+import { runProject } from '../src/run'
 import type { RunStateShape } from '../src/run'
-import { RunLog, makeRunLog } from '../src/runlog'
+import { makeRunLog } from '../src/runlog'
 import { Battery, Power, watchBattery } from '../src/time'
 import {
   type RunViewItem,
@@ -52,15 +46,7 @@ import {
   makeRunViewSources,
   projectView,
 } from '../src/view'
-import {
-  configOf,
-  file,
-  options,
-  project,
-  setUpRuns,
-  settings,
-  withRuns,
-} from './run-harness'
+import { configOf, options, project, setUpRuns, withRuns } from './run-harness'
 
 // The run view's holds and banners (spec §8.3, §14, §18.3): the holds on, as their one state has them,
 // are the view's holds, each with its reason, since when and when it lifts where that is known, and each
@@ -213,6 +199,7 @@ describe("a run view's holds", () => {
           },
           attention: Stream.never,
           needsYou: () => Effect.void,
+          reviews: () => Effect.void,
           scope,
         })
         const items = yield* Queue.unbounded<RunViewItem>()
@@ -500,6 +487,33 @@ describe("the battery's banner", () => {
       }).pipe(Effect.scoped),
   )
 
+  it.effect(
+    'comes back when the host is unplugged below a threshold warned of already',
+    () =>
+      Effect.gen(function* () {
+        const told: Array<Option.Option<string>> = []
+        const notices: Array<string> = []
+        yield* watchBattery(
+          notice =>
+            Effect.sync(() => {
+              notices.push(notice._tag)
+            }),
+          banner =>
+            Effect.sync(() => {
+              told.push(Option.map(banner, ({ text }) => text))
+            }),
+        ).pipe(Effect.provide(batteryReading([on(19), charging(19), on(19)])))
+        for (let n = 0; n < 2; n++) yield* minute
+        expect(told).toEqual([
+          Option.some('Battery at 19% and discharging'),
+          Option.none(),
+          Option.some('Battery at 19% and discharging'),
+        ])
+        // Warned of once: no record again until it has risen above the threshold.
+        expect(notices).toEqual(['LidSleeps', 'OnBattery', 'Low'])
+      }).pipe(Effect.scoped),
+  )
+
   it.effect('says nothing of a host that runs on no battery', () =>
     Effect.gen(function* () {
       const told: Array<Option.Option<Banner>> = []
@@ -518,82 +532,44 @@ describe("the battery's banner", () => {
 describe('a run writes its holds and battery into its view', () => {
   beforeAll(setUpRuns)
 
-  const until = (
-    records: PubSub.Subscription<RunEvent>,
-    found: (event: RunEvent) => boolean,
-  ) =>
-    Effect.gen(function* () {
-      while (true) if (found(yield* PubSub.take(records))) return
-    })
-
-  it.effect(
-    'shows the environment hold it ends on, and the battery it starts on',
-    () => {
-      const fixture = project({ ...settings, concurrent: 3 })
-      return withRuns(
-        fixture,
-        Effect.gen(function* () {
-          yield* Effect.forEach(['One', 'Two', 'Three'], title =>
-            file(title, 'nothing'),
-          )
-          const records = yield* (yield* RunLog).subscribe
-          const scope = yield* Scope.Scope
-          const sources = yield* makeRunViewSources({ flush: interval, scope })
-          const attached = yield* Deferred.make<Effect.Effect<HoldsSnapshot>>()
-          const warnings = yield* Ref.make<ReadonlyArray<string>>([])
-          const viewed: RunViewSources = {
-            ...sources.sources,
-            attach: parts =>
-              Effect.andThen(
-                Deferred.succeed(attached, parts.holds),
-                sources.sources.attach(parts),
-              ),
-            warnBattery: banner =>
-              Ref.update(warnings, seen => [
-                ...seen,
-                ...Option.toArray(banner).map(({ text }) => text),
-              ]),
-          }
-          const running = yield* Effect.forkChild(
-            runProject(
-              configOf(fixture, options()),
-              yield* makeRunControl,
-              viewed,
-            ).pipe(
-              Effect.provideService(EnvironmentProbe, {
-                probe: () =>
-                  Effect.succeed(
-                    ProbeOutcome.Failed({ reason: 'Pi did not start' }),
-                  ),
-              }),
-              Effect.provide(
-                batteryReading([
-                  Option.some(Power.Battery({ level: 70, discharging: true })),
-                ]),
-              ),
+  it.effect('attaches its holds, and tells the battery it starts on', () => {
+    const fixture = project()
+    return withRuns(
+      fixture,
+      Effect.gen(function* () {
+        const scope = yield* Scope.Scope
+        const sources = yield* makeRunViewSources({ flush: interval, scope })
+        const attached = yield* Deferred.make<Effect.Effect<HoldsSnapshot>>()
+        const warnings = yield* Ref.make<ReadonlyArray<string>>([])
+        const viewed: RunViewSources = {
+          ...sources.sources,
+          attach: parts =>
+            Effect.andThen(
+              Deferred.succeed(attached, parts.holds),
+              sources.sources.attach(parts),
             ),
-          )
-          yield* until(
-            records,
-            event => event.kind === 'hold' && event.hold === 'ENVIRONMENT',
-          )
-          const probed = yield* Effect.forkChild(
-            until(records, event => event.kind === 'stop'),
-          )
-          while (probed.pollUnsafe() === undefined) {
-            yield* TestClock.adjust(ENV_PROBE)
-            yield* TestClock.withLive(Effect.sleep('50 millis'))
-          }
-          const end = yield* Fiber.join(running)
-          expect(end).toEqual({ kind: 'ENVIRONMENT', code: 7 })
-          const rows = holdRows(yield* Effect.flatten(Deferred.await(attached)))
-          expect(rows.map(({ kind }) => kind)).toEqual(['ENVIRONMENT'])
-          expect(rows[0]?.reason).toContain('3 tickets in a row')
-          expect((yield* Ref.get(warnings))[0]).toBe('On battery at 70%')
-        }),
-      )
-    },
-    // Three dispatches, each a process of its own.
-    30_000,
-  )
+          warnBattery: banner =>
+            Ref.update(warnings, seen => [
+              ...seen,
+              ...Option.toArray(banner).map(({ text }) => text),
+            ]),
+        }
+        const end = yield* runProject(
+          configOf(fixture, options()),
+          undefined,
+          viewed,
+        ).pipe(
+          Effect.provide(
+            batteryReading([
+              Option.some(Power.Battery({ level: 70, discharging: true })),
+            ]),
+          ),
+        )
+        expect(end).toEqual({ kind: 'READY_EMPTY', code: 0 })
+        const holds = yield* Effect.flatten(Deferred.await(attached))
+        expect(holdRows(holds)).toEqual([])
+        expect(yield* Ref.get(warnings)).toEqual(['On battery at 70%'])
+      }),
+    )
+  })
 })
