@@ -13,26 +13,21 @@ import { defineMessageUnion } from 'foldkit/message'
 export const Model = Schema.Struct({
   /** What the search field holds. */
   query: Schema.String,
-  /** The selected entry's place among those the query matches, from 0. */
-  selected: Schema.Int,
+  /**
+   * The selected entry's ID, so the selection stays on its entry as others leave or join the list
+   * around it; none while nothing was selected. An ID no longer among the entries selects nothing.
+   */
+  selected: Schema.Option(Schema.String),
 })
 export type Model = typeof Model.Type
 
-export const init = (): Model => ({ query: '', selected: 0 })
+export const init = (): Model => ({ query: '', selected: Option.none() })
 
 export const Message = defineMessageUnion({
   ChangedQuery: { query: Schema.String },
   CompletedScrollToEntry: {},
 })
 export type Message = typeof Message.Type
-
-/** A changed query selects the first entry it matches. */
-export const update = (model: Model, message: Message): Model =>
-  Message.match(message, {
-    ChangedQuery: ({ query }) =>
-      query === model.query ? model : { query, selected: 0 },
-    CompletedScrollToEntry: () => model,
-  })
 
 /** What an entry does: one of the screen's commands, or a way to a project, a ticket, a worker or a theme. */
 export type Group = 'command' | 'project' | 'ticket' | 'worker' | 'theme'
@@ -79,23 +74,70 @@ export const matching = <M>(
   })
 }
 
-/** The selection moved `by` places through the `count` entries the query matches, round from either end. */
-export const moved = (model: Model, by: number, count: number): Model =>
-  count === 0
+/** The palette on `query`, with the first of `entries` it matches selected. */
+const reading = <M>(
+  query: string,
+  entries: ReadonlyArray<Entry<M>>,
+): Model => ({
+  query,
+  selected: Option.map(Array.head(matching(entries, query)), ({ id }) => id),
+})
+
+/** The palette as it opens, on `entries`: no query, the first entry selected. */
+export const opened = <M>(entries: ReadonlyArray<Entry<M>>): Model =>
+  reading('', entries)
+
+/** A changed query selects the first of `entries` it matches. */
+export const update = <M>(
+  model: Model,
+  message: Message,
+  entries: ReadonlyArray<Entry<M>>,
+): Model =>
+  Message.match(message, {
+    ChangedQuery: ({ query }) =>
+      query === model.query ? model : reading(query, entries),
+    CompletedScrollToEntry: () => model,
+  })
+
+/**
+ * The selection moved `by` places through the entries the query matches, round from either end. With
+ * nothing selected, its entry gone, down starts at the first and up at the last.
+ */
+export const moved = <M>(
+  model: Model,
+  by: number,
+  entries: ReadonlyArray<Entry<M>>,
+): Model => {
+  const shown = matching(entries, model.query)
+  const place = Option.getOrElse(
+    Option.flatMap(model.selected, id =>
+      Array.findFirstIndex(shown, entry => entry.id === id),
+    ),
+    () => (by > 0 ? -1 : 0),
+  )
+  const count = shown.length
+  return count === 0
     ? model
     : {
         ...model,
-        selected: (((model.selected + by) % count) + count) % count,
+        selected: Option.map(
+          Array.get(shown, (((place + by) % count) + count) % count),
+          ({ id }) => id,
+        ),
       }
+}
 
-/** The selected entry among those the query matches; none while it matches none. */
+/**
+ * The selected entry, where the query still matches it. Nothing stands in for an entry gone: Enter
+ * runs what is highlighted, never what moved into its place.
+ */
 export const selected = <M>(
   model: Model,
   entries: ReadonlyArray<Entry<M>>,
-): Option.Option<Entry<M>> => {
-  const shown = matching(entries, model.query)
-  return Array.get(shown, Math.min(model.selected, shown.length - 1))
-}
+): Option.Option<Entry<M>> =>
+  Option.flatMap(model.selected, id =>
+    Array.findFirst(matching(entries, model.query), entry => entry.id === id),
+  )
 
 /** A key the palette answers to, as its foot names it. */
 export interface FootKey {

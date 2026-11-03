@@ -347,10 +347,14 @@ describe('filtering', () => {
 
   test('a changed query selects the first entry it matches', () => {
     const typed = Palette.update(
-      { query: 'the', selected: 2 },
+      { query: 'the', selected: Option.some('theme.classic') },
       Palette.Message.ChangedQuery({ query: 'theme' }),
+      paletteEntries(connected),
     )
-    expect(typed).toEqual({ query: 'theme', selected: 0 })
+    expect(typed).toEqual({
+      query: 'theme',
+      selected: Option.some('theme.lichen-bright'),
+    })
   })
 })
 
@@ -472,7 +476,9 @@ describe('running a command', () => {
       message(key('k', { mod: true })),
       model(shown => {
         expect(shown.overlay).toEqual(Overlay.Palette())
-        expect(shown.screens.palette).toEqual(Palette.init())
+        expect(shown.screens.palette).toEqual(
+          Palette.opened(paletteEntries(shown)),
+        )
       }),
     )
   })
@@ -487,7 +493,9 @@ describe('running a command', () => {
       message(key('Enter')),
       model(shown => {
         expect(shown.overlay).toEqual(Overlay.Palette())
-        expect(shown.screens.palette).toEqual(Palette.init())
+        expect(shown.screens.palette).toEqual(
+          Palette.opened(paletteEntries(shown)),
+        )
       }),
       // The focused button's own click runs it, though another is selected.
       message(Message.RanPaletteEntry({ id: 'theme.classic' })),

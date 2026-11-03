@@ -155,19 +155,18 @@ export const update = (
   RequestedPalette: () => ({
     model: writePalette(
       modifyFields(model, { overlay: () => Overlay.Palette() }),
-      Palette.init(),
+      Palette.opened(paletteEntries(model)),
     ),
   }),
   GotPaletteMessage: ({ message }) => ({
-    model: writePalette(model, Palette.update(model.screens.palette, message)),
+    model: writePalette(
+      model,
+      Palette.update(model.screens.palette, message, paletteEntries(model)),
+    ),
   }),
   MovedPaletteSelection: ({ by }) => {
     const entries = paletteEntries(model)
-    const palette = Palette.moved(
-      model.screens.palette,
-      by,
-      Palette.matching(entries, model.screens.palette.query).length,
-    )
+    const palette = Palette.moved(model.screens.palette, by, entries)
     // The list scrolls to keep the selection in view.
     return {
       model: writePalette(model, palette),
