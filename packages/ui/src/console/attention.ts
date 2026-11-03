@@ -882,6 +882,8 @@ export interface ViewInputs {
   readonly live: boolean
   /** The chip a request's card carries for its project: none in a project's own scope (§18.3). */
   readonly chip: (project: EngineProject) => Option.Option<Chip>
+  /** The keys that answer the drawn options, as the platform writes them, in the options' order (`keyedOptions`). */
+  readonly optionKeys: ReadonlyArray<string>
   /** The approval keys as the platform writes them, drawn on the keyed permission request's buttons. */
   readonly approvalKeys: Readonly<Record<ApprovalKey, string>>
 }
@@ -1310,14 +1312,18 @@ const optionsPanel = (
               h.AriaLabel('Options'),
               h.Class('flex flex-col gap-4'),
             ],
-            options.map(shown =>
-              h.keyed('button')(
+            options.map(shown => {
+              const optionKey = Array.get(inputs.optionKeys, shown.place)
+              return h.keyed('button')(
                 `option-${shown.index}`,
                 [
                   h.Type('button'),
                   h.Role('radio'),
                   h.AriaChecked(Option.contains(answering.chosen, shown.index)),
-                  h.AriaKeyshortcuts(String(shown.place + 1)),
+                  ...Option.match(optionKey, {
+                    onNone: () => [],
+                    onSome: label => [h.AriaKeyshortcuts(label)],
+                  }),
                   h.DataAttribute('option', String(shown.index)),
                   h.OnClick(Message.ChoseOption({ key, index: shown.index })),
                   h.Class(
@@ -1325,9 +1331,10 @@ const optionsPanel = (
                   ),
                 ],
                 [
-                  shown.place < 9
-                    ? keyCap(String(shown.place + 1), h)
-                    : h.empty,
+                  Option.match(optionKey, {
+                    onNone: () => h.empty,
+                    onSome: label => keyCap(label, h),
+                  }),
                   h.span([h.Class('text-fg')], [shown.option.label]),
                   shown.recommended
                     ? h.span(
@@ -1343,8 +1350,8 @@ const optionsPanel = (
                     [shown.option.tradeOff],
                   ),
                 ],
-              ),
-            ),
+              )
+            }),
           ),
       h.input([
         h.Type('text'),

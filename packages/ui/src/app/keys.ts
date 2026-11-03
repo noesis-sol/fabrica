@@ -115,6 +115,18 @@ const answerKeys = (options: KeyedOptions): ReadonlyArray<KeyCommand> =>
       })),
   })
 
+/**
+ * Keys 1–9 as the platform writes them, in the order of the drawn options they answer, the first's
+ * first: the options' key caps (§18.3), none while no options are keyed.
+ */
+export const answerKeyLabels = (
+  options: KeyedOptions,
+  platform: Platform,
+): ReadonlyArray<string> =>
+  answerKeys(options).flatMap(command =>
+    Option.toArray(keyLabel(command, platform)),
+  )
+
 /** The keys that answer the column's keyed permission request, each as its card's button (§18.5, H62). */
 export const approvalChords: Readonly<Record<Attention.ApprovalKey, Chord>> = {
   allow_once: { key: 'y', mod: false },

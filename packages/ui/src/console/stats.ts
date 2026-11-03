@@ -237,6 +237,21 @@ export const Offer = defineTaggedUnion({
 })
 export type Offer = typeof Offer.Type
 
+/**
+ * The buttons the row draws while the project's run goes, in its order: Drain or Undrain, then Stop or
+ * its confirmation and Keep running. Each is offered, and enabled, while the run isn't busy.
+ */
+const runButtons = (
+  model: Model,
+  project: EngineProject,
+  state: RunState,
+): ReadonlyArray<Offer> => [
+  state === 'draining' ? Offer.Undrain({ project }) : Offer.Drain({ project }),
+  ...(Controls.guards.ConfirmingStop(model.controls)
+    ? [Offer.ConfirmStop({ project }), Offer.KeepRunning()]
+    : [Offer.Stop()]),
+]
+
 /** The controls the row offers enabled, in its order: none without a project or a connection. */
 export const offers = (
   model: Model,
@@ -263,14 +278,7 @@ export const offers = (
         onSome: run =>
           isBusy(model, run.header.state)
             ? []
-            : [
-                run.header.state === 'draining'
-                  ? Offer.Undrain({ project })
-                  : Offer.Drain({ project }),
-                ...(Controls.guards.ConfirmingStop(model.controls)
-                  ? [Offer.ConfirmStop({ project }), Offer.KeepRunning()]
-                  : [Offer.Stop()]),
-              ],
+            : runButtons(model, project, run.header.state),
       }),
   })
 
@@ -1232,7 +1240,7 @@ const modeMenu = (project: EngineProject, h: HtmlBuilder<Message>): Html =>
               h.Role('menuitem'),
               // Opened by its key, the menu takes focus: Tab and Enter choose a mode (§18.5).
               h.Autofocus(index === 0),
-              h.OnClick(Message.ChoseMode({ project, mode })),
+              h.OnClick(offerMessage(Offer.StartIn({ project, mode }))),
               h.Class('w-full px-12 py-4 text-left text-sm hover:bg-bg'),
             ],
             [modeTitle[mode]],
@@ -1290,7 +1298,7 @@ const typingForm = (
       h.button(
         [
           h.Type('button'),
-          h.OnClick(Message.CancelledControls()),
+          h.OnClick(offerMessage(Offer.CloseStart())),
           h.Class(rowGhostButton),
         ],
         ['Cancel'],
@@ -1316,10 +1324,14 @@ const idleControls = (
               h.AriaHasPopup('menu'),
               h.AriaExpanded(Controls.guards.ChoosingMode(model.controls)),
               h.Disabled(Request.guards.Pending(model.request)),
-              h.OnClick(Message.ClickedStartRun()),
+              h.OnClick(offerMessage(Offer.Start({ project }))),
               h.Class(rowPrimaryButton),
             ],
-            [Request.guards.Pending(model.request) ? 'Starting…' : 'Start run'],
+            [
+              Request.guards.Pending(model.request)
+                ? 'Starting…'
+                : offerTitle(Offer.Start({ project })),
+            ],
           ),
           Controls.guards.ChoosingMode(model.controls)
             ? modeMenu(project, h)
@@ -1354,58 +1366,21 @@ const runningControls = (
           [words],
         ),
     }),
-    state === 'draining'
-      ? h.button(
-          [
-            h.Type('button'),
-            h.Disabled(busy),
-            h.OnClick(Message.ClickedUndrain({ project })),
-            h.Class(rowGhostButton),
-          ],
-          ['Undrain'],
-        )
-      : h.button(
-          [
-            h.Type('button'),
-            h.Disabled(busy),
-            h.OnClick(Message.ClickedDrain({ project })),
-            h.Class(rowGhostButton),
-          ],
-          ['Drain'],
-        ),
-    ...(Controls.guards.ConfirmingStop(model.controls)
-      ? [
-          h.button(
-            [
-              h.Type('button'),
-              h.Disabled(busy),
-              h.OnClick(Message.ConfirmedStop({ project })),
-              h.Class(
-                'rounded-button bg-c3 px-8 py-4 text-xs font-bold text-ink hover:brightness-[1.08]',
-              ),
-            ],
-            ['Stop the run'],
+    ...runButtons(model, project, state).map(offer =>
+      h.button(
+        [
+          h.Type('button'),
+          h.Disabled(busy),
+          h.OnClick(offerMessage(offer)),
+          h.Class(
+            Offer.guards.ConfirmStop(offer)
+              ? 'rounded-button bg-c3 px-8 py-4 text-xs font-bold text-ink hover:brightness-[1.08] disabled:opacity-60'
+              : rowGhostButton,
           ),
-          h.button(
-            [
-              h.Type('button'),
-              h.OnClick(Message.CancelledControls()),
-              h.Class(rowGhostButton),
-            ],
-            ['Keep running'],
-          ),
-        ]
-      : [
-          h.button(
-            [
-              h.Type('button'),
-              h.Disabled(busy),
-              h.OnClick(Message.ClickedStop()),
-              h.Class(rowGhostButton),
-            ],
-            ['Stop'],
-          ),
-        ]),
+        ],
+        [offerTitle(offer)],
+      ),
+    ),
   ]
 }
 

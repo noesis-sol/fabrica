@@ -24,7 +24,7 @@ import {
   andThen,
 } from '../../feature'
 import { perFrame } from '../../frame'
-import { approvalKeyLabels } from '../../keys'
+import { answerKeyLabels, approvalKeyLabels } from '../../keys'
 import { Message } from '../../message'
 import type { Model } from '../../model'
 import * as RemoteEngines from '../../remote-engines'
@@ -189,6 +189,7 @@ export const attentionPart = (
         Option.isNone(scope)
           ? Sidebar.projectChip(sidebar, project)
           : Option.none(),
+      optionKeys: answerKeyLabels(Attention.keyedOptions(attention), platform),
       approvalKeys: approvalKeyLabels(platform),
     },
     toParentMessage: message => Message.GotAttentionMessage({ message }),
