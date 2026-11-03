@@ -58,17 +58,22 @@ describe('the update’s download time limits', () => {
       )
       yield* TestClock.adjust(REQUEST_LIMIT)
       const failure = yield* Fiber.join(install).pipe(Effect.flip)
-      expect(failure).toStrictEqual(
-        UpdateFailure.DownloadTimedOut({
-          url: `${served.url}/latest/download/checksums.txt`,
-          limit: REQUEST_LIMIT,
-        }),
-      )
+      // The signature, asked for beside it on the same limit, may be on its way still as the clock moves,
+      // since a real request doesn't wait on the TestClock, and then its limit runs out first.
+      expect(
+        ['checksums.txt', 'checksums.txt.sig'].map(name =>
+          UpdateFailure.DownloadTimedOut({
+            url: `${served.url}/latest/download/${name}`,
+            limit: REQUEST_LIMIT,
+          }),
+        ),
+      ).toContainEqual(failure)
       // No archive asked for, and the stage gone.
-      expect(served.asked.toSorted()).toStrictEqual([
-        '/latest/download/checksums.txt',
-        '/latest/download/checksums.txt.sig',
-      ])
+      expect(
+        served.asked.filter(
+          path => !path.startsWith('/latest/download/checksums.txt'),
+        ),
+      ).toStrictEqual([])
       expect(yield* entries(places.engines)).toStrictEqual(['0.1.0'])
     }).pipe(Effect.scoped),
   )

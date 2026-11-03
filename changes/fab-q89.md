@@ -2,3 +2,5 @@
   `/bin/sh` on a script, since a freshly written executable's first run waits on macOS (850 ms and up, with
   how many start together), and they read what it said from a FIFO, which can't be missed. The three test
   files share it, `packages/engine/test/fixture-launcher.ts`.
+- The stalled checksums.txt test no longer depends on the signature's real request ending before the
+  TestClock moves: the install times out on either, under the same limit, and asks for no archive.
