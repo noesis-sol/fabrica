@@ -62,13 +62,13 @@ const statsPart = (
 
 /**
  * The stats row in a scope with no run going, memoised on its slices (§18.5): under All projects every
- * project's run going.
+ * project's run going, each with its chip.
  */
 export const lazyStatsPart = (
   stats: Stats.Model,
   project: Model['scope'],
   live: boolean,
-  runViews: Model['runViews'],
+  runs: Stats.ViewInputs['runs'],
   now: Model['now'],
   attention: Model['attention'],
   h: HtmlBuilder<Message>,
@@ -79,7 +79,7 @@ export const lazyStatsPart = (
       project,
       live,
       run: Option.none(),
-      runs: runViews.map(({ view }) => view),
+      runs,
       now,
       attention,
     },
@@ -99,7 +99,6 @@ export const lazyStatsRunPart = (
   tickets: RunView['tickets'],
   banners: RunView['banners'],
   steps: RunView['steps'],
-  runViews: Model['runViews'],
   now: Model['now'],
   attention: Model['attention'],
   h: HtmlBuilder<Message>,
@@ -110,7 +109,7 @@ export const lazyStatsRunPart = (
       project,
       live,
       run: Option.some({ header, totals, tickets, banners, steps }),
-      runs: runViews.map(({ view }) => view),
+      runs: [],
       now,
       attention,
     },

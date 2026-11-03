@@ -141,6 +141,27 @@ const allRuns = (
     )
   })
 
+/** The stats row with no scoped run to draw: under All projects every project's run going, each with its chip. */
+const statsWithoutRun = (
+  stats: Model['console']['stats'],
+  project: Model['scope'],
+  live: boolean,
+  runViews: Model['runViews'],
+  sidebar: Sidebar.Model,
+  now: Model['now'],
+  attention: Model['attention'],
+  h: HtmlBuilder<Message>,
+): Html =>
+  lazyStatsPart(
+    stats,
+    project,
+    live,
+    allRuns(runViews, sidebar),
+    now,
+    attention,
+    h,
+  )
+
 const noRequests: ReadonlyArray<AttentionRequest> = []
 
 /**
@@ -199,11 +220,12 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Html => {
         [
           Option.match(model.runView, {
             onNone: () =>
-              lazyStats(lazyStatsPart, [
+              lazyStats(statsWithoutRun, [
                 parts.stats,
                 model.scope,
                 isLive(model.connection),
                 model.runViews,
+                parts.sidebar,
                 model.now,
                 model.attention,
                 h,
@@ -218,7 +240,6 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Html => {
                 view.tickets,
                 view.banners,
                 view.steps,
-                model.runViews,
                 model.now,
                 model.attention,
                 h,

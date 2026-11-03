@@ -45,6 +45,7 @@ import {
   type EngineServices,
   sessionFor,
 } from '../app/engine-route'
+import { type Chip, chipView } from './sidebar'
 import { waitingWords } from './waiting'
 
 // The console's stats row (spec §18.3, H80, H81; Appendix A.2), for the scoped project's run: live
@@ -57,7 +58,8 @@ import { waitingWords } from './waiting'
 // Above the row, a strip of the run's banners, each hold's among them (`c2` for a hold, `c3` for a
 // stop), with when each lifts, the engine's run-wide steps with their elapsed time, and a request the engine refused.
 // Under All projects the row's figures are summed over every project's run going (§18.3), with no
-// controls: a run is started, drained or stopped from its project's own scope.
+// controls: a run is started, drained or stopped from its project's own scope; the strip draws each
+// run's banners and steps, run after run in the sidebar's order, each marked with its project's chip.
 // A Submodel: the root folds its Messages and gives it the run, the scope and the time.
 
 /** The modes Start run offers (§13.1), in the menu's order. */
@@ -871,15 +873,42 @@ export const questionsLeft = (
     },
   })
 
+/** A project's run going under All projects, and that project's chip (§18.3). */
+export interface ProjectRun {
+  readonly view: StatsRun
+  readonly chip: Chip
+}
+
 /** What the frame gives the row: what its controls are given, every project's runs, and the time. */
 export interface ViewInputs extends ControlInputs {
-  /** Under All projects, every project's run going, whose figures the row sums; none in a project's scope. */
-  readonly runs: ReadonlyArray<StatsRun>
+  /**
+   * Under All projects, every project's run going, in the sidebar's order, whose figures the row sums and
+   * whose notices the strip draws; none in a project's scope.
+   */
+  readonly runs: ReadonlyArray<ProjectRun>
   /** The time now, in the viewer's zone. */
   readonly now: Option.Option<DateTime.Zoned>
   /** The scope's open attention requests, whose questions the pre-flight waits on. */
   readonly attention: Option.Option<ReadonlyArray<AttentionRequest>>
 }
+
+/** A run the row and the strip are of, and the chip its notices carry: none in a project's own scope. */
+interface ScopeRun {
+  readonly view: StatsRun
+  readonly chip: Option.Option<Chip>
+}
+
+/** The runs of the scope: the scoped project's, or under All projects every one going. */
+const scopeRuns = (inputs: ViewInputs): ReadonlyArray<ScopeRun> =>
+  Option.isSome(inputs.project)
+    ? Option.match(inputs.run, {
+        onNone: () => [],
+        onSome: view => [{ view, chip: Option.none() }],
+      })
+    : inputs.runs.map(({ view, chip }) => ({
+        view,
+        chip: Option.some(chip),
+      }))
 
 const toneMark = (tone: Tone, h: HtmlBuilder<Message>): Html =>
   h.span(
@@ -899,14 +928,35 @@ const lifting = (
     onSome: ({ lifts, now }) => [`lifts ${sayMoment(lifts, now)}`],
   })
 
+/** A notice's key among the strip's, whichever run's it is. */
+const noticeKey = (chip: Option.Option<Chip>, key: string): string =>
+  Option.match(chip, {
+    onNone: () => key,
+    onSome: ({ label }) => `${label}-${key}`,
+  })
+
+/** The chip a notice opens with, where it carries one. */
+const noticeChip = (
+  chip: Option.Option<Chip>,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Html> =>
+  Option.match(chip, {
+    onNone: () => [],
+    onSome: shown => [
+      h.span([h.Class('flex-none self-center')], [chipView(shown, h)]),
+    ],
+  })
+
 const notice = (
   {
     key,
+    chip,
     tone,
     text,
     after,
   }: {
     readonly key: string
+    readonly chip: Option.Option<Chip>
     readonly tone: Tone
     readonly text: string
     readonly after: ReadonlyArray<Html | string>
@@ -914,25 +964,32 @@ const notice = (
   h: HtmlBuilder<Message>,
 ): Html =>
   h.keyed('li')(
-    key,
+    noticeKey(chip, key),
     [
       h.DataAttribute('tone', tone),
       h.Class(
         `flex items-baseline gap-8 rounded-card border border-line bg-panel px-12 py-6 text-xs ${tone === 'stop' ? 'border-c3' : 'border-c2'}`,
       ),
     ],
-    [toneMark(tone, h), h.span([h.Class('text-fg')], [text]), ...after],
+    [
+      ...noticeChip(chip, h),
+      toneMark(tone, h),
+      h.span([h.Class('text-fg')], [text]),
+      ...after,
+    ],
   )
 
 const bannerNotice = (
   banner: Banner,
   index: number,
+  chip: Option.Option<Chip>,
   now: Option.Option<DateTime.Zoned>,
   h: HtmlBuilder<Message>,
 ): Html =>
   notice(
     {
       key: `banner-${index}`,
+      chip,
       tone: banner.tone,
       text: banner.text,
       after: lifting(banner.lifts, now).map(words =>
@@ -944,11 +1001,12 @@ const bannerNotice = (
 
 const stepNotice = (
   step: EngineStep,
+  chip: Option.Option<Chip>,
   now: DateTime.Zoned,
   h: HtmlBuilder<Message>,
 ): Html =>
   h.keyed('li')(
-    `step-${step.step}`,
+    noticeKey(chip, `step-${step.step}`),
     [
       h.DataAttribute('step', step.step),
       h.Class(
@@ -956,6 +1014,7 @@ const stepNotice = (
       ),
     ],
     [
+      ...noticeChip(chip, h),
       h.span([h.Class('font-extrabold text-c5')], ['Engine']),
       h.span([h.Class('text-fg')], [`${stepWords[step.step]}…`]),
       h.span(
@@ -1003,27 +1062,25 @@ const refusalNotice = (request: Request, h: HtmlBuilder<Message>): Html =>
       )
     : h.empty
 
-/** The strip: the run's banners, its run-wide steps and a refused request; nothing when none. */
+/** The strip: each run's banners and run-wide steps, then a refused request; nothing when none. */
 const strip = (
   model: Model,
   inputs: ViewInputs,
   h: HtmlBuilder<Message>,
 ): Html => {
-  const banners = Option.match(inputs.run, {
-    onNone: () => [],
-    onSome: run =>
-      run.banners.map((banner, index) =>
-        bannerNotice(banner, index, inputs.now, h),
-      ),
-  })
-  const steps = Option.match(Option.all({ run: inputs.run, now: inputs.now }), {
-    onNone: () => [],
-    onSome: ({ run, now }) =>
-      shownSteps(run.steps, now).map(step => stepNotice(step, now, h)),
-  })
   const items = [
-    ...banners,
-    ...steps,
+    ...scopeRuns(inputs).flatMap(({ view: run, chip }) => [
+      ...run.banners.map((banner, index) =>
+        bannerNotice(banner, index, chip, inputs.now, h),
+      ),
+      ...Option.match(inputs.now, {
+        onNone: () => [],
+        onSome: now =>
+          shownSteps(run.steps, now).map(step =>
+            stepNotice(step, chip, now, h),
+          ),
+      }),
+    ]),
     ...(Request.guards.Refused(model.request)
       ? [refusalNotice(model.request, h)]
       : []),
@@ -1392,18 +1449,13 @@ const controls = (
       ),
   })
 
-/** The runs the row's figures are of: the scoped project's, or under All projects every one going; none without. */
-const scopeRuns = (
+const row = (
+  model: Model,
   inputs: ViewInputs,
-): Option.Option<Array.NonEmptyReadonlyArray<StatsRun>> =>
-  Option.isSome(inputs.project)
-    ? Option.map(inputs.run, run => Array.of(run))
-    : Array.isReadonlyArrayNonEmpty(inputs.runs)
-      ? Option.some(inputs.runs)
-      : Option.none()
-
-const row = (model: Model, inputs: ViewInputs, h: HtmlBuilder<Message>): Html =>
-  h.div(
+  h: HtmlBuilder<Message>,
+): Html => {
+  const runs = scopeRuns(inputs)
+  return h.div(
     [
       h.DataAttribute('layout', 'stats-row'),
       h.Class(
@@ -1411,18 +1463,21 @@ const row = (model: Model, inputs: ViewInputs, h: HtmlBuilder<Message>): Html =>
       ),
     ],
     [
-      ...Option.match(scopeRuns(inputs), {
-        onNone: () => [
-          h.span(
-            [h.Class('text-sm text-muted'), h.Style({ padding: '10px 18px' })],
-            [Option.isSome(inputs.project) ? 'No run' : 'No run going'],
-          ),
-        ],
-        onSome: runs => figures(figuresOf(runs), h),
-      }),
+      ...(runs.length === 0
+        ? [
+            h.span(
+              [
+                h.Class('text-sm text-muted'),
+                h.Style({ padding: '10px 18px' }),
+              ],
+              [Option.isSome(inputs.project) ? 'No run' : 'No run going'],
+            ),
+          ]
+        : figures(figuresOf(runs.map(({ view: run }) => run)), h)),
       controls(model, inputs, h),
     ],
   )
+}
 
 // The pre-flight checklist below the row.
 

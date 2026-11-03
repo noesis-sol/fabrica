@@ -36,11 +36,15 @@ export const update = (model: Model): Handlers<keyof typeof messages> => ({
   }),
 })
 
-/** Whether the scoped run holds on a usage limit: its banner then takes the usage windows' place (§18.3). */
+/**
+ * Whether a run of the scope holds on a usage limit, the scoped project's or under All projects any
+ * project's: its banner then takes the usage windows' place (§18.3).
+ */
 const usageHeld = (model: Model): boolean =>
-  Option.exists(model.runView, runView =>
-    runView.holds.some(hold => hold.kind === 'USAGE_LIMIT'),
-  )
+  [
+    ...Option.toArray(model.runView),
+    ...model.runViews.map(({ view }) => view),
+  ].some(runView => runView.holds.some(hold => hold.kind === 'USAGE_LIMIT'))
 
 export const view = (model: Model, h: HtmlBuilder<Message>): Html =>
   Titlebar.view(
