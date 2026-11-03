@@ -16,6 +16,7 @@ import {
 
 import {
   type Actor,
+  Assignee,
   type CommitHash,
   type DoneKind,
   type EndKind,
@@ -87,7 +88,12 @@ import {
 } from '../runlog'
 import { KeptAwake, Wake, inhibitorExit, keepAwake } from '../time'
 import { type RunViewSources, makeRunViewSources } from '../view'
-import { type OnBase, WorkGraph } from '../workgraph'
+import {
+  type OnBase,
+  TicketNotFound,
+  TransitionRefused,
+  WorkGraph,
+} from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
 import {
   ResumeWhy,
@@ -724,27 +730,40 @@ const runStarted = Effect.fn('Run.started')(function* (
       Effect.forkScoped,
     )
 
-  /** A change of the work graph the run made failed: the run stops, `TRACKER_FAILED`. */
+  /**
+   * A change of the work graph the run made failed: the run stops, `TRACKER_FAILED`. One refused, its
+   * ticket moved under the run by another's hand, is a race: said, and the ticket left as it is (§13.2).
+   */
   const tracked = <A, E extends { readonly message: string }>(
     effect: Effect.Effect<A, E>,
   ): Effect.Effect<void> =>
     effect.pipe(
       Effect.asVoid,
-      Effect.catch(error => stop('TRACKER_FAILED', error.message)),
+      Effect.catch(error =>
+        error instanceof TransitionRefused || error instanceof TicketNotFound
+          ? record(log, {
+              kind: 'warn',
+              ticket: error.id,
+              text: warningLine({
+                tag: 'TICKET_MOVED',
+                about: 'ticket',
+                text: `${error.message}: left as it is`,
+              }),
+            })
+          : stop('TRACKER_FAILED', error.message),
+      ),
     )
+
+  /** The claim on a ticket of the dispatch under `session`, as its worker claims it. */
+  const claimOf = (session: SessionId) =>
+    new Assignee({ engine: config.engine, session })
 
   const titleOf = (snapshot: RunSnapshot, ticket: TicketId) =>
     snapshot.tickets.get(ticket)?.title ?? ticket
 
-  /** Sets the ticket aside in the work graph with `note`, then in the run, as `reason`. */
-  const setAside = (ticket: TicketId, reason: SetAsideReason, note: string) =>
+  /** Sets the ticket aside in the run alone, as `reason`, with `note`. */
+  const asideInRun = (ticket: TicketId, reason: SetAsideReason, note: string) =>
     Effect.gen(function* () {
-      yield* tracked(
-        Effect.andThen(
-          graph.note({ id: ticket, body: note, actor }),
-          graph.defer({ id: ticket, until: Option.none(), actor }),
-        ),
-      )
       yield* sessions.left({
         ticket,
         left: SessionLeft.cases.set_aside.make({}),
@@ -770,6 +789,43 @@ const runStarted = Effect.fn('Run.started')(function* (
         }),
         ...(yield* spentBy(ticket)),
       })
+    })
+
+  /** Sets the ticket aside in the work graph with `note`, then in the run, as `reason`. */
+  const setAside = (ticket: TicketId, reason: SetAsideReason, note: string) =>
+    Effect.andThen(
+      tracked(
+        Effect.andThen(
+          graph.note({ id: ticket, body: note, actor }),
+          graph.defer({ id: ticket, until: Option.none(), actor }),
+        ),
+      ),
+      asideInRun(ticket, reason, note),
+    )
+
+  /**
+   * A dispatch whose worker didn't start gives its claim back and sets its ticket aside. A ticket with
+   * no claim of this dispatch's (the store failed under the claim, or the dispatch was stopped before
+   * it) is someone else's to say: set aside in the run alone, the work graph left as it is (§11.5).
+   */
+  const notStarted = (ticket: TicketId, session: SessionId, reason: string) =>
+    Effect.gen(function* () {
+      const released = yield* graph
+        .release({ id: ticket, holder: claimOf(session), actor })
+        .pipe(
+          Effect.as(true),
+          Effect.catchTags({
+            TransitionRefused: () => Effect.succeed(false),
+            TicketNotFound: () => Effect.succeed(false),
+          }),
+          Effect.catch(error =>
+            Effect.as(stop('TRACKER_FAILED', error.message), false),
+          ),
+        )
+      const note = `its worker couldn't start: ${reason}`
+      yield* released
+        ? setAside(ticket, 'TOOL_DEFECT', note)
+        : asideInRun(ticket, 'TOOL_DEFECT', note)
     })
 
   const settled = (
@@ -971,6 +1027,7 @@ const runStarted = Effect.fn('Run.started')(function* (
    */
   const workerEnded = (
     ticket: TicketId,
+    session: SessionId,
     end: WorkerEnd,
     finished = 'finished',
   ) =>
@@ -1030,7 +1087,9 @@ const runStarted = Effect.fn('Run.started')(function* (
               ticket,
               left: SessionLeft.cases.waits.make({}),
             })
-            yield* tracked(graph.release({ id: ticket, actor }))
+            yield* tracked(
+              graph.release({ id: ticket, holder: claimOf(session), actor }),
+            )
             yield* state.move({
               ticket,
               to: Phase.cases.waiting.make({
@@ -1063,7 +1122,9 @@ const runStarted = Effect.fn('Run.started')(function* (
               ticket,
               left: SessionLeft.cases.asked.make({ question }),
             })
-            yield* tracked(graph.release({ id: ticket, actor }))
+            yield* tracked(
+              graph.release({ id: ticket, holder: claimOf(session), actor }),
+            )
             yield* state.move({
               ticket,
               to: Phase.cases.asked.make({ question }),
@@ -1115,32 +1176,38 @@ const runStarted = Effect.fn('Run.started')(function* (
           ),
         SetupFailed: ({ detail }) =>
           Effect.andThen(
-            tracked(graph.release({ id: ticket, actor })),
+            tracked(
+              graph.release({ id: ticket, holder: claimOf(session), actor }),
+            ),
             setupFailed(ticket, detail),
           ),
-        NotStarted: ({ reason }) =>
+        NotStarted: ({ reason }) => notStarted(ticket, session, reason),
+        // Never the run's: back in the queue, which reads it again, as it would have come off the ready set.
+        NotClaimed: ({ reason }) =>
           Effect.andThen(
-            Effect.ignore(graph.release({ id: ticket, actor })),
-            setAside(
+            state.move({
               ticket,
-              'TOOL_DEFECT',
-              `its worker couldn't start: ${reason}`,
-            ),
-          ),
-        Failed: ({ reason }) =>
-          Effect.andThen(
-            Effect.ignore(graph.release({ id: ticket, actor })),
-            setAside(
+              to: Phase.cases.queued.make({}),
+              cause: reason,
+            }),
+            record(log, {
+              kind: 'warn',
               ticket,
-              'TOOL_DEFECT',
-              `its worker couldn't start: ${reason}`,
-            ),
+              text: warningLine({
+                tag: 'NOT_CLAIMED',
+                about: 'ticket',
+                text: `${ticket} dropped from this run: ${reason}`,
+              }),
+            }),
           ),
+        Failed: ({ reason }) => notStarted(ticket, session, reason),
       })
       yield* reopenedOnceEnded(ticket)
       // A ticket released back to the queue moves the ready set: it may be ready already (§13.5).
       yield* wakes.wake(
-        WorkerEnd.$is('WaitsFor')(end) || WorkerEnd.$is('SetupFailed')(end)
+        WorkerEnd.$is('WaitsFor')(end) ||
+          WorkerEnd.$is('SetupFailed')(end) ||
+          WorkerEnd.$is('NotClaimed')(end)
           ? WakeReason.Requeued({ ticket })
           : WakeReason.Settled({ ticket }),
       )
@@ -1186,11 +1253,15 @@ const runStarted = Effect.fn('Run.started')(function* (
           run: attempt => dispatchWorker(context, ticket, session, attempt),
         })
         if (!WorkerEnd.$is('Finished')(end))
-          return yield* Effect.uninterruptible(workerEnded(ticket, end))
+          return yield* Effect.uninterruptible(
+            workerEnded(ticket, session, end),
+          )
         yield* settled(ticket, 'finish', 'finished')
         const verifier = project.verifier
         if (!verifier.enabled)
-          return yield* Effect.uninterruptible(workerEnded(ticket, end))
+          return yield* Effect.uninterruptible(
+            workerEnded(ticket, session, end),
+          )
         const kept = yield* Effect.result(graph.verifierRounds(ticket))
         if (Result.isFailure(kept))
           return yield* Effect.uninterruptible(
@@ -1208,6 +1279,7 @@ const runStarted = Effect.fn('Run.started')(function* (
           return yield* Effect.uninterruptible(
             workerEnded(
               ticket,
+              session,
               end,
               `finished past the verifier's last round, ${verifier.rounds}`,
             ),
@@ -1233,7 +1305,7 @@ const runStarted = Effect.fn('Run.started')(function* (
             text: `  ${ticket} verified in round ${round} on ${verified.tree}: ${verified.verdict.summary}`,
           })
           return yield* Effect.uninterruptible(
-            workerEnded(ticket, end, 'verified'),
+            workerEnded(ticket, session, end, 'verified'),
           )
         }
         if (Verified.$is('Unanswered')(verified))

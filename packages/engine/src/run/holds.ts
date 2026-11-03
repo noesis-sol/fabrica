@@ -86,8 +86,8 @@ export const heldClock = (
  * How a ticket's turn, ended as `end`, counts for the environment hold (§14.1): `quick` when it ended
  * within minutes of its dispatch, `changed` when its branch or worktree has changes, `providerHeld`
  * while a usage limit or a refused credential holds the run. A start failure is the supervisor's to
- * count, once no model is left; a wait for another ticket (a closed-but-unmerged blocker among them)
- * and a tool's defect in the engine aren't counted.
+ * count, once no model is left; a wait for another ticket (a closed-but-unmerged blocker among them),
+ * a tool's defect in the engine and a refused claim aren't counted.
  */
 export const settleOf = (input: {
   readonly ticket: TicketId
@@ -104,6 +104,7 @@ export const settleOf = (input: {
     WaitsFor: () => Settle.Uncounted(),
     ToolFailed: () => Settle.Uncounted(),
     NotStarted: () => Settle.Uncounted(),
+    NotClaimed: () => Settle.Uncounted(),
     Failed: () => Settle.Uncounted(),
     SetupFailed: () => Settle.SetupFailed({ ticket: input.ticket }),
     Unfinished: () =>

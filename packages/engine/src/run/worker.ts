@@ -114,7 +114,9 @@ export type WorkerEnd = Data.TaggedEnum<{
   NotStarted: { readonly reason: string }
   /** Its supervision set it aside (§12.8, §14.5): past `ticket_limit`, stuck twice, over its budget. */
   SetAside: { readonly reason: SetAsideReason; readonly note: string }
-  /** It couldn't be dispatched or its worker didn't start: the claim, git, the control socket, Pi. */
+  /** Its claim was refused, the ticket no longer open since it was read as ready: a race, and the graph left as it is (§13.2). */
+  NotClaimed: { readonly reason: string }
+  /** It couldn't be dispatched or its worker didn't start: the store under its claim, git, the control socket, Pi. */
   Failed: { readonly reason: string }
 }>
 export const WorkerEnd = Data.taggedEnum<WorkerEnd>()
@@ -306,6 +308,15 @@ const endOf = (
       Option.some(WorkerEnd.ToolFailed({ tool, reason })),
   })
 
+/** A claim the work graph refused, the ticket no longer there to claim: closed, deferred, claimed by another, gone. */
+class ClaimRefused extends Data.TaggedError('ClaimRefused')<{
+  readonly reason: string
+}> {
+  override get message() {
+    return this.reason
+  }
+}
+
 /** Claims the ticket for the worker's session. */
 const claimFor = (
   context: WorkerContext,
@@ -319,7 +330,14 @@ const claimFor = (
       assignee: new Assignee({ engine: context.config.engine, session }),
       actor: context.actor,
     })
-  })
+  }).pipe(
+    Effect.catchTags({
+      TransitionRefused: error =>
+        Effect.fail(new ClaimRefused({ reason: error.message })),
+      TicketNotFound: error =>
+        Effect.fail(new ClaimRefused({ reason: error.message })),
+    }),
+  )
 
 /**
  * The worktree of the ticket's first turn, the ticket claimed: prepared and set up, with the Base
@@ -571,7 +589,7 @@ export const runWorker = Effect.fn('Run.worker')(function* (
   )
 })
 
-/** `runWorker`, its failures to dispatch or start as its end, in its own scope. */
+/** `runWorker`, a refused claim and its failures to dispatch or start as its end, in its own scope. */
 export const dispatchWorker = (
   context: WorkerContext,
   ticket: TicketId,
@@ -580,6 +598,9 @@ export const dispatchWorker = (
 ) =>
   runWorker(context, ticket, session, attempt).pipe(
     Effect.scoped,
+    Effect.catchTag('ClaimRefused', ({ reason }) =>
+      Effect.succeed(WorkerEnd.NotClaimed({ reason })),
+    ),
     Effect.catchTag('AgentStartFailed', error =>
       Effect.succeed(WorkerEnd.NotStarted({ reason: error.message })),
     ),

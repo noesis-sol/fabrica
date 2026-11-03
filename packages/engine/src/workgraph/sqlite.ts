@@ -535,13 +535,20 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
   )
 
   const release: WorkGraphShape['release'] = Effect.fn('WorkGraph.release')(
-    function* ({ id, actor }) {
+    function* ({ id, holder, actor }) {
       return yield* mutate(
         'release',
         transition({
           id,
           operation: 'release',
-          allowed: ticket => ticket.status === 'in_progress',
+          allowed: ticket =>
+            ticket.status === 'in_progress' &&
+            (holder === undefined ||
+              Option.exists(
+                ticket.assignee,
+                ({ engine, session }) =>
+                  engine === holder.engine && session === holder.session,
+              )),
           change: () => ({ status: 'open', assignee: Option.none() }),
           event: { _tag: 'released' },
           actor,

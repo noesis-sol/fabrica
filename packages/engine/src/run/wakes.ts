@@ -13,7 +13,7 @@ export type WakeReason = Data.TaggedEnum<{
   Started: {}
   /** A ticket's worker settled, or failed: its slot is free. */
   Settled: { readonly ticket: TicketId }
-  /** A ticket's worker settled and the ticket went back in the queue, released: the ready set moved. */
+  /** A ticket's worker settled and the ticket went back in the queue, released, or its claim was refused: the ready set moved. */
   Requeued: { readonly ticket: TicketId }
   /** A ticket's turn in the merge queue ended: Base may have moved. */
   MergeEnded: { readonly ticket: TicketId }

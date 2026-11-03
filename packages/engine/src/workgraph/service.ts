@@ -218,9 +218,13 @@ export interface WorkGraphShape {
     readonly assignee: Assignee
     readonly actor: Actor
   }) => Changed<Ticket, TransitionRefused>
-  /** Gives an in-progress ticket back: open, unassigned. */
+  /**
+   * Gives an in-progress ticket back: open, unassigned. With a `holder`, only that holder's claim:
+   * the ticket claimed by anyone else is refused, and left as it is (§11.5).
+   */
   readonly release: (options: {
     readonly id: TicketId
+    readonly holder?: Assignee
     readonly actor: Actor
   }) => Changed<Ticket, TransitionRefused>
   /**

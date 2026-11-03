@@ -49,6 +49,9 @@ export const answerOf = (end: HandBackEnd): WorkerAnswer =>
           WorkerAnswer.Unavailable({
             reason: `its worker's session didn't resume: ${reason}`,
           }),
+        // A hand-back claims nothing: never so, and no worker to answer if it were.
+        NotClaimed: ({ reason }) =>
+          WorkerAnswer.Unavailable({ reason: `its claim failed: ${reason}` }),
         Failed: ({ reason }) =>
           WorkerAnswer.Unavailable({ reason: `its worker failed: ${reason}` }),
       }),
