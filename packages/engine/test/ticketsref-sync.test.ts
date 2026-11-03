@@ -1217,6 +1217,81 @@ describe('privacy', () => {
     )
   }
 
+  it.effect(
+    'a PGP private key block and JSON held in a note are blocked too',
+    () =>
+      Effect.gen(function* () {
+        const { a } = yield* twoEngines
+        const pgp = yield* a.create('PGP')
+        yield* a.graph.update({
+          id: pgp,
+          changes: {
+            description: Option.some(
+              ['-----BEGIN PGP PRIVATE KEY', 'BLOCK-----'].join(' '),
+            ),
+          },
+          actor: maintainer,
+        })
+        const held = yield* a.create('Held')
+        yield* a.graph.note({
+          id: held,
+          body: JSON.stringify({ stdout: `key:\n${awsKey()}\n` }),
+          actor: maintainer,
+        })
+        const stopped = yield* Effect.flip(a.sync.commit)
+        if (stopped._tag !== 'ExportBlocked') return expect.fail(stopped._tag)
+        expect(stopped.findings.toSorted()).toEqual(
+          [
+            `a private key block in tickets/${pgp}.json`,
+            `an AWS access key in tickets/${held}.json`,
+          ].toSorted(),
+        )
+        expect(a.head()).toBe('')
+      }).pipe(Effect.scoped),
+  )
+
+  it('finds each secret whatever comes before it, and passes the words that end like one', () => {
+    const secrets: ReadonlyArray<readonly [string, string]> = [
+      ['an AWS access key', awsKey()],
+      ['an AWS access key', ['ASIA', 'ABCDEFGHIJKLMNOP'].join('')],
+      ['a Google API key', ['AIza', 'a'.repeat(35)].join('')],
+      ['a GitHub token', ['ghp', 'a'.repeat(36)].join('_')],
+      ['a GitHub token', ['github', 'pat', 'a'.repeat(22)].join('_')],
+      ['a GitLab token', ['glpat', 'a'.repeat(20)].join('-')],
+      ['a Slack token', ['xoxb', 'a'.repeat(10)].join('-')],
+      ['an Anthropic key', ['sk', 'ant', 'a'.repeat(24)].join('-')],
+      ['an OpenAI key', ['sk', 'a'.repeat(32)].join('-')],
+      ['a Stripe key', ['sk', 'live', 'a'.repeat(16)].join('_')],
+    ]
+    const before = [
+      '',
+      'KEY=',
+      'KEY_',
+      '\\n',
+      '\\\\n',
+      '\\t',
+      '\\u000a',
+      '\\"',
+      '"',
+      '/',
+    ]
+    for (const [name, secret] of secrets)
+      for (const prefix of before)
+        expect(secretsIn(`${prefix}${secret}`)).toContain(name)
+    for (const armour of ['RSA', 'EC', 'OPENSSH'])
+      expect(
+        secretsIn(['-----BEGIN', armour, 'PRIVATE KEY-----'].join(' ')),
+      ).toEqual(['a private key block'])
+    expect(
+      secretsIn(['-----BEGIN PGP', 'PRIVATE KEY BLOCK-----'].join(' ')),
+    ).toEqual(['a private key block'])
+
+    expect(secretsIn(`task-${'a'.repeat(40)}`)).toEqual([])
+    expect(secretsIn(`work_live_${'a'.repeat(20)}`)).toEqual([])
+    expect(secretsIn('-----BEGIN PUBLIC KEY-----')).toEqual([])
+    expect(secretsIn('C:\\new\\table')).toEqual([])
+  })
+
   it.effect('finds a secret in a note, on a line of its own', () =>
     Effect.gen(function* () {
       const { a } = yield* twoEngines
