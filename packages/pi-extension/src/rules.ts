@@ -1,5 +1,6 @@
 import { Data, Effect, Option } from 'effect'
-import { readFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { type FileHandle, lstat, open } from 'node:fs/promises'
 import { join } from 'node:path'
 
 // The standing rules (spec §12.4): orchestra's worker prompt, adapted, which the extension puts in
@@ -82,8 +83,71 @@ export class ProjectRulesUnreadable extends Data.TaggedError(
   }
 }
 
-const missing = (error: unknown) =>
-  error instanceof Error && 'code' in error && error.code === 'ENOENT'
+/** The most the project's rules may hold: more is refused rather than put in every prompt. */
+export const ProjectRulesMaxBytes = 64 * 1024
+
+const hasCode = (error: unknown, code: string) =>
+  error instanceof Error && 'code' in error && error.code === code
+
+const missing = (error: unknown) => hasCode(error, 'ENOENT')
+
+const reasonOf = (error: unknown) =>
+  error instanceof Error ? error.message : String(error)
+
+/**
+ * The rules file's text, or none where there is none. The worktree is the agent's and the file a
+ * merged ticket's (spec §20.2, H62): `.fabrica` must be a real folder, the file is opened without
+ * following a link and without waiting on a named pipe, kept only when it is a regular file, and
+ * read only up to the cap, so a link to a key or a pipe or device at its path never reaches the prompt.
+ */
+const readRegularText = async (
+  root: string,
+  path: string,
+): Promise<Option.Option<string>> => {
+  const folder = await lstat(join(root, '.fabrica')).catch((error: unknown) =>
+    missing(error) ? undefined : Promise.reject(error),
+  )
+  if (folder === undefined) return Option.none()
+  if (!folder.isDirectory()) throw new Error('.fabrica is not a folder')
+  const handle: FileHandle | undefined = await open(
+    path,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  ).catch((error: unknown) =>
+    missing(error)
+      ? undefined
+      : Promise.reject(
+          hasCode(error, 'ELOOP') ? new Error('it is a symbolic link') : error,
+        ),
+  )
+  if (handle === undefined) return Option.none()
+  try {
+    const stats = await handle.stat()
+    if (!stats.isFile()) throw new Error('it is not a regular file')
+    if (stats.size > ProjectRulesMaxBytes)
+      throw new Error(
+        `it has ${stats.size} bytes, more than the ${ProjectRulesMaxBytes} allowed`,
+      )
+    const buffer = Buffer.alloc(ProjectRulesMaxBytes + 1)
+    let length = 0
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(
+        buffer,
+        length,
+        buffer.length - length,
+        length,
+      )
+      if (bytesRead === 0) break
+      length += bytesRead
+    }
+    if (length > ProjectRulesMaxBytes)
+      throw new Error(
+        `it has more than the ${ProjectRulesMaxBytes} bytes allowed`,
+      )
+    return Option.some(buffer.toString('utf8', 0, length))
+  } finally {
+    await handle.close().catch(() => undefined)
+  }
+}
 
 /** The project's own rules, or none where it has no `.fabrica/worker-rules.md`. */
 export const readProjectRules = Effect.fn('Rules.readProjectRules')(function* (
@@ -91,14 +155,8 @@ export const readProjectRules = Effect.fn('Rules.readProjectRules')(function* (
 ) {
   const path = join(root, ProjectRulesPath)
   return yield* Effect.tryPromise({
-    try: () =>
-      readFile(path, 'utf8').then(Option.some, (error: unknown) =>
-        missing(error) ? Option.none<string>() : Promise.reject(error),
-      ),
+    try: () => readRegularText(root, path),
     catch: error =>
-      new ProjectRulesUnreadable({
-        path,
-        reason: error instanceof Error ? error.message : String(error),
-      }),
+      new ProjectRulesUnreadable({ path, reason: reasonOf(error) }),
   })
 })
