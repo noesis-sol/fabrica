@@ -96,7 +96,8 @@ export type Open = typeof Open.Type
 /**
  * The key guard: off while no options are drawn; waiting from when they are drawn, numbered so that a
  * guard started for an earlier drawing can't pass this one; passed once `keyGuard` has gone by with the
- * same request drawn. It keeps the request as drawn, so a change to it starts the guard again.
+ * same request drawn and the console shown. It keeps the request as drawn, so a change to it starts the
+ * guard again.
  */
 export const Guard = defineTaggedUnion({
   Off: {},

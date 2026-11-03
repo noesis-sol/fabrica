@@ -151,7 +151,13 @@ export const dropLostAttention = (model: Model): Return => {
 }
 
 export const update = (model: Model): Handlers<keyof typeof messages> => ({
-  GotAttentionMessage: ({ message }) => foldAttention(model, message),
+  // A guard's time counts only with the console shown: run out under another screen, an overlay or an
+  // SSH prompt, it stays waiting until `restartedKeyGuards` starts it afresh, so a palette entry can't
+  // answer a request that arrived under the palette (§15.1).
+  GotAttentionMessage: ({ message }) =>
+    message._tag === 'PassedGuard' && !isConsoleShown(model)
+      ? { model }
+      : foldAttention(model, message),
   PressedAnswerKey: ({ key, place }) => foldAnswerKey(model, { key, place }),
   PressedApprovalKey: ({ key, decision }) =>
     Option.match(

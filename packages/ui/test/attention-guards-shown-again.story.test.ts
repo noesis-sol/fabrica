@@ -11,6 +11,7 @@ import {
   PermissionId,
   ProjectId,
   StreamEpoch,
+  attentionKey,
   protocolVersion,
 } from '@fabrica/contracts'
 
@@ -49,6 +50,19 @@ const permission = decodeRequest({
   shown: { _tag: 'command', lines: ['rm -rf build/'] },
   why: 'rm is not on the allow list',
   openedAt: at - 3 * 60_000,
+})
+
+const other = decodeRequest({
+  _tag: 'permission',
+  project,
+  id: 'perm-2',
+  ticket: 'fa-8',
+  session: 's-2',
+  tool: 'bash',
+  input: { command: 'git push --force' },
+  shown: { _tag: 'command', lines: ['git push --force'] },
+  why: 'git push is not on the allow list',
+  openedAt: at - 60_000,
 })
 
 const question = decodeRequest({
@@ -176,7 +190,7 @@ describe('the approval keys, as the console is shown again', () => {
         expect(commandsOf(away)).toEqual(waitFor(1))
         const ranOut = sent(away.model, passed(1))
         expect(
-          Attention.Guard.guards.Passed(
+          Attention.Guard.guards.Waiting(
             ranOut.model.console.attention.approvalGuard,
           ),
         ).toBe(true)
@@ -256,6 +270,50 @@ describe('the approval keys, as the console is shown again', () => {
     expect(commandsOf(shown)).toEqual(waitFor(2))
   })
 
+  test('a palette entry can’t answer a request that arrived under the palette', () => {
+    const under = sent(connected, palette, received([permission]), passed(1))
+    expect(under.model.console.attention.approvalGuard._tag).toBe('Waiting')
+    expect(
+      sent(under.model, Message.RanPaletteSelection()).model.console.attention
+        .sending,
+    ).toEqual(Attention.Sending.None())
+    const entry = sent(
+      under.model,
+      Message.RanPaletteEntry({ id: 'approval.allow_once' }),
+    )
+    expect(entry.model.overlay).toEqual(Overlay.Closed())
+    expect(entry.model.console.attention.sending).toEqual(
+      Attention.Sending.None(),
+    )
+    expect(commandsOf(entry)).toEqual(waitFor(2))
+  })
+
+  test('a palette entry can’t answer a request that changed under the palette', () => {
+    const entry = sent(
+      connected,
+      received([permission]),
+      passed(1),
+      palette,
+      received([other]),
+      passed(2),
+      Message.RanPaletteEntry({ id: 'approval.allow_once' }),
+    )
+    expect(entry.model.console.attention.sending).toEqual(
+      Attention.Sending.None(),
+    )
+  })
+
+  test('a palette entry answers a request whose guard passed before the palette opened', () => {
+    const entry = sent(
+      connected,
+      received([permission]),
+      passed(1),
+      palette,
+      Message.RanPaletteEntry({ id: 'approval.allow_once' }),
+    )
+    expect(commandsOf(entry).slice(0, 1)).toEqual(allowOnce)
+  })
+
   test('an SSH prompt gone starts it again', () => {
     const asked = sent(
       connected,
@@ -318,6 +376,18 @@ describe('keys 1–9, as the console is shown again', () => {
     const shown = sent(drawn.model, passed(1), showBacklog, showConsole)
     expect(commandsOf(shown)).toEqual(waitFor(2))
     expect(commandsOf(sent(shown.model, key('1')))).toEqual([])
+  })
+
+  test('a palette entry answers options whose guard passed before the palette opened, and no others', () => {
+    const answers = (start: Model) =>
+      sent(start, Message.RanPaletteEntry({ id: 'answer.1' })).model.console
+        .attention.sending
+    expect(answers(sent(drawn.model, passed(1), palette).model)).toEqual(
+      Attention.Sending.Pending({ key: attentionKey(question) }),
+    )
+    expect(answers(sent(drawn.model, palette, passed(1)).model)).toEqual(
+      Attention.Sending.None(),
+    )
   })
 
   test('both guards start, each with a drawing of its own', () => {
