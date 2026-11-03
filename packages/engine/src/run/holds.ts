@@ -70,8 +70,19 @@ export const mayTake = (snapshot: TakeSnapshot): MayTake => {
 }
 
 /** Whether the run waits on a hold that can lift, rather than ending with nothing in progress. */
-export const waitsOnHold = (holds: HoldsSnapshot): boolean =>
+const waitsOnHold = (holds: HoldsSnapshot): boolean =>
   holds.on.length > 0 && Option.isNone(holds.gaveUp)
+
+/**
+ * Whether the holds keep a look from ending the run, `holds` read after its state: one that can lift
+ * does, and so does a change since `heard`, the holds its last wake for them gave: a lift whose tickets
+ * the look read as waiting, or a hold that gave up. That change's wake is on its way, and the look it
+ * brings decides.
+ */
+export const keepsRun = (input: {
+  readonly holds: HoldsSnapshot
+  readonly heard: HoldsSnapshot
+}): boolean => input.holds !== input.heard || waitsOnHold(input.holds)
 
 /** The clock of the run's hand-backs and workers: `sleep`'s, held while the holds stop it (§13.7). */
 export const heldClock = (

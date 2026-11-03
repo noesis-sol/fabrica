@@ -20,6 +20,7 @@ import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
+import { vi } from '@effect/vitest'
 import {
   type Actor,
   EngineId,
@@ -77,6 +78,10 @@ import { anthropicAnswer, anthropicBadKey } from './proxy-streams'
 // and model proxy, on TestClock. The only stand-ins are at the boundary: Pi's CLI is a stub speaking
 // its RPC protocol, which does what its ticket's description says (`stub: finish`, `stub: defer`, …)
 // through the real control socket, and the model provider is a loopback server.
+
+// A whole run is many processes of its own, dispatches and merges: on a loaded machine (load average
+// 30-70) one passes in more than the test kit's limit (fab-50w). Every test file running them has this one.
+vi.setConfig({ testTimeout: 30_000 })
 
 /**
  * A stub of `pi --mode rpc`. On its prompt it reads its ticket with `get_ticket` over the control

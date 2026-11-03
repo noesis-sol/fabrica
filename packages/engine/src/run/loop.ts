@@ -113,13 +113,13 @@ import { makeHandBackWorker } from './handback-worker'
 import {
   MayTake,
   heldClock,
+  keepsRun,
   makeEnvironmentHold,
   mayTake,
   minimalAgent,
   providerHeld,
   settleOf,
   supervisorHolds,
-  waitsOnHold,
 } from './holds'
 import { record, recordBaseNote } from './records'
 import {
@@ -1827,8 +1827,12 @@ const runStarted = Effect.fn('Run.started')(function* (
 
   /** One look: the ready set where its reasons can have moved it, the free slots filled; whether the run ends. */
   let ready: ReadonlyArray<Ticket> = []
+  // The holds as the run started, and as its last wake for them gave them.
+  const holdsAtStart = yield* holds.current
+  let heard = holdsAtStart
   const look = (reasons: ReadonlyArray<WakeReason>) =>
     Effect.gen(function* () {
+      heard = reasons.findLast(WakeReason.$is('HoldsChanged'))?.holds ?? heard
       yield* Effect.forEach(reasons, drainSaid, { discard: true })
       const starting = reasons.some(reason => WakeReason.$is('Started')(reason))
       if (readsReady(reasons)) {
@@ -1908,7 +1912,7 @@ const runStarted = Effect.fn('Run.started')(function* (
       if (inProgress(after).length > 0) return Option.none<Ending>()
       // A hold that can lift keeps the run, unless it drains: the tickets it holds back are to come.
       // Read after the state: a ticket's turn counts toward a hold before it leaves its slot.
-      if (waitsOnHold(yield* holds.current) && !draining)
+      if (keepsRun({ holds: yield* holds.current, heard }) && !draining)
         return Option.none<Ending>()
       const limitReached = Option.exists(
         limit,
@@ -1954,12 +1958,12 @@ const runStarted = Effect.fn('Run.started')(function* (
     Effect.catch(error => stop('TRACKER_FAILED', error.message)),
     watched("the work graph's changes"),
   )
-  // Each change of the holds after the first: a lift wakes the run, and one that gave up stops it.
+  // Each change of the holds since the start: a lift wakes the run, and one that gave up stops it.
   yield* holds.changes.pipe(
-    Stream.drop(1),
+    Stream.filter(snapshot => snapshot !== holdsAtStart),
     Stream.runForEach(snapshot =>
       Option.match(stopping(snapshot), {
-        onNone: () => wakes.wake(WakeReason.HoldsChanged()),
+        onNone: () => wakes.wake(WakeReason.HoldsChanged({ holds: snapshot })),
         onSome: gaveUp => stop(gaveUp.kind, gaveUp.detail, gaveUp.ticket),
       }),
     ),

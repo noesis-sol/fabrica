@@ -2,6 +2,8 @@ import { Data, Effect, type Option, Queue } from 'effect'
 
 import type { StopKind, TicketId } from '@fabrica/contracts'
 
+import type { HoldsSnapshot } from '../holds'
+
 // What wakes the run (spec §13.2, tutti-rvzn.5, -gr4z.9): each change records why, and a look reads
 // only what its reasons can have changed. A worker settling frees a slot and moves nothing in the
 // work graph that the ready set reads, unless its ticket went back in the queue; a merge moves Base,
@@ -19,8 +21,8 @@ export type WakeReason = Data.TaggedEnum<{
   MergeEnded: { readonly ticket: TicketId }
   /** The work graph changed by another's hand than the run's. */
   TicketsChanged: {}
-  /** The holds changed (§14): one was raised or lifted, and the tickets a probe freed are back in the queue. */
-  HoldsChanged: {}
+  /** The holds changed to `holds` (§14): one was raised or lifted, and the tickets a probe freed are back in the queue. */
+  HoldsChanged: { readonly holds: HoldsSnapshot }
   /** The run was asked to drain (no new tickets), or the drain was taken back (§13.10). */
   Drain: { readonly draining: boolean }
   /** Something stops the run: merging stopped, the work graph or git failed under it, a defect. */
