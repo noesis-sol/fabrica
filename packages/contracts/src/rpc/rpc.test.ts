@@ -701,6 +701,11 @@ const samples: Record<string, Samples> = {
     ],
     error: [notFound],
   },
+  'tickets.rebuild': {
+    payload: [{ project }],
+    success: [{ tickets: 3, tombstones: 1, quarantined: 0 }],
+    error: [{ _tag: 'Refused', reason: 'no tickets ref' }],
+  },
   'tickets.import': {
     payload: [{ project, beads: '{"id":"bd-1","title":"x"}\n' }],
     success: [
@@ -1229,6 +1234,7 @@ describe('the protocol’s groups', () => {
       'tickets.edges',
       'tickets.conflicts',
       'tickets.import',
+      'tickets.rebuild',
       'run.start',
       'run.stop',
       'run.drain',

@@ -272,6 +272,7 @@ describe('the export on demand', () => {
         settings: unused,
         setSettings: unused,
         workGraph: unused,
+        ticketsSync: unused,
         onBase: unused,
         watchStatus: () => Stream.die('not used by an export'),
       })

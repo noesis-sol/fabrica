@@ -1,4 +1,4 @@
-import { Duration, Effect, Schedule } from 'effect'
+import { Duration, Effect, Option, Schedule, Stream } from 'effect'
 
 import {
   CommandOutcome,
@@ -75,6 +75,16 @@ const describeStart = StartFailure.$match({
   NotOnPath: ({ path }) => `git is not on the PATH (${path})`,
   SpawnFailed: ({ message }) => `git didn't start: ${message}`,
 })
+
+/** A git command given its input on stdin that ran to an exit code: its stdout as bytes. */
+export interface GitPipedExit {
+  readonly code: number
+  readonly stdout: Uint8Array
+  readonly stderr: string
+}
+
+const collected = (stream: Stream.Stream<Uint8Array>) =>
+  Effect.map(Stream.runCollect(stream), chunks => Buffer.concat([...chunks]))
 
 /** Runs git commands through one runner and configuration. */
 export const makeCommands = ({
@@ -190,11 +200,66 @@ export const makeCommands = ({
       ),
     )
 
+  /**
+   * A command that reads `input` on its stdin (`hash-object --stdin`, `mktree`, `cat-file --batch`),
+   * run once. The input is written beside the reading of its output, so neither pipe fills and stops
+   * the other.
+   */
+  const piped = (
+    { cwd, args }: GitCommand,
+    input: string | Uint8Array,
+  ): Effect.Effect<GitPipedExit, GitFailed> => {
+    const failed = (reason: string) =>
+      new GitFailed({ command: args.join(' '), reason })
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const running = yield* runner
+          .start({
+            command: 'git',
+            args: ['--no-pager', ...args],
+            cwd,
+            env: GIT_ENVIRONMENT,
+            stdin: 'pipe',
+          })
+          .pipe(Effect.mapError(({ reason }) => failed(describeStart(reason))))
+        const [, stdout, stderr, status] = yield* Effect.all(
+          [
+            running
+              .write(input)
+              .pipe(Effect.ignore, Effect.andThen(running.closeStdin)),
+            collected(running.stdout),
+            collected(running.stderr),
+            running.exit,
+          ],
+          { concurrency: 'unbounded' },
+        )
+        return yield* ExitStatus.$match(status, {
+          Code: ({ code }) =>
+            Effect.succeed({ code, stdout, stderr: stderr.toString('utf8') }),
+          Signal: ({ signal }) => Effect.fail(failed(`ended by ${signal}`)),
+        })
+      }),
+    ).pipe(
+      Effect.timeoutOption(config.timeLimit),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(
+              failed(
+                `timed out after ${Duration.format(Duration.fromInputUnsafe(config.timeLimit))}`,
+              ),
+            ),
+          onSome: Effect.succeed,
+        }),
+      ),
+    )
+  }
+
   /** A read's command, its outcome as the runner gave it: for a read that tells why git didn't run. */
   const queryOutcome = (command: GitCommand) =>
     invoke(READ_ENVIRONMENT, command)
 
-  return { write, network, query, queryOutcome, read, unexpected }
+  return { write, network, query, queryOutcome, piped, read, unexpected }
 }
 
 export type Commands = ReturnType<typeof makeCommands>

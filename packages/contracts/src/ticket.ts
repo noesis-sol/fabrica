@@ -305,6 +305,16 @@ export const TicketChange = Schema.TaggedUnion({
   deleted: {},
   /** A field both sides of a sync changed; the later clock's value was kept (§11.7). */
   merge_conflict: { field: Text, ours: Schema.Json, theirs: Schema.Json },
+  /** A sync's edge to a missing or tombstoned ticket, dropped (§11.7). */
+  edge_dropped: { edge: Edge },
+  /** A `blocks` edge a sync brought in closes a cycle: it is kept, the tickets on it wait (§11.7). */
+  blocks_cycle: { edge: Edge },
+  /** A file of the tickets ref that doesn't decode: skipped, the local copy kept (§11.7). */
+  quarantined: { file: Text, reason: Text },
+  /** The remote the tickets ref goes to, named before its first push (§11.7). */
+  ref_remote_named: { remote: Text, url: Text },
+  /** A secret pattern in what was to be exported: nothing is committed until it goes (§11.7). */
+  export_blocked: { findings: Schema.NonEmptyArray(Text) },
 })
 export type TicketChange = typeof TicketChange.Type
 

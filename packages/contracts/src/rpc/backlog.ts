@@ -106,6 +106,8 @@ export const NotReady = Schema.TaggedUnion({
   not_dispatched: { type: Schema.Literals(['epic', 'question', 'manual']) },
   /** A `blocks` blocker not closed. */
   blocked: { by: TicketId, status: TicketStatus },
+  /** A sync made a cycle of `blocks` links through it (§11.7). */
+  blocks_cycle: {},
   /** A blocker closed but not merged (`CLOSED_UNMERGED`). */
   closed_unmerged: { by: TicketId },
   /** The ticket it was filed from isn't merged. */
@@ -155,6 +157,14 @@ export class ImportFailed extends Schema.TaggedError<ImportFailed>()(
   'ImportFailed',
   { problems: Schema.NonEmptyArray(Text) },
 ) {}
+
+/** What a rebuild from the tickets ref brought back. */
+export class Rebuilt extends Schema.Class<Rebuilt>('Rebuilt')({
+  tickets: Count,
+  tombstones: Count,
+  /** The files it couldn't read: skipped, their local copies kept (§11.7). */
+  quarantined: Count,
+}) {}
 
 const inProject = Schema.Union([ProjectNotFound, TicketNotFound, Refused])
 
@@ -243,6 +253,12 @@ export const BacklogRpcs = RpcGroup.make(
     payload: { project: ProjectId, beads: Schema.String },
     success: Imported,
     error: Schema.Union([ProjectNotFound, ImportFailed]),
+  }),
+  /** Rebuilds the project's work graph from its tickets ref (§11.3). */
+  Rpc.make('tickets.rebuild', {
+    payload: { project: ProjectId },
+    success: Rebuilt,
+    error: Schema.Union([ProjectNotFound, Refused]),
   }),
   Rpc.make('tickets.watch', {
     payload: { project: ProjectId, resume },

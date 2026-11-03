@@ -9,6 +9,7 @@ import {
   NotReady,
   NotReadyReason,
   type ProjectId,
+  Rebuilt,
   Refused,
   type Resolution,
   type Resume,
@@ -80,6 +81,7 @@ const notReadyOf = (reason: WaitReason): NotReady =>
     },
     Blocked: ({ blocker, status }) =>
       NotReady.cases.blocked.make({ by: blocker, status }),
+    BlocksCycle: () => NotReady.cases.blocks_cycle.make({}),
     ClosedUnmerged: ({ blocker }) =>
       NotReady.cases.closed_unmerged.make({ by: blocker }),
     FiledFrom: ({ origin }) =>
@@ -518,6 +520,25 @@ export const makeBacklogHandlers = Effect.gen(function* () {
     )
   })
 
+  const rebuild = Effect.fn('Backlog.rebuild')(function* ({
+    project,
+  }: {
+    readonly project: ProjectId
+  }) {
+    const sync = yield* projects
+      .ticketsSync(project)
+      .pipe(Effect.catchTag('WorkGraphUnopened', Effect.die))
+    const rebuilt = yield* sync.rebuild.pipe(
+      Effect.catchIf(
+        (error): error is Exclude<typeof error, WorkGraph.StoreFailed> =>
+          error._tag !== 'StoreFailed',
+        error => Effect.fail(new Refused({ reason: error.message })),
+      ),
+      Effect.catchTag('StoreFailed', Effect.die),
+    )
+    return new Rebuilt(rebuilt)
+  })
+
   const watch = ({
     project,
     resume,
@@ -551,6 +572,7 @@ export const makeBacklogHandlers = Effect.gen(function* () {
     'tickets.edges': edges,
     'tickets.conflicts': conflicts,
     'tickets.import': importBeads,
+    'tickets.rebuild': rebuild,
     'tickets.watch': watch,
   })
 })

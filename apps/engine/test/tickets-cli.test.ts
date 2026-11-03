@@ -11,10 +11,9 @@ import {
 import { layerToolbox } from '@fabrica/testkit'
 
 import { projectHolding } from '../src/cli/tickets'
-import { versionLine } from '../src/version'
 import { fabrica, onlyJson, testEngine } from './tickets-engine'
 
-// `fabrica tickets list|show|create|update|close|reopen|defer|dep|label|note|ready|why|rebuild` (spec
+// `fabrica tickets list|show|create|update|close|reopen|defer|dep|label|note|ready|why` (spec
 // §19, §11): run as the CLI's entry runs it, against an engine started in a temporary data folder with
 // one project, a checkout of the test's; each command with its text and with `--json`.
 
@@ -253,12 +252,6 @@ layer(layerToolbox({ tools: ['git'] }), { excludeTestServices: true })(
         const unnamed = yield* fabrica(socket, 'tickets', 'ready')
         expect(Exit.isFailure(unnamed.exit)).toBe(true)
         expect(unnamed.err.join('\n')).toContain("no project's checkout holds")
-
-        const rebuild = yield* fabrica(socket, 'tickets', 'rebuild', '--json')
-        expect(Exit.isFailure(rebuild.exit)).toBe(true)
-        expect(rebuild.err).toStrictEqual([
-          `fabrica: \`fabrica tickets rebuild\` is not in ${versionLine} yet: it rebuilds the backlog from the tickets ref, which comes with sync (M4)`,
-        ])
       }).pipe(Effect.scoped),
     )
   },

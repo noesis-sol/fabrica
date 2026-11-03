@@ -7,6 +7,7 @@ import type { CommitHash, FileDiff, TreeHash } from '@fabrica/contracts'
 
 import { CommandOutcome, ProcessRunner, StartFailure } from '../process'
 import {
+  type Commands,
   type GitCommand,
   type GitConfig,
   defaultConfig,
@@ -51,6 +52,8 @@ import {
 // on; a revision is a commit's hash or a name (`main`, `fabrica/<ticket>`), never parsed as a path.
 
 export interface GitShape {
+  /** How the service runs its commands, for what keeps a ref of its own with git's plumbing (spec §11.7). */
+  readonly commands: Commands
   /** Whether the git commands run with is 2.38 or later (spec §13.1). */
   readonly version: Effect.Effect<GitVersion>
   /** The worktree's uncommitted and untracked files. */
@@ -288,11 +291,8 @@ const argumentBatches = (
 
 export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
   const runner = yield* ProcessRunner
-  const { write, network, query, queryOutcome, read, unexpected } =
-    makeCommands({
-      runner,
-      config,
-    })
+  const commands = makeCommands({ runner, config })
+  const { write, network, query, queryOutcome, read, unexpected } = commands
 
   /** A read of a value that `answer` takes from the exit, failing the attempt where it gives none. */
   const readExit = <A>(
@@ -1284,6 +1284,7 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
   })
 
   return Git.of({
+    commands,
     version,
     status,
     isOnBase,

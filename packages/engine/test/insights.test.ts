@@ -1065,6 +1065,10 @@ describe('the Insights group', () => {
         Effect.fail(
           new WorkGraphUnopened({ project: id, reason: 'none here' }),
         ),
+      ticketsSync: id =>
+        Effect.fail(
+          new WorkGraphUnopened({ project: id, reason: 'none here' }),
+        ),
       onBase: unused,
       watchStatus: () => Stream.die('not used by the Insights group'),
     })

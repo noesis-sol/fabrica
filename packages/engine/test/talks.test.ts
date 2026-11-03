@@ -234,6 +234,7 @@ const oneProject = (checkout: string, settings: ProjectSettings) => {
         : Effect.fail(new ProjectNotFound({ project: id })),
     setSettings: () => unused,
     workGraph: () => unused,
+    ticketsSync: () => unused,
     onBase: () => unused,
     watchStatus: () => Stream.die('not asked of the projects by talks'),
   })

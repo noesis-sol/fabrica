@@ -87,7 +87,7 @@ import {
 // small and indexed, and a long read goes in batches that yield between them.
 
 /** The key every mutation invalidates and every reactive query of the work graph listens on. */
-const reactivityKeys = ['work_graph']
+export const reactivityKeys = ['work_graph']
 
 /** How many tickets a batch of `list` reads before it yields. */
 const listBatchSize = 500
@@ -1475,5 +1475,5 @@ export const layer = (
   options: WorkGraphOptions & { readonly filename: string },
 ) =>
   Layer.effect(WorkGraph, makeWorkGraph(options)).pipe(
-    Layer.provide(storeLayer(options.filename)),
+    Layer.provideMerge(storeLayer(options.filename)),
   )

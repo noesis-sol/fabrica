@@ -50,6 +50,8 @@ export type WaitReason = Data.TaggedEnum<{
     readonly status: Exclude<TicketStatus, 'closed'>
     readonly title: string
   }
+  /** A sync made a cycle of `blocks` links through it (§11.7): the links are kept, and it waits. */
+  BlocksCycle: {}
   /** A `blocks` blocker closed, its branch not on Base (CLOSED_UNMERGED). */
   ClosedUnmerged: { readonly blocker: TicketId }
   /** The ticket it was filed from, running or closed unmerged. */
@@ -79,6 +81,8 @@ export const describeWait: (reason: WaitReason) => string = WaitReason.$match({
         : type === 'epic'
           ? `waits for the epic ${blocker} to close`
           : `waits for ${blocker} to merge: it is ${statusWords[status]}`,
+  BlocksCycle: () =>
+    'a sync made a cycle of blocks links through it: remove one to free them',
   ClosedUnmerged: ({ blocker }) =>
     `waits for ${blocker} to merge: it is closed but not merged`,
   FiledFrom: ({ origin, status }) =>
@@ -297,11 +301,27 @@ export const whyWaiting = (
     const prerequisites = yield* prerequisitesOf(sql, sql`id = ${ticket.id}`)
     const holds = (prerequisites.get(ticket.id) ?? []).map(holdOf)
     const onBase = yield* askGit(options.onBase, asksGit(holds))
+    const cycle = yield* onBlocksCycle(sql, ticket.id)
     return [
       ...ownReasons(ticket, now, new Set(options.setAside ?? [])),
       ...holdReasons(holds, onBase),
+      ...(cycle ? [WaitReason.BlocksCycle()] : []),
     ]
   })
+
+/** Whether the ticket is on a cycle of `blocks` links through tickets not closed, as only a sync's merge can make (§11.7). */
+const onBlocksCycle = (sql: SqlClient.SqlClient, id: TicketId): Read<boolean> =>
+  Effect.map(
+    sql`WITH RECURSIVE reach(id) AS (
+      SELECT to_id FROM edges WHERE from_id = ${id} AND kind = 'blocks'
+      UNION
+      SELECT edges.to_id FROM edges
+        JOIN reach ON edges.from_id = reach.id
+        JOIN tickets ON tickets.id = reach.id
+        WHERE edges.kind = 'blocks' AND tickets.status <> 'closed'
+    ) SELECT 1 FROM reach WHERE id = ${id} LIMIT 1`,
+    rows => rows.length > 0,
+  )
 
 type ChildRow = TicketRow & { readonly parent: string }
 

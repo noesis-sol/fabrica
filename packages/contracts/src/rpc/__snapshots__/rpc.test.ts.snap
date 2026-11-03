@@ -1818,6 +1818,21 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
           "properties": {
             "_tag": {
               "enum": [
+                "blocks_cycle",
+              ],
+              "type": "string",
+            },
+          },
+          "required": [
+            "_tag",
+          ],
+          "type": "object",
+        },
+        {
+          "additionalProperties": true,
+          "properties": {
+            "_tag": {
+              "enum": [
                 "closed_unmerged",
               ],
               "type": "string",
@@ -3224,6 +3239,29 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
       "required": [
         "label",
         "tradeOff",
+      ],
+      "type": "object",
+    },
+    "RebuiltEncoded": {
+      "additionalProperties": true,
+      "properties": {
+        "quarantined": {
+          "minimum": 0,
+          "type": "integer",
+        },
+        "tickets": {
+          "minimum": 0,
+          "type": "integer",
+        },
+        "tombstones": {
+          "minimum": 0,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "tickets",
+        "tombstones",
+        "quarantined",
       ],
       "type": "object",
     },
@@ -10173,6 +10211,37 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         "$ref": "#/$defs/ImportedEncoded",
       },
       "tag": "tickets.import",
+    },
+    {
+      "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ProjectNotFoundEncoded",
+          },
+          {
+            "$ref": "#/$defs/RefusedEncoded",
+          },
+        ],
+      },
+      "group": "backlog",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "project": {
+            "pattern": "^\\S+$",
+            "type": "string",
+          },
+        },
+        "required": [
+          "project",
+        ],
+        "type": "object",
+      },
+      "stream": false,
+      "success": {
+        "$ref": "#/$defs/RebuiltEncoded",
+      },
+      "tag": "tickets.rebuild",
     },
     {
       "error": {

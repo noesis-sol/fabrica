@@ -20,6 +20,7 @@ export { StatusChange, statusChangeOf } from './status-change'
 export {
   layer as sqliteLayer,
   makeWorkGraph,
+  reactivityKeys,
   storeLayer,
   type WorkGraphOptions,
 } from './sqlite'

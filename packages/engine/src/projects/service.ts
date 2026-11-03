@@ -29,6 +29,7 @@ import {
   type TicketId,
 } from '@fabrica/contracts'
 
+import { engineIdentity } from '../engine/database'
 import { EngineFiles } from '../engine/paths'
 import {
   CloneOutcome,
@@ -38,6 +39,11 @@ import {
   ticketBranch,
 } from '../git'
 import type { SettingsProblems } from '../settings'
+import {
+  type TicketsSyncShape,
+  commitChanges,
+  makeTicketsSync,
+} from '../ticketsref'
 import {
   type OnBase,
   WorkGraph,
@@ -136,6 +142,10 @@ export interface ProjectsShape {
   readonly workGraph: (
     project: ProjectId,
   ) => Effect.Effect<WorkGraphShape, ProjectNotFound | WorkGraphUnopened>
+  /** The sync of the project's work graph and its tickets ref (§11.7), opened with the work graph. */
+  readonly ticketsSync: (
+    project: ProjectId,
+  ) => Effect.Effect<TicketsSyncShape, ProjectNotFound | WorkGraphUnopened>
   /** Whether a closed ticket of the project is on its Base, as the ready rule asks it (§13.3). */
   readonly onBase: (
     project: ProjectId,
@@ -152,6 +162,7 @@ export class Projects extends Context.Service<Projects, ProjectsShape>()(
 
 interface Opened {
   readonly graph: WorkGraphShape
+  readonly sync: TicketsSyncShape
   readonly scope: Scope.Closeable
 }
 
@@ -235,11 +246,11 @@ export const make = Effect.gen(function* () {
   /** Opens the project's work graph where it isn't open, with a watcher that sends its row on each change. */
   const open = (
     record: ProjectRecord,
-  ): Effect.Effect<WorkGraphShape, WorkGraphUnopened> =>
+  ): Effect.Effect<Opened, WorkGraphUnopened> =>
     openLock.withPermit(
       Effect.gen(function* () {
         const held = (yield* Ref.get(opened)).get(record.id)
-        if (held !== undefined) return held.graph
+        if (held !== undefined) return held
         if (yield* isRemoved(record.id))
           return yield* new WorkGraphUnopened({
             project: record.id,
@@ -283,10 +294,45 @@ export const make = Effect.gen(function* () {
           ),
           Effect.forkIn(own),
         )
-        yield* Ref.update(opened, map =>
-          new Map(map).set(record.id, { graph, scope: own }),
+        const failedToOpen = (error: unknown) =>
+          new WorkGraphUnopened({
+            project: record.id,
+            reason: reasonOf(error),
+          })
+        const sync = yield* withSql(engineIdentity()).pipe(
+          Effect.flatMap(engine =>
+            makeTicketsSync({
+              repo: record.path,
+              prefix: ticketPrefixFor(record.name),
+              engine,
+            }),
+          ),
+          Effect.provide(built),
+          withGit,
+          Effect.mapError(failedToOpen),
+          Effect.tapError(() => Scope.close(own, Exit.void)),
         )
-        return graph
+        const ticketChanges = yield* graph.changes.pipe(
+          Effect.provideService(Scope.Scope, own),
+          Effect.mapError(failedToOpen),
+          Effect.tapError(() => Scope.close(own, Exit.void)),
+        )
+        yield* commitChanges({
+          graph,
+          changes: ticketChanges,
+          commit: sync.commit,
+        }).pipe(
+          Effect.provideService(Scope.Scope, own),
+          Effect.catch(error =>
+            Effect.logWarning(
+              `the work graph of ${record.id} stopped sending its changes to its tickets ref: ${error.message}`,
+            ),
+          ),
+          Effect.forkIn(own),
+        )
+        const made: Opened = { graph, sync, scope: own }
+        yield* Ref.update(opened, map => new Map(map).set(record.id, made))
+        return made
       }),
     )
 
@@ -315,7 +361,7 @@ export const make = Effect.gen(function* () {
         [
           settingsExist(record.path),
           open(record).pipe(
-            Effect.flatMap(graph =>
+            Effect.flatMap(({ graph }) =>
               graph.ready({ onBase: onBaseOf(git, record) }),
             ),
             Effect.map(tickets => tickets.length),
@@ -574,7 +620,10 @@ export const make = Effect.gen(function* () {
       ),
     settings,
     setSettings,
-    workGraph: project => Effect.flatMap(find(project), open),
+    workGraph: project =>
+      Effect.map(Effect.flatMap(find(project), open), held => held.graph),
+    ticketsSync: project =>
+      Effect.map(Effect.flatMap(find(project), open), held => held.sync),
     onBase: project =>
       Effect.map(find(project), record => onBaseOf(git, record)),
     watchStatus: statusFeed.watch,

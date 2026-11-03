@@ -1,4 +1,4 @@
-import { Data, DateTime, Effect, Option, Schema } from 'effect'
+import { DateTime, Effect, Option, Schema } from 'effect'
 import { Argument, Command, Flag } from 'effect/cli'
 
 import {
@@ -20,7 +20,6 @@ import {
   edgeWords,
 } from '@fabrica/contracts'
 
-import { versionLine } from '../version'
 import { printAnswer } from './output'
 import { sanitise, sanitiseLine } from './sanitise'
 import { ticketsImport } from './tickets-import'
@@ -30,6 +29,7 @@ import {
   refused,
   withProject,
 } from './tickets-project'
+import { ticketsRebuild } from './tickets-rebuild'
 
 export { projectHolding, TicketsRefused } from './tickets-project'
 
@@ -37,15 +37,8 @@ export { projectHolding, TicketsRefused } from './tickets-project'
 // §11): the backlog of a project, through the engine's Backlog group, every change the maintainer's.
 // The project is `--project <id>`, or the one whose checkout holds the folder the command runs in.
 // `create --files` gives the files a ticket will change, its footprint (§13.4). `why` says each reason
-// in the engine's words. `rebuild` waits for the tickets ref (M4), and says so; `import --beads` is
-// its own file's. Values the engine sends are printed one to a line.
-
-/** `fabrica tickets rebuild`, which the tickets ref (M4) brings. */
-export class RebuildWaits extends Data.TaggedError('RebuildWaits')<{}> {
-  override get message() {
-    return `\`fabrica tickets rebuild\` is not in ${versionLine} yet: it rebuilds the backlog from the tickets ref, which comes with sync (M4)`
-  }
-}
+// in the engine's words. `rebuild` and `import --beads` are their own files'. Values the engine sends
+// are printed one to a line.
 
 /** `value` decoded by `schema`, or refused as not `what`. */
 const decoded = <A>(
@@ -776,10 +769,6 @@ const why = Command.make(
     ),
 ).pipe(Command.withDescription("Why a ticket isn't ready"))
 
-const rebuild = Command.make('rebuild', {}, () =>
-  Effect.fail(new RebuildWaits()),
-).pipe(Command.withDescription('Rebuilds the backlog from its ref'))
-
 export const tickets = Command.make('tickets').pipe(
   Command.withDescription('The backlog'),
   Command.withSubcommands([
@@ -795,7 +784,7 @@ export const tickets = Command.make('tickets').pipe(
     note,
     ready,
     why,
-    rebuild,
+    ticketsRebuild,
     ticketsImport,
   ]),
 )

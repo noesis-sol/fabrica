@@ -103,12 +103,29 @@ const mergeConflictEvents = statements(
   `CREATE INDEX events_merge_conflict ON events (ticket_id) WHERE type = 'merge_conflict'`,
 )
 
+/**
+ * The tickets ref's sync state (§11.7), engine-local: the last commit pushed and imported, the engine's
+ * ID and the last clock it issued, how far the events have been exported, the remote last named and
+ * the export's last warning. `tickets_sync_pending` holds what a merge has to record, written before
+ * the merge's commit reaches the ref, so a crash between the two loses none of it.
+ */
+const ticketsSync = statements(
+  `CREATE TABLE tickets_sync (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    engine_id TEXT NOT NULL, last_pushed TEXT, last_imported TEXT,
+    exported_seq INTEGER NOT NULL, last_clock TEXT NOT NULL,
+    named_remote TEXT, blocked TEXT)`,
+  `CREATE TABLE tickets_sync_pending (seq INTEGER PRIMARY KEY, commit_hash TEXT NOT NULL,
+    ticket_id TEXT NOT NULL, type TEXT NOT NULL, payload TEXT NOT NULL)`,
+)
+
 /** The engine's migrations, in order. */
 export const migrations: Migrations = {
   '0001_work_graph': workGraph,
   '0002_check_own_passes': checkOwnPasses,
   '0003_verifier_rounds': verifierRounds,
   '0004_events_merge_conflict': mergeConflictEvents,
+  '0005_tickets_sync': ticketsSync,
 }
 
 /** The schema version a set of migrations brings a database to: its highest number. */
