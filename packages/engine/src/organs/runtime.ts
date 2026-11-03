@@ -7,9 +7,11 @@ import {
   Effect,
   Exit,
   Option,
+  Pull,
   Redacted,
   Ref,
   Result,
+  Schedule,
   Schema,
   type Scope,
   Stream,
@@ -65,6 +67,7 @@ import type { CredentialsHoldShape, UsageHoldShape } from '../holds'
 import { Deadlines, coreShareVariables } from '../process'
 import { type Caller, ModelProxy, Permits, ProxyEvent, Refusal } from '../proxy'
 import { record } from '../run/records'
+import { RATE_BACKOFF } from '../run/supervisor'
 import type { RunLog } from '../runlog'
 import { modelName } from '../talks'
 import { Telemetry, TelemetryRow } from '../telemetry'
@@ -77,8 +80,10 @@ import { drawBase36 } from '../workgraph/ids'
 // project's) and can be turned off. Calls go through the model proxy under a token of their own, so its
 // permits and holds apply and the run's cost account counts them; a call refused for a usage limit or
 // its credential waits out its hold as a worker's turn does and goes again (§14.2, §14.6), rather than
-// fail ticket after ticket. Anything else that keeps one question from an answer, a defect among them,
-// loses that answer alone: logged, written to the run's records, and the organ's queue goes on.
+// fail ticket after ticket, and one refused for a rate limit backs off as a worker's does (§12.8). A
+// limit doesn't count while its provider is held. Anything else that keeps one question from an answer,
+// a defect among them, loses that answer alone: logged, written to the run's records, and the organ's
+// queue goes on.
 
 /** What an organ's question came to. */
 export type OrganOutcome<A> = Data.TaggedEnum<{
@@ -129,13 +134,15 @@ export interface OrganSessionQuestion<A> extends OrganQuestion<A> {
 export interface OrganHolds {
   readonly usage: Pick<UsageHoldShape, 'waitOut'>
   readonly credentials: Pick<CredentialsHoldShape, 'waitOut'>
+  /** The providers the run's holds hold (`heldProviders`): their value now, then each change. */
+  readonly held: Stream.Stream<ReadonlySet<ProviderName>>
 }
 
-/** Each wait's limit, in time awake (§7.7). */
+/** Each wait's limit, in time awake (§7.7); while its provider is held it stops, and starts again at the lift. */
 export interface OrganLimits {
   /** For one model call's answer, from its permit on. */
   readonly call: Duration.Duration
-  /** For one turn of a session, from its permit on; a call the proxy holds mid-turn counts in it. */
+  /** For one turn of a session, from its permit on. */
   readonly session: Duration.Duration
 }
 
@@ -164,6 +171,8 @@ export interface OrganConfig {
   /** pi-ai's tables (`piPriceTable`), unless another is given. */
   readonly prices?: PriceTable
   readonly limits?: OrganLimits
+  /** A rate limit's backoff, a worker's (`RATE_BACKOFF`) unless another is given. */
+  readonly backoff?: Schedule.Schedule<Duration.Duration>
 }
 
 export interface OrganRuntime {
@@ -269,17 +278,48 @@ export const makeOrganRuntime = Effect.fn('Organs.make')(function* (
   const models = builtinModels()
   const prices = config.prices ?? piPriceTable()
   const limits = config.limits ?? DEFAULT_ORGAN_LIMITS
+  const backoff = config.backoff ?? RATE_BACKOFF
 
-  /** Waits up to `limit` for `effect`, as the deadlines count time; past it, the answer is lost. */
+  /** Ends once `limit` has passed with `provider` not held, as the deadlines count time. */
+  const limitPassed = (provider: ProviderName, limit: Duration.Duration) =>
+    Option.match(config.holds, {
+      onNone: () => deadlines.sleep(limit),
+      onSome: ({ held }) =>
+        Effect.gen(function* () {
+          /** Ends when the provider first is as `wanted`; never, where the holds are gone before it is. */
+          const until = (wanted: boolean) =>
+            held.pipe(
+              Stream.filter(providers => providers.has(provider) === wanted),
+              Stream.runHead,
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => Effect.never,
+                  onSome: () => Effect.void,
+                }),
+              ),
+            )
+          for (;;) {
+            const passed = yield* Effect.raceFirst(
+              Effect.as(deadlines.sleep(limit), true),
+              Effect.as(until(true), false),
+            )
+            if (passed) return
+            yield* until(false)
+          }
+        }),
+    })
+
+  /** Waits up to `limit` for `effect`; past it, the answer is lost. */
   const within = <A, E, R>(
     effect: Effect.Effect<A, E, R>,
+    provider: ProviderName,
     limit: Duration.Duration,
     what: string,
   ) =>
     Effect.raceFirst(
       effect,
       Effect.andThen(
-        deadlines.sleep(limit),
+        limitPassed(provider, limit),
         Effect.fail(
           new AnswerLost({
             reason: `${what} didn't end within ${formatDurationMillis(Duration.toMillis(limit))}`,
@@ -297,35 +337,66 @@ export const makeOrganRuntime = Effect.fn('Organs.make')(function* (
       }),
     )
 
-  /** Waits out the hold a refusal raised; false for a refusal no hold takes, or with no holds to wait on. */
-  const heldOut = (provider: ProviderName, refusal: Refusal) =>
-    Option.match(config.holds, {
-      onNone: () => Effect.succeed(false),
-      onSome: holds =>
-        Refusal.$match(refusal, {
-          UsageLimited: ({ resetAt }) =>
-            Effect.as(
-              holds.usage.waitOut({
-                ticket: Option.none(),
-                provider,
-                resetAt,
+  /**
+   * A question's waits on `provider`'s refusals: each waits out what a refusal asks and says whether to
+   * go again. A usage limit and a refused credential wait out their hold, with no holds to wait on not
+   * at all; a rate limit backs off, one backoff for the question, until it is spent; a start that failed
+   * goes no further (§12.9: no call to the provider has gone through in the run, so no hold takes it).
+   */
+  const waitsOn = (provider: ProviderName) =>
+    Effect.map(
+      Schedule.toStep(backoff),
+      step =>
+        (refusal: Refusal): Effect.Effect<boolean> =>
+          Refusal.$match(refusal, {
+            UsageLimited: ({ resetAt }) =>
+              Option.match(config.holds, {
+                onNone: () => Effect.succeed(false),
+                onSome: holds =>
+                  Effect.as(
+                    holds.usage.waitOut({
+                      ticket: Option.none(),
+                      provider,
+                      resetAt,
+                    }),
+                    true,
+                  ),
               }),
-              true,
-            ),
-          CredentialRefused: ({ account, reason }) =>
-            Effect.as(
-              holds.credentials.waitOut({
-                ticket: Option.none(),
-                provider,
-                account,
-                reason,
+            CredentialRefused: ({ account, reason }) =>
+              Option.match(config.holds, {
+                onNone: () => Effect.succeed(false),
+                onSome: holds =>
+                  Effect.as(
+                    holds.credentials.waitOut({
+                      ticket: Option.none(),
+                      provider,
+                      account,
+                      reason,
+                    }),
+                    true,
+                  ),
               }),
-              true,
-            ),
-          RateLimited: () => Effect.succeed(false),
-          StartFailed: () => Effect.succeed(false),
-        }),
-    })
+            RateLimited: ({ retryAfter }) =>
+              Effect.gen(function* () {
+                const delay = yield* step(
+                  yield* Clock.currentTimeMillis,
+                  undefined,
+                ).pipe(
+                  Effect.map(([, wait]) => Option.some(wait)),
+                  Pull.catchDone(() => Effect.succeedNone),
+                )
+                if (Option.isNone(delay)) return false
+                yield* deadlines.sleep(
+                  Option.match(retryAfter, {
+                    onNone: () => delay.value,
+                    onSome: asked => Duration.max(asked, delay.value),
+                  }),
+                )
+                return true
+              }),
+            StartFailed: () => Effect.succeed(false),
+          }),
+    )
 
   /** Writes a question's `organ` record and its telemetry row, and says so where its answer was lost. */
   const finish = Effect.fn('Organs.finish')(function* (input: {
@@ -548,20 +619,19 @@ export const makeOrganRuntime = Effect.fn('Organs.make')(function* (
           },
         ]
         let retried = false
+        const waitOut = yield* waitsOn(provider)
         for (;;) {
           yield* permitted(asking)
           yield* Ref.set(asking.refused, Option.none())
           const reply = yield* within(
             call(messages),
+            provider,
             limits.call,
             'the model call',
           )
           if (reply.stopReason === 'error' || reply.stopReason === 'aborted') {
             const refusal = yield* Ref.get(asking.refused)
-            if (
-              Option.isSome(refusal) &&
-              (yield* heldOut(provider, refusal.value))
-            )
+            if (Option.isSome(refusal) && (yield* waitOut(refusal.value)))
               continue
             return yield* new AnswerLost({
               reason:
@@ -621,27 +691,17 @@ export const makeOrganRuntime = Effect.fn('Organs.make')(function* (
         const decode = Schema.decodeUnknownEffect(question.answer, {
           onExcessProperty: 'error',
         })
-        // The answer, or what lost it; Pi gives a refused answer back to the model, once.
+        // The answer, or what lost it.
         const answered = yield* Deferred.make<A, AnswerLost>()
-        const refusedOnce = yield* Ref.make(false)
         const take = (given: unknown) =>
           decode(given).pipe(
             Effect.matchEffect({
               onSuccess: answer =>
                 Effect.asVoid(Deferred.succeed(answered, answer)),
               onFailure: issue =>
-                Effect.gen(function* () {
-                  if (yield* Ref.getAndSet(refusedOnce, true))
-                    yield* Deferred.fail(
-                      answered,
-                      new AnswerLost({
-                        reason: `its answer failed to decode twice: ${issue.message}`,
-                      }),
-                    )
-                  return yield* Effect.fail(
-                    ToolRefusal.cases.invalid.make({ issue: issue.message }),
-                  )
-                }),
+                Effect.fail(
+                  ToolRefusal.cases.invalid.make({ issue: issue.message }),
+                ),
             }),
           )
         const channel = yield* control.open({
@@ -703,6 +763,25 @@ export const makeOrganRuntime = Effect.fn('Organs.make')(function* (
           // The engine's own priority: an organ isn't a worker (H73).
           nice: Option.none(),
         })
+        // Pi gives a refused answer back to the model, once: refused by Pi's check of its JSON Schema,
+        // which the engine never hears of, or by the organ's schema above.
+        yield* (yield* agent.events).pipe(
+          Stream.filter(
+            event =>
+              event.type === 'tool_execution_end' &&
+              event.toolName === AnswerToolName &&
+              event.isError,
+          ),
+          Stream.drop(1),
+          Stream.runForEach(() =>
+            Deferred.fail(
+              answered,
+              new AnswerLost({ reason: 'its answer was refused twice' }),
+            ),
+          ),
+          Effect.forkScoped,
+        )
+        const waitOut = yield* waitsOn(provider)
         const turns = Effect.gen(function* () {
           let message = `${question.instructions}\n\n${prompt}`
           for (;;) {
@@ -712,6 +791,7 @@ export const makeOrganRuntime = Effect.fn('Organs.make')(function* (
                 Effect.as(agent.prompt(message), Option.none<A>()),
                 Effect.map(Deferred.await(answered), Option.some),
               ),
+              provider,
               limits.session,
               "the session's turn",
             )
@@ -719,15 +799,12 @@ export const makeOrganRuntime = Effect.fn('Organs.make')(function* (
             const polled = yield* Deferred.poll(answered)
             if (Option.isSome(polled)) return yield* polled.value
             const refusal = yield* Ref.get(asking.refused)
-            if (
-              Option.isNone(refusal) ||
-              !(yield* heldOut(provider, refusal.value))
-            )
+            if (Option.isNone(refusal) || !(yield* waitOut(refusal.value)))
               return yield* new AnswerLost({
                 reason: 'its session settled with no answer',
               })
             yield* permitted(asking)
-            message = `Your turn ended as ${provider} refused its call, and the hold on it has lifted: carry on, and end through ${AnswerToolName}.`
+            message = `Your turn ended as ${provider} refused its call, and it may be called again: carry on, and end through ${AnswerToolName}.`
           }
         })
         const ended = yield* Effect.exit(turns)

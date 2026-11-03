@@ -9,8 +9,10 @@ import {
   Option,
   PubSub,
   Redacted,
+  Schedule,
   Schema,
   Stream,
+  SubscriptionRef,
 } from 'effect'
 import { RpcClient, RpcSerialization } from 'effect/rpc'
 import { TestClock } from 'effect/testing'
@@ -77,6 +79,7 @@ import {
   organSessionTools,
 } from '../src/organs'
 import {
+  Deadlines,
   type RunnerConfig,
   hostHolders,
   hostPriority,
@@ -370,7 +373,8 @@ const routesAt = (url: string): ReadonlyArray<ProviderRoute> => [
 /**
  * A stub of `pi --mode rpc` that logs how it was started, and answers as its prompt's first word says:
  * `good` answers; `bad-then-good` gives an answer that doesn't decode, then one that does; `bad-twice`
- * two that don't; `silent` settles with none; `unfinished` reports the session unfinished; `refused`
+ * two that don't, then waits; `pi-refuses-twice` reports two calls Pi's own check refused, which never
+ * reach the engine, then waits; `hang-please` calls the model proxy, then answers; `silent` settles with none; `unfinished` reports the session unfinished; `refused`
  * calls the model proxy, then settles with none, and answers on the prompt after; `tools` tries a
  * worker's tool and the verifier's, then answers.
  */
@@ -417,6 +421,10 @@ const control = () => {
   })
   return socket
 }
+const toolEnd = (toolName, isError) =>
+  out({ type: 'tool_execution_end', toolCallId: 'call-' + next, toolName, isError })
+const answering = input =>
+  call('answer', input).then(exit => toolEnd('answer', exit._tag !== 'Success'))
 const call = (tag, payload) =>
   new Promise(resolve => {
     const id = String(next++)
@@ -446,22 +454,32 @@ let prompts = 0
 const work = async message => {
   prompts += 1
   note({ event: 'prompt', message })
-  if (/\\bgood-please\\b/.test(message)) return call('answer', good)
+  if (/\\bgood-please\\b/.test(message)) return answering(good)
   if (/\\bbad-then-good\\b/.test(message)) {
-    await call('answer', bad)
-    return call('answer', good)
+    await answering(bad)
+    return answering(good)
   }
   if (/\\bbad-twice\\b/.test(message)) {
-    await call('answer', bad)
-    return call('answer', bad)
+    await answering(bad)
+    await answering(bad)
+    return new Promise(() => undefined)
+  }
+  if (/\\bpi-refuses-twice\\b/.test(message)) {
+    toolEnd('answer', true)
+    toolEnd('answer', true)
+    return new Promise(() => undefined)
+  }
+  if (/\\bhang-please\\b/.test(message)) {
+    await callProxy()
+    return answering(good)
   }
   if (/\\bunfinished-please\\b/.test(message)) return call('report_unfinished', {})
-  if (/\\brefused-please\\b/.test(message)) return prompts > 1 ? call('answer', good) : callProxy()
-  if (/carry on/.test(message)) return call('answer', good)
+  if (/\\brefused-please\\b/.test(message)) return prompts > 1 ? answering(good) : callProxy()
+  if (/carry on/.test(message)) return answering(good)
   if (/\\btools-please\\b/.test(message)) {
     await call('add_note', { body: 'an organ writes nothing' })
     await call('verdict', { verdict: { _tag: 'PASS', summary: 'Mine.', findings: [] } })
-    return call('answer', good)
+    return answering(good)
   }
 }
 const handle = command => {
@@ -1139,6 +1157,7 @@ describe("an organ's refused call", () => {
         const organHolds: OrganHolds = {
           usage: { waitOut: () => Effect.void },
           credentials,
+          held: holds.changes.pipe(Stream.map(heldProviders)),
         }
         const runtime = yield* runtimeOf(place, {
           log: Option.some(log),
@@ -1201,6 +1220,7 @@ describe("an organ's refused call", () => {
                 }),
             },
             credentials: { waitOut: () => Effect.void },
+            held: Stream.make(new Set<string>()),
           }),
         }).pipe(Effect.provide(context))
         expect(yield* runtime.ask(question(one))).toMatchObject({
@@ -1215,6 +1235,190 @@ describe("an organ's refused call", () => {
         ])
         expect(provider.seen).toHaveLength(2)
       }),
+  )
+
+  const rateLimited = (headers: Readonly<Record<string, string>>): Reply => ({
+    status: 429,
+    headers: { 'content-type': 'application/json', ...headers },
+    body: JSON.stringify({
+      type: 'error',
+      error: { type: 'rate_limit_error', message: 'slow down' },
+    }),
+  })
+
+  /** Deadlines that never pass a limit of `limit`, and let any other wait through at once, keeping it. */
+  const slept = (limit: Duration.Duration) => {
+    const waits: Array<Duration.Duration> = []
+    return {
+      waits,
+      deadlines: Deadlines.of({
+        sleep: duration =>
+          Duration.equals(Duration.fromInputUnsafe(duration), limit)
+            ? Effect.never
+            : Effect.sync(() => {
+                waits.push(Duration.fromInputUnsafe(duration))
+              }),
+      }),
+    }
+  }
+
+  it.live(
+    'a rate limit backs off as a worker’s does, as long as the provider asks, then goes again',
+    () =>
+      Effect.gen(function* () {
+        const { provider, place, context } = yield* setting([
+          rateLimited({ 'retry-after': '120' }),
+          rateLimited({}),
+          called(goodAnswer),
+        ])
+        const limit = Duration.minutes(10)
+        const clock = slept(limit)
+        const runtime = yield* runtimeOf(place, {
+          limits: { call: limit, session: limit },
+        }).pipe(
+          Effect.provideService(Deadlines, clock.deadlines),
+          Effect.provide(context),
+        )
+        expect(yield* runtime.ask(question(one))).toMatchObject({
+          _tag: 'Answered',
+        })
+        expect(provider.seen).toHaveLength(3)
+        // The provider's 120 s over the backoff's first 30 s; then the backoff's second, 60 s.
+        expect(clock.waits.map(Duration.toSeconds)).toEqual([120, 60])
+      }),
+  )
+
+  it.live('a rate limit past its backoff loses that answer alone', () =>
+    Effect.gen(function* () {
+      const { provider, place, context } = yield* setting([
+        rateLimited({}),
+        rateLimited({}),
+        called(goodAnswer),
+      ])
+      const limit = Duration.minutes(10)
+      const runtime = yield* runtimeOf(place, {
+        limits: { call: limit, session: limit },
+        backoff: Schedule.exponential(Duration.seconds(1)).pipe(
+          Schedule.upTo({ times: 1 }),
+        ),
+      }).pipe(
+        Effect.provideService(Deadlines, slept(limit).deadlines),
+        Effect.provide(context),
+      )
+      const outcomes = yield* Effect.forEach(
+        [question(one), question(two)],
+        asked => runtime.ask(asked),
+      )
+      expect(tags(outcomes)).toEqual(['NoResult', 'Answered'])
+      expect(provider.seen).toHaveLength(3)
+    }),
+  )
+
+  /** The holds' held providers, which a test changes, as a run's holds do. */
+  const heldBy = Effect.gen(function* () {
+    const held = yield* SubscriptionRef.make<ReadonlySet<string>>(new Set())
+    const holds: OrganHolds = {
+      usage: { waitOut: () => Effect.void },
+      credentials: { waitOut: () => Effect.void },
+      held: SubscriptionRef.changes(held),
+    }
+    return { held, holds }
+  })
+
+  /** Lets the fibers waiting on what just changed see it, before the clock moves. */
+  const settled = Effect.repeat(Effect.yieldNow, { times: 20 })
+
+  it.effect(
+    "a call's limit doesn't count while its provider is held, and counts again from the lift",
+    () =>
+      Effect.gen(function* () {
+        const { provider, place, context } = yield* setting(['hang'])
+        const { held, holds } = yield* heldBy
+        const limit = Duration.minutes(1)
+        const runtime = yield* runtimeOf(place, {
+          holds: Option.some(holds),
+          limits: { call: limit, session: limit },
+        }).pipe(Effect.provide(context))
+        const reached = yield* Deferred.make<void>()
+        provider.came.push(() => Deferred.doneUnsafe(reached, Exit.void))
+        const asking = yield* Effect.forkChild(runtime.ask(question(one)))
+        yield* Deferred.await(reached)
+        yield* settled
+        yield* SubscriptionRef.set(held, new Set(['anthropic']))
+        yield* settled
+        yield* TestClock.adjust(Duration.hours(5))
+        expect(asking.pollUnsafe()).toBeUndefined()
+        yield* SubscriptionRef.set(held, new Set<string>())
+        yield* settled
+        yield* TestClock.adjust(Duration.seconds(59))
+        expect(asking.pollUnsafe()).toBeUndefined()
+        yield* TestClock.adjust(Duration.seconds(1))
+        expect(yield* Fiber.join(asking)).toMatchObject({
+          _tag: 'NoResult',
+          reason: expect.stringContaining('within'),
+        })
+      }),
+    sessionTimeout,
+  )
+
+  it.live(
+    "a session's turn outlasts a hold on its provider: no limit waits during it, and one waits again from the lift",
+    () =>
+      Effect.gen(function* () {
+        const { provider, place, context } = yield* setting(['hang'])
+        const { held, holds } = yield* heldBy
+        const sleepers = new Set<Deferred.Deferred<void>>()
+        const sleeping = (count: number) =>
+          Effect.repeat(
+            Effect.sync(() => sleepers.size),
+            { until: size => size === count },
+          )
+        const passLimit = Effect.sync(() => {
+          for (const sleeper of sleepers)
+            Deferred.doneUnsafe(sleeper, Exit.void)
+        })
+        const runtime = yield* runtimeOf(place, {
+          holds: Option.some(holds),
+        }).pipe(
+          Effect.provideService(
+            Deadlines,
+            Deadlines.of({
+              sleep: () =>
+                Effect.acquireUseRelease(
+                  Effect.tap(Deferred.make<void>(), sleeper =>
+                    Effect.sync(() => sleepers.add(sleeper)),
+                  ),
+                  Deferred.await,
+                  sleeper => Effect.sync(() => sleepers.delete(sleeper)),
+                ),
+            }),
+          ),
+          Effect.provide(context),
+        )
+        const reached = yield* Deferred.make<void>()
+        provider.came.push(() => Deferred.doneUnsafe(reached, Exit.void))
+        const asking = yield* Effect.forkChild(
+          runtime.session({
+            ...question(one, { prompt: Effect.succeed('hang-please') }),
+            cores: 1,
+          }),
+        )
+        yield* Deferred.await(reached)
+        yield* sleeping(1)
+        yield* SubscriptionRef.set(held, new Set(['anthropic']))
+        // The hold stops the turn's limit: nothing is left to pass.
+        yield* sleeping(0)
+        yield* passLimit
+        expect(asking.pollUnsafe()).toBeUndefined()
+        yield* SubscriptionRef.set(held, new Set<string>())
+        yield* sleeping(1)
+        yield* passLimit
+        expect(yield* Fiber.join(asking)).toMatchObject({
+          _tag: 'NoResult',
+          reason: expect.stringContaining('within'),
+        })
+      }),
+    sessionTimeout,
   )
 
   it.live(
@@ -1311,6 +1515,25 @@ describe('an organ asking through a short Pi session', () => {
   )
 
   it.live(
+    "counts the calls Pi's own check refuses, which the engine never hears of",
+    () =>
+      Effect.gen(function* () {
+        const { place, context } = yield* setting([])
+        const runtime = yield* runtimeOf(place).pipe(Effect.provide(context))
+        expect(
+          yield* runtime.session(sessionQuestion('pi-refuses-twice')),
+        ).toMatchObject({
+          _tag: 'NoResult',
+          reason: 'its answer was refused twice',
+        })
+        expect(
+          stubLog(place).filter(entry => entry['event'] === 'call'),
+        ).toEqual([])
+      }),
+    sessionTimeout,
+  )
+
+  it.live(
     'loses the answer of a second that fails to decode, and of a session that settles with none',
     () =>
       Effect.gen(function* () {
@@ -1322,7 +1545,7 @@ describe('an organ asking through a short Pi session', () => {
         )
         expect(tags(outcomes)).toEqual(['NoResult', 'NoResult', 'NoResult'])
         expect(outcomes[0]).toMatchObject({
-          reason: expect.stringContaining('failed to decode twice'),
+          reason: 'its answer was refused twice',
         })
         expect(outcomes[1]).toMatchObject({
           reason: 'its session settled with no answer',
@@ -1372,6 +1595,7 @@ describe('an organ asking through a short Pi session', () => {
                   waits.push(input)
                 }),
             },
+            held: Stream.make(new Set<string>()),
           }),
         }).pipe(Effect.provide(context))
         // A call goes through first, so that the session's refused one is the credentials hold's.

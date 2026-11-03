@@ -712,6 +712,12 @@ describe('the Pi contract', () => {
             }),
           },
         })
+        // Each `answer` Pi ended, for the organ's count of those refused: Pi's own check's among them.
+        const ended = yield* (yield* agent.events).pipe(
+          Stream.takeUntil(event => event.type === 'agent_settled'),
+          Stream.runCollect,
+          Effect.forkScoped,
+        )
         const settled = yield* agent.prompt('Which files?')
         expect(settled.aborted).toBe(false)
         expect(stub.unserved).toEqual([])
@@ -736,6 +742,15 @@ describe('the Pi contract', () => {
         expect(
           calls.filter(call => call.rpc === 'answer').map(call => call.payload),
         ).toEqual([{ answer: ['src/a.ts'] }])
+        const answers = (yield* Fiber.join(ended)).flatMap(event =>
+          event.type === 'tool_execution_end' && event.toolName === 'answer'
+            ? [[event.toolCallId, event.isError]]
+            : [],
+        )
+        expect(answers).toEqual([
+          ['toolu_bad', true],
+          ['toolu_good', false],
+        ])
         expect(yield* settledEntries(sessionFile(agent.session))).toEqual([
           { outcome: 'answer', nudged: false, aborted: false },
         ])

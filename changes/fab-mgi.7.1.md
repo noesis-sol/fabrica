@@ -2,4 +2,5 @@
   organ's schema and retried once with the error, or through a short read-only Pi session in the checkout ending
   in the same tool, on `organs.<name>.model` (else the project's) unless it is turned off. Its calls take the
   model proxy's permits and accounting; a usage limit or a refused credential waits out its hold and goes again,
-  and anything else loses that one ticket's answer, logged, while the organ's queue goes on.
+  a rate limit backs off as a worker's does, its time limit stops while its provider is held, and anything else
+  loses that one ticket's answer, logged, while the organ's queue goes on.
