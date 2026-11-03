@@ -1,5 +1,6 @@
 import { Data, Effect, Option, Runtime } from 'effect'
 import { spawn } from 'node:child_process'
+import * as NodePath from 'node:path'
 
 import { formatListenAddress } from '@fabrica/contracts'
 
@@ -14,7 +15,9 @@ import type { ServiceManager } from '../service/outcome'
 // get a command's allowlisted environment (§20.2): it is the daemon, and takes the old engine's own
 // environment as its host's, the ssh-agent, ssh command, proxies and CA variables its git's network
 // commands pass on among it (§11.7). It keeps the old engine's `serve` flags too, its TLS listener's
-// (§9.3), their files' paths made absolute, since it runs from the home folder. Run by the login service
+// (§9.3) and its passphrase file's (§20.3), their files' paths made absolute, since it runs from the
+// home folder; a passphrase typed at the old engine's prompt isn't carried, so on a host with no
+// keyring the new engine refuses its runs until it is started again where its passphrase can be given. Run by the login service
 // (§7.1), it starts nothing and exits for the service's manager to start the new engine from the link
 // the update switched, since the manager would kill or double a `fabrica serve` the engine started.
 
@@ -28,10 +31,14 @@ export class RelaunchFailed extends Data.TaggedError('RelaunchFailed')<{
   }
 }
 
-/** `fabrica serve`'s arguments for the TLS listener's flags: each flag given, its paths absolute. */
-export const serveArguments = (
-  flags: ListenSettings,
-): ReadonlyArray<string> => {
+/** `fabrica serve`'s flags, given again to the engine it restarts as. */
+export interface ServeFlags extends ListenSettings {
+  /** The file the secret store's passphrase is read from, where no keyring answers (§20.3). */
+  readonly passphrase_file: Option.Option<string>
+}
+
+/** `fabrica serve`'s arguments for its flags: each flag given, its paths absolute. */
+export const serveArguments = (flags: ServeFlags): ReadonlyArray<string> => {
   const absolute = absoluteListenPaths(flags)
   return [
     'serve',
@@ -47,6 +54,10 @@ export const serveArguments = (
       onNone: () => [],
       onSome: path => ['--listen-key', path],
     }),
+    ...Option.match(flags.passphrase_file, {
+      onNone: () => [],
+      onSome: path => ['--passphrase-file', NodePath.resolve(path)],
+    }),
   ]
 }
 
@@ -55,14 +66,14 @@ export const relaunch = Effect.fn('Update.relaunch')(function* ({
   launcher,
   cwd,
   hostEnvironment,
-  listen,
+  flags,
 }: {
   readonly launcher: string
   readonly cwd: string
   /** The engine's own environment, read once where it started: the new engine's, whole. */
   readonly hostEnvironment: Readonly<Record<string, string | undefined>>
-  /** The engine's `serve` flags for its TLS listener, given again to the new engine. */
-  readonly listen: ListenSettings
+  /** The engine's `serve` flags, given again to the new engine. */
+  readonly flags: ServeFlags
 }) {
   return yield* Effect.callback<void, RelaunchFailed>(resume => {
     const failed = (error: unknown) =>
@@ -75,7 +86,7 @@ export const relaunch = Effect.fn('Update.relaunch')(function* ({
         ),
       )
     try {
-      const child = spawn(launcher, serveArguments(listen), {
+      const child = spawn(launcher, serveArguments(flags), {
         cwd,
         env: hostEnvironment,
         detached: true,

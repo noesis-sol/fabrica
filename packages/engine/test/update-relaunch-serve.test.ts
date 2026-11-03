@@ -27,6 +27,7 @@ const noFlags = {
   listen: Option.none(),
   listen_certificate: Option.none(),
   listen_key: Option.none(),
+  passphrase_file: Option.none(),
 }
 
 describe('the relaunched engine’s serve flags', () => {
@@ -39,6 +40,7 @@ describe('the relaunched engine’s serve flags', () => {
       listen: Option.some({ host: Option.some('::1'), port: 8443 }),
       listen_certificate: Option.some('/etc/fabrica/cert.pem'),
       listen_key: Option.some('certs/key.pem'),
+      passphrase_file: Option.none(),
     })
     expect(given.slice(0, 6)).toStrictEqual([
       'serve',
@@ -90,15 +92,16 @@ describe('the relaunched engine', () => {
             GIT_SSH_COMMAND: 'ssh -i key',
             https_proxy: 'http://proxy:3128',
           },
-          listen: {
+          flags: {
             listen: Option.some({ host: Option.some('0.0.0.0'), port: 8443 }),
             listen_certificate: Option.some('/certs/cert.pem'),
             listen_key: Option.some('/certs/key.pem'),
+            passphrase_file: Option.some('/home/ada/.fabrica-passphrase'),
           },
         })
         yield* appears(said)
         expect(yield* Effect.promise(() => readFile(said, 'utf8'))).toBe(
-          'serve --listen 0.0.0.0:8443 --listen-certificate /certs/cert.pem --listen-key /certs/key.pem|/tmp/agent.sock|ssh -i key|http://proxy:3128\n',
+          'serve --listen 0.0.0.0:8443 --listen-certificate /certs/cert.pem --listen-key /certs/key.pem --passphrase-file /home/ada/.fabrica-passphrase|/tmp/agent.sock|ssh -i key|http://proxy:3128\n',
         )
       }).pipe(Effect.scoped),
   )

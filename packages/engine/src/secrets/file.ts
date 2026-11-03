@@ -18,13 +18,22 @@ import type { ItemStore } from './values'
 // The encrypted file a host with no keyring keeps the credentials in (spec §20.3):
 // `<data>/secrets/credentials.enc`, mode 0600 in a folder only the engine's user enters. Its items
 // are one JSON object, sealed with AES-256-GCM under a key scrypt derives from the passphrase given
-// at the engine's start, or read from a file only the user can read (for a service). The file is
-// written whole through the engine's one writer (H84), and read afresh for every operation.
+// at the engine's start, typed at its prompt, or read from a file only the user can read (for a
+// service). A passphrase typed for a file not yet there is typed twice, since a typo would lock the
+// credentials it seals. The file is written whole through the engine's one writer (H84), and read
+// afresh for every operation.
+
+/** Shows `message` at a prompt and gives what was typed there, or none where nothing was (its input ended). */
+export type PassphraseAsk = (
+  message: string,
+) => Effect.Effect<Option.Option<Redacted.Redacted<string>>>
 
 /** Where the passphrase comes from. */
 export type PassphraseSource = Data.TaggedEnum<{
-  /** Given at the engine's start (typed at its prompt, or by the CLI). */
+  /** Given at the engine's start. */
   Given: { readonly passphrase: Redacted.Redacted<string> }
+  /** Typed at the engine's prompt, asked only where no keyring answers. */
+  Prompted: { readonly ask: PassphraseAsk }
   /** A file only its user can read or write (mode 0600 or tighter), for an engine run as a service. */
   File: { readonly path: string }
 }>
@@ -177,6 +186,40 @@ export const readPassphraseFile = Effect.fn('Secrets.readPassphraseFile')(
   },
 )
 
+/** A passphrase typed at the prompt for the file at `path`, twice where `creating` it. */
+const typedPassphrase = Effect.fn('Secrets.typedPassphrase')(function* ({
+  ask,
+  path,
+  creating,
+}: {
+  readonly ask: PassphraseAsk
+  readonly path: string
+  readonly creating: boolean
+}) {
+  const refused = (reason: string) => new PassphraseRefused({ path, reason })
+  const typed = (message: string) =>
+    Effect.flatMap(
+      ask(message),
+      Option.match({
+        onNone: () => Effect.fail(refused('no passphrase was typed')),
+        onSome: passphrase =>
+          Redacted.value(passphrase) === ''
+            ? Effect.fail(refused('the passphrase typed is empty'))
+            : Effect.succeed(passphrase),
+      }),
+    )
+  const passphrase = yield* typed(
+    creating
+      ? `A new passphrase for the engine's credentials, in ${path}: `
+      : `The passphrase for the engine's credentials, in ${path}: `,
+  )
+  if (!creating) return passphrase
+  const again = yield* typed('The same passphrase again: ')
+  if (Redacted.value(again) !== Redacted.value(passphrase))
+    return yield* refused("the two passphrases typed don't match")
+  return passphrase
+})
+
 /** Makes `<data>/secrets/` where it is missing, mode 0700, and refuses anything else standing there. */
 const secretsFolder = Effect.fn('Secrets.secretsFolder')(function* (
   data: string,
@@ -214,10 +257,6 @@ export const openSecretsFile = Effect.fn('Secrets.openSecretsFile')(
   }) {
     const location = { root: options.data, path: SECRETS_FILE }
     const path = NodePath.join(options.data, SECRETS_FILE)
-    const passphrase = yield* PassphraseSource.$match(options.passphrase, {
-      Given: ({ passphrase }) => Effect.succeed(passphrase),
-      File: ({ path }) => readPassphraseFile(path),
-    })
     const refused = (reason: string) => new PassphraseRefused({ path, reason })
     const storeFailed = (operation: string) => (error: { message: string }) =>
       new SecretStoreFailed({ store: 'file', operation, reason: error.message })
@@ -246,6 +285,12 @@ export const openSecretsFile = Effect.fn('Secrets.openSecretsFile')(
     })
 
     const found = yield* readEnvelope
+    const passphrase = yield* PassphraseSource.$match(options.passphrase, {
+      Given: ({ passphrase }) => Effect.succeed(passphrase),
+      Prompted: ({ ask }) =>
+        typedPassphrase({ ask, path, creating: Option.isNone(found) }),
+      File: ({ path }) => readPassphraseFile(path),
+    })
     const kdf: Envelope['kdf'] = Option.match(found, {
       onNone: () => ({
         name: 'scrypt',

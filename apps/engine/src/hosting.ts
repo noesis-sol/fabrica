@@ -143,21 +143,25 @@ export interface HostingConfig {
  * The run hosting on this host: its processes, its sleep causes, its battery, keeping it awake, its
  * keyring, its zone and the known providers.
  */
-export const onHost = (options: {
+export const onHost = ({
+  passphrase,
+  ...options
+}: {
   readonly paths: Daemon.EnginePaths
   readonly cores: number
   readonly agents: AgentPlaces
+  /** The encrypted file's passphrase, where no keyring answers: none has a host with no keyring refuse its runs. */
+  readonly passphrase: Option.Option<Secrets.PassphraseSource>
 }): HostingConfig => ({
   ...options,
   runner: Process.layerHost,
   sleepCauses: sleepCausesFor(process.platform),
   battery: batteryFor(process.platform),
   keepAwakeHost: hostKeepAwake(),
-  // No passphrase is given yet: a host with no keyring has its runs refused, saying so.
   secrets: Secrets.layerHost({
     platform: process.platform,
     data: options.paths.data,
-    passphrase: Option.none(),
+    passphrase,
   }),
   routes: Proxy.knownRoutes,
   zone: DateTime.layerCurrentZoneLocal,

@@ -9,7 +9,8 @@ import { ServiceManager } from './outcome'
 // link the install script makes and an update switches (§9.2), so the service starts the release the
 // link names. It carries the installing shell's PATH, so the engine finds the tools its projects' checks
 // run, and the XDG folders that place the engine's files (§7.2), so the service's engine and the CLI
-// find the same data folder and socket.
+// find the same data folder and socket. Where its engine keeps its credentials in the encrypted file
+// (§20.3), with no prompt to type their passphrase at, the service gives `serve` the file it is read from.
 //
 // Stopped by its manager, the engine alone gets SIGTERM and winds its runs down (§7.1): on Linux,
 // `KillMode=mixed` sends SIGTERM to the main process only, then SIGKILL to whatever is left in the
@@ -76,12 +77,21 @@ export interface ServiceDefinition {
   readonly environment: Readonly<Record<string, string>>
   /** Where launchd writes the engine's stdout and stderr (systemd's go to the journal). */
   readonly logFile: string
+  /** The absolute path of the file the secret store's passphrase is read from, where one is given. */
+  readonly passphraseFile: Option.Option<string>
 }
 
 /** The command the service runs. */
 export const serviceCommand = (
-  definition: Pick<ServiceDefinition, 'launcher'>,
-): ReadonlyArray<string> => [definition.launcher, 'serve']
+  definition: Pick<ServiceDefinition, 'launcher' | 'passphraseFile'>,
+): ReadonlyArray<string> => [
+  definition.launcher,
+  'serve',
+  ...Option.match(definition.passphraseFile, {
+    onNone: () => [],
+    onSome: path => ['--passphrase-file', path],
+  }),
+]
 
 /** The variables of `environment` the service carries. */
 export const carriedEnvironment = (

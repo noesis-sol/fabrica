@@ -1,5 +1,5 @@
-import { Effect, Layer } from 'effect'
-import { Command } from 'effect/cli'
+import { Effect, Layer, Option } from 'effect'
+import { Command, Flag } from 'effect/cli'
 import { userInfo } from 'node:os'
 import * as NodePath from 'node:path'
 
@@ -12,7 +12,9 @@ import { printAnswer } from './output'
 // serve`, a launchd agent on macOS and a systemd user unit on Linux, run from the `fabrica` link the
 // install script makes (§9.2), with the PATH and XDG folders of the shell that installs it. Installing
 // on Linux enables the user's linger, so the engine runs without a login session, and says how to
-// enable it with sudo where logind refuses. Its commands are run on this host, not through the engine.
+// enable it with sudo where logind refuses. `--passphrase-file` has the service run `fabrica serve` with
+// it, its path made absolute, for a host with no keyring (§20.3). Its commands are run on this host, not
+// through the engine.
 
 /** The commands the login service runs, on this host's process runner. */
 const runner = Process.layerHost.pipe(Layer.provide(Process.layerClock))
@@ -90,27 +92,40 @@ export const statusText = ({
     })}`,
   ].join('\n')
 
-const install = Command.make('install', {}, () =>
-  Effect.gen(function* () {
-    const { facts, host } = yield* serviceHost
-    const paths = yield* hostPaths(facts)
-    // launchd opens the log file before it starts the engine, so its folder is made first.
-    yield* Daemon.prepareFolders(paths)
-    const installed = yield* LoginService.install({
-      host,
-      definition: {
-        launcher: Update.installPlaces(facts.home).link,
-        home: facts.home,
-        environment: LoginService.carriedEnvironment(host.environment),
-        logFile: NodePath.join(paths.logs, 'service.log'),
-      },
-    })
-    yield* printAnswer({
-      schema: LoginService.ServiceInstalled,
-      value: installed,
-      text: installedText,
-    })
-  }).pipe(Effect.provide(runner)),
+const install = Command.make(
+  'install',
+  {
+    passphrase_file: Flag.String('passphrase-file').pipe(
+      Flag.withDescription(
+        'Where no keyring answers, the engine reads the passphrase of its encrypted credentials from this file, mode 0600',
+      ),
+      Flag.optional,
+    ),
+  },
+  ({ passphrase_file }) =>
+    Effect.gen(function* () {
+      const { facts, host } = yield* serviceHost
+      const paths = yield* hostPaths(facts)
+      // launchd opens the log file before it starts the engine, so its folder is made first.
+      yield* Daemon.prepareFolders(paths)
+      const installed = yield* LoginService.install({
+        host,
+        definition: {
+          launcher: Update.installPlaces(facts.home).link,
+          home: facts.home,
+          environment: LoginService.carriedEnvironment(host.environment),
+          logFile: NodePath.join(paths.logs, 'service.log'),
+          passphraseFile: Option.map(passphrase_file, path =>
+            NodePath.resolve(path),
+          ),
+        },
+      })
+      yield* printAnswer({
+        schema: LoginService.ServiceInstalled,
+        value: installed,
+        text: installedText,
+      })
+    }).pipe(Effect.provide(runner)),
 ).pipe(
   Command.withDescription(
     'Installs and starts the login service that runs the engine',

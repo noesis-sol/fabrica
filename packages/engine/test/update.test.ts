@@ -476,6 +476,7 @@ const noFlags = {
   listen: Option.none(),
   listen_certificate: Option.none(),
   listen_key: Option.none(),
+  passphrase_file: Option.none(),
 }
 
 describe('the restart into an update', () => {
@@ -503,7 +504,7 @@ describe('the restart into an update', () => {
             HOME: root,
             SECRET: 'kept',
           },
-          listen: noFlags,
+          flags: noFlags,
         })
         yield* appears(said)
         expect(yield* Effect.promise(() => readFile(said, 'utf8'))).toBe(
@@ -520,7 +521,7 @@ describe('the restart into an update', () => {
           launcher: NodePath.join(root, 'missing'),
           cwd: root,
           hostEnvironment: { PATH: '/usr/bin:/bin', HOME: root },
-          listen: noFlags,
+          flags: noFlags,
         }),
       )
       expect(failed._tag).toBe('RelaunchFailed')

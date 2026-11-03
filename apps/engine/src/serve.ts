@@ -1,10 +1,11 @@
-import { Effect } from 'effect'
+import { Effect, Option, Stdio } from 'effect'
 import { fileURLToPath } from 'node:url'
 
 import { Daemon, LoginService, Update } from '@fabrica/engine'
 
 import { engineHost, hostFacts, hostPaths } from './host'
 import { agentPlaces, onHost, runHosting } from './hosting'
+import { passphraseSource, terminalAsk } from './passphrase'
 import { version } from './version'
 
 // `fabrica serve` (spec §19, §7.1, §9.2): runs the engine in the foreground, as the login service runs
@@ -15,8 +16,10 @@ import { version } from './version'
 // link the update switched. `--listen <addr>` has it listen over TLS too (§9.3), with the certificate
 // `--listen-certificate` and `--listen-key` give, or its own; each flag over the engine's setting of the
 // same name, and given again to the release it restarts as, with the engine's environment. Its runs run on the host (`hosting.ts`): Pi beside the engine, through its model proxy.
+// Where no keyring answers, its secret store's passphrase is read from `--passphrase-file`, or else
+// typed at a prompt where it runs on a terminal (`passphrase.ts`, §20.3).
 
-export const serve = (flags: Daemon.ListenSettings) =>
+export const serve = (flags: Update.ServeFlags) =>
   Effect.gen(function* () {
     const facts = yield* hostFacts
     const [paths, host] = yield* Effect.all([
@@ -24,6 +27,14 @@ export const serve = (flags: Daemon.ListenSettings) =>
       engineHost(facts),
     ])
     const hostEnvironment = { ...process.env }
+    const onTerminal = yield* Effect.flatMap(
+      Stdio.Stdio,
+      stdio => stdio.stdinIsTerminal,
+    )
+    const passphrase = passphraseSource({
+      file: flags.passphrase_file,
+      prompt: onTerminal ? Option.some(yield* terminalAsk) : Option.none(),
+    })
     const service = LoginService.runningService(hostEnvironment)
     const end = yield* Daemon.serveEngine({
       paths,
@@ -42,6 +53,7 @@ export const serve = (flags: Daemon.ListenSettings) =>
             self: fileURLToPath(import.meta.url),
             node: process.execPath,
           }),
+          passphrase,
         }),
       ),
     }).pipe(Effect.scoped)
@@ -52,7 +64,7 @@ export const serve = (flags: Daemon.ListenSettings) =>
           launcher,
           cwd: facts.home,
           hostEnvironment,
-          listen: flags,
+          flags,
           service,
         }).pipe(
           Effect.andThen(

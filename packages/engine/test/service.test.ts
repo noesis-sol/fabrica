@@ -1,4 +1,4 @@
-import { Effect, Exit, Layer, Result } from 'effect'
+import { Effect, Exit, Layer, Option, Result } from 'effect'
 import {
   chmod,
   mkdir,
@@ -119,6 +119,7 @@ const definitionFor = (options: {
   home: options.home,
   environment: { PATH: '/usr/bin:/bin' },
   logFile: join(options.home, 'logs', 'service.log'),
+  passphraseFile: Option.none(),
 })
 
 const read = (file: string) => Effect.promise(() => readFile(file, 'utf8'))
@@ -144,6 +145,7 @@ describe('the service files', () => {
     environment: { PATH: '/opt/<tools>/bin:/usr/bin' },
     logFile:
       '/Users/ada/R&D/Library/Application Support/fabrica/logs/service.log',
+    passphraseFile: Option.none(),
   }
 
   it('writes a launchd agent that runs fabrica serve, restarts it only where it fails, and waits on its wind-down', () => {
@@ -199,6 +201,7 @@ describe('the service files', () => {
           XDG_DATA_HOME: '/data/50%',
         },
         logFile: '/home/ada/.local/share/fabrica/logs/service.log',
+        passphraseFile: Option.none(),
       }),
     ).toBe(
       [

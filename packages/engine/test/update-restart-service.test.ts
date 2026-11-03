@@ -52,6 +52,7 @@ describe('the restart into an update under the login service', () => {
     home: '/home/ada',
     environment: { PATH: '/usr/bin' },
     logFile: '/home/ada/service.log',
+    passphraseFile: Option.none(),
   }
 
   it('names the manager in the service’s environment, read back as the engine’s', () => {
@@ -86,10 +87,11 @@ describe('the restart into an update under the login service', () => {
             launcher: '/nonexistent/fabrica',
             cwd: '/',
             hostEnvironment: { PATH: '/usr/bin:/bin' },
-            listen: {
+            flags: {
               listen: Option.none(),
               listen_certificate: Option.none(),
               listen_key: Option.none(),
+              passphrase_file: Option.none(),
             },
             service: Option.some('systemd'),
           }),
@@ -119,10 +121,11 @@ describe('the restart into an update under the login service', () => {
         launcher: fabrica,
         cwd: root,
         hostEnvironment: { PATH: '/usr/bin:/bin', HOME: root },
-        listen: {
+        flags: {
           listen: Option.none(),
           listen_certificate: Option.none(),
           listen_key: Option.none(),
+          passphrase_file: Option.none(),
         },
         service: Option.none(),
       })

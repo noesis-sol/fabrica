@@ -55,6 +55,12 @@ const serveCommand = Command.make(
       Flag.withDescription("The certificate's private key, a PEM file"),
       Flag.optional,
     ),
+    passphrase_file: Flag.String('passphrase-file').pipe(
+      Flag.withDescription(
+        "Where no keyring answers, reads the passphrase of the engine's encrypted credentials from this file, mode 0600; else it is asked on the terminal",
+      ),
+      Flag.optional,
+    ),
   },
   serve,
 ).pipe(
