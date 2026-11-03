@@ -92,6 +92,7 @@ const inputsOf = (overrides: Partial<ViewInputs> = {}): ViewInputs => ({
   slots: 2,
   line: { merging: Option.none(), waiting: [] },
   mergesWait: Option.none(),
+  battery: Option.none(),
   workers: [],
   steps: [],
   doneToday: 0,
@@ -451,6 +452,7 @@ describe('the run view', () => {
         }
         yield* view.sources.attach({
           state,
+          holds: Effect.succeed({ on: [], gaveUp: Option.none() }),
           line: Effect.succeed({ merging: Option.none(), waiting: [] }),
           mergesWait: Effect.succeed(Option.none()),
           slots: 3,

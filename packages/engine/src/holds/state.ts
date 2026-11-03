@@ -1,10 +1,18 @@
-import { Clock, Effect, Option, Stream, SubscriptionRef } from 'effect'
+import {
+  Clock,
+  DateTime,
+  Effect,
+  Option,
+  Stream,
+  SubscriptionRef,
+} from 'effect'
 
-import type {
-  HoldKind,
-  ProviderName,
-  StopKind,
-  TicketId,
+import {
+  Hold,
+  type HoldKind,
+  type ProviderName,
+  type StopKind,
+  type TicketId,
 } from '@fabrica/contracts'
 
 import { record } from '../run/records'
@@ -27,6 +35,8 @@ export interface HoldOn {
   readonly why: string
   /** Epoch milliseconds. */
   readonly since: number
+  /** When it lifts, in epoch milliseconds, where that is known: a usage limit's reset. */
+  readonly lifts: Option.Option<number>
 }
 
 /** A hold that gave up: the run stops as `kind` (§13.11). */
@@ -72,6 +82,19 @@ const named = (on: HoldOn): string =>
 export const banners = (snapshot: HoldsSnapshot): ReadonlyArray<string> =>
   snapshot.on.map(on => `HOLD: ${named(on)}: ${on.why}`)
 
+/** The holds on as the run view shows them (§8.3): each with its reason, since when and when it lifts. */
+export const holdRows = (snapshot: HoldsSnapshot): ReadonlyArray<Hold> =>
+  snapshot.on.map(
+    on =>
+      new Hold({
+        kind: on.hold,
+        reason: on.why,
+        since: DateTime.makeUnsafe(on.since),
+        lifts: Option.map(on.lifts, at => DateTime.makeUnsafe(at)),
+        provider: on.provider,
+      }),
+  )
+
 /**
  * Whether the hand-backs' and the workers' clocks stop (§13.7, §14.2, §14.6): while the run holds for
  * the usage limit, a refused credential or the machine's load.
@@ -107,9 +130,19 @@ export interface HoldsShape {
   readonly current: Effect.Effect<HoldsSnapshot>
   /** The holds' value now, then each change. */
   readonly changes: Stream.Stream<HoldsSnapshot>
-  /** Raises `key`'s hold for `why`, its record written: false where it was on already, unchanged. */
+  /**
+   * Raises `key`'s hold for `why`, lifting at `lifts` (epoch milliseconds) where that is known, its
+   * record written: false where it was on already, unchanged.
+   */
   readonly raise: (
-    input: HoldKey & { readonly why: string },
+    input: HoldKey & { readonly why: string; readonly lifts?: number },
+  ) => Effect.Effect<boolean>
+  /**
+   * What is known of `key`'s hold has changed: it now holds for `why`, lifting at `lifts` where that is
+   * known. It keeps its place and its `since`, and no record is written: false where it wasn't on.
+   */
+  readonly revise: (
+    input: HoldKey & { readonly why: string; readonly lifts?: number },
   ) => Effect.Effect<boolean>
   /** Lifts `key`'s hold alone, its record written: false where it wasn't on. */
   readonly lift: (
@@ -135,7 +168,7 @@ export const makeHolds = Effect.fn('Holds.make')(function* (input: {
     gaveUp: Option.none(),
   })
 
-  const raise: HoldsShape['raise'] = ({ why, ...key }) =>
+  const raise: HoldsShape['raise'] = ({ why, lifts, ...key }) =>
     SubscriptionRef.modifyEffect(state, current =>
       isOn(current, key)
         ? Effect.succeed([false, current] as const)
@@ -145,6 +178,7 @@ export const makeHolds = Effect.fn('Holds.make')(function* (input: {
               provider: Option.fromUndefinedOr(key.provider),
               why,
               since: yield* Clock.currentTimeMillis,
+              lifts: Option.fromUndefinedOr(lifts),
             }
             const running = yield* input.running
             yield* record(log, {
@@ -155,6 +189,23 @@ export const makeHolds = Effect.fn('Holds.make')(function* (input: {
             })
             return [true, { ...current, on: [...current.on, on] }] as const
           }),
+    )
+
+  const revise: HoldsShape['revise'] = ({ why, lifts, ...key }) =>
+    SubscriptionRef.modify(state, current =>
+      isOn(current, key)
+        ? [
+            true,
+            {
+              ...current,
+              on: current.on.map(on =>
+                sameKey(on, key)
+                  ? { ...on, why, lifts: Option.fromUndefinedOr(lifts) }
+                  : on,
+              ),
+            },
+          ]
+        : [false, current],
     )
 
   const lift: HoldsShape['lift'] = ({ why, ...key }) =>
@@ -189,6 +240,7 @@ export const makeHolds = Effect.fn('Holds.make')(function* (input: {
     current: SubscriptionRef.get(state),
     changes,
     raise,
+    revise,
     lift,
     giveUp,
     lifted: key =>

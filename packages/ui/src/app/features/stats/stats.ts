@@ -97,7 +97,6 @@ export const lazyStatsRunPart = (
   header: RunView['header'],
   totals: RunView['totals'],
   tickets: RunView['tickets'],
-  holds: RunView['holds'],
   banners: RunView['banners'],
   steps: RunView['steps'],
   runViews: Model['runViews'],
@@ -110,7 +109,7 @@ export const lazyStatsRunPart = (
     {
       project,
       live,
-      run: Option.some({ header, totals, tickets, holds, banners, steps }),
+      run: Option.some({ header, totals, tickets, banners, steps }),
       runs: runViews.map(({ view }) => view),
       now,
       attention,

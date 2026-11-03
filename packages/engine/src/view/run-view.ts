@@ -2,6 +2,7 @@ import { DateTime, Duration, Effect, Option, Ref, Scope, Stream } from 'effect'
 
 import {
   type AttentionRequest,
+  type Banner,
   type Phase,
   type ProjectNotFound,
   type Resume,
@@ -15,6 +16,7 @@ import {
 
 import type { AttentionItem } from '../attention/service'
 import { type Spent, noTokens, tokensOf } from '../cost'
+import { type HoldsSnapshot, holdRows } from '../holds'
 import type { MergeLine } from '../merge'
 import { type RunStateShape, slotsTaken } from '../run/state'
 import { type WorkGraphShape, doneToday } from '../workgraph'
@@ -29,9 +31,9 @@ import {
 } from './project'
 import { type Steps, makeSteps } from './steps'
 
-// A run's view (spec §8.3, H40, H80): what the run writes into it (its state, merge line and cost
+// A run's view (spec §8.3, H40, H80): what the run writes into it (its state, holds, merge line and cost
 // account once its start checks pass, the work graph's facts of the tickets it reads, its steps, its
-// workers), and the fiber that writes the view from them: each `view_interval`, it reads every input
+// workers, the battery's warning), and the fiber that writes the view from them: each `view_interval`, it reads every input
 // once, projects the view keeping each part that says what it said, and publishes only a view that
 // changed. Done today is read from the work graph as the view starts, on each change of the work
 // graph, and again as the host's day changes, under its zone. The project's open attention requests
@@ -44,10 +46,12 @@ export interface RunViewSources {
   readonly steps: Steps
   readonly workers: WorkerDesk
   /**
-   * The run's state, its merge queue's line, why the ticket merging waits (`MERGES_WAIT`), its slots
-   * and what its tickets spent (its cost account's), once its start checks pass.
+   * The run's state, its holds, its merge queue's line, why the ticket merging waits (`MERGES_WAIT`),
+   * its slots and what its tickets spent (its cost account's), once its start checks pass.
    */
   readonly attach: (parts: Attached) => Effect.Effect<void>
+  /** The battery's warning as it stands: none once the host no longer runs on it (§7.7). */
+  readonly warnBattery: (banner: Option.Option<Banner>) => Effect.Effect<void>
   /** The work graph's facts of tickets the run reads: their type, priority and whether solo. */
   readonly seen: (
     tickets: ReadonlyArray<Ticket>,
@@ -69,6 +73,7 @@ export interface RunViewHandle {
 
 interface Attached {
   readonly state: RunStateShape
+  readonly holds: Effect.Effect<HoldsSnapshot>
   readonly line: Effect.Effect<MergeLine>
   readonly mergesWait: Effect.Effect<Option.Option<string>>
   readonly slots: number
@@ -85,6 +90,7 @@ export const makeRunViewSources = Effect.fn('RunView.sources')(
     const workers = yield* makeWorkerDesk(options)
     const attached = yield* Ref.make(Option.none<Attached>())
     const facts = yield* Ref.make<ReadonlyMap<TicketId, TicketFacts>>(new Map())
+    const battery = yield* Ref.make(Option.none<Banner>())
 
     const seen = (
       tickets: ReadonlyArray<Ticket>,
@@ -142,12 +148,13 @@ export const makeRunViewSources = Effect.fn('RunView.sources')(
       steps,
       workers,
       attach: parts => Ref.set(attached, Option.some(parts)),
+      warnBattery: banner => Ref.set(battery, banner),
       seen,
       inLine,
       inProgress,
       slotsTaken: taken,
     }
-    return { sources, attached, facts }
+    return { sources, attached, facts, battery }
   },
 )
 
@@ -186,7 +193,7 @@ export const makeRunView = Effect.fn('RunView.make')(function* (options: {
   ) => Effect.Effect<void>
   readonly scope: Scope.Scope
 }) {
-  const { sources, attached, facts } = yield* makeRunViewSources({
+  const { sources, attached, facts, battery } = yield* makeRunViewSources({
     flush: options.flush,
     scope: options.scope,
   })
@@ -257,6 +264,8 @@ export const makeRunView = Effect.fn('RunView.make')(function* (options: {
       known,
       spent,
       attention,
+      holds,
+      warning,
     ] = yield* Effect.all(
       [
         options.header,
@@ -286,6 +295,11 @@ export const makeRunView = Effect.fn('RunView.make')(function* (options: {
           onSome: ({ spent: read }) => Effect.map(read, Option.some),
         }),
         Ref.get(requests),
+        Option.match(parts, {
+          onNone: () => Effect.succeed([]),
+          onSome: ({ holds: read }) => Effect.map(read, holdRows),
+        }),
+        Ref.get(battery),
       ],
       { concurrency: 'unbounded' },
     )
@@ -309,6 +323,7 @@ export const makeRunView = Effect.fn('RunView.make')(function* (options: {
       }),
       line,
       mergesWait,
+      battery: warning,
       workers,
       steps,
       doneToday: doneNow,
@@ -322,9 +337,9 @@ export const makeRunView = Effect.fn('RunView.make')(function* (options: {
         onNone: () => noTokens,
         onSome: ({ run }) => tokensOf(run.workers),
       }),
-      // The holds as one state and the host's load come with their services.
-      holds: [],
+      holds,
       attention,
+      // The host's load comes with its service.
       load: Option.none(),
     } satisfies ViewInputs
   })

@@ -519,22 +519,30 @@ describe('the run controls', () => {
   })
 })
 
-const hold = (overrides: Record<string, unknown>) => ({
-  kind: 'USAGE_LIMIT',
-  reason: 'Anthropic usage limit reached',
-  since: at - 600_000,
-  lifts: null,
-  provider: 'anthropic',
-  ...overrides,
+/** A hold as the engine sends it, beside the banner it makes. */
+const hold = (reason: string, lifts: number | null) => ({
+  holds: [
+    {
+      kind: 'USAGE_LIMIT',
+      reason,
+      since: at - 600_000,
+      lifts,
+      provider: 'anthropic',
+    },
+  ],
+  banners: [{ tone: 'hold', text: reason, lifts }],
 })
 
 describe('the strip of holds and banners', () => {
-  test('a hold in c2 with when it lifts, today as a time', () => {
+  test('a hold once, in c2, with when it lifts, today as a time', () => {
     scene(
       { update, view },
       given(
-        withRun({ holds: [hold({ lifts: Date.UTC(2026, 9, 29, 13, 5) })] }),
+        withRun(
+          hold('Anthropic usage limit reached', Date.UTC(2026, 9, 29, 13, 5)),
+        ),
       ),
+      expectAll(all.selector('[data-tone]')).toHaveCount(1),
       expectScene(within(strip, selector('[data-tone="hold"]'))).toContainText(
         'Anthropic usage limit reached',
       ),
@@ -548,7 +556,11 @@ describe('the strip of holds and banners', () => {
   test('a lift on another day says its day', () => {
     scene(
       { update, view },
-      given(withRun({ holds: [hold({ lifts: Date.UTC(2026, 9, 30, 0, 0) })] })),
+      given(
+        withRun(
+          hold('Anthropic usage limit reached', Date.UTC(2026, 9, 30, 0, 0)),
+        ),
+      ),
       expectScene(selector('[data-lifts]')).toHaveText(
         'lifts Fri 30 Oct 02:00',
       ),
@@ -558,11 +570,7 @@ describe('the strip of holds and banners', () => {
   test('a hold with no known lift says none', () => {
     scene(
       { update, view },
-      given(
-        withRun({
-          holds: [hold({ kind: 'MACHINE', reason: 'The machine is busy' })],
-        }),
-      ),
+      given(withRun(hold('The machine is busy', null))),
       expectScene(selector('[data-tone="hold"]')).toContainText(
         'The machine is busy',
       ),
@@ -575,8 +583,12 @@ describe('the strip of holds and banners', () => {
       { update, view },
       given(
         withRun({
-          holds: [
-            hold({ kind: 'STOP', reason: 'Stopping: asked by the maintainer' }),
+          banners: [
+            {
+              tone: 'stop',
+              text: 'Stopping: the workers are closing',
+              lifts: null,
+            },
           ],
         }),
       ),

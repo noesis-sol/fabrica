@@ -602,7 +602,7 @@ describe('the battery in the run log', () => {
           batt(21, 'Battery Power'),
           batt(20, 'Battery Power'),
         ])
-        yield* recordBattery.pipe(
+        yield* recordBattery(() => Effect.void).pipe(
           Effect.provideService(RunLog, runLog),
           Effect.provide(
             pmsetBattery.pipe(Layer.provideMerge(stubRunner({ stub }))),

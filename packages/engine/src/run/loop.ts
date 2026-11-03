@@ -527,7 +527,7 @@ const runStarted = Effect.fn('Run.started')(function* (
         text: `${notKept.value}; the host may idle-sleep`,
       }),
     })
-  yield* recordBattery
+  yield* recordBattery(view.warnBattery)
   yield* recordSleeps
 
   // Why the ticket merging waits (`MERGES_WAIT`, H72), on the console until its turn's outcome comes.
@@ -536,6 +536,7 @@ const runStarted = Effect.fn('Run.started')(function* (
   )
   yield* view.attach({
     state,
+    holds: holds.current,
     line: merges.line,
     mergesWait: Effect.map(
       Ref.get(mergesWait),

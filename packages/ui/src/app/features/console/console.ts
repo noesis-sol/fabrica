@@ -216,7 +216,6 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Html => {
                 view.header,
                 view.totals,
                 view.tickets,
-                view.holds,
                 view.banners,
                 view.steps,
                 model.runViews,

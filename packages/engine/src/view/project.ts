@@ -68,6 +68,8 @@ export interface ViewInputs {
   readonly line: LineInput
   /** Why the ticket merging waits: `MERGES_WAIT: <checkout> has uncommitted changes to …` (H72). */
   readonly mergesWait: Option.Option<string>
+  /** What the run says of the battery while the host runs on it (§7.7). */
+  readonly battery: Option.Option<Banner>
   readonly workers: ReadonlyArray<WorkerLive>
   readonly steps: ReadonlyArray<EngineStep>
   readonly doneToday: number
@@ -176,6 +178,10 @@ export const reviewsOf = (view: RunView): ReadonlyArray<ReviewRequest> =>
       : [],
   )
 
+/** What names a hold's row: its kind and, for a provider's hold, the provider. */
+const holdKey = (hold: Hold): string =>
+  JSON.stringify([hold.kind, Option.getOrNull(hold.provider)])
+
 /** The ticket's row, its times and hand-backs kept from its row before. */
 const rowOf = (
   taken: TicketTaken,
@@ -207,13 +213,14 @@ const rowOf = (
 }
 
 /**
- * The banners a run's state puts over its stats row: a hold's, a drain's or a stop's, and a warning
- * while its merges wait on Base's checkout.
+ * The banners a run's state puts over its stats row: a hold's, a drain's or a stop's, a warning while
+ * its merges wait on Base's checkout, and the battery's.
  */
 const bannersOf = (
   header: RunHeader,
   holds: ReadonlyArray<Hold>,
   mergesWait: Option.Option<string>,
+  battery: Option.Option<Banner>,
 ): ReadonlyArray<Banner> => [
   ...holds.map(
     hold => new Banner({ tone: 'hold', text: hold.reason, lifts: hold.lifts }),
@@ -241,6 +248,7 @@ const bannersOf = (
       new Banner({ tone: 'warning', text, lifts: Option.none() }),
     ],
   }),
+  ...Option.toArray(battery),
 ]
 
 /** The view of `inputs`, every part that says what it said in `before` kept as it was. */
@@ -334,10 +342,10 @@ export const projectView = (
         waiting: inputs.line.waiting,
       }),
     ),
-    holds: keptRows(part('holds'), inputs.holds, hold => hold.kind),
+    holds: keptRows(part('holds'), inputs.holds, holdKey),
     banners: kept(
       part('banners'),
-      bannersOf(inputs.header, inputs.holds, inputs.mergesWait),
+      bannersOf(inputs.header, inputs.holds, inputs.mergesWait, inputs.battery),
     ),
     attention: keptRows(part('attention'), inputs.attention, attentionKey),
     load: kept(part('load'), inputs.load),

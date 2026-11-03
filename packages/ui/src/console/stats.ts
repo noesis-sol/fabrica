@@ -20,7 +20,6 @@ import {
   type AttentionRequest,
   type Banner,
   type EngineStep,
-  type Hold,
   type NoRun,
   Preflight,
   PreflightCheck,
@@ -55,8 +54,8 @@ import { waitingWords } from './waiting'
 // Overnight starts after its pre-flight checklist (§15.6), drawn below the row: its refusals to fix or
 // override, its warnings with their fixes, the ready and question-only counts, then its questions in
 // the answer talk; the fixes chosen go with the start, so a checklist cancelled changes nothing.
-// Above the row, a strip of the run's holds and banners (`c2` for a hold, `c3` for a stop) with when
-// each lifts, the engine's run-wide steps with their elapsed time, and a request the engine refused.
+// Above the row, a strip of the run's banners, each hold's among them (`c2` for a hold, `c3` for a
+// stop), with when each lifts, the engine's run-wide steps with their elapsed time, and a request the engine refused.
 // Under All projects the row's figures are summed over every project's run going (§18.3), with no
 // controls: a run is started, drained or stopped from its project's own scope.
 // A Submodel: the root folds its Messages and gives it the run, the scope and the time.
@@ -194,7 +193,7 @@ export type OutMessage = typeof OutMessage.Type
  */
 export type StatsRun = Pick<
   RunView,
-  'header' | 'totals' | 'tickets' | 'holds' | 'banners' | 'steps'
+  'header' | 'totals' | 'tickets' | 'banners' | 'steps'
 >
 
 /** What the controls are given: the scope, the connection and the scoped project's run. */
@@ -802,10 +801,6 @@ const toneColour: Record<Tone, string> = {
   warning: 'text-c2',
 }
 
-/** A hold's tone: the run winding down to stop is a stop, every other hold a hold. */
-export const holdTone = (hold: Hold): Tone =>
-  hold.kind === 'STOP' ? 'stop' : 'hold'
-
 /** What a run-wide engine step is doing, in words. */
 export const stepWords: Record<StepKind, string> = {
   start_checks: 'Running the start checks',
@@ -929,24 +924,6 @@ const notice = (
     [toneMark(tone, h), h.span([h.Class('text-fg')], [text]), ...after],
   )
 
-const holdNotice = (
-  hold: Hold,
-  index: number,
-  now: Option.Option<DateTime.Zoned>,
-  h: HtmlBuilder<Message>,
-): Html =>
-  notice(
-    {
-      key: `hold-${hold.kind}-${index}`,
-      tone: holdTone(hold),
-      text: hold.reason,
-      after: lifting(hold.lifts, now).map(words =>
-        h.span([h.DataAttribute('lifts', ''), h.Class('text-muted')], [words]),
-      ),
-    },
-    h,
-  )
-
 const bannerNotice = (
   banner: Banner,
   index: number,
@@ -1026,17 +1003,12 @@ const refusalNotice = (request: Request, h: HtmlBuilder<Message>): Html =>
       )
     : h.empty
 
-/** The strip: the run's holds, its banners, its run-wide steps and a refused request; nothing when none. */
+/** The strip: the run's banners, its run-wide steps and a refused request; nothing when none. */
 const strip = (
   model: Model,
   inputs: ViewInputs,
   h: HtmlBuilder<Message>,
 ): Html => {
-  const holds = Option.match(inputs.run, {
-    onNone: () => [],
-    onSome: run =>
-      run.holds.map((hold, index) => holdNotice(hold, index, inputs.now, h)),
-  })
   const banners = Option.match(inputs.run, {
     onNone: () => [],
     onSome: run =>
@@ -1050,7 +1022,6 @@ const strip = (
       shownSteps(run.steps, now).map(step => stepNotice(step, now, h)),
   })
   const items = [
-    ...holds,
     ...banners,
     ...steps,
     ...(Request.guards.Refused(model.request)

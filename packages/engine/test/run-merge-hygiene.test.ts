@@ -200,6 +200,7 @@ describe("the run view's banners", () => {
     spent: new Map(),
     line: { merging: Option.none(), waiting: [] },
     mergesWait,
+    battery: Option.none(),
     workers: [],
     steps: [],
     doneToday: 0,

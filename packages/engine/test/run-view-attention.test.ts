@@ -152,6 +152,7 @@ describe("the run view's attention requests", () => {
         const counts = Effect.map(Queue.clear(told), all => [...all])
         yield* view.sources.attach({
           state,
+          holds: Effect.succeed({ on: [], gaveUp: Option.none() }),
           line: Effect.succeed({ merging: Option.none(), waiting: [] }),
           mergesWait: Effect.succeed(Option.none()),
           slots: 2,

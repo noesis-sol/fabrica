@@ -41,7 +41,7 @@ import {
 // limit call after call. A worker's refusal ends with its turn: its wait is for the hold that refusal
 // raised, which may have lifted already. Past `usage_limit_wait` the hold gives up and the run ends
 // `USAGE_LIMIT` (exit 8), its workers kept for the carry-over. Resets are said with their day when it
-// isn't today.
+// isn't today, and the hold says when it lifts by the reset it knows, revised as a probe learns another.
 
 /** A call refused for a quota with a reset, as the hold takes it. */
 export interface Limited {
@@ -168,6 +168,26 @@ export const makeUsageHold = Effect.fn('UsageHold.make')(function* (input: {
   const say = (at: DateTime.Utc, now: DateTime.Utc) =>
     sayMoment(at, DateTime.setZone(now, zone))
 
+  /** The hold's reason, its reset as it knows it. */
+  const whyHeld = (
+    provider: ProviderName,
+    reset: Option.Option<DateTime.Utc>,
+    now: DateTime.Utc,
+  ) =>
+    Option.match(reset, {
+      onSome: at =>
+        `${provider}'s usage limit, until its reset at ${say(at, now)}, when the model proxy probes ${provider}`,
+      onNone: () =>
+        `${provider}'s usage limit, its reset unknown; the model proxy probes ${provider} every ${retryWords}`,
+    })
+
+  /** When the hold lifts by `reset`, as a raise or a revision takes it. */
+  const liftsAt = (reset: Option.Option<DateTime.Utc>) =>
+    Option.match(reset, {
+      onNone: () => ({}),
+      onSome: at => ({ lifts: DateTime.toEpochMillis(at) }),
+    })
+
   const sleepUntil = (at: number) =>
     Effect.flatMap(Clock.currentTimeMillis, now =>
       Effect.sleep(Duration.millis(Math.max(0, at - now))),
@@ -231,6 +251,12 @@ export const makeUsageHold = Effect.fn('UsageHold.make')(function* (input: {
         /** The probe came to no lift: when it probes again, as the hold says it. */
         const again = (what: string, after: DateTime.Utc) =>
           Effect.gen(function* () {
+            yield* holds.revise({
+              hold: 'USAGE_LIMIT',
+              provider,
+              why: whyHeld(provider, reset, after),
+              ...liftsAt(reset),
+            })
             const next = Option.match(reset, {
               onSome: at => `at its reset, ${say(at, after)}`,
               onNone: () => `in ${retryWords}, its reset unknown`,
@@ -309,16 +335,12 @@ export const makeUsageHold = Effect.fn('UsageHold.make')(function* (input: {
       const { provider } = limited
       const now = yield* DateTime.now
       const reset = knownReset(limited.resetAt, now)
-      const why = Option.match(reset, {
-        onSome: at =>
-          `${provider}'s usage limit, until its reset at ${say(at, now)}, when the model proxy probes ${provider}`,
-        onNone: () =>
-          `${provider}'s usage limit, its reset unknown; the model proxy probes ${provider} every ${retryWords}`,
-      })
+      const why = whyHeld(provider, reset, now)
       const raised = yield* holds.raise({
         hold: 'USAGE_LIMIT',
         provider,
         why,
+        ...liftsAt(reset),
       })
       if (!raised) return
       const by = Option.match(limited.ticket, {

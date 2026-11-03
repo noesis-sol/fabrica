@@ -219,6 +219,7 @@ describe('the holds as one state', () => {
               provider: Option.none(),
               why: 'the machine is full',
               since: 0,
+              lifts: Option.none(),
             },
           ],
           gaveUp: Option.none(),

@@ -20,7 +20,8 @@ import { CommandOutcome, ExitStatus, ProcessRunner } from '../process'
 // sleeps it, since keeping awake prevents idle sleep only; one that starts on battery says so. While
 // it goes, the battery is read once a minute and warned of at 20% and at 10% while discharging: an
 // event and a banner each time, and a notification at 10% (tutti-yhjt). Writing the event is the run
-// log's (`recordBattery`); the banner and the notification are the run view's and the app's.
+// log's (`recordBattery`); the banner is the run view's, shown with the charge as read until the host
+// no longer runs on the battery; the notification is the app's.
 
 /** What the host draws its power from, as read. */
 export type Power = Data.TaggedEnum<{
@@ -74,6 +75,36 @@ export const batteryBanner: (notice: BatteryNotice) => Option.Option<Banner> =
           lifts: Option.none(),
         }),
       ),
+  })
+
+/**
+ * The notice the run's banner shows after a reading of `power`: the last of `said` with a banner, else
+ * the one `before`, at the charge read; none once the host no longer runs on the battery.
+ */
+export const shownNotice = (
+  power: Power,
+  said: ReadonlyArray<BatteryNotice>,
+  before: Option.Option<BatteryNotice>,
+): Option.Option<BatteryNotice> =>
+  Power.$match(power, {
+    NoBattery: () => Option.none(),
+    Battery: ({ level, discharging }) =>
+      discharging
+        ? Option.flatMap(
+            Option.orElse(
+              Array.findLast(said, notice =>
+                Option.isSome(batteryBanner(notice)),
+              ),
+              () => before,
+            ),
+            BatteryNotice.$match({
+              LidSleeps: () => Option.none<BatteryNotice>(),
+              OnBattery: () => Option.some(BatteryNotice.OnBattery({ level })),
+              Low: ({ threshold }) =>
+                Option.some(BatteryNotice.Low({ level, threshold })),
+            }),
+          )
+        : Option.none(),
   })
 
 /** What a run's start says of `power`. */
@@ -280,34 +311,41 @@ export const batteryInterval = Duration.minutes(1)
 /**
  * Watches the battery for a run: reads it once as the run starts and reports what the start says
  * and any threshold it is already at, then reads it every minute while the scope is open, reporting
- * each threshold reached. Returns the start's reading.
+ * each threshold reached and telling `warn` the banner as each reading leaves it. Returns the start's
+ * reading.
  */
 export const watchBattery = <R>(
   report: (notice: BatteryNotice) => Effect.Effect<void, never, R>,
+  warn: (banner: Option.Option<Banner>) => Effect.Effect<void> = () =>
+    Effect.void,
 ): Effect.Effect<Option.Option<Power>, never, Battery | Scope.Scope | R> =>
   Effect.gen(function* () {
     const battery = yield* Battery
     const warned = yield* Ref.make<ReadonlySet<BatteryThreshold>>(new Set())
-    const check = (power: Power) =>
-      Effect.flatMap(
-        Ref.modify(warned, before => {
+    const shown = yield* Ref.make(Option.none<BatteryNotice>())
+    const check = (power: Power, start: ReadonlyArray<BatteryNotice> = []) =>
+      Effect.gen(function* () {
+        const notice = yield* Ref.modify(warned, before => {
           const reached = reachedThreshold(power, before)
           return [reached.notice, reached.warned]
-        }),
-        notice =>
-          Option.match(notice, { onNone: () => Effect.void, onSome: report }),
-      )
+        })
+        const said = [...start, ...Option.toArray(notice)]
+        yield* Effect.forEach(said, report, { discard: true })
+        const showing = yield* Ref.updateAndGet(shown, before =>
+          shownNotice(power, said, before),
+        )
+        yield* warn(Option.flatMap(showing, batteryBanner))
+      })
     const checkRead = Effect.flatMap(battery.read, power =>
-      Option.match(power, { onNone: () => Effect.void, onSome: check }),
+      Option.match(power, {
+        onNone: () => Effect.void,
+        onSome: read => check(read),
+      }),
     )
     const first = yield* battery.read
     yield* Option.match(first, {
       onNone: () => Effect.void,
-      onSome: power =>
-        Effect.andThen(
-          Effect.forEach(startNotices(power), report, { discard: true }),
-          check(power),
-        ),
+      onSome: power => check(power, startNotices(power)),
     })
     yield* Effect.forkScoped(
       Effect.forever(Effect.delay(checkRead, batteryInterval)),

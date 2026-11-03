@@ -1,5 +1,7 @@
 import { Effect, Option, type Scope } from 'effect'
 
+import type { Banner } from '@fabrica/contracts'
+
 import { Battery, BatteryNotice, type Power, watchBattery } from '../time'
 import { batteryLine } from './lines'
 import { type EventDraft, RunLog } from './run-log'
@@ -25,21 +27,22 @@ export const batteryDraft = (notice: BatteryNotice): EventDraft => {
 
 /**
  * Writes what the run's start says of the battery, then the record and line of each threshold it
- * reaches until the scope closes; returns the start's reading. A record that can't be written is
- * lost, the run going on.
+ * reaches until the scope closes, telling `warn` the banner over the run's stats row as each reading
+ * leaves it; returns the start's reading. A record that can't be written is lost, the run going on.
  */
-export const recordBattery: Effect.Effect<
-  Option.Option<Power>,
-  never,
-  RunLog | Battery | Scope.Scope
-> = Effect.gen(function* () {
-  const runLog = yield* RunLog
-  return yield* watchBattery(notice =>
-    runLog.emit(batteryDraft(notice)).pipe(
-      Effect.asVoid,
-      Effect.catch(error =>
-        Effect.logWarning('the battery record was lost', error),
-      ),
-    ),
-  )
-})
+export const recordBattery = (
+  warn: (banner: Option.Option<Banner>) => Effect.Effect<void>,
+): Effect.Effect<Option.Option<Power>, never, RunLog | Battery | Scope.Scope> =>
+  Effect.gen(function* () {
+    const runLog = yield* RunLog
+    return yield* watchBattery(
+      notice =>
+        runLog.emit(batteryDraft(notice)).pipe(
+          Effect.asVoid,
+          Effect.catch(error =>
+            Effect.logWarning('the battery record was lost', error),
+          ),
+        ),
+      warn,
+    )
+  })
