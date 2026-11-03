@@ -2,6 +2,7 @@ import { Data } from 'effect'
 
 import type {
   CommitHash,
+  HandBackKind,
   MergeStep,
   SetAsideReason,
   StopKind,
@@ -20,9 +21,6 @@ export type MergeStopKind = Extract<
   StopKind,
   'MERGE_FAILED' | 'OFF_BRANCH' | 'TRACKER_FAILED'
 >
-
-/** What a merge hands back to a ticket's worker: its rebase's conflicts to resolve, or its failed check to fix. */
-export type HandBackKind = 'resolve' | 'fix'
 
 /** Why a ticket is back in the queue's line: its hand-back done, or a check to run again once Base moved. */
 export type RequeuedFor = 'hand_back' | 'recheck'

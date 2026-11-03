@@ -3,6 +3,7 @@ import { Data, Duration } from 'effect'
 import type {
   CheckResult,
   CheckSuite,
+  HandBackKind,
   HoldKind,
   ModelName,
   OrganName,
@@ -32,9 +33,6 @@ export type ModelCallOutcome = 'answered' | 'refused' | 'failed'
 
 /** How a merge ended: merged, or set aside for its reason (§13.7). */
 export type MergeOutcome = 'merged' | SetAsideReason
-
-/** Which hand-back a ticket was given (§13.7). */
-export type HandBackKind = 'resolve' | 'fix'
 
 /** Whose process tree a process sample measured (§7.4). */
 export type SampledProcess = 'worker' | 'check'

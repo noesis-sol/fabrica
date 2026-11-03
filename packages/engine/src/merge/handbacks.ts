@@ -11,7 +11,12 @@ import {
 } from 'effect'
 import { basename, dirname, posix } from 'node:path'
 
-import type { CheckSuite, CommitHash, TicketId } from '@fabrica/contracts'
+import type {
+  CheckSuite,
+  CommitHash,
+  HandBackKind,
+  TicketId,
+} from '@fabrica/contracts'
 
 import { CheckOutcome } from '../checks'
 import { readFileText } from '../files'
@@ -23,7 +28,6 @@ import {
   removeWrote,
   wroteRecorded,
 } from './hygiene'
-import type { HandBackKind } from './outcome'
 import {
   type MergeSetupShape,
   SetupOutcome,

@@ -99,6 +99,7 @@ import { type RunConfig, RunMode, overnightMode } from './config'
 import { type RunControl, makeRunControl } from './control'
 import { endSteps } from './end'
 import { type Gated, type Taken, makeFootprintsGate } from './footprints-gate'
+import { handBackFields, makeHandBackTally } from './hand-backs'
 import { makeHandBackWorker } from './handback-worker'
 import {
   MayTake,
@@ -123,6 +124,7 @@ import { StartChecked, type Started, runStartChecks } from './start-checks'
 import {
   type RunSnapshot,
   type RunStateShape,
+  type SpentFields,
   inPhase,
   inProgress,
   makeRunState,
@@ -403,11 +405,19 @@ const runStarted = Effect.fn('Run.started')(function* (
     billing: () => 'api_key',
   })
   yield* countProxyCalls(cost)
-  /** A record's fields for what `ticket` spent in the run so far. */
-  const spentBy = (ticket: TicketId) =>
-    Effect.map(cost.ticket(ticket), spendFields)
+  // The run's hand-backs, as the merge queue gives them (§13.7).
+  const handBacks = yield* makeHandBackTally({ project: config.project, run })
+  /** A record's fields for what `ticket` spent in the run so far: its spend and its hand-backs. */
+  const spentBy = (ticket: TicketId): Effect.Effect<SpentFields> =>
+    Effect.map(
+      Effect.all([cost.ticket(ticket), handBacks.of(ticket)]),
+      ([spend, counts]) => ({
+        ...spendFields(spend),
+        ...handBackFields(counts),
+      }),
+    )
   // A ticket's part in the run ended, its worker's transcript stops being watched.
-  const state = yield* makeRunState(log, cost.ticket, view.workers.leave)
+  const state = yield* makeRunState(log, spentBy, view.workers.leave)
   // The holds, one state (§14, H58): the merge queue's hand-backs and the workers' quiet are counted
   // on its clock, in time awake (§7.7), stopped while they hold.
   const holds = yield* makeHolds({
@@ -1270,6 +1280,7 @@ const runStarted = Effect.fn('Run.started')(function* (
         HandedBack: ({ kind, attempt, detail }) =>
           ended(
             Effect.gen(function* () {
+              yield* handBacks.given({ ticket, kind, attempt })
               yield* state.move({
                 ticket,
                 to:

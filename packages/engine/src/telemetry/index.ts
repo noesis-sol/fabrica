@@ -20,7 +20,6 @@ export {
 } from './queries'
 export { type RetentionSettings, cutoffOf, dayOf, prune } from './retention'
 export {
-  type HandBackKind,
   type MergeOutcome,
   type ModelCallOutcome,
   type RowKind,

@@ -99,6 +99,9 @@ export type TokensByModel = typeof TokensByModel.Type
 export const HandBacks = Schema.Struct({ resolve: Count, fix: Count })
 export type HandBacks = typeof HandBacks.Type
 
+/** Which hand-back a ticket was given (§13.7): its rebase's conflicts to resolve, or its failed check to fix. */
+export type HandBackKind = keyof HandBacks
+
 /** What the run's organ calls cost, on `end`. */
 export const OrganTotals = Schema.Struct({
   calls: Count,

@@ -3,13 +3,13 @@ import { Effect, Option, SynchronizedRef } from 'effect'
 import {
   Phase,
   type PhaseTag,
+  type TicketEndEvent,
   type TicketId,
   type TicketOutcome,
   factsOf,
   slotsTakenBy,
 } from '@fabrica/contracts'
 
-import { type Spend, spendFields } from '../cost'
 import { type RunLog, toSeconds } from '../runlog'
 import { type Stopwatch, elapsed, startStopwatch } from '../time'
 import { record } from './records'
@@ -18,10 +18,16 @@ import { record } from './records'
 // owner, changed only by atomic transitions applied to the current value. Each transition writes its
 // `phase` record (and, where the ticket's part in the run ends, its `ticket_end`) while it holds the
 // state, so the stream gives the phases in the order they were taken; a `ticket_end` carries what its
-// ticket spent in the run so far (§14.4). What a phase counts as is `phaseFacts`', read here and
-// nowhere restated. A ticket's part in the run ending where it goes (from in progress to a phase it
-// can end in) is told to `left`, once the move is made: its worker's transcript stops being watched
-// (§8.3).
+// ticket spent in the run so far (§14.4) and its hand-backs (§13.7). What a phase counts as is
+// `phaseFacts`', read here and nowhere restated. A ticket's part in the run ending where it goes (from
+// in progress to a phase it can end in) is told to `left`, once the move is made: its worker's
+// transcript stops being watched (§8.3).
+
+/** A record's fields for what a ticket spent in the run so far: its tokens, its cost and its hand-backs. */
+export type SpentFields = Pick<
+  typeof TicketEndEvent.Type,
+  'tokens' | 'cost_usd' | 'equivalent_usd' | 'hand_backs'
+>
 
 /** A ticket the run has taken up. */
 export interface TicketState {
@@ -127,12 +133,12 @@ export interface RunStateShape {
 }
 
 /**
- * A run's state, empty, its records written through `log`, a ticket's spend read from `spent`, each
+ * A run's state, empty, its records written through `log`, what a ticket spent read from `spent`, each
  * ticket whose part ends told to `left`.
  */
 export const makeRunState = Effect.fn('RunState.make')(function* (
   log: RunLog['Service'],
-  spent: (ticket: TicketId) => Effect.Effect<Spend>,
+  spent: (ticket: TicketId) => Effect.Effect<SpentFields>,
   left: (ticket: TicketId) => Effect.Effect<void> = () => Effect.void,
 ) {
   const state = yield* SynchronizedRef.make<RunSnapshot>({
@@ -144,7 +150,7 @@ export const makeRunState = Effect.fn('RunState.make')(function* (
   const ticketEnd = (taken: TicketState, outcome: TicketOutcome) =>
     Effect.flatMap(
       Effect.all([elapsed(taken.since), spent(taken.ticket)]),
-      ([span, spend]) =>
+      ([span, fields]) =>
         record(log, {
           kind: 'ticket_end',
           ticket: taken.ticket,
@@ -155,7 +161,7 @@ export const makeRunState = Effect.fn('RunState.make')(function* (
             onSome: why => ({ why }),
           }),
           seconds: toSeconds(span),
-          ...spendFields(spend),
+          ...fields,
         }),
     )
 

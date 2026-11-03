@@ -25,7 +25,6 @@ import {
 } from '@fabrica/contracts'
 
 import { makeTranscriptReader } from '../src/agent'
-import { noSpend } from '../src/cost'
 import { makeRunState } from '../src/run'
 import { RunLog, layerRunLog } from '../src/runlog'
 import { makeWorkerDesk } from '../src/view'
@@ -199,7 +198,7 @@ describe("a ticket's part in the run", () => {
         yield* Effect.gen(function* () {
           const state = yield* makeRunState(
             yield* RunLog,
-            () => Effect.succeed(noSpend),
+            () => Effect.succeed({}),
             done => Ref.update(left, all => [...all, done]),
           )
           yield* state.enter({ ticket, title: 'Build the page' })
