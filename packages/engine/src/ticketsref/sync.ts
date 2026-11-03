@@ -400,24 +400,31 @@ export const makeTicketsSync = Effect.fn('TicketsSync.make')(function* ({
 
   // --- Export ----------------------------------------------------------------------------------
 
-  /** A commit of the store's changes on the last commit imported; none where nothing differs. */
+  /**
+   * A commit of the store's changes on the last commit imported (`imported`, where the repository still
+   * has it); none where nothing differs. With no such commit every ticket is exported: one with no change
+   * since it was last synced at the clocks it had then, so that a store whose ref is gone (a new clone, a
+   * pruned ref) doesn't outrank what the remote has changed since.
+   */
   const exportLocal = ({
     state,
+    imported,
     listing,
   }: {
     readonly state: SyncState
+    readonly imported: Option.Option<CommitHash>
     readonly listing: Listing
   }) =>
     Effect.gen(function* () {
-      const first = Option.isNone(state.lastImported)
-      const since = first
-        ? { ids: [], deleted: true }
-        : yield* local.changedSince(state.exportedSeq)
+      const first = Option.isNone(imported)
+      const since = yield* local.changedSince(state.exportedSeq)
       const named: ReadonlyArray<TicketId> = since.ids
-      if (!since.deleted && named.length === 0) return Option.none()
-      const ids = since.deleted
-        ? [...new Set([...(yield* local.allIds), ...named])]
-        : named
+      const changedIds = new Set<string>(named)
+      if (!first && !since.deleted && named.length === 0) return Option.none()
+      const ids =
+        first || since.deleted
+          ? [...new Set([...(yield* local.allIds), ...named])]
+          : named
       const tickets = yield* local.readTickets(ids)
 
       const baseHashes = new Map<TicketId, string>()
@@ -469,12 +476,16 @@ export const makeTicketsSync = Effect.fn('TicketsSync.make')(function* ({
         const id = item.ticket.id
         if (quarantined.has(id)) continue
         const base = bases.get(id) ?? Option.none()
-        const file = yield* fileFromLocal({
+        const made = yield* fileFromLocal({
           local: item,
           base,
           clock,
           unknownTargets,
         })
+        const file =
+          first && !changedIds.has(id) && Option.isSome(item.clocks)
+            ? new TicketFile({ ...made, clocks: item.clocks.value })
+            : made
         const text = yield* encodeTicketFile(file).pipe(
           Effect.mapError(storeFailed('exporting a ticket')),
         )
@@ -537,7 +548,7 @@ export const makeTicketsSync = Effect.fn('TicketsSync.make')(function* ({
       const changed = files.length + graves.length
       const commit = yield* store.commitTree({
         tree,
-        parents: Option.toArray(state.lastImported),
+        parents: Option.toArray(imported),
         message: `tickets: ${changed} changed (${engine})`,
         engine,
       })
@@ -1049,12 +1060,18 @@ export const makeTicketsSync = Effect.fn('TicketsSync.make')(function* ({
     const state = yield* local.readState
     const seq = yield* local.lastSeq
     const head = yield* store.head
-    const imported = state.lastImported
+    const imported = yield* Option.match(state.lastImported, {
+      onNone: () => Effect.succeed(Option.none<CommitHash>()),
+      onSome: commit =>
+        Effect.map(store.hasCommit(commit), has =>
+          has ? Option.some(commit) : Option.none<CommitHash>(),
+        ),
+    })
     const listing = yield* Option.match(imported, {
       onNone: () => Effect.succeed<Listing>(new Map()),
       onSome: store.list,
     })
-    const made = yield* exportLocal({ state, listing })
+    const made = yield* exportLocal({ state, imported, listing })
     const ours = Option.isSome(made) ? Option.some(made.value.commit) : imported
     if (sameCommit(ours, head)) {
       if (seq !== state.exportedSeq) yield* local.recordSeen(seq)

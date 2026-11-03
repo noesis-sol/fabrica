@@ -10,6 +10,7 @@ import {
   parseHash,
   parsePushed,
 } from '../git'
+import { withoutCredentials } from './privacy'
 
 // The tickets ref in git (spec §11.7): `refs/fabrica/tickets`, kept with git's plumbing only, so no
 // checkout, index, `HEAD` or stash of the user's is ever touched. Trees are written with `mktree`
@@ -206,6 +207,16 @@ export const makeTicketsStore = Effect.fn('TicketsStore.make')(function* ({
   })
 
   const head = resolve(ticketsRef)
+
+  /** Whether the repository still has the commit: a new clone, or a pruned ref, hasn't. */
+  const hasCommit = Effect.fn('TicketsStore.hasCommit')(function* (
+    commit: CommitHash,
+  ) {
+    const exit = yield* query(
+      yield* quiet(['cat-file', '-e', `${commit}^{commit}`]),
+    )
+    return exit.code === 0
+  })
 
   /** Every file of a commit. */
   const list = Effect.fn('TicketsStore.list')(function* (commit: CommitHash) {
@@ -455,20 +466,23 @@ export const makeTicketsStore = Effect.fn('TicketsStore.make')(function* ({
     )
   })
 
-  /** Where `remote` points, to name it to the maintainer; its name, where git can't say. */
+  /** Where `remote` points, with no credentials, to name it to the maintainer; its name, where git can't say. */
   const remoteUrl = Effect.fn('TicketsStore.remoteUrl')(function* (
     remote: string,
   ) {
     const exit = yield* query(
       yield* quiet(['remote', 'get-url', '--end-of-options', remote]),
     )
-    return exit.code === 0 ? exit.stdout.trim() || remote : remote
+    return exit.code === 0
+      ? withoutCredentials(exit.stdout.trim()) || remote
+      : remote
   })
 
   return {
     refreshHooks,
     head,
     resolve,
+    hasCommit,
     list,
     changedBetween,
     mergeBase,

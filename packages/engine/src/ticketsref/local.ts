@@ -50,6 +50,7 @@ const batchSize = 200
 const decodeClock = Schema.decodeUnknownSync(HlcFromString)
 const encodeClock = Schema.encodeSync(HlcFromString)
 const encodeClocks = Schema.encodeSync(Clocks)
+const decodeClocks = Schema.decodeUnknownOption(Schema.fromJsonString(Clocks))
 
 /** The tickets ref's sync state. */
 export interface SyncState {
@@ -82,6 +83,8 @@ export interface LocalTicket {
   readonly labels: ReadonlyArray<LabelName>
   readonly edges: FileEdges
   readonly notes: ReadonlyArray<Note>
+  /** The clocks of the file last imported or exported for it; none before its first. */
+  readonly clocks: Option.Option<Clocks>
 }
 
 /** A file of the ref an import skipped: its path and why (§11.7). */
@@ -366,7 +369,9 @@ export const makeLocal = Effect.fn('TicketsLocal.make')(function* (
           'reading the tickets',
           Effect.gen(function* () {
             const [rows, labels, edges, notes] = yield* Effect.all([
-              sql<TicketRow>`SELECT * FROM tickets WHERE id IN ${sql.in(batch)}`,
+              sql<
+                TicketRow & { readonly clocks: string }
+              >`SELECT * FROM tickets WHERE id IN ${sql.in(batch)}`,
               sql<{
                 readonly ticket_id: string
                 readonly label: LabelName
@@ -383,6 +388,7 @@ export const makeLocal = Effect.fn('TicketsLocal.make')(function* (
                   .map(label => label.label),
                 edges: fileEdges(edges.filter(edge => edge.from_id === row.id)),
                 notes: decodedNotes.filter(note => note.ticketId === row.id),
+                clocks: decodeClocks(row.clocks),
               })),
             )
           }),

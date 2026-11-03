@@ -24,7 +24,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { beforeAll, describe, expect, it } from '@effect/vitest'
+import { beforeAll, describe, expect, it, vi } from '@effect/vitest'
 import {
   type Actor,
   Edge,
@@ -55,6 +55,7 @@ import {
   secretsIn,
   secretsInFile,
   ticketsRef,
+  withoutCredentials,
 } from '../src/ticketsref'
 import { WaitReason, WorkGraph, sqliteLayer } from '../src/workgraph'
 
@@ -62,6 +63,9 @@ import { WaitReason, WorkGraph, sqliteLayer } from '../src/workgraph'
 // and clone of one bare remote, converge after concurrent edits, deletions, offline periods and rejected
 // pushes, with failures injected between each step. Every test builds its own engines. The clock is the
 // test's, so clocks and the 90 days are the test's to move; git's commands run for real.
+
+// A test's two engines run some hundred git commands: under a loaded machine's checks, more than the 15 s others get.
+vi.setConfig({ testTimeout: 90_000 })
 
 let root = ''
 let home = ''
@@ -939,6 +943,76 @@ describe('imports', () => {
   )
 })
 
+describe('a store whose ref is gone', () => {
+  it.effect(
+    "a new clone under the same database converges, the remote's changes kept",
+    () =>
+      Effect.gen(function* () {
+        const { remote, checkouts } = repositories(2)
+        const checkout = checkouts[0] ?? ''
+        const filename = join(freshFolder('db'), 'work.db')
+        const a = yield* makeEngine({ id: 'fe-a', checkout, filename })
+        const b = yield* makeEngine({
+          id: 'fe-b',
+          checkout: checkouts[1] ?? '',
+        })
+        const shared = yield* a.create('Shared')
+        const quiet = yield* a.create('Quiet')
+        yield* converge(a, b)
+
+        // The other engine changes both while this checkout is cloned again: the old commits are gone.
+        yield* TestClock.adjust('1 second')
+        yield* b.graph.update({
+          id: shared,
+          changes: { title: 'From b' },
+          actor: maintainer,
+        })
+        yield* b.graph.update({
+          id: quiet,
+          changes: { title: 'Quiet from b' },
+          actor: maintainer,
+        })
+        yield* b.sync.sync('origin')
+        const moved = `${checkout}.old`
+        renameSync(checkout, moved)
+        git(root, 'clone', '--quiet', '--no-local', remote, checkout)
+        const imported = Option.getOrThrow((yield* a.sync.state).lastImported)
+        expect(() =>
+          git(checkout, 'cat-file', '-e', `${imported}^{commit}`),
+        ).toThrow()
+
+        // A change made here since is kept; what it didn't change takes the remote's.
+        yield* TestClock.adjust('1 second')
+        yield* a.graph.update({
+          id: shared,
+          changes: { priority: 0 },
+          actor: maintainer,
+        })
+        yield* a.sync.sync('origin')
+        yield* converge(a, b)
+        yield* expectConverged(a, b)
+        expect((yield* a.graph.show(quiet)).ticket.title).toBe('Quiet from b')
+        expect((yield* a.graph.show(shared)).ticket.priority).toBe(0)
+      }).pipe(Effect.scoped),
+  )
+
+  it.effect('a ref deleted and pruned with no remote is written again', () =>
+    Effect.gen(function* () {
+      const { a } = yield* twoEngines
+      const id = yield* a.create('One')
+      yield* a.sync.commit
+      const before = a.file(`tickets/${id}.json`)
+      git(a.checkout, 'update-ref', '-d', ticketsRef)
+      git(a.checkout, 'gc', '--quiet', '--prune=now')
+      const settled = yield* a.sync.commit
+      expect(settled.committed).toBe(true)
+      expect(a.file(`tickets/${id}.json`)).toBe(before)
+      const rebuilt = yield* a.sync.rebuild
+      expect(rebuilt.tickets).toBe(1)
+    }).pipe(Effect.scoped),
+  )
+})
+
 describe('deletion', () => {
   it.effect('writes a tombstone, and prunes it after 90 days', () =>
     Effect.gen(function* () {
@@ -1271,6 +1345,11 @@ describe('privacy', () => {
       '\\\\n',
       '\\t',
       '\\u000a',
+      '%0A',
+      '%20',
+      '%3D',
+      '\\x0a',
+      '\\v',
       '\\"',
       '"',
       '/',
@@ -1286,6 +1365,8 @@ describe('privacy', () => {
       secretsIn(['-----BEGIN PGP', 'PRIVATE KEY BLOCK-----'].join(' ')),
     ).toEqual(['a private key block'])
 
+    expect(secretsIn('task-ant-colony-simulation-feature')).toEqual([])
+    expect(secretsIn(`highs_${'a'.repeat(40)}`)).toEqual([])
     expect(secretsIn(`task-${'a'.repeat(40)}`)).toEqual([])
     expect(secretsIn(`work_live_${'a'.repeat(20)}`)).toEqual([])
     expect(secretsIn('-----BEGIN PUBLIC KEY-----')).toEqual([])
@@ -1326,6 +1407,40 @@ describe('privacy', () => {
     ]
     for (const [name, text] of named) expect(secretsIn(text)).toContain(name)
     expect(secretsIn('AKIA is a prefix; sk- is one too')).toEqual([])
+  })
+
+  it.effect("keeps no credentials of the remote's URL", () =>
+    Effect.gen(function* () {
+      const { remote, a } = yield* twoEngines
+      const token = ['ghp', 'a'.repeat(36)].join('_')
+      git(
+        a.checkout,
+        'remote',
+        'set-url',
+        'origin',
+        `file://x:${token}@localhost${remote}`,
+      )
+      yield* a.create('One')
+      yield* a.sync.push('origin')
+      const named = yield* a.events('ref_remote_named')
+      expect(named.length).toBe(1)
+      expect(named[0]?.payload).not.toContain(token)
+      expect(named[0]?.payload).toContain(remote)
+    }).pipe(Effect.scoped),
+  )
+
+  it('takes credentials out of a URL, and leaves the rest', () => {
+    expect(withoutCredentials('https://x-access-token:t0ken@host/a.git')).toBe(
+      'https://host/a.git',
+    )
+    expect(withoutCredentials('https://t0ken@host/a.git')).toBe(
+      'https://host/a.git',
+    )
+    expect(withoutCredentials('https://host/a@b.git')).toBe(
+      'https://host/a@b.git',
+    )
+    expect(withoutCredentials('git@host:a/b.git')).toBe('git@host:a/b.git')
+    expect(withoutCredentials('/srv/a.git')).toBe('/srv/a.git')
   })
 
   it.effect('names the remote before the first push, once', () =>
