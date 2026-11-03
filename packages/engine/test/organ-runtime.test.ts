@@ -96,7 +96,7 @@ import {
   make as makeProxy,
 } from '../src/proxy'
 import { makeRunLog } from '../src/runlog'
-import { SecretName, Secrets } from '../src/secrets'
+import { Held, Kept, SecretName, Secrets } from '../src/secrets'
 import { Telemetry, type TelemetryRow } from '../src/telemetry'
 import { layerWake, noSleepCauses } from '../src/time'
 import { WorkGraph, makeWorkGraph, storeLayer } from '../src/workgraph'
@@ -327,8 +327,21 @@ const secrets = Secrets.of({
   store: 'file',
   set: () => Effect.void,
   list: Effect.succeed([]),
-  get: () => Effect.succeed(Redacted.make(realKey)),
+  get: () => Effect.succeed(Held.Key({ key: Redacted.make(realKey) })),
+  read: () => Effect.succeedNone,
+  modify: () => Effect.succeedNone,
   remove: () => Effect.succeed(false),
+})
+
+/** The store with every provider signed in to: a subscription's, as the proxy reads it for a grant. */
+const signedIn = Secrets.of({
+  ...secrets,
+  read: () =>
+    Effect.succeed(
+      Option.some(
+        Kept.OAuth({ provider: 'anthropic', credential: Redacted.make('{}') }),
+      ),
+    ),
 })
 
 const routesAt = (url: string): ReadonlyArray<ProviderRoute> => [
@@ -603,6 +616,7 @@ const services = (input: {
   readonly url: string
   readonly place: ReturnType<typeof folders>
   readonly telemetry: Layer.Layer<Telemetry>
+  readonly secrets?: typeof secrets
 }) => {
   const runner = Layer.provideMerge(runnerLayer(runnerConfig()), layerClock)
   const git = Layer.provide(gitLayer(gitConfig), runner)
@@ -613,7 +627,7 @@ const services = (input: {
     ModelProxy,
     makeProxy({ routes: routesAt(input.url) }),
   ).pipe(
-    Layer.provide(Layer.succeed(Secrets)(secrets)),
+    Layer.provide(Layer.succeed(Secrets)(input.secrets ?? secrets)),
     Layer.provideMerge(layerHeld),
   )
   const agents = agentLayer({
@@ -740,13 +754,18 @@ const runtimeOf = (
   })
 
 /** The provider, the services over it, and the telemetry they write. */
-const setting = (replies: Array<Reply | 'hang'>) =>
+const setting = (replies: Array<Reply | 'hang'>, store = secrets) =>
   Effect.gen(function* () {
     const provider = yield* recorded(replies)
     const place = folders()
     const telemetry = telemetryOf()
     const context = yield* Layer.build(
-      services({ url: provider.url, place, telemetry: telemetry.layer }),
+      services({
+        url: provider.url,
+        place,
+        telemetry: telemetry.layer,
+        secrets: store,
+      }),
     )
     return { provider, place, telemetry, context }
   })
@@ -1098,6 +1117,23 @@ describe('an organ asking through pi-ai', () => {
         const google = yield* forcedOn(on('google', 'google-generative-ai'))
         expect(JSON.stringify(google?.body)).toContain('"mode":"ANY"')
         expect(JSON.stringify(google?.body)).toContain('"name":"answer"')
+      }),
+  )
+
+  it.live(
+    "on a subscription, sends what an agent's Pi would: the placeholder, so the request is the subscription's",
+    () =>
+      Effect.gen(function* () {
+        const { provider, place, context } = yield* setting(
+          [called(goodAnswer)],
+          signedIn,
+        )
+        const runtime = yield* runtimeOf(place).pipe(Effect.provide(context))
+        expect(yield* runtime.ask(question(one))).toMatchObject({
+          _tag: 'Answered',
+        })
+        expect(provider.seen[0]?.headers['anthropic-beta']).toContain('oauth-')
+        expect(provider.seen[0]?.headers['x-api-key']).toBe(realKey)
       }),
   )
 

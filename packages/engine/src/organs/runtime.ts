@@ -554,12 +554,14 @@ export const makeOrganRuntime = Effect.fn('Organs.make')(function* (
             reason: `pi-ai's catalog has no model ${asking.name}`,
           })
         const granted = yield* proxy.grant(asking.caller)
-        const baseUrl = Option.fromUndefinedOr(granted.baseUrls[provider])
-        if (Option.isNone(baseUrl))
+        const entry = Option.fromUndefinedOr(
+          granted.providers.find(given => given.provider === provider),
+        )
+        if (Option.isNone(entry))
           return yield* new AnswerLost({
             reason: `the model proxy reaches no provider named ${provider}`,
           })
-        const model: Model<Api> = { ...found, baseUrl: baseUrl.value }
+        const model: Model<Api> = { ...found, baseUrl: entry.value.baseUrl }
         const tool = answerTool({
           answer: question.answer,
           description: question.description,
@@ -590,7 +592,8 @@ export const makeOrganRuntime = Effect.fn('Organs.make')(function* (
                     tools,
                   },
                   {
-                    apiKey: Redacted.value(granted.token),
+                    // A subscription's placeholder, so pi-ai builds its kind of request.
+                    apiKey: entry.value.apiKey ?? Redacted.value(granted.token),
                     signal,
                     // A refusal comes straight back, for its hold; the SDK would only ask again.
                     maxRetries: 0,
@@ -746,9 +749,7 @@ export const makeOrganRuntime = Effect.fn('Organs.make')(function* (
           ticket,
           project: config.project,
           worktree: config.checkout,
-          providers: Object.entries(granted.baseUrls).map(
-            ([name, baseUrl]) => ({ provider: name, baseUrl }),
-          ),
+          providers: granted.providers,
           token: Redacted.value(granted.token),
           model: Option.some({ provider, modelId }),
           tools: Option.some(organSessionTools),
