@@ -54,7 +54,13 @@ const workerMessage = (message: Worker.Message): Message =>
   Message.GotWorkerMessage({ message })
 
 const key = (pressed: string) =>
-  Message.PressedKey({ key: pressed, mod: false, alt: false, inField: false })
+  Message.PressedKey({
+    key: pressed,
+    mod: false,
+    alt: false,
+    inField: false,
+    repeat: false,
+  })
 
 const decodeRunView = Schema.decodeUnknownSync(Schema.toCodecJson(RunView))
 
