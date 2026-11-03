@@ -377,7 +377,6 @@ export const scriptedHosting = (
         nice: Option.none(),
         // A host with no inhibitor: no sleep to prevent.
         keepAwakeHost: { platform: 'aix', pid: 1 },
-        environment: {},
       })
     }),
   )

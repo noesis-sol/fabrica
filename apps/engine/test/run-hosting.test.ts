@@ -70,7 +70,6 @@ const scriptedConfig = (
       cli: places.stub,
       extension: places.extension,
     },
-    environment: {},
     runner: Process.layer(runnerConfig(places)),
     sleepCauses: noSleepCauses,
     battery: noBattery,

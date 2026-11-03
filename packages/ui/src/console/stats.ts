@@ -300,11 +300,15 @@ export const offerMessage = (offer: Offer): Message =>
     KeepRunning: () => Message.CancelledControls(),
   })
 
-/** A run started from the app: no dispatch limit, online, the project's own settings, no pre-flight. */
+/**
+ * A run started from the app: no dispatch limit, online, the project's own settings (no flags, nor
+ * the variables a command's environment gives), no pre-flight.
+ */
 export const startFlags: RunFlags = {
   limit: Option.none(),
   offline: false,
   settings: {},
+  environment: {},
   preflight: Option.none(),
 }
 

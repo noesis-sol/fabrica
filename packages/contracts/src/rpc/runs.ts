@@ -1,4 +1,4 @@
-import { Schema } from 'effect'
+import { Effect, Schema } from 'effect'
 import { Rpc, RpcGroup } from 'effect/rpc'
 
 import { EndKind, RunEvent, StopKind } from '../events'
@@ -56,8 +56,10 @@ export class PreflightChoices extends Schema.Class<PreflightChoices>(
 
 /**
  * A run's flags (§19). `settings` are the settings flags, by setting path, as their text
- * (`{ concurrent: "3", auto_answer: "10m" }` for `--concurrent 3 --auto-answer=10m`): the engine
- * resolves them with the project's and its own settings, so a problem names the flag it came from.
+ * (`{ concurrent: "3", auto_answer: "10m" }` for `--concurrent 3 --auto-answer=10m`), and
+ * `environment` the FABRICA_ variables of settings in the starting client's environment, by name
+ * (`{ FABRICA_CONCURRENT: "1" }`): the engine resolves them, a flag over its variable, with the
+ * project's and its own settings, so a problem names the flag or the variable it came from (§13.13).
  */
 export const RunFlags = Schema.Struct({
   /** Caps the run's dispatches; none: no limit. */
@@ -65,6 +67,10 @@ export const RunFlags = Schema.Struct({
   /** Start without the remote: the lease unchecked (§11.5). */
   offline: Schema.Boolean,
   settings: Schema.Record(Schema.String, Schema.String),
+  /** Left out by a client from before it was sent: none. */
+  environment: Schema.Record(Schema.String, Schema.String).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed({})),
+  ),
   /** An overnight run's pre-flight gone through (§15.6); none: its refusals refuse the start. */
   preflight: optional(PreflightChoices),
 })

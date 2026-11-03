@@ -52,6 +52,7 @@ import { EngineScopes } from '../engine/scopes'
 import { Engine } from '../engine/service'
 import { Projects } from '../projects/service'
 import { RunLog, layerRunLog, readEvents } from '../runlog'
+import { variableOf } from '../settings'
 import { Telemetry } from '../telemetry'
 import { localNow } from '../time'
 import { type RunViewHandle, type RunViewItem, makeRunView } from '../view'
@@ -317,9 +318,16 @@ export const make = Effect.gen(function* () {
           mode: input.mode,
           startedAt,
           offline: flags.offline,
-          autoAnswer:
-            'auto_answer' in flags.settings &&
-            flags.settings['auto_answer'] !== 'false',
+          autoAnswer: Option.exists(
+            Option.orElse(
+              Option.fromUndefinedOr(flags.settings['auto_answer']),
+              () =>
+                Option.fromUndefinedOr(
+                  flags.environment[variableOf('auto_answer')],
+                ),
+            ),
+            text => text !== 'false',
+          ),
         }
         // The run's view lives as long as the run: written every `view_interval`, its transcripts
         // crossing every `stream_flush` (§8.3), the engine's settings as the run starts.
@@ -379,7 +387,7 @@ export const make = Effect.gen(function* () {
           },
           settings: {
             flags: flags.settings,
-            environment: hosting.environment,
+            environment: flags.environment,
             engineSettings,
           },
           cores: hosting.cores,

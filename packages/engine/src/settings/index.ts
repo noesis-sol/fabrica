@@ -5,6 +5,8 @@ export {
   type SettingScope,
   findSettingKey,
   settingKeys,
+  settingVariables,
+  variableOf,
 } from './keys'
 export {
   type SettingsProblem,

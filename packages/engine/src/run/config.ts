@@ -36,7 +36,7 @@ export interface RunOptions {
 export interface RunSettingsInputs {
   /** The settings flags given, by setting path, as their text; `--concurrent` is added to them. */
   readonly flags: Readonly<Record<string, string>>
-  /** The engine's environment, for the FABRICA_ variables of settings. */
+  /** The FABRICA_ variables of settings in the starting client's environment, by name. */
   readonly environment: Readonly<Record<string, string | undefined>>
   /** The engine's settings as stored; `{}` where it has none. */
   readonly engineSettings: unknown

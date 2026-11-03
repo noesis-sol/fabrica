@@ -1,5 +1,6 @@
 import {
   Console,
+  Context,
   Data,
   DateTime,
   Effect,
@@ -20,6 +21,7 @@ import {
   TicketId,
   exitCodeOf,
 } from '@fabrica/contracts'
+import { Settings } from '@fabrica/engine'
 
 import { Json, optionalValueFlag } from './flags'
 import { Followed, followRun } from './follow'
@@ -33,8 +35,15 @@ import { projectFlag, refused, withProject } from './tickets-project'
 // (`--project`, or the one whose checkout holds this folder). Without `--wait` the command returns once
 // the run starts; with it, it prints the run's lines as `fabrica follow` does and exits with the code
 // its end gives (§13.11). A start the engine refuses prints every problem and exits with its end's
-// code, 2 for a start check's. `--concurrent`, `--model` and `--auto-answer` are settings flags: the
-// engine resolves them with the project's and its own settings (§13.13).
+// code, 2 for a start check's. `--concurrent`, `--model` and `--auto-answer` are settings flags, and
+// the FABRICA_ variables of settings in this command's environment are sent with them: the engine
+// resolves them, a flag over its variable, with the project's and its own settings (§13.13), so a
+// variable left in the environment that started the engine sets no run's settings.
+
+/** The environment the command was run in, for its FABRICA_ variables of settings; a test gives its own. */
+export const RunEnvironment = Context.Reference<
+  Readonly<Record<string, string | undefined>>
+>('@fabrica/engine-app/RunEnvironment', { defaultValue: () => process.env })
 
 /** The run ended, or didn't start, with a non-zero exit code (§13.11): the command exits with it. */
 export class RunExited extends Data.TaggedError('RunExited')<{
@@ -119,7 +128,10 @@ const modeOf = (flags: ModeFlags) =>
     return yield* only ?? Effect.succeed(RunMode.cases.tickets.make({}))
   })
 
-/** The run's flags: its limit, `--offline`, and the settings flags by setting path, as their text. */
+/**
+ * The run's flags: its limit, `--offline`, the settings flags by setting path, as their text, and the
+ * FABRICA_ variables of settings in the command's environment.
+ */
 const flagsOf = (given: {
   readonly limit: Option.Option<number>
   readonly concurrent: Option.Option<number>
@@ -130,6 +142,7 @@ const flagsOf = (given: {
   Effect.gen(function* () {
     if (Option.exists(given.limit, limit => limit < 1))
       return yield* refused('--limit takes a whole number, 1 or more')
+    const environment = yield* RunEnvironment
     const settings: Record<string, string> = {}
     if (Option.isSome(given.concurrent))
       settings['concurrent'] = String(given.concurrent.value)
@@ -140,6 +153,7 @@ const flagsOf = (given: {
       limit: given.limit,
       offline: given.offline,
       settings,
+      environment: Settings.settingVariables(environment),
       preflight: Option.none(),
     })
   })

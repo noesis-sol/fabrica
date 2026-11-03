@@ -94,6 +94,7 @@ const noFlags: RunFlags = {
   limit: Option.none(),
   offline: false,
   settings: {},
+  environment: {},
   preflight: Option.none(),
 }
 

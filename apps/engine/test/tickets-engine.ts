@@ -15,6 +15,7 @@ import {
 
 import { LocalEngine } from '../src/cli/connect'
 import { runCli } from '../src/cli/main'
+import { RunEnvironment } from '../src/cli/run'
 
 // The `fabrica tickets` tests' engine: started in a temporary data folder with one project, a
 // checkout of the test's, and the CLI run as its entry runs it, against it.
@@ -50,8 +51,15 @@ export const gitOf = (tools: Tools) =>
     Layer.provide(Process.layerClock),
   )
 
-/** `fabrica <args>` with the local engine at `socket`: its exit and what it printed. */
-export const fabrica = (socket: string, ...args: ReadonlyArray<string>) =>
+/**
+ * `fabrica <args>` with the local engine at `socket`, run in `environment` (none of the host's): its
+ * exit and what it printed.
+ */
+export const fabricaIn = (
+  environment: Readonly<Record<string, string>>,
+  socket: string,
+  ...args: ReadonlyArray<string>
+) =>
   Effect.gen(function* () {
     const out: Array<string> = []
     const err: Array<string> = []
@@ -64,6 +72,7 @@ export const fabrica = (socket: string, ...args: ReadonlyArray<string>) =>
     )
     const exit = yield* runCli(args).pipe(
       Effect.provideService(Console.Console, console),
+      Effect.provideService(RunEnvironment, environment),
       Effect.provide([
         NodeServices.layer,
         Layer.succeed(LocalEngine)({ socket: Effect.succeed(socket) }),
@@ -73,6 +82,10 @@ export const fabrica = (socket: string, ...args: ReadonlyArray<string>) =>
     )
     return { exit, out, err }
   })
+
+/** `fabrica <args>` with the local engine at `socket`, in an empty environment. */
+export const fabrica = (socket: string, ...args: ReadonlyArray<string>) =>
+  fabricaIn({}, socket, ...args)
 
 /** An engine started in a temporary data folder with one project, `work`, for the test's scope. */
 export const testEngine = Effect.gen(function* () {

@@ -796,7 +796,7 @@ The CLI's exit codes and the event stream's stop kinds are orchestra's, minus th
 
 **Scope** \[DECISION\] (H68): `.fabrica/settings.json` is committed, so it holds only what everyone running the project shares (its checks, setup, requirements, permissions, footprint rules). A person's or a machine's choice is the engine's setting or the app's: `keep_awake`, `worker_nice`, `machine_workers`, `auto_answer`, `credentials_wait`, notifications, the theme. tutti put keeping awake in its committed settings, so one person's choice for a night went to everyone who ran the project (tutti-v0tn), and then moved it to each person's own configuration (tutti-22jf).
 
-Flags, then environment variables (`FABRICA_…`), then the project's settings, then the engine's, resolved once per run into one value; every problem listed (tutti spec §3.3 `AppConfig`).
+Flags, then environment variables (`FABRICA_…`), then the project's settings, then the engine's, resolved once per run into one value; every problem listed (tutti spec §3.3 `AppConfig`). The variables are the starting client's, sent with its flags, as orchestra bound each flag over its variable in the process the user ran: `FABRICA_CONCURRENT=1 fabrica run` sets the run's `concurrent`, and a variable left in whatever started the engine sets no run's settings. A run started from the app sends none.
 
 ## 14. Holds
 

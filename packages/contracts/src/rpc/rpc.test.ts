@@ -660,12 +660,12 @@ const samples: Record<string, Samples> = {
       {
         project,
         mode: { _tag: 'tickets' },
-        flags: { offline: false, settings: {} },
+        flags: { offline: false, settings: {}, environment: {} },
       },
       {
         project,
         mode: { _tag: 'ticket', ticket },
-        flags: { limit: 5, offline: true, settings: {} },
+        flags: { limit: 5, offline: true, settings: {}, environment: {} },
       },
       {
         project,
@@ -677,17 +677,18 @@ const samples: Record<string, Samples> = {
         flags: {
           offline: false,
           settings: { concurrent: '3', auto_answer: '10m' },
+          environment: { FABRICA_MODEL: 'anthropic/claude-opus-5-5' },
         },
       },
       {
         project,
         mode: { _tag: 'feature', text: 'Dark mode' },
-        flags: { offline: false, settings: {} },
+        flags: { offline: false, settings: {}, environment: {} },
       },
       {
         project,
         mode: { _tag: 'overnight' },
-        flags: { offline: false, settings: {} },
+        flags: { offline: false, settings: {}, environment: {} },
       },
       {
         project,
@@ -695,6 +696,7 @@ const samples: Record<string, Samples> = {
         flags: {
           offline: false,
           settings: {},
+          environment: {},
           preflight: { fix: ['concurrent_low'], override: ['free_disk'] },
         },
       },
@@ -726,7 +728,7 @@ const samples: Record<string, Samples> = {
       {
         project,
         mode: { _tag: 'overnight' },
-        flags: { offline: false, settings: {} },
+        flags: { offline: false, settings: {}, environment: {} },
       },
     ],
     success: [
@@ -1228,14 +1230,14 @@ describe('the protocol’s groups', () => {
       refuses(shape('run.start').payload, {
         project,
         mode: { _tag: 'ticket' },
-        flags: { offline: false, settings: {} },
+        flags: { offline: false, settings: {}, environment: {} },
       }),
     ).toBe(true)
     expect(
       refuses(shape('run.start').payload, {
         project,
         mode: { _tag: 'tickets' },
-        flags: { limit: 0, offline: false, settings: {} },
+        flags: { limit: 0, offline: false, settings: {}, environment: {} },
       }),
     ).toBe(true)
     expect(

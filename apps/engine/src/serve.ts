@@ -42,7 +42,6 @@ export const serve = (flags: Daemon.ListenSettings) =>
             self: fileURLToPath(import.meta.url),
             node: process.execPath,
           }),
-          environment: hostEnvironment,
         }),
       ),
     }).pipe(Effect.scoped)

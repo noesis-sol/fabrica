@@ -9695,6 +9695,12 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
           "flags": {
             "additionalProperties": true,
             "properties": {
+              "environment": {
+                "additionalProperties": {
+                  "type": "string",
+                },
+                "type": "object",
+              },
               "limit": {
                 "minimum": 1,
                 "type": "integer",
@@ -9968,6 +9974,12 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
           "flags": {
             "additionalProperties": true,
             "properties": {
+              "environment": {
+                "additionalProperties": {
+                  "type": "string",
+                },
+                "type": "object",
+              },
               "limit": {
                 "minimum": 1,
                 "type": "integer",

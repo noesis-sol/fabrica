@@ -50,8 +50,6 @@ export type RunHostingShape = Data.TaggedEnum<{
     readonly nice: Option.Option<number>
     /** The engine's host, which its runs keep from idle sleep. */
     readonly keepAwakeHost: KeepAwakeHost
-    /** The engine's environment, for the FABRICA_ variables of settings (§13.13). */
-    readonly environment: Readonly<Record<string, string | undefined>>
   }
   Refused: { readonly reason: string }
 }>

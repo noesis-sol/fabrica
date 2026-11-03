@@ -28,6 +28,7 @@ import {
 } from '../../../packages/engine/test/scripted-run'
 import { LocalEngine } from '../src/cli/connect'
 import { runCli } from '../src/cli/main'
+import { RunEnvironment } from '../src/cli/run'
 import { fabrica } from './tickets-engine'
 
 // `fabrica run` and `fabrica follow` (spec §19, §13.10, §13.11): run as the CLI's entry runs it,
@@ -103,6 +104,7 @@ const live = (socket: string, ...args: ReadonlyArray<string>) =>
     )
     const fiber = yield* runCli([...args, '--project', 'work']).pipe(
       Effect.provideService(Console.Console, console),
+      Effect.provideService(RunEnvironment, {}),
       Effect.provide([
         NodeServices.layer,
         Layer.succeed(LocalEngine)({ socket: Effect.succeed(socket) }),

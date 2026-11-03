@@ -3,7 +3,8 @@ import { Option } from 'effect'
 // The settings a run resolves, each by its path in its settings file (spec §13.13). A key is a value
 // set as a whole; a group (verifier, budgets, organs.triage) is an object of keys, merged key by key,
 // so a flag giving verifier.rounds keeps the project's verifier.enabled. Each key is also a flag
-// (`--verifier-rounds`) and an environment variable (`FABRICA_VERIFIER_ROUNDS`).
+// (`--verifier-rounds`) and an environment variable (`FABRICA_VERIFIER_ROUNDS`), read in the
+// environment of the client that starts the run, as the flag is.
 
 /** Whose settings hold a key: the project's committed file, or the engine's (a person's or a machine's choice, H68). */
 export type SettingScope = 'project' | 'engine'
@@ -79,6 +80,10 @@ const enginePaths = [
 export const flagOf = (path: string): string =>
   `--${path.replaceAll(/[._]/g, '-')}`
 
+/** The environment variable that sets the setting at `path`: `FABRICA_VERIFIER_ROUNDS`. */
+export const variableOf = (path: string): string =>
+  `FABRICA_${path.replaceAll('.', '_').toUpperCase()}`
+
 const makeKey =
   (scope: SettingScope) =>
   (path: string): SettingKey => ({
@@ -86,7 +91,7 @@ const makeKey =
     segments: path.split('.'),
     scope,
     flag: flagOf(path),
-    variable: `FABRICA_${path.replaceAll('.', '_').toUpperCase()}`,
+    variable: variableOf(path),
   })
 
 /** Every setting a run resolves, the project's first. */
@@ -94,6 +99,20 @@ export const settingKeys: ReadonlyArray<SettingKey> = [
   ...projectPaths.map(makeKey('project')),
   ...enginePaths.map(makeKey('engine')),
 ]
+
+/**
+ * The FABRICA_ variables of settings `environment` sets, by name: what a client starting a run sends
+ * of its own environment, so that its variables, not the engine's, set the run's settings (§13.13).
+ */
+export const settingVariables = (
+  environment: Readonly<Record<string, string | undefined>>,
+): Record<string, string> =>
+  Object.fromEntries(
+    settingKeys.flatMap(({ variable }) => {
+      const value = environment[variable]
+      return value === undefined ? [] : [[variable, value]]
+    }),
+  )
 
 /** The setting at `path`, where there is one. */
 export const findSettingKey = (path: string): Option.Option<SettingKey> =>

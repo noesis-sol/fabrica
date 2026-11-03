@@ -25,7 +25,7 @@ import {
 import { parseJson, placedAt, valueAt, withValueAt } from './values'
 
 // Resolving a run's settings, once, into one value (spec §13.13): each key from its flag, else its
-// FABRICA_ environment variable, else the project's settings (a project key) or the engine's (a
+// FABRICA_ environment variable in the starting client's environment, else the project's settings (a project key) or the engine's (a
 // machine key), else its default. Every problem, in every source, is listed together; a person's or
 // a machine's setting in the project's file is one (H68).
 
@@ -33,7 +33,7 @@ import { parseJson, placedAt, valueAt, withValueAt } from './values'
 export interface SettingsInputs {
   /** The settings flags given, by setting path (`concurrent`, `verifier.rounds`), as their text. */
   readonly flags: Readonly<Record<string, string>>
-  /** The engine's environment, from which the FABRICA_ variables of settings are read. */
+  /** The starting client's environment, from which the FABRICA_ variables of settings are read. */
   readonly environment: Readonly<Record<string, string | undefined>>
   readonly projectFile: ProjectSettingsFile
   /** The engine's settings as stored; `{}` where it has none. */

@@ -117,8 +117,6 @@ export interface HostingConfig {
   /** The host's cores. */
   readonly cores: number
   readonly agents: AgentPlaces
-  /** The engine's environment, for the FABRICA_ variables of settings (§13.13). */
-  readonly environment: Readonly<Record<string, string | undefined>>
   /** The process runner, on the deadlines the hosting gives it. */
   readonly runner: Layer.Layer<Process.ProcessRunner, never, Process.Deadlines>
   /** What the host logs of its sleeps, for time awake. */
@@ -149,7 +147,6 @@ export const onHost = (options: {
   readonly paths: Daemon.EnginePaths
   readonly cores: number
   readonly agents: AgentPlaces
-  readonly environment: Readonly<Record<string, string | undefined>>
 }): HostingConfig => ({
   ...options,
   runner: Process.layerHost,
@@ -228,7 +225,6 @@ export const runHosting = (
             cores: coresShare(settings, config.cores),
             nice: Option.some(settings.worker_nice),
             keepAwakeHost: config.keepAwakeHost,
-            environment: config.environment,
           }),
         ),
         Effect.catch(error => Effect.succeed(refused(error.message))),
