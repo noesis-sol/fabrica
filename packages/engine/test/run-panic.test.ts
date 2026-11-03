@@ -1,6 +1,7 @@
 import {
   Cause,
   Deferred,
+  Duration,
   Effect,
   Exit,
   Fiber,
@@ -10,8 +11,21 @@ import {
 } from 'effect'
 
 import { beforeAll, describe, expect, it } from '@effect/vitest'
-import type { RunEvent } from '@fabrica/contracts'
+import {
+  type Actor,
+  Assignee,
+  CommandSetting,
+  CommitHash,
+  EngineId,
+  type RunEvent,
+  SessionId,
+  defaultSetupFiles,
+} from '@fabrica/contracts'
 
+import { Checks } from '../src/checks'
+import { Worktrees, besideCheckout } from '../src/git'
+import { MergeOutcome, make as makeQueue, noSetup } from '../src/merge'
+import { HandBackWorker } from '../src/merge/handbacks'
 import { runProject } from '../src/run'
 import {
   type EventDraft,
@@ -22,9 +36,11 @@ import {
 import { StoreFailed, WorkGraph } from '../src/workgraph'
 import {
   type Project,
+  commit,
   configOf,
   eventsOf,
   file,
+  git,
   ofKind,
   options,
   project,
@@ -33,8 +49,8 @@ import {
 } from './run-harness'
 
 // A run ends `PANIC` on a defect anywhere in it, and `TRACKER_FAILED` where the work graph can't be
-// watched, its end record written (spec §13.11, §13.2): the merge's updates, the work graph's changes,
-// a look and the end itself. Whole runs on the harness, the records a test's defect comes from refused
+// watched, its end record written (spec §13.11, §13.2): the merge queue and its updates, the work graph's
+// changes, a look and the end itself. Whole runs on the harness, the records a test's defect comes from refused
 // by the log, as a schema refuses one, and the work graph's changes failed where a test says.
 
 beforeAll(setUpRuns)
@@ -88,7 +104,7 @@ const refused = (kind: RunEvent['kind']) =>
 const ended = <A, E>(
   fixture: Project,
   setup: Effect.Effect<A, E, WorkGraph>,
-  layer: Layer.Layer<never, never, RunLog | WorkGraph>,
+  layer: Layer.Layer<never, never, RunLog | WorkGraph | Checks>,
 ) =>
   withRuns(
     fixture,
@@ -108,6 +124,7 @@ const ended = <A, E>(
 const endedWatching = (
   fixture: Project,
   changes: Stream.Stream<never, StoreFailed>,
+  refuses: (draft: EventDraft) => boolean = () => false,
 ) =>
   Effect.gen(function* () {
     const dispatched = yield* Deferred.make<void>()
@@ -115,10 +132,13 @@ const endedWatching = (
       fixture,
       file('Works on', 'hang'),
       Layer.merge(
-        noting(kind =>
-          kind === 'dispatch'
-            ? Effect.asVoid(Deferred.succeed(dispatched, undefined))
-            : Effect.void,
+        Layer.provide(
+          refusing(refuses),
+          noting(kind =>
+            kind === 'dispatch'
+              ? Effect.asVoid(Deferred.succeed(dispatched, undefined))
+              : Effect.void,
+          ),
         ),
         changing(
           Effect.succeed(
@@ -225,6 +245,117 @@ describe('a defect outside the workers', () => {
         expect(stops).toBe(2)
         expectEnded(run, 'PANIC', 4)
       }),
+  )
+
+  it.effect(
+    "writes a ticket's ticket_end once when the end goes through again",
+    () =>
+      Effect.gen(function* () {
+        let ends = 0
+        const { end, events } = yield* endedWatching(
+          project(),
+          Stream.fail(storeFailed),
+          draft => {
+            if (draft.kind !== 'end') return false
+            ends += 1
+            return ends === 1
+          },
+        )
+        expect(end).toEqual({ kind: 'PANIC', code: 4 })
+        expect(ofKind(events, 'stop').map(stop => stop.detail)).toEqual([
+          'TRACKER_FAILED',
+          'PANIC',
+        ])
+        expect(
+          ofKind(events, 'ticket_end').map(({ outcome }) => outcome),
+        ).toEqual(['stopped'])
+        expect(ofKind(events, 'end').map(record => record.code)).toEqual([4])
+      }),
+  )
+
+  it.effect(
+    'stops the run with the ticket when its turn in the merge queue dies',
+    () =>
+      Effect.gen(function* () {
+        const run = yield* ended(
+          project(),
+          file('Merges', 'finish'),
+          Layer.effect(
+            Checks,
+            Effect.map(Checks, checks =>
+              Checks.of({
+                ...checks,
+                run: input =>
+                  input.suite === 'merge'
+                    ? Effect.die('a bug')
+                    : checks.run(input),
+              }),
+            ),
+          ),
+        )
+        expectEnded(run, 'PANIC', 4)
+        const [stop] = ofKind(run.events, 'stop')
+        expect(stop?.ticket).toBeDefined()
+        expect(stop?.text).toContain('a bug')
+      }),
+  )
+
+  it.effect('stops merging with the ticket when its hand-back dies', () =>
+    Effect.gen(function* () {
+      const fixture = project()
+      const update = yield* withRuns(
+        fixture,
+        Effect.gen(function* () {
+          const graph = yield* WorkGraph
+          const worktrees = yield* Worktrees
+          const actor: Actor = { _tag: 'maintainer' }
+          const { id: ticket } = yield* file('Conflicts', 'finish')
+          const { worktree } = yield* worktrees.prepare({
+            home: besideCheckout(fixture.checkout),
+            ticket,
+            base: CommitHash.make(git(fixture.checkout, 'rev-parse', 'main')),
+          })
+          commit(worktree.path, 'the change', { 'README.md': 'ours\n' })
+          commit(fixture.checkout, 'Base too', { 'README.md': 'theirs\n' })
+          yield* graph.claim({
+            id: ticket,
+            assignee: new Assignee({
+              engine: EngineId.make('engine-1'),
+              session: SessionId.make('session-1'),
+            }),
+            actor,
+          })
+          const merges = yield* makeQueue({
+            home: besideCheckout(fixture.checkout),
+            base: 'main',
+            checkFast: CommandSetting.cases.Command.make({
+              command: 'check-pass',
+            }),
+            checkTimeout: Duration.minutes(1),
+            setupFiles: defaultSetupFiles,
+            handBacks: { resolve: 2, fix: 2, timeout: Duration.minutes(20) },
+            train: 0,
+            cores: 1,
+            actor,
+          }).pipe(
+            Effect.provideService(HandBackWorker, {
+              give: () => Effect.die('a bug'),
+              tell: () => Effect.void,
+            }),
+            Effect.provide(noSetup),
+          )
+          const updates = yield* merges.updates
+          const collected = yield* Effect.forkChild(
+            Stream.runCollect(
+              Stream.takeUntil(updates, MergeOutcome.$is('Stopped')),
+            ),
+          )
+          yield* merges.enqueue(worktree)
+          return (yield* Fiber.join(collected)).at(-1)
+        }),
+      )
+      expect(update).toMatchObject({ _tag: 'Stopped', kind: 'PANIC' })
+    }),
   )
 
   it.effect('ends PANIC when the run dies before its loop', () =>

@@ -16,6 +16,7 @@ import type { CommitHash, MergeStep, TicketId } from '@fabrica/contracts'
 
 import type { Checks } from '../checks'
 import { Git, type Worktree, type Worktrees } from '../git'
+import { onPanic } from '../panic'
 import { WorkGraph } from '../workgraph'
 import {
   Awaiting,
@@ -227,32 +228,50 @@ export const make = Effect.fn('MergeQueue.make')(function* (
     )
   })
 
+  /** A defect in the ticket's part of the queue: merging stops, so the run ends rather than waits on it. */
+  const panicked = (ticket: TicketId) =>
+    onPanic(detail =>
+      publish(MergeOutcome.Stopped({ ticket, kind: 'PANIC', detail })),
+    )
+
+  /** The ticket's turn: whether merging goes on after it. */
+  const taken = (worktree: Worktree) =>
+    Effect.gen(function* () {
+      const ticket = worktree.ticket
+      yield* SynchronizedRef.update(line, current => ({
+        merging: Option.some(ticket),
+        waiting: current.waiting.filter(waiting => waiting.ticket !== ticket),
+      }))
+      const outcome = yield* turnOf(worktree)
+      yield* book.turnEnded(ticket)
+      yield* train.settle(outcome)
+      yield* SynchronizedRef.update(line, current => ({
+        ...current,
+        merging: Option.none(),
+      }))
+      // What follows the merge comes before the run hears of it, so the run's end never cuts it short;
+      // the rechecks are said before the merge, so the run never takes their tickets for done.
+      if (MergeOutcome.$is('Merged')(outcome)) {
+        yield* afterMerge.merged({ ticket, commit: outcome.commit })
+        yield* recheck
+      }
+      yield* publish(outcome)
+      if (MergeOutcome.$is('HandedBack')(outcome))
+        yield* FiberSet.run(
+          handBacks,
+          handBack(worktree).pipe(Effect.catchCause(panicked(ticket))),
+        )
+      return !MergeOutcome.$is('Stopped')(outcome)
+    })
+
   /** Takes the next ticket's turn: whether merging goes on after it. */
-  const next = Effect.gen(function* () {
-    const worktree = yield* Queue.take(entries)
-    const ticket = worktree.ticket
-    yield* SynchronizedRef.update(line, current => ({
-      merging: Option.some(ticket),
-      waiting: current.waiting.filter(waiting => waiting.ticket !== ticket),
-    }))
-    const outcome = yield* turnOf(worktree)
-    yield* book.turnEnded(ticket)
-    yield* train.settle(outcome)
-    yield* SynchronizedRef.update(line, current => ({
-      ...current,
-      merging: Option.none(),
-    }))
-    // What follows the merge comes before the run hears of it, so the run's end never cuts it short;
-    // the rechecks are said before the merge, so the run never takes their tickets for done.
-    if (MergeOutcome.$is('Merged')(outcome)) {
-      yield* afterMerge.merged({ ticket, commit: outcome.commit })
-      yield* recheck
-    }
-    yield* publish(outcome)
-    if (MergeOutcome.$is('HandedBack')(outcome))
-      yield* FiberSet.run(handBacks, handBack(worktree))
-    return !MergeOutcome.$is('Stopped')(outcome)
-  })
+  const next = Effect.flatMap(Queue.take(entries), worktree =>
+    taken(worktree).pipe(
+      Effect.catchCause(cause =>
+        Effect.as(panicked(worktree.ticket)(cause), false),
+      ),
+    ),
+  )
 
   yield* Effect.forkScoped(
     Effect.gen(function* () {

@@ -68,6 +68,7 @@ import {
   HandBackWorker,
   type HandBackWorkerShape,
 } from '../merge/handbacks'
+import { onPanic } from '../panic'
 import { basePushes, pushSetting } from '../projects/base-sync'
 import { ModelProxy, Permits } from '../proxy'
 import {
@@ -160,9 +161,8 @@ import {
 // stop ends it `INTERRUPTED`; a drain dispatches nothing more, and the run ends `DRAINED` once nothing
 // is in progress. Its start takes up what an earlier run left (`carryover.ts`, §13.10): each ticket
 // with a saved session, carried over, answered or undeferred, resumes it as a dispatch does, in a free
-// slot (H76); a ticket merged by hand is noticed as Base moves. A defect in the loop, its end or a fiber
-// that wakes it ends the run `PANIC`, its end record written (§13.11), so a run never waits on a fiber
-// gone, nor ends with nothing said.
+// slot (H76); a ticket merged by hand is noticed as Base moves. A defect in the loop, its end, the merge
+// queue or a fiber that watches for what wakes the run ends it `PANIC`, its end record written (§13.11).
 
 /** How a run ended, and the exit code the CLI exits with (§13.11). */
 export interface RunEnd {
@@ -182,17 +182,6 @@ type Ending = Data.TaggedEnum<{
   }
 }>
 const Ending = Data.taggedEnum<Ending>()
-
-/**
- * A cause's handler where the run can't go on past it: anything but an interruption is a panic, given
- * to `panicked` in its words (§13.11); an interruption goes on being one.
- */
-const onPanic =
-  <A>(panicked: (detail: string) => Effect.Effect<A>) =>
-  <E>(cause: Cause.Cause<E>): Effect.Effect<A> =>
-    Cause.hasInterruptsOnly(cause)
-      ? Effect.interrupt
-      : panicked(Cause.pretty(cause))
 
 /**
  * The end of a run that couldn't go through its own, what's escaped it having closed its scope: its
@@ -1959,7 +1948,8 @@ const runStarted = Effect.fn('Run.started')(function* (
       cost,
       afterFullCheck: pushes.after_run,
     })
-  // A defect in the end goes through the end again as what it is: what it had done, it finds done.
+  // A defect in the end goes through the end again as what it is: the steps it had taken are done, and
+  // each ticket's `ticket_end` is written once; its end line is said again, as the panic.
   return yield* ended(ending.value).pipe(
     Effect.catchCause(
       onPanic(detail =>

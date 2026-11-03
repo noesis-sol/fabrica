@@ -19,7 +19,7 @@ import type { CheckRecord } from '../checks'
 /** The stops a merge can bring a run to: it stops merging, and the run ends with its kind (§13.11). */
 export type MergeStopKind = Extract<
   StopKind,
-  'MERGE_FAILED' | 'OFF_BRANCH' | 'TRACKER_FAILED'
+  'MERGE_FAILED' | 'OFF_BRANCH' | 'TRACKER_FAILED' | 'PANIC'
 >
 
 /** Why a ticket is back in the queue's line: its hand-back done, or a check to run again once Base moved. */

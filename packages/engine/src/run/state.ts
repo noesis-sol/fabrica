@@ -280,10 +280,14 @@ export const makeRunState = Effect.fn('RunState.make')(function* (
     { ...current, ending: true },
   ])
 
+  /** The tickets `endLeft` wrote the `ticket_end` of: an end gone through again writes each once. */
+  const endedLeft = new Set<TicketId>()
   const endLeft = SynchronizedRef.get(state).pipe(
     Effect.flatMap(current =>
       Effect.forEach(
-        [...current.tickets.values()],
+        [...current.tickets.values()].filter(
+          taken => !endedLeft.has(taken.ticket),
+        ),
         taken =>
           Option.match(
             Option.filter(
@@ -292,7 +296,11 @@ export const makeRunState = Effect.fn('RunState.make')(function* (
             ),
             {
               onNone: () => Effect.void,
-              onSome: outcome => ticketEnd(taken, outcome),
+              onSome: outcome =>
+                Effect.andThen(
+                  ticketEnd(taken, outcome),
+                  Effect.sync(() => endedLeft.add(taken.ticket)),
+                ),
             },
           ),
         { discard: true },
