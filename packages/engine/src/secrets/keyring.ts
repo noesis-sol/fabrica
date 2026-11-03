@@ -228,9 +228,16 @@ const keychainFailed = (operation: string, code: number) =>
 
 /**
  * `security -i` reads its commands a line at a time, into a buffer that cuts a longer line: a line
- * of 4,060 bytes was taken whole, one of 5,400 cut and refused (macOS 26).
+ * of 4,060 bytes was taken whole, one of 5,400 cut and refused (macOS 26). A longer item, as a
+ * subscription's sign-in can be, is kept in pieces of this many characters of its base64.
  */
-const SECURITY_LINE_LIMIT = 4000
+const SECURITY_PIECE = 3000
+
+/** What an item kept in pieces holds under its own name: this, and how many there are. */
+const PIECES_MARK = 'pieces:'
+
+/** A piece's item: `~` is in no item's name, so a piece is never one. */
+const pieceName = (name: string, index: number) => `${name}~${index}`
 
 /** The macOS Keychain, through `security`: a generic password per item, the service `fabrica`, the account the item's name. */
 export const keychain = (cli: KeyringCliShape): Keyring => {
@@ -241,24 +248,44 @@ export const keychain = (cli: KeyringCliShape): Keyring => {
       args: [operation, '-s', KEYRING_SERVICE, '-a', name, ...extra],
       input: Option.none(),
     })
-  const read = Effect.fn('Keychain.read')(function* (name: string) {
+  /** What `security` prints for an item, its base64 or the mark of its pieces. */
+  const printed = Effect.fn('Keychain.printed')(function* (name: string) {
     const { code, stdout } = yield* item('find-generic-password', name, ['-w'])
-    if (code === SECURITY_NOT_FOUND) return Option.none()
+    if (code === SECURITY_NOT_FOUND) return Option.none<string>()
     if (code !== 0) return yield* keychainFailed('read an item', code)
-    return Option.some(fromBase64(stdout))
+    return Option.some(Redacted.value(stdout).trim())
   })
-  const write = Effect.fn('Keychain.write')(function* (
-    name: string,
-    value: Redacted.Redacted<string>,
-  ) {
-    // Names and base64 hold no space or quote, so `security -i` splits the line as written.
-    const line = `add-generic-password -U -s ${KEYRING_SERVICE} -a ${name} -w ${Redacted.value(toBase64(value))}\n`
-    if (Buffer.byteLength(line) > SECURITY_LINE_LIMIT)
+  /** How many pieces what is printed for an item says it has. */
+  const piecesIn = (text: string): number =>
+    text.startsWith(PIECES_MARK) ? Number(text.slice(PIECES_MARK.length)) : 0
+  const read = Effect.fn('Keychain.read')(function* (name: string) {
+    const head = yield* printed(name)
+    if (Option.isNone(head)) return Option.none()
+    const count = piecesIn(head.value)
+    if (count === 0) return Option.some(fromBase64(Redacted.make(head.value)))
+    const pieces = yield* Effect.forEach(
+      Array.from({ length: count }, (_, index) => index),
+      index => printed(pieceName(name, index)),
+      { concurrency: 'unbounded' },
+    )
+    if (!pieces.every(Option.isSome))
       return yield* new SecretStoreFailed({
         store: 'keychain',
-        operation: 'write an item',
-        reason: `the credential is longer than the security command takes (${SECURITY_LINE_LIMIT} bytes in all)`,
+        operation: 'read an item',
+        reason: `a piece of ${name} is missing`,
       })
+    return Option.some(
+      fromBase64(
+        Redacted.make(pieces.map(piece => Option.getOrThrow(piece)).join('')),
+      ),
+    )
+  })
+  const writeLine = Effect.fn('Keychain.writeLine')(function* (
+    name: string,
+    text: string,
+  ) {
+    // Names and base64 hold no space or quote, so `security -i` splits the line as written.
+    const line = `add-generic-password -U -s ${KEYRING_SERVICE} -a ${name} -w ${text}\n`
     const { code } = yield* run('write an item', {
       command: 'security',
       args: ['-i'],
@@ -266,10 +293,50 @@ export const keychain = (cli: KeyringCliShape): Keyring => {
     })
     if (code !== 0) return yield* keychainFailed('write an item', code)
   })
-  const remove = Effect.fn('Keychain.remove')(function* (name: string) {
+  const removeItem = Effect.fn('Keychain.removeItem')(function* (name: string) {
     const { code } = yield* item('delete-generic-password', name)
     if (code !== 0 && code !== SECURITY_NOT_FOUND)
       return yield* keychainFailed('remove an item', code)
+  })
+  const removePieces = (name: string, from: number, to: number) =>
+    Effect.forEach(
+      Array.from(
+        { length: Math.max(0, to - from) },
+        (_, index) => from + index,
+      ),
+      index => removeItem(pieceName(name, index)),
+      { discard: true },
+    )
+  const piecesKept = (name: string) =>
+    Effect.map(printed(name), head =>
+      Option.match(head, { onNone: () => 0, onSome: piecesIn }),
+    )
+  // The pieces go first, so the item never names pieces it hasn't got.
+  const write = Effect.fn('Keychain.write')(function* (
+    name: string,
+    value: Redacted.Redacted<string>,
+  ) {
+    const before = yield* piecesKept(name)
+    const base64 = Redacted.value(toBase64(value))
+    const pieces =
+      base64.length <= SECURITY_PIECE
+        ? []
+        : (base64.match(new RegExp(`.{1,${SECURITY_PIECE}}`, 'gu')) ?? [])
+    yield* Effect.forEach(
+      pieces,
+      (piece, index) => writeLine(pieceName(name, index), piece),
+      { discard: true },
+    )
+    yield* writeLine(
+      name,
+      pieces.length === 0 ? base64 : `${PIECES_MARK}${pieces.length}`,
+    )
+    yield* removePieces(name, pieces.length, before)
+  })
+  const remove = Effect.fn('Keychain.remove')(function* (name: string) {
+    const before = yield* piecesKept(name)
+    yield* removeItem(name)
+    yield* removePieces(name, 0, before)
   })
   return {
     store: { kind: 'keychain', read, write, remove },

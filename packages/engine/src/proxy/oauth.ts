@@ -1,4 +1,5 @@
 import { Data, Duration, Effect, Option, Redacted } from 'effect'
+import { createHash } from 'node:crypto'
 
 import type { AuthInteraction, Credential } from '@earendil-works/pi-ai'
 import {
@@ -10,7 +11,7 @@ import { anthropicProvider } from '@earendil-works/pi-ai/providers/anthropic'
 import { githubCopilotProvider } from '@earendil-works/pi-ai/providers/github-copilot'
 import { openaiProvider } from '@earendil-works/pi-ai/providers/openai'
 import { openrouterProvider } from '@earendil-works/pi-ai/providers/openrouter'
-import type { ProviderName } from '@fabrica/contracts'
+import type { EngineId, ProviderName } from '@fabrica/contracts'
 
 import { type SecretsShape, oauthStore } from '../secrets'
 
@@ -74,6 +75,23 @@ const noAmbient = {
   fileExists: () => Promise.resolve(false),
 }
 
+/**
+ * The stable ID ChatGPT's sign-in asks of an installation, as its agent host: a UUID drawn from the
+ * engine's ID, which it keeps for good, that says nothing of it.
+ */
+export const deviceIdOf = (engine: EngineId): string => {
+  const hex = createHash('sha256')
+    .update(`fabrica-device:${engine}`)
+    .digest('hex')
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    `5${hex.slice(13, 16)}`,
+    `8${hex.slice(17, 20)}`,
+    hex.slice(20, 32),
+  ].join('-')
+}
+
 /** Sign-ins and their tokens, kept in `secrets`, over `providers`. */
 export const makeSubscriptions = (options: {
   readonly secrets: SecretsShape
@@ -92,11 +110,13 @@ export const makeSubscriptions = (options: {
     login: (
       provider: ProviderName,
       interaction: AuthInteraction,
+      deviceId: string,
     ): Effect.Effect<Credential, SignInFailed> =>
       Effect.tryPromise({
         try: () =>
           models.login(provider, 'oauth', interaction, {
             agentName: 'Fabrica',
+            getDeviceId: () => deviceId,
           }),
         catch: error =>
           new SignInFailed({
@@ -106,6 +126,15 @@ export const makeSubscriptions = (options: {
                 : 'the sign-in failed',
           }),
       }),
+    /** The headers `pi-ai`'s catalog has Pi send with a call to `model`, or else to the provider's first (GitHub Copilot's). */
+    catalogHeaders: (
+      provider: ProviderName,
+      model: string,
+    ): Readonly<Record<string, string>> =>
+      presentHeaders(
+        (models.getModel(provider, model) ?? models.getModels(provider)[0])
+          ?.headers,
+      ),
     /** The subscription's current token, refreshed first where it expires within `validFor` (or five minutes). */
     current: (
       provider: ProviderName,

@@ -21,15 +21,19 @@ import { describe, expect, it } from '@effect/vitest'
 import {
   CredentialInfo,
   CredentialValue,
+  EngineId,
+  EngineVersion,
   type LoginStep,
   ModelName,
   RunId,
   SecretRpcs,
   SessionId,
   TicketId,
+  protocolVersion,
 } from '@fabrica/contracts'
 
 import { modelsJson } from '../src/agent/launch'
+import { Engine } from '../src/engine/service'
 import { ProcessRunner } from '../src/process'
 import {
   Authentication,
@@ -38,9 +42,12 @@ import {
   ProxyEvent,
   Refusal,
   chatGptCompat,
+  deviceIdOf,
   layerOpen,
   make,
+  makeSubscriptions,
   subscriptionEntry,
+  subscriptionProviders,
 } from '../src/proxy'
 import { secretsHandlers, termsNotice } from '../src/rpc/secrets'
 import { RunHosting, RunHostingShape } from '../src/run/hosting'
@@ -49,6 +56,7 @@ import {
   Held,
   type ItemStore,
   Kept,
+  SecretMissing,
   SecretName,
   Secrets,
   type SecretsShape,
@@ -172,11 +180,35 @@ const scripted = (
 
 // The Secrets group, through its handlers
 
+const engineId = EngineId.make('engine-one')
+
+/** The engine the handlers run on: they read only its ID. */
+const thisEngine = Engine.of({
+  id: engineId,
+  version: new EngineVersion({
+    release: '1.2.3',
+    protocol: protocolVersion,
+    supported: [protocolVersion],
+  }),
+  listening: Option.none(),
+  status: () => Effect.die('not asked here'),
+  settings: Effect.die('not asked here'),
+  stop: Effect.void,
+  restart: () => Effect.void,
+  stopping: Effect.succeed(false),
+  stopRequested: Effect.never,
+})
+
 /** A client of the Secrets group, on `credentials`; a hosting refusing runs serves it all the same. */
 const clientOf = (hosting: RunHostingShape) =>
   RpcTest.makeClient(SecretRpcs).pipe(
     Effect.provide(
-      secretsHandlers.pipe(Layer.provide(Layer.succeed(RunHosting)(hosting))),
+      secretsHandlers.pipe(
+        Layer.provide([
+          Layer.succeed(RunHosting)(hosting),
+          Layer.succeed(Engine)(thisEngine),
+        ]),
+      ),
     ),
   )
 
@@ -451,6 +483,50 @@ describe('a sign-in', () => {
       )
       expect(late._tag).toBe('LoginNotWaiting')
       expect(yield* secrets.read(anthropic)).toStrictEqual(Option.none())
+    }).pipe(Effect.scoped),
+  )
+})
+
+describe('a sign-in with pi-ai’s own providers', () => {
+  it('draws a UUID for ChatGPT’s agent host, the same each time, naming no engine', () => {
+    const id = deviceIdOf(engineId)
+    expect(id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/u,
+    )
+    expect(deviceIdOf(engineId)).toBe(id)
+    expect(deviceIdOf(EngineId.make('engine-two'))).not.toBe(id)
+  })
+
+  it.live('gets each provider as far as what it first relays', () =>
+    Effect.gen(function* () {
+      const secrets = yield* memorySecrets
+      const client = yield* clientOf(
+        refusedWith(secrets, subscriptionProviders()),
+      )
+      for (const [provider, first] of [
+        ['anthropic', 'asked'],
+        ['github-copilot', 'asked'],
+        ['openrouter', 'waiting'],
+        ['openai', 'open_url'],
+      ] as const) {
+        const steps = yield* Queue.unbounded<LoginStep>()
+        const failed = yield* Deferred.make<string>()
+        const going = yield* client['credentials.login']({ provider }).pipe(
+          Stream.runForEach(step => Queue.offer(steps, step)),
+          Effect.catchTag('LoginFailed', ({ reason }) =>
+            Deferred.succeed(failed, reason),
+          ),
+          Effect.forkScoped,
+        )
+        expect((yield* Queue.take(steps))._tag).toBe('terms')
+        const next = yield* Effect.raceFirst(
+          Effect.map(Queue.take(steps), step => step._tag),
+          Deferred.await(failed),
+        )
+        // ChatGPT's sign-in listens on a port of its own, which another test on this machine may hold.
+        if (!next.startsWith('Port 1455 is in use')) expect(next).toBe(first)
+        yield* Fiber.interrupt(going)
+      }
     }).pipe(Effect.scoped),
   )
 })
@@ -906,6 +982,70 @@ describe('a subscription’s token in the proxy', () => {
       expect(chatgpt?.headers.authorization).toBe('Bearer chatgpt-token')
     }).pipe(Effect.scoped),
   )
+})
+
+describe('a probe on GitHub Copilot', () => {
+  it.live('carries the headers pi-ai’s catalog has Pi send', () =>
+    Effect.gen(function* () {
+      const upstream = yield* provider
+      const secrets = yield* memorySecrets
+      yield* keep(secrets, 'github-copilot', signedIn('copilot'))
+      // pi-ai's catalog, with the account's base URL here rather than Copilot's.
+      const copilot = subscriptionProviders()
+        .filter(({ id }) => id === 'github-copilot')
+        .map((real): Provider => ({
+          ...real,
+          auth: scripted('github-copilot', {
+            toAuth: credential =>
+              Promise.resolve({
+                apiKey: credential.access,
+                baseUrl: upstream.url,
+              }),
+          }).auth,
+        }))
+      const { proxy } = yield* proxyOver(upstream.url, secrets, copilot, [
+        {
+          provider: 'github-copilot',
+          upstream: upstream.url,
+          api: 'openai-completions',
+          authentication: Authentication.Bearer({
+            credential: SecretName.make('github-copilot'),
+          }),
+        },
+      ])
+      const outcome = yield* proxy.probe({
+        provider: 'github-copilot',
+        model: ModelName.make('no-such-model'),
+        run: RunId.make('run-1'),
+      })
+      expect(outcome._tag).toBe('Passed')
+      const sent = upstream.asked[0]?.headers
+      expect(sent?.authorization).toBe('Bearer copilot')
+      expect(sent?.['editor-version']).toEqual(expect.any(String))
+      expect(sent?.['copilot-integration-id']).toEqual(expect.any(String))
+    }).pipe(Effect.scoped),
+  )
+
+  it('reads them from the catalog, whatever the model', () => {
+    const subscriptions = makeSubscriptions({
+      secrets: Secrets.of({
+        store: 'file',
+        set: () => Effect.void,
+        list: Effect.succeed([]),
+        get: name => Effect.fail(new SecretMissing({ name })),
+        read: () => Effect.succeedNone,
+        modify: () => Effect.succeedNone,
+        remove: () => Effect.succeed(false),
+      }),
+      providers: subscriptionProviders(),
+    })
+    expect(
+      subscriptions.catalogHeaders('github-copilot', 'no-such-model'),
+    ).toHaveProperty('editor-version')
+    expect(
+      subscriptions.catalogHeaders('anthropic', 'claude-sonnet-4-5'),
+    ).toEqual({})
+  })
 })
 
 describe('an agent’s configuration', () => {

@@ -775,8 +775,22 @@ export const make = Effect.fn('ModelProxy.make')(function* (
       caller,
       method: 'POST',
       path: request.path,
-      request: subscription =>
-        probeRequest(route.api, options.model, subscription),
+      request: subscription => {
+        const { headers, body } = probeRequest(
+          route.api,
+          options.model,
+          subscription,
+        )
+        return {
+          body,
+          headers: subscription
+            ? {
+                ...subscriptions.catalogHeaders(route.provider, options.model),
+                ...headers,
+              }
+            : headers,
+        }
+      },
     })
     return yield* Exchanged.$match(exchanged, {
       NoCredential: ({ refusal }) =>

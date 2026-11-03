@@ -18,7 +18,8 @@ import {
 } from '@fabrica/contracts'
 
 import { drawToken } from '../control/token'
-import { makeSubscriptions } from '../proxy/oauth'
+import { Engine } from '../engine/service'
+import { deviceIdOf, makeSubscriptions } from '../proxy/oauth'
 import {
   type EngineCredentials,
   RunHosting,
@@ -104,6 +105,7 @@ const listed = (name: SecretName, kept: Kept): CredentialInfo =>
 export const secretsHandlers = SecretRpcs.toLayer(
   Effect.gen(function* () {
     const hosting = yield* RunHosting
+    const deviceId = deviceIdOf((yield* Engine).id)
     const credentials = RunHostingShape.$match(hosting, {
       Ready: ({ credentials }) => Option.fromUndefinedOr(credentials),
       Refused: ({ credentials }) => Option.fromUndefinedOr(credentials),
@@ -219,7 +221,7 @@ export const secretsHandlers = SecretRpcs.toLayer(
               }),
           }
           offer(LoginStep.cases.terms.make({ text: termsNotice }))
-          yield* subscriptions.login(provider, interaction).pipe(
+          yield* subscriptions.login(provider, interaction, deviceId).pipe(
             Effect.matchEffect({
               onFailure: ({ reason }) =>
                 Queue.fail(queue, refused(reason)).pipe(Effect.asVoid),
