@@ -117,6 +117,7 @@ const engineServing = ({
     'run.watchEvents': () => Stream.never,
     'attention.list': notServed,
     'attention.answer': notServed,
+    'attention.revise': notServed,
     'attention.watch': () => Stream.never,
     'credentials.set': ask('credentials.set'),
     'credentials.list': ask('credentials.list'),

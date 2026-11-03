@@ -112,6 +112,7 @@ const handlersOf = (attentionAnswered: Deferred.Deferred<void>) =>
         ),
       'attention.list': notImplemented('attention.list'),
       'attention.answer': notImplemented('attention.answer'),
+      'attention.revise': notImplemented('attention.revise'),
       'attention.watch': () =>
         Stream.unwrap(
           Effect.gen(function* () {

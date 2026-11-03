@@ -3160,6 +3160,34 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
       ],
       "type": "object",
     },
+    "RevisedEncoded": {
+      "additionalProperties": true,
+      "properties": {
+        "answered": {
+          "$ref": "#/$defs/AnsweredEncoded",
+        },
+        "kept": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "undone": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string",
+          },
+          "type": "array",
+        },
+      },
+      "required": [
+        "answered",
+        "undone",
+        "kept",
+      ],
+      "type": "object",
+    },
     "RunEndedEncoded": {
       "additionalProperties": true,
       "properties": {
@@ -10861,6 +10889,87 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         "$ref": "#/$defs/AnsweredEncoded",
       },
       "tag": "attention.answer",
+    },
+    {
+      "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/AttentionNotFoundEncoded",
+          },
+          {
+            "$ref": "#/$defs/InvalidAnswerEncoded",
+          },
+        ],
+      },
+      "group": "attention",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "answer": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "_tag": {
+                    "enum": [
+                      "option",
+                    ],
+                    "type": "string",
+                  },
+                  "index": {
+                    "minimum": 0,
+                    "type": "integer",
+                  },
+                },
+                "required": [
+                  "_tag",
+                  "index",
+                ],
+                "type": "object",
+              },
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "_tag": {
+                    "enum": [
+                      "text",
+                    ],
+                    "type": "string",
+                  },
+                  "text": {
+                    "pattern": "\\S",
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "_tag",
+                  "text",
+                ],
+                "type": "object",
+              },
+            ],
+          },
+          "project": {
+            "pattern": "^\\S+$",
+            "type": "string",
+          },
+          "ticket": {
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)+(?:\\.[1-9][0-9]*)*$",
+            "type": "string",
+          },
+        },
+        "required": [
+          "project",
+          "ticket",
+          "answer",
+        ],
+        "type": "object",
+      },
+      "stream": false,
+      "success": {
+        "$ref": "#/$defs/RevisedEncoded",
+      },
+      "tag": "attention.revise",
     },
     {
       "error": {

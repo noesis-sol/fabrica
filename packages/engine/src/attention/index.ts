@@ -7,7 +7,6 @@ export {
   AttentionItem,
   AttentionRequests,
   type AttentionRequestsShape,
-  type Revised,
   daemonProjects,
   layer,
   make,

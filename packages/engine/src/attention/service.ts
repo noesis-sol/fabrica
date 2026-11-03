@@ -31,6 +31,7 @@ import {
   type ProjectNotFound,
   type QuestionAnswer,
   type Resume,
+  Revised,
   type Ticket,
   type TicketEvent,
   type TicketId,
@@ -73,13 +74,6 @@ export interface AttentionProjects {
   readonly graph: (
     project: ProjectId,
   ) => Effect.Effect<WorkGraphShape, ProjectNotFound>
-}
-
-/** A revised answer, what it undid of the old one, and what it couldn't undo. */
-export interface Revised {
-  readonly answered: Answered
-  readonly undone: ReadonlyArray<string>
-  readonly kept: ReadonlyArray<string>
 }
 
 export interface AttentionRequestsShape {
@@ -531,10 +525,10 @@ export const make = (
       ticket: TicketId,
     ) =>
       graph.show(ticket).pipe(
+        Effect.catchTag('StoreFailed', Effect.die),
         Effect.catchTag('TicketNotFound', () =>
           Effect.fail(new AttentionNotFound({ ref })),
         ),
-        Effect.orDie,
         Effect.filterOrFail(
           detail => Option.isSome(detail.ticket.question),
           () => new AttentionNotFound({ ref }),
@@ -884,7 +878,7 @@ export const make = (
         graph.answer({ id: question.id, answer: text, actor: maintainer }),
       )
       yield* sync(input.project, graph)
-      return { answered, undone, kept } satisfies Revised
+      return new Revised({ answered, undone, kept })
     })
 
     return {

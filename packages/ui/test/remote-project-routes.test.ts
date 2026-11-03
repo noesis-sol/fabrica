@@ -201,6 +201,7 @@ const engineServing = ({
       Effect.andThen(ask('attention.answer', Option.some(answer.project)), () =>
         Effect.die('not served'),
       ),
+    'attention.revise': notServed,
     'attention.watch': ({ project }) => askedStream('attention.watch', project),
     'talk.open': ({ project }) =>
       Effect.as(

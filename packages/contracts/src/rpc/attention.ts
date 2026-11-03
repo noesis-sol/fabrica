@@ -9,7 +9,8 @@ import { ProjectNotFound } from './errors'
 import { applyKeyedPatch, keyedPatch, resume, streamItem } from './stream'
 
 // The Attention group (spec §8.1, §15.1): what waits on the maintainer, as every client lists it, and
-// their answers. The first answer wins (§8.5): a later one is told who answered and when.
+// their answers. The first answer wins (§8.5): a later one is told who answered and when, and a
+// question's answer is changed by revising it (§15.2).
 
 /** A permission request's call, rendered for its tool and shown whole, never cut off (§15.1, H62). */
 export const PermissionShown = Schema.TaggedUnion({
@@ -116,6 +117,14 @@ export class Answered extends Schema.Class<Answered>('Answered')({
   at: Moment,
 }) {}
 
+/** A revised answer (§15.2, H53): who revised it and when, what it undid of the old answer, and what it
+ * couldn't undo. */
+export class Revised extends Schema.Class<Revised>('Revised')({
+  answered: Answered,
+  undone: Schema.Array(Text),
+  kept: Schema.Array(Text),
+}) {}
+
 /** A request that left the list: answered or closed, by whom where someone did. */
 export class AttentionClosed extends Schema.Class<AttentionClosed>(
   'AttentionClosed',
@@ -167,6 +176,12 @@ export const AttentionRpcs = RpcGroup.make(
     payload: { answer: AttentionAnswer },
     success: Answered,
     error: Schema.Union([AlreadyAnswered, AttentionNotFound, InvalidAnswer]),
+  }),
+  /** A question's answer revised: what the old one did undone where it can (§15.2, H53). */
+  Rpc.make('attention.revise', {
+    payload: { project: ProjectId, ticket: TicketId, answer: QuestionAnswer },
+    success: Revised,
+    error: Schema.Union([AttentionNotFound, InvalidAnswer]),
   }),
   Rpc.make('attention.watch', {
     payload: { project: optional(ProjectId), resume },

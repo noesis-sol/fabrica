@@ -849,6 +849,31 @@ const samples: Record<string, Samples> = {
       { _tag: 'InvalidAnswer', reason: 'the question has 2 options' },
     ],
   },
+  'attention.revise': {
+    payload: [
+      { project, ticket: 'fa-q1', answer: { _tag: 'option', index: 1 } },
+      { project, ticket: 'fa-q1', answer: { _tag: 'text', text: 'Files.' } },
+    ],
+    success: [
+      {
+        answered: { by: 'fabrica answer', at },
+        undone: ['fa-t2 (Document the feature) reopened'],
+        kept: ['fa-t1’s worker was given the old answer, and worked on it'],
+      },
+      { answered: { by: 'Fabrica app', at }, undone: [], kept: [] },
+    ],
+    error: [
+      {
+        _tag: 'AttentionNotFound',
+        ref: { _tag: 'question', project, ticket: 'fa-q1' },
+      },
+      {
+        _tag: 'InvalidAnswer',
+        reason:
+          'fa-q1 hasn’t been answered: answer it rather than revise its answer',
+      },
+    ],
+  },
   'attention.watch': {
     payload: [{}],
     success: [
@@ -1119,6 +1144,7 @@ describe('the protocol’s groups', () => {
       'worker.release',
       'attention.list',
       'attention.answer',
+      'attention.revise',
       'talk.open',
       'talk.send',
       'talk.close',
@@ -1189,6 +1215,13 @@ describe('the protocol’s groups', () => {
           ticket: 'fa-q1',
           answer: { _tag: 'option', index: -1 },
         },
+      }),
+    ).toBe(true)
+    expect(
+      refuses(shape('attention.revise').success, {
+        answered: { by: 'fabrica answer', at },
+        undone: [' '],
+        kept: [],
       }),
     ).toBe(true)
     expect(

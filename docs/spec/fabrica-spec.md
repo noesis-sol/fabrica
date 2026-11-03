@@ -334,7 +334,7 @@ The engine samples its host's load every few seconds for the console's system st
 | Backlog | `tickets.list`, `show`, `create`, `update`, `close`, `dep.add`, `dep.remove`, `label`, `note`, `ready`, `why` (what holds a ticket back), `import` (Beads JSONL, §11.6) | backlog changes |
 | Runs | `run.start` (mode, flags), `run.stop`, `run.drain`, `run.undrain`, `run.status`, `run.preflight` | the run view (§8.3), the run's events |
 | Workers | `worker.message`, `worker.interrupt`, `worker.release` | a worker's transcript |
-| Attention | `attention.list`, `attention.answer` | open requests |
+| Attention | `attention.list`, `attention.answer`, `attention.revise` (a question's answer changed, §15.2) | open requests |
 | Talks | `talk.open` (mode, context), `talk.send`, `talk.close` | a talk's transcript |
 | Review | `diff.ticket`, `diff.run`, `report.list`, `report.get`, `log.tail` | |
 | Insights | `insights.summary`, `insights.query` (a named query with its parameters; no SQL from clients), `insights.export` (the recorded rows as Parquet files in a folder on the engine's host, §21) | |
