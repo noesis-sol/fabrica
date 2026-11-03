@@ -5,9 +5,10 @@ import { join } from 'node:path'
 
 // The standing rules (spec §12.4): orchestra's worker prompt, adapted, which the extension puts in
 // Pi's system prompt as a section of its own, so that they survive compaction; the project's own
-// `.fabrica/worker-rules.md` is appended. Rules about one action live in its tool's description
-// (`@fabrica/contracts` tools), not here. Pi runs `before_agent_start` again for a resumed session
-// and records a changed section in it (spike fab-mgi.2.1).
+// `.fabrica/worker-rules.md` is appended, or, where it is refused, a line saying why it is left out.
+// Rules about one action live in its tool's description (`@fabrica/contracts` tools), not here. Pi
+// runs `before_agent_start` again for a resumed session and records a changed section in it (spike
+// fab-mgi.2.1).
 
 /**
  * The template's version. A change to the rules' text is a new version: the engine records the
@@ -160,3 +161,19 @@ export const readProjectRules = Effect.fn('Rules.readProjectRules')(function* (
       new ProjectRulesUnreadable({ path, reason: reasonOf(error) }),
   })
 })
+
+/** The rules for a project whose own were refused: the standing rules, and why its own are left out. */
+const rulesWithoutProject = (refused: ProjectRulesUnreadable): string =>
+  `${rules}\n\nThe project's own rules are left out of this prompt: ${refused.message}. Note that on your ticket with add_note, and go on without them.`
+
+/**
+ * A worker's rules in the worktree at `root`. It never fails: Pi only reports a handler's error, so a
+ * refused rules file that escaped `before_agent_start` would start the agent with no rules at all.
+ */
+export const workerRules = (root: string) =>
+  readProjectRules(root).pipe(
+    Effect.match({
+      onFailure: rulesWithoutProject,
+      onSuccess: standingRules,
+    }),
+  )

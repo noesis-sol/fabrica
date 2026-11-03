@@ -5,12 +5,7 @@ import { CopilotProvider, copilotBaseUrl, copilotProvider } from './copilot'
 import type { ExtensionEnvironment } from './environment'
 import { GateDecision, GateEngine, decide, gateEngine } from './gate'
 import type { PiApi } from './pi'
-import {
-  StandingRulesSection,
-  readProjectRules,
-  standingRules,
-  verifierRules,
-} from './rules'
+import { StandingRulesSection, verifierRules, workerRules } from './rules'
 import {
   NudgeType,
   SettledType,
@@ -62,7 +57,7 @@ export const makeExtension =
       const options = event.systemPromptOptions
       options.sections[StandingRulesSection] = verifying
         ? verifierRules
-        : standingRules(await Effect.runPromise(readProjectRules(options.cwd)))
+        : await Effect.runPromise(workerRules(options.cwd))
       return undefined
     })
 
