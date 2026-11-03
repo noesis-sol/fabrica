@@ -27,9 +27,10 @@ import type { Model } from './model'
 
 // The root's update (spec §18.1): each Message to its feature's branch, every feature's listed here a
 // line each in the order of their names (feature.ts); after every one, the attention column drops the
-// requests of the engines no longer connected.
+// requests of the engines no longer connected, and its key guards start afresh if the console was shown
+// again. A Message a key or an entry runs is part of the one that ran it, so only that one does either.
 
-const root: Root = { update: (model, message) => update(model, message) }
+const root: Root = { update: (model, message) => receive(model, message) }
 
 const receive = (model: Model, message: Message): Return =>
   Message.match<Return>(message, {
@@ -59,4 +60,7 @@ const receive = (model: Model, message: Message): Return =>
   })
 
 export const update = (model: Model, message: Message): Return =>
-  andThen(receive(model, message), Attention.dropLostAttention)
+  andThen(
+    andThen(receive(model, message), Attention.dropLostAttention),
+    Attention.restartedKeyGuards(model),
+  )

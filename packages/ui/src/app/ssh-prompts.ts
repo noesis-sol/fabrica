@@ -130,6 +130,9 @@ export const drop = (model: Model, id: number): Model =>
     ? { asked: model.asked.slice(1), secret: noSecret }
     : { ...model, asked: model.asked.filter(held => held.id !== id) }
 
+/** Whether any prompt is waiting, the first shown over the app. */
+export const isWaiting = (model: Model): boolean => model.asked.length > 0
+
 /** Whether the prompt `id` is waiting. */
 export const isAsked = (model: Model, id: number): boolean =>
   model.asked.some(held => held.id === id)

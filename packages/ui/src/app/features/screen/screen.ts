@@ -12,6 +12,7 @@ import { hints, openPalette } from '../../keys'
 import { Message } from '../../message'
 import { type Model, Overlay } from '../../model'
 import { Screen, screenTitle } from '../../screen'
+import * as SshPrompts from '../../ssh-prompts'
 import * as BacklogFeature from '../backlog/backlog'
 import * as EnginesFeature from '../engines/engines'
 import * as InsightsFeature from '../insights/insights'
@@ -25,6 +26,12 @@ import type { messages } from './message'
 // is reached again or as the scope changes under it; and the header above any screen but the console.
 
 const sameScreen = Schema.toEquivalence(Screen)
+
+/** The console is in front of the maintainer: its screen shown, with no overlay or SSH prompt over it. */
+export const isConsoleShown = (model: Model): boolean =>
+  Screen.guards.Console(model.screen) &&
+  !isOverlayOpen(model) &&
+  !SshPrompts.isWaiting(model.sshPrompts)
 
 /** Shows `screen`, closing any overlay; the same screen again keeps the Model as it is. */
 export const showScreen = (model: Model, screen: Screen): Model =>

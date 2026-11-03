@@ -65,12 +65,12 @@ import { type Chip, chipView } from './sidebar'
 // consequential, H53), a free-text line and "Talk it through". Review (`c4`): a ticket set aside, with
 // why. Your task (`c2`): a maintainer task, done when the maintainer closes it. "Open session" opens
 // the worker view. Keys 1–9 answer the question whose options are drawn, only that one, and only 500 ms
-// after they were first drawn: a guard that starts again whenever the request they would answer changes,
-// counted on the injected clock (§15.1, H88; tutti-14o5). The approval keys answer the column's first
-// permission request as its buttons do, only while they are drawn, behind a guard of their own that
-// starts again whenever that request changes (§18.5, H62). Every answer carries its request's ID, and
-// goes to the engine the request is open on (engine-route.ts): under All projects the column holds
-// every connected engine's requests, each card with its engine.
+// after they were first drawn: a guard that starts again whenever the request they would answer changes
+// and whenever the console is shown again, counted on the injected clock (§15.1, H88; tutti-14o5). The
+// approval keys answer the column's first permission request as its buttons do, only while they are
+// drawn, behind a guard of their own that starts again likewise (§18.5, H62). Every answer carries its
+// request's ID, and goes to the engine the request is open on (engine-route.ts): under All projects the
+// column holds every connected engine's requests, each card with its engine.
 // A Submodel: the root folds its Messages, keeps its open request in step with the stream, and gives it
 // the requests and the time.
 
@@ -762,6 +762,25 @@ const keptApproval = (
           : drawingApproval(model, shown),
     },
   )
+}
+
+/**
+ * The console in front of the maintainer again, after another screen or something over it: each guard
+ * that is on starts afresh, since nothing was drawn for them to see while it ran, or passed (§15.1).
+ */
+export const shownAgain = (model: Model): Kept => {
+  const options = Option.match(guardedRequest(model.guard), {
+    onNone: (): Kept => ({ model }),
+    onSome: shown => drawing(model, shown),
+  })
+  const approval = Option.match(guardedRequest(options.model.approvalGuard), {
+    onNone: (): Kept => ({ model: options.model }),
+    onSome: shown => drawingApproval(options.model, shown),
+  })
+  return {
+    model: approval.model,
+    commands: [...(options.commands ?? []), ...(approval.commands ?? [])],
+  }
 }
 
 /** What a card has open, kept in step with the requests listed. */

@@ -32,7 +32,7 @@ import { Screen } from '../../screen'
 import { applyEngineAttention, joinedAttention, watchOf } from '../../streams'
 import type { SubscriptionEnvironment } from '../../subscriptions'
 import * as ReviewFeature from '../review/review'
-import { enterScreen, showScreen } from '../screen/screen'
+import { enterScreen, isConsoleShown, showScreen } from '../screen/screen'
 import { requestAnswerTalk, stepTalkPanel, writeTalks } from '../talks/talks'
 import type { messages } from './message'
 
@@ -89,6 +89,27 @@ const foldAnswerKey = Update.foldChild({
   write: writeAttention,
   toParentMessage: toAttentionMessage,
 })
+
+/** The key guards started afresh, by the attention column. */
+const foldShownAgain = Update.foldChild({
+  update: (attention: Attention.Model, _: void) =>
+    Attention.shownAgain(attention),
+  read: (model: Model) => Option.some(model.console.attention),
+  write: writeAttention,
+  toParentMessage: toAttentionMessage,
+})
+
+/**
+ * After a Message that began on `before`: the key guards start afresh if it showed the console again,
+ * by whatever way the screen changed or what covered it closed, so a key answers only what has been
+ * drawn in front of the maintainer for the guard's time (§15.1).
+ */
+export const restartedKeyGuards =
+  (before: Model) =>
+  (model: Model): Return =>
+    isConsoleShown(model) && !isConsoleShown(before)
+      ? foldShownAgain(model, undefined)
+      : { model }
 
 /**
  * The scope's attention requests now `engineAttention`, each engine's kept apart: the column shows them
