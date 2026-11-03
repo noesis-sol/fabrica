@@ -1,9 +1,7 @@
 import { Deferred, Effect, Fiber, Layer, Option } from 'effect'
 import { RpcClient, RpcSerialization } from 'effect/rpc'
 import { sign } from 'node:crypto'
-import { existsSync, watch } from 'node:fs'
 import {
-  chmod,
   lstat,
   mkdir,
   readFile,
@@ -46,6 +44,7 @@ import {
   targetOf,
   verifyChecksums,
 } from '../src/update'
+import { stubLauncher } from './fixture-launcher'
 import {
   type FixtureRelease,
   PATH,
@@ -58,7 +57,6 @@ import {
   makeHome,
   releaseKey,
   serveReleases,
-  shStub,
   target,
   tempFolder,
 } from './fixture-releases'
@@ -461,16 +459,6 @@ describe('the engine update', () => {
   })
 })
 
-/** Completes once `file` exists, on its folder's change events. */
-const appears = (file: string): Effect.Effect<void> =>
-  Effect.callback<void>(resume => {
-    const watcher = watch(NodePath.dirname(file), () => {
-      if (existsSync(file)) resume(Effect.void)
-    })
-    if (existsSync(file)) resume(Effect.void)
-    return Effect.sync(() => watcher.close())
-  })
-
 /** `fabrica serve` with none of its flags. */
 const noFlags = {
   listen: Option.none(),
@@ -485,19 +473,12 @@ describe('the restart into an update', () => {
     () =>
       Effect.gen(function* () {
         const root = yield* tempFolder('relaunch')
-        const fabrica = NodePath.join(root, 'fabrica')
-        const said = NodePath.join(root, 'said')
-        yield* Effect.promise(async () => {
-          await writeFile(
-            fabrica,
-            shStub(
-              `printf '%s|%s|%s\\n' "$*" "$HOME" "\${SECRET-unset}" > '${said}.tmp'\nmv '${said}.tmp' '${said}'`,
-            ),
-          )
-          await chmod(fabrica, 0o755)
+        const launcher = yield* stubLauncher({
+          folder: root,
+          says: `'%s|%s|%s\\n' "$*" "$HOME" "\${SECRET-unset}"`,
         })
         yield* relaunch({
-          launcher: fabrica,
+          launcher: launcher.path,
           cwd: root,
           hostEnvironment: {
             PATH: '/usr/bin:/bin',
@@ -506,10 +487,7 @@ describe('the restart into an update', () => {
           },
           flags: noFlags,
         })
-        yield* appears(said)
-        expect(yield* Effect.promise(() => readFile(said, 'utf8'))).toBe(
-          `serve|${root}|kept\n`,
-        )
+        expect(yield* launcher.said).toBe(`serve|${root}|kept\n`)
       }).pipe(Effect.scoped),
   )
 

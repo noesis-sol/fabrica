@@ -1,27 +1,16 @@
 import { Effect, Option } from 'effect'
-import { existsSync, watch } from 'node:fs'
-import { chmod, readFile, writeFile } from 'node:fs/promises'
 import * as NodePath from 'node:path'
 
 import { describe, expect, it } from '@effect/vitest'
 
 import { relaunch, serveArguments } from '../src/update'
-import { shStub, tempFolder } from './fixture-releases'
+import { stubLauncher } from './fixture-launcher'
+import { tempFolder } from './fixture-releases'
 
 // The restart into an update outside the login service (spec §9.2, §9.3, §20.2): the new engine is
 // started with the old one's `serve` flags, so a TLS listener comes back with it, and with the old
 // engine's own environment, since it is the daemon rather than a command, so its git's network
 // commands keep the host's ssh-agent, ssh command, proxies and CA certificates.
-
-/** Completes once `file` exists, on its folder's change events. */
-const appears = (file: string): Effect.Effect<void> =>
-  Effect.callback<void>(resume => {
-    const watcher = watch(NodePath.dirname(file), () => {
-      if (existsSync(file)) resume(Effect.void)
-    })
-    if (existsSync(file)) resume(Effect.void)
-    return Effect.sync(() => watcher.close())
-  })
 
 const noFlags = {
   listen: Option.none(),
@@ -71,19 +60,12 @@ describe('the relaunched engine', () => {
     () =>
       Effect.gen(function* () {
         const root = yield* tempFolder('relaunch-serve')
-        const fabrica = NodePath.join(root, 'fabrica')
-        const said = NodePath.join(root, 'said')
-        yield* Effect.promise(async () => {
-          await writeFile(
-            fabrica,
-            shStub(
-              `printf '%s|%s|%s|%s\\n' "$*" "\${SSH_AUTH_SOCK-unset}" "\${GIT_SSH_COMMAND-unset}" "\${https_proxy-unset}" > '${said}.tmp'\nmv '${said}.tmp' '${said}'`,
-            ),
-          )
-          await chmod(fabrica, 0o755)
+        const launcher = yield* stubLauncher({
+          folder: root,
+          says: `'%s|%s|%s|%s\\n' "$*" "\${SSH_AUTH_SOCK-unset}" "\${GIT_SSH_COMMAND-unset}" "\${https_proxy-unset}"`,
         })
         yield* relaunch({
-          launcher: fabrica,
+          launcher: launcher.path,
           cwd: root,
           hostEnvironment: {
             PATH: '/usr/bin:/bin',
@@ -99,8 +81,7 @@ describe('the relaunched engine', () => {
             passphrase_file: Option.some('/home/ada/.fabrica-passphrase'),
           },
         })
-        yield* appears(said)
-        expect(yield* Effect.promise(() => readFile(said, 'utf8'))).toBe(
+        expect(yield* launcher.said).toBe(
           'serve --listen 0.0.0.0:8443 --listen-certificate /certs/cert.pem --listen-key /certs/key.pem --passphrase-file /home/ada/.fabrica-passphrase|/tmp/agent.sock|ssh -i key|http://proxy:3128\n',
         )
       }).pipe(Effect.scoped),

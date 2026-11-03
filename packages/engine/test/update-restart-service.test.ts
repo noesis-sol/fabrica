@@ -1,15 +1,4 @@
 import { Effect, Option, Runtime } from 'effect'
-import { existsSync, watch } from 'node:fs'
-import {
-  chmod,
-  mkdtemp,
-  readFile,
-  realpath,
-  rm,
-  writeFile,
-} from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import * as NodePath from 'node:path'
 
 import { describe, expect, it } from '@effect/vitest'
 
@@ -21,30 +10,12 @@ import {
   systemdUnit,
 } from '../src/service'
 import { restart } from '../src/update'
+import { stubLauncher } from './fixture-launcher'
+import { tempFolder } from './fixture-releases'
 
 // The restart into an update under the login service (spec §7.1, §9.2): the service names its manager
 // in the engine's environment, and the engine, restarted, exits with the code the manager restarts it
 // on rather than starting the new launcher itself; outside the service it starts the launcher as before.
-
-/** A new temporary folder, removed with the scope. */
-const tempFolder = (prefix: string) =>
-  Effect.acquireRelease(
-    Effect.promise(async () =>
-      realpath(await mkdtemp(NodePath.join(tmpdir(), `fab-${prefix}-`))),
-    ),
-    folder =>
-      Effect.promise(() => rm(folder, { recursive: true, force: true })),
-  )
-
-/** Completes once `file` exists, on its folder's change events. */
-const appears = (file: string): Effect.Effect<void> =>
-  Effect.callback<void>(resume => {
-    const watcher = watch(NodePath.dirname(file), () => {
-      if (existsSync(file)) resume(Effect.void)
-    })
-    if (existsSync(file)) resume(Effect.void)
-    return Effect.sync(() => watcher.close())
-  })
 
 describe('the restart into an update under the login service', () => {
   const definition = {
@@ -108,17 +79,12 @@ describe('the restart into an update under the login service', () => {
   it.live('starts the new launcher’s serve outside the service', () =>
     Effect.gen(function* () {
       const root = yield* tempFolder('restart')
-      const fabrica = NodePath.join(root, 'fabrica')
-      const said = NodePath.join(root, 'said')
-      yield* Effect.promise(async () => {
-        await writeFile(
-          fabrica,
-          `#!/bin/sh\nprintf '%s\\n' "$*" > '${said}.tmp'\nmv '${said}.tmp' '${said}'\n`,
-        )
-        await chmod(fabrica, 0o755)
+      const launcher = yield* stubLauncher({
+        folder: root,
+        says: `'%s\\n' "$*"`,
       })
       yield* restart({
-        launcher: fabrica,
+        launcher: launcher.path,
         cwd: root,
         hostEnvironment: { PATH: '/usr/bin:/bin', HOME: root },
         flags: {
@@ -129,10 +95,7 @@ describe('the restart into an update under the login service', () => {
         },
         service: Option.none(),
       })
-      yield* appears(said)
-      expect(yield* Effect.promise(() => readFile(said, 'utf8'))).toBe(
-        'serve\n',
-      )
+      expect(yield* launcher.said).toBe('serve\n')
     }).pipe(Effect.scoped),
   )
 })
