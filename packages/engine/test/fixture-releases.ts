@@ -23,6 +23,7 @@ import { tmpdir } from 'node:os'
 import * as NodePath from 'node:path'
 
 import {
+  ProcessRunner,
   type RunnerConfig,
   hostHolders,
   hostPriority,
@@ -32,6 +33,7 @@ import {
 } from '../src/process'
 import {
   type InstallPlaces,
+  LAUNCHER,
   distributionName,
   installPlaces,
   layer as updaterLayer,
@@ -243,27 +245,60 @@ export const runnerConfig = ({
   outputGrace: Duration.millis(200),
 })
 
-/** The Updater on the fixture's releases, signed with `keys`, installing under `home`. */
+/**
+ * The process runner in context, starting a launcher by /bin/sh reading it rather than by its own exec, which
+ * on macOS waits on XProtect (fixture-launcher.ts): an install unpacks a new file for each launcher it runs.
+ */
+const launcherThroughSh = Layer.effect(
+  ProcessRunner,
+  Effect.gen(function* () {
+    const runner = yield* ProcessRunner
+    return ProcessRunner.of({
+      ...runner,
+      run: command =>
+        runner.run(
+          command.command.endsWith(`/${LAUNCHER}`)
+            ? {
+                ...command,
+                command: '/bin/sh',
+                args: [command.command, ...command.args],
+              }
+            : command,
+        ),
+    })
+  }),
+)
+
+/**
+ * The Updater on the fixture's releases, signed with `keys`, installing under `home`. It reads each new
+ * launcher through /bin/sh, unless `launcherExec` has it exec the file, as the engine does.
+ */
 export const fixtureUpdater = ({
   releases,
   keys = [releaseKey.publicPem],
   home,
   path,
+  launcherExec = false,
 }: {
   readonly releases: string
   readonly keys?: ReadonlyArray<string>
   readonly home: string
   readonly path: string
-}) =>
-  updaterLayer({
+  readonly launcherExec?: boolean
+}) => {
+  const runner = runnerLayer(runnerConfig({ path, home }))
+  return updaterLayer({
     source: { releases, keys },
     places: installPlaces(home),
     host: platform,
   }).pipe(
     Layer.provide(FetchHttpClient.layer),
-    Layer.provide(runnerLayer(runnerConfig({ path, home }))),
+    Layer.provide(
+      launcherExec ? runner : launcherThroughSh.pipe(Layer.provide(runner)),
+    ),
     Layer.provide(layerClock),
   )
+}
 
 /** The entries of a folder, sorted; none where it isn't there. */
 export const entries = (folder: string) =>

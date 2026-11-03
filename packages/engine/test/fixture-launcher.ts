@@ -11,10 +11,11 @@ import { PATH } from './fixture-releases'
 // starts it detached and has no handle on it: what it was started with comes back through a FIFO.
 //
 // The launcher is /bin/sh, which takes the `serve` it is given for the script of that name in its working
-// directory. A script written just now and exec'd itself waits on macOS before its first line runs, as a new
-// executable does: 850 ms at best and 4.4 s with 16 starting together, growing with how many a loaded
-// machine's suites start (fab-q89), which took these tests past their limit. /bin/sh isn't new, and reads
-// the script as data, in 10 ms.
+// directory. A script written just now and exec'd itself waits on macOS before its first line runs, as each
+// file does on its first exec, a copy or a file tar unpacks included: XProtect scans them one at a time for
+// the whole machine, 150-190 ms each, so with 16 starting together one waits 2.4 s, and more as a loaded
+// machine's suites start more, which took these tests past their limit (fab-q89, fab-0n1). /bin/sh isn't
+// new, and reads the script as data, in 10 ms.
 //
 // The kernel keeps what is written to the FIFO until it is read, so it is there however late the test
 // asks, where a folder's change events go to a watcher only once it is up. Opened for reading and writing,
