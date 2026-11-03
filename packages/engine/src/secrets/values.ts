@@ -1,4 +1,6 @@
-import { Data, Effect, Option, Redacted, Schema } from 'effect'
+import { Data, Effect, Match, Option, Redacted, Schema } from 'effect'
+
+import type { ProviderName } from '@fabrica/contracts'
 
 import type { SecretStoreFailed } from './errors'
 
@@ -23,38 +25,102 @@ export type ApiKey = Data.TaggedEnum<{
 }>
 export const ApiKey = Data.taggedEnum<ApiKey>()
 
-/** An API key as a store keeps it: JSON text. */
-const StoredKey = Schema.Union([
-  Schema.TaggedStruct('Key', { key: Schema.String }),
-  Schema.TaggedStruct('Command', { command: Schema.String }),
-])
-type StoredKey = typeof StoredKey.Type
-const StoredKeyJson = Schema.fromJsonString(StoredKey)
-const decodeStoredKey = Schema.decodeUnknownOption(StoredKeyJson)
-const encodeStoredKey = Schema.encodeSync(StoredKeyJson)
+/** What is kept under a name, as it was given: nothing here runs a key's command. */
+export type Kept = Data.TaggedEnum<{
+  Key: {
+    readonly key: Redacted.Redacted<string>
+    readonly provider: Option.Option<ProviderName>
+  }
+  Command: {
+    readonly command: string
+    readonly provider: Option.Option<ProviderName>
+  }
+  /** A subscription's sign-in: `pi-ai`'s OAuth credential, its tokens among it, as JSON text. */
+  OAuth: {
+    readonly provider: ProviderName
+    readonly credential: Redacted.Redacted<string>
+  }
+}>
+export const Kept = Data.taggedEnum<Kept>()
 
-/** The text a store keeps for `key`. */
-export const encodeApiKey = (key: ApiKey): Redacted.Redacted<string> =>
+/** What the proxy has to use for a name (§12.9). */
+export type Held = Data.TaggedEnum<{
+  /** A key, its command run where it is given by one. */
+  Key: { readonly key: Redacted.Redacted<string> }
+  /** A subscription's sign-in: its current token comes from the proxy's OAuth refresh. */
+  Subscription: { readonly provider: ProviderName }
+}>
+export const Held = Data.taggedEnum<Held>()
+
+/** What is kept, as a store keeps it: JSON text. */
+const Stored = Schema.Union([
+  Schema.TaggedStruct('Key', {
+    key: Schema.String,
+    provider: Schema.optional(Schema.String),
+  }),
+  Schema.TaggedStruct('Command', {
+    command: Schema.String,
+    provider: Schema.optional(Schema.String),
+  }),
+  Schema.TaggedStruct('OAuth', {
+    provider: Schema.String,
+    credential: Schema.String,
+  }),
+])
+type Stored = typeof Stored.Type
+const StoredJson = Schema.fromJsonString(Stored)
+const decodeStored = Schema.decodeUnknownOption(StoredJson)
+const encodeStored = Schema.encodeSync(StoredJson)
+
+const storedProvider = (provider: Option.Option<ProviderName>) =>
+  Option.match(provider, {
+    onNone: () => ({}),
+    onSome: name => ({ provider: name }),
+  })
+
+/** The text a store keeps for `kept`. */
+export const encodeKept = (kept: Kept): Redacted.Redacted<string> =>
   Redacted.make(
-    encodeStoredKey(
-      ApiKey.$match(key, {
-        Key: ({ key }): StoredKey => ({
+    encodeStored(
+      Kept.$match(kept, {
+        Key: ({ key, provider }): Stored => ({
           _tag: 'Key',
           key: Redacted.value(key),
+          ...storedProvider(provider),
         }),
-        Command: ({ command }): StoredKey => ({ _tag: 'Command', command }),
+        Command: ({ command, provider }): Stored => ({
+          _tag: 'Command',
+          command,
+          ...storedProvider(provider),
+        }),
+        OAuth: ({ provider, credential }): Stored => ({
+          _tag: 'OAuth',
+          provider,
+          credential: Redacted.value(credential),
+        }),
       }),
     ),
   )
 
-/** The API key a store's text holds, or none where it holds no key of this form. */
-export const decodeApiKey = (
+/** What a store's text holds, or none where it holds nothing of these forms. */
+export const decodeKept = (
   text: Redacted.Redacted<string>,
-): Option.Option<ApiKey> =>
-  Option.map(decodeStoredKey(Redacted.value(text)), stored =>
-    stored._tag === 'Key'
-      ? ApiKey.Key({ key: Redacted.make(stored.key) })
-      : ApiKey.Command({ command: stored.command }),
+): Option.Option<Kept> =>
+  Option.map(decodeStored(Redacted.value(text)), stored =>
+    Match.valueTags(stored, {
+      Key: ({ key, provider }): Kept =>
+        Kept.Key({
+          key: Redacted.make(key),
+          provider: Option.fromUndefinedOr(provider),
+        }),
+      Command: ({ command, provider }): Kept =>
+        Kept.Command({
+          command,
+          provider: Option.fromUndefinedOr(provider),
+        }),
+      OAuth: ({ provider, credential }): Kept =>
+        Kept.OAuth({ provider, credential: Redacted.make(credential) }),
+    }),
   )
 
 /** The item holding the names of the credentials kept: a name can't start with a dot, so it is never one. */

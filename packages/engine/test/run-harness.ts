@@ -66,7 +66,7 @@ import {
   runProject,
 } from '../src/run'
 import { layerRunLog, readEvents } from '../src/runlog'
-import { SecretMissing, SecretName, Secrets } from '../src/secrets'
+import { Held, SecretMissing, SecretName, Secrets } from '../src/secrets'
 import { Telemetry } from '../src/telemetry'
 import { layerWake, noBattery, noSleepCauses } from '../src/time'
 import { WorkGraph, makeWorkGraph, storeLayer } from '../src/workgraph'
@@ -435,8 +435,10 @@ const secrets = Secrets.of({
   list: Effect.succeed([]),
   get: name =>
     name === 'anthropic'
-      ? Effect.succeed(Redacted.make('sk-ant-test-key'))
+      ? Effect.succeed(Held.Key({ key: Redacted.make('sk-ant-test-key') }))
       : Effect.fail(new SecretMissing({ name })),
+  read: () => Effect.succeedNone,
+  modify: () => Effect.succeedNone,
   remove: () => Effect.succeed(false),
 })
 

@@ -123,6 +123,7 @@ const engineServing = ({
     'credentials.list': ask('credentials.list'),
     'credentials.remove': ask('credentials.remove'),
     'credentials.login': () => Stream.never,
+    'credentials.answerLogin': ask('credentials.answerLogin'),
   })
 }
 

@@ -4,6 +4,7 @@ import * as Attention from './features/attention/attention'
 import * as Backlog from './features/backlog/backlog'
 import * as Clock from './features/clock/clock'
 import * as Connection from './features/connection/connection'
+import * as Engines from './features/engines/engines'
 import * as History from './features/history/history'
 import * as Keys from './features/keys/keys'
 import * as Notifications from './features/notifications/notifications'
@@ -38,6 +39,7 @@ export const makeSubscriptions = (environment: SubscriptionEnvironment) => ({
   ...Backlog.subscriptions(environment),
   ...Clock.subscriptions(environment),
   ...Connection.subscriptions(environment),
+  ...Engines.subscriptions(),
   ...History.subscriptions(environment),
   ...Keys.subscriptions(environment),
   ...Notifications.subscriptions(environment),

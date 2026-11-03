@@ -600,6 +600,26 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
       ],
       "type": "object",
     },
+    "CredentialStoreFailedEncoded": {
+      "additionalProperties": true,
+      "properties": {
+        "_tag": {
+          "enum": [
+            "CredentialStoreFailed",
+          ],
+          "type": "string",
+        },
+        "reason": {
+          "pattern": "\\S",
+          "type": "string",
+        },
+      },
+      "required": [
+        "_tag",
+        "reason",
+      ],
+      "type": "object",
+    },
     "DiffEncoded": {
       "additionalProperties": true,
       "properties": {
@@ -1483,6 +1503,26 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         "_tag",
         "provider",
         "reason",
+      ],
+      "type": "object",
+    },
+    "LoginNotWaitingEncoded": {
+      "additionalProperties": true,
+      "properties": {
+        "_tag": {
+          "enum": [
+            "LoginNotWaiting",
+          ],
+          "type": "string",
+        },
+        "login": {
+          "pattern": "^\\S+$",
+          "type": "string",
+        },
+      },
+      "required": [
+        "_tag",
+        "login",
       ],
       "type": "object",
     },
@@ -8011,7 +8051,7 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
     },
     {
       "error": {
-        "not": {},
+        "$ref": "#/$defs/CredentialStoreFailedEncoded",
       },
       "group": "secrets",
       "payload": {
@@ -8083,7 +8123,7 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
     },
     {
       "error": {
-        "not": {},
+        "$ref": "#/$defs/CredentialStoreFailedEncoded",
       },
       "group": "secrets",
       "payload": {
@@ -8100,7 +8140,14 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
     },
     {
       "error": {
-        "$ref": "#/$defs/CredentialNotFoundEncoded",
+        "anyOf": [
+          {
+            "$ref": "#/$defs/CredentialNotFoundEncoded",
+          },
+          {
+            "$ref": "#/$defs/CredentialStoreFailedEncoded",
+          },
+        ],
       },
       "group": "secrets",
       "payload": {
@@ -8142,6 +8189,26 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
       "stream": true,
       "success": {
         "anyOf": [
+          {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": [
+                  "terms",
+                ],
+                "type": "string",
+              },
+              "text": {
+                "pattern": "\\S",
+                "type": "string",
+              },
+            },
+            "required": [
+              "_tag",
+              "text",
+            ],
+            "type": "object",
+          },
           {
             "additionalProperties": true,
             "properties": {
@@ -8224,6 +8291,69 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
             "properties": {
               "_tag": {
                 "enum": [
+                  "asked",
+                ],
+                "type": "string",
+              },
+              "choices": {
+                "items": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "id": {
+                      "pattern": "\\S",
+                      "type": "string",
+                    },
+                    "label": {
+                      "pattern": "\\S",
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "id",
+                    "label",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+              "login": {
+                "pattern": "^\\S+$",
+                "type": "string",
+              },
+              "message": {
+                "pattern": "\\S",
+                "type": "string",
+              },
+              "placeholder": {
+                "anyOf": [
+                  {
+                    "pattern": "\\S",
+                    "type": "string",
+                  },
+                  {
+                    "type": "null",
+                  },
+                ],
+              },
+              "secret": {
+                "type": "boolean",
+              },
+            },
+            "required": [
+              "_tag",
+              "login",
+              "message",
+              "placeholder",
+              "secret",
+              "choices",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": [
                   "signed_in",
                 ],
                 "type": "string",
@@ -8249,6 +8379,34 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         ],
       },
       "tag": "credentials.login",
+    },
+    {
+      "error": {
+        "$ref": "#/$defs/LoginNotWaitingEncoded",
+      },
+      "group": "secrets",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "answer": {
+            "type": "string",
+          },
+          "login": {
+            "pattern": "^\\S+$",
+            "type": "string",
+          },
+        },
+        "required": [
+          "login",
+          "answer",
+        ],
+        "type": "object",
+      },
+      "stream": false,
+      "success": {
+        "type": "null",
+      },
+      "tag": "credentials.answerLogin",
     },
     {
       "error": {

@@ -16,6 +16,7 @@ import {
 } from '../src/process'
 import {
   ApiKey,
+  Held,
   type KeyringCall,
   KeyringCli,
   KeyringOutcome,
@@ -46,6 +47,13 @@ const tempFolder = (prefix: string) =>
 const COST = { N: 2 ** 10, r: 8, p: 1 }
 
 const KEY = 'sk-test-0123456789abcdef'
+
+/** The key held, as a text to compare. */
+const keyOf = (held: Held): string =>
+  Held.$match(held, {
+    Key: ({ key }) => Redacted.value(key),
+    Subscription: () => expect.fail('a key was kept, not a sign-in'),
+  })
 const anthropic = SecretName.make('anthropic')
 const openai = SecretName.make('openai.work')
 
@@ -148,10 +156,10 @@ const roundTrip = Effect.gen(function* () {
   yield* secrets.set(anthropic, ApiKey.Key({ key: Redacted.make(KEY) }))
   yield* secrets.set(openai, ApiKey.Key({ key: Redacted.make('sk-other') }))
   expect(yield* secrets.list).toEqual([anthropic, openai])
-  expect(Redacted.value(yield* secrets.get(anthropic))).toBe(KEY)
+  expect(keyOf(yield* secrets.get(anthropic))).toBe(KEY)
   // Set again, a name keeps its one place in the list and takes the new key.
   yield* secrets.set(openai, ApiKey.Key({ key: Redacted.make('sk-newer') }))
-  expect(Redacted.value(yield* secrets.get(openai))).toBe('sk-newer')
+  expect(keyOf(yield* secrets.get(openai))).toBe('sk-newer')
   expect(yield* secrets.remove(openai)).toBe(true)
   expect(yield* secrets.remove(openai)).toBe(false)
   expect(yield* secrets.list).toEqual([anthropic])
@@ -240,7 +248,7 @@ describe('the encrypted file', () => {
         const key = yield* Effect.gen(function* () {
           return yield* (yield* Secrets).get(anthropic)
         }).pipe(open(fileConfig(data, fromFile)))
-        expect(Redacted.value(key)).toBe(KEY)
+        expect(keyOf(key)).toBe(KEY)
 
         const wrong = yield* Effect.flip(
           Effect.gen(function* () {
@@ -394,8 +402,8 @@ describe('a key given as a command', () => {
           command: `echo run >> ${counter}; printf '  ${KEY}\\n'`,
         }),
       )
-      expect(Redacted.value(yield* secrets.get(anthropic))).toBe(KEY)
-      expect(Redacted.value(yield* secrets.get(anthropic))).toBe(KEY)
+      expect(keyOf(yield* secrets.get(anthropic))).toBe(KEY)
+      expect(keyOf(yield* secrets.get(anthropic))).toBe(KEY)
       const runs = yield* Effect.promise(() => readFile(counter, 'utf8'))
       expect(runs).toBe('run\nrun\n')
 

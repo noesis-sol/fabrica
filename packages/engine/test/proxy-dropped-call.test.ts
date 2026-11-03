@@ -15,7 +15,7 @@ import {
   type PermitsShape,
   make,
 } from '../src/proxy'
-import { SecretName, Secrets } from '../src/secrets'
+import { Held, SecretName, Secrets } from '../src/secrets'
 
 // The model proxy lets go of a call the agent drops (spec §12.9): dropped before the provider's head
 // has come, the upstream request is aborted and the call's permit released; dropped while it waits for
@@ -67,7 +67,12 @@ const secrets = Secrets.of({
   store: 'file',
   set: () => Effect.void,
   list: Effect.succeed([]),
-  get: () => Effect.succeed(Redacted.make('sk-ant-api03-real-anthropic-key')),
+  get: () =>
+    Effect.succeed(
+      Held.Key({ key: Redacted.make('sk-ant-api03-real-anthropic-key') }),
+    ),
+  read: () => Effect.succeedNone,
+  modify: () => Effect.succeedNone,
   remove: () => Effect.succeed(false),
 })
 

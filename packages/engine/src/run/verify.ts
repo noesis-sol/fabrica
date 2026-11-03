@@ -379,10 +379,7 @@ const verifyRound = Effect.fn('Verifier.round')(function* (input: {
     ticket,
     project: config.project,
     worktree: worktree.path,
-    providers: Object.entries(granted.baseUrls).map(([provider, baseUrl]) => ({
-      provider,
-      baseUrl,
-    })),
+    providers: granted.providers,
     token: Redacted.value(granted.token),
     model,
     tools: Option.some(verifierTools),

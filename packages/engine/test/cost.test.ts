@@ -40,7 +40,7 @@ import {
   layerOpen,
   make as makeProxy,
 } from '../src/proxy'
-import { SecretMissing, SecretName, Secrets } from '../src/secrets'
+import { Held, SecretMissing, SecretName, Secrets } from '../src/secrets'
 import {
   Telemetry,
   TelemetryRow,
@@ -606,8 +606,12 @@ describe('cost through the model proxy', () => {
               list: Effect.succeed([]),
               get: name =>
                 name === 'anthropic'
-                  ? Effect.succeed(Redacted.make('sk-ant-api03-real-key'))
+                  ? Effect.succeed(
+                      Held.Key({ key: Redacted.make('sk-ant-api03-real-key') }),
+                    )
                   : Effect.fail(new SecretMissing({ name })),
+              read: () => Effect.succeedNone,
+              modify: () => Effect.succeedNone,
               remove: () => Effect.succeed(false),
             }),
           ),

@@ -25,7 +25,7 @@ import {
   recordUsageWindows,
   usageWindowDraft,
 } from '../src/runlog'
-import { SecretMissing, SecretName, Secrets } from '../src/secrets'
+import { Held, SecretMissing, SecretName, Secrets } from '../src/secrets'
 import { anthropicAnswer, openaiResponses } from './proxy-streams'
 
 // The usage windows (spec §12.9, §13.12, H90): read from the headers of every response the model
@@ -164,8 +164,10 @@ const secrets = Secrets.of({
   list: Effect.succeed([]),
   get: name =>
     name === 'anthropic.work' || name === 'openai'
-      ? Effect.succeed(Redacted.make(`real-${name}-key`))
+      ? Effect.succeed(Held.Key({ key: Redacted.make(`real-${name}-key`) }))
       : Effect.fail(new SecretMissing({ name })),
+  read: () => Effect.succeedNone,
+  modify: () => Effect.succeedNone,
   remove: () => Effect.succeed(false),
 })
 

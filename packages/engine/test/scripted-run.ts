@@ -37,7 +37,7 @@ import {
   make as makeProxy,
 } from '../src/proxy'
 import { RunHosting, RunHostingShape } from '../src/run/hosting'
-import { SecretMissing, SecretName, Secrets } from '../src/secrets'
+import { Held, SecretMissing, SecretName, Secrets } from '../src/secrets'
 import { layerWake, noBattery, noSleepCauses } from '../src/time'
 import { anthropicAnswer } from './proxy-streams'
 
@@ -301,8 +301,10 @@ export const testSecrets = Secrets.of({
   list: Effect.succeed([]),
   get: name =>
     name === 'anthropic'
-      ? Effect.succeed(Redacted.make('sk-ant-test-key'))
+      ? Effect.succeed(Held.Key({ key: Redacted.make('sk-ant-test-key') }))
       : Effect.fail(new SecretMissing({ name })),
+  read: () => Effect.succeedNone,
+  modify: () => Effect.succeedNone,
   remove: () => Effect.succeed(false),
 })
 

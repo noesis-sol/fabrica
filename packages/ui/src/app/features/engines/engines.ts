@@ -1,11 +1,13 @@
-import { Option } from 'effect'
-import { Command, type Update } from 'foldkit'
+import { Option, Schema, Stream } from 'effect'
+import { Command, Subscription, type Update } from 'foldkit'
 import { type Html, type HtmlBuilder, createLazy } from 'foldkit/html'
 import { modifyFields } from 'foldkit/struct'
 
+import * as Credentials from '../../../screens/credentials'
 import * as Engines from '../../../screens/engines'
 import { Connection } from '../../connection'
-import type { Handlers, Return } from '../../feature'
+import { withEngineClient } from '../../engine-route'
+import type { Handlers, Return, SubscriptionServices } from '../../feature'
 import { Message } from '../../message'
 import type { Model } from '../../model'
 import * as RemoteEngines from '../../remote-engines'
@@ -84,6 +86,34 @@ export const update = (model: Model): Handlers<keyof typeof messages> => ({
     }
   },
 })
+
+export const subscriptions = () =>
+  Subscription.make<Model, Message, SubscriptionServices>()(entry => ({
+    // A sign-in's steps: through the engine running it, for as long as the screen has it going.
+    signIn: entry(
+      { run: Schema.Option(Credentials.SignInRun) },
+      {
+        modelToDependencies: model => ({
+          run: Credentials.runOf(model.screens.engines.signIn),
+        }),
+        dependenciesToStream: ({ run }) =>
+          Option.match(run, {
+            onNone: () => Stream.empty,
+            onSome: going =>
+              withEngineClient(going.engine, client =>
+                Credentials.loginMessages(client, going),
+              ).pipe(
+                Stream.concat(Stream.make(Credentials.endedLogin(going))),
+                Stream.map(message =>
+                  Message.GotEnginesMessage({
+                    message: Engines.signInMessage(message),
+                  }),
+                ),
+              ),
+          }),
+      },
+    ),
+  }))
 
 const lazyEngines = createLazy()
 

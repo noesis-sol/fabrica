@@ -32,10 +32,18 @@ import {
   createZstdDecompress,
 } from 'node:zlib'
 
+import type { Provider } from '@earendil-works/pi-ai/models'
 import type { ModelName, ProviderName, RunId, Tokens } from '@fabrica/contracts'
 
+import type { ProviderEntry } from '../agent/launch'
 import { drawToken } from '../control/token'
-import { type SecretName, Secrets } from '../secrets'
+import { Held, Kept, type SecretName, Secrets } from '../secrets'
+import {
+  type SubscriptionAuth,
+  makeSubscriptions,
+  subscriptionEntry,
+  subscriptionProviders,
+} from './oauth'
 import { type Caller, Permits } from './permits'
 import { ProbeOutcome, probeRequest } from './probe'
 import { type Refusal, classify, credentialRefusal } from './refusal'
@@ -59,7 +67,10 @@ import { type UsageWindowFigure, windowChanged, windowsOf } from './windows'
 // its bytes as they came, while the proxy reads the call's usage from it and what a refusal means.
 // Usage and refusals are published, for telemetry and the holds. Every response's usage windows, an
 // allowed one's too (H90), are kept as each account's latest figures, served, and published as they
-// change, for the run's `usage_window` records (§13.12) and the console (§18.3).
+// change, for the run's `usage_window` records (§13.12) and the console (§18.3). A credential kept as a
+// subscription's sign-in has its token refreshed before it expires (oauth.ts), and is sent as a bearer,
+// to the account's own base URL where it has one; an agent is granted the placeholder Pi needs to build
+// that subscription's request, chosen from what is kept as its session starts.
 
 /** What the proxy saw of a model call, for telemetry (§14.4, §21) and the holds (§14.2, §14.6). */
 export type ProxyEvent = Data.TaggedEnum<{
@@ -89,10 +100,12 @@ export const ProxyEvent = Data.taggedEnum<ProxyEvent>()
 
 /** An agent's way through the proxy, for its Pi's configuration (§12.1). */
 export interface AgentProxy {
-  /** Its token, given to Pi as each provider's key. */
+  /** Its token, given to Pi as each provider's key where the provider needs no placeholder. */
   readonly token: Redacted.Redacted<string>
   /** Each provider's base URL at the proxy, by the provider's name. */
   readonly baseUrls: Readonly<Record<ProviderName, string>>
+  /** Each provider as Pi is configured for it: its base URL, and its placeholder and compat on a subscription. */
+  readonly providers: ReadonlyArray<ProviderEntry>
 }
 
 /** The proxy's listener couldn't be opened. */
@@ -130,7 +143,18 @@ export class ModelProxy extends Context.Service<ModelProxy, ModelProxyShape>()(
 /** The providers the proxy reaches. */
 export interface ProxyConfig {
   readonly routes: ReadonlyArray<ProviderRoute>
+  /** The providers subscriptions are signed in to; `pi-ai`'s where none are given. */
+  readonly providers?: ReadonlyArray<Provider>
 }
+
+/** What a call is sent with. */
+type Sending = Data.TaggedEnum<{
+  /** Nothing: a provider that takes no credential. */
+  Nothing: {}
+  Key: { readonly key: Redacted.Redacted<string> }
+  Subscription: { readonly auth: SubscriptionAuth }
+}>
+const Sending = Data.taggedEnum<Sending>()
 
 /** How the proxy's exchange with a provider went. */
 type Exchanged = Data.TaggedEnum<{
@@ -206,12 +230,12 @@ const passed = (
 const outgoing = (
   headers: IncomingHttpHeaders | Readonly<Record<string, string>>,
   authentication: Authentication,
-  credential: Option.Option<Redacted.Redacted<string>>,
+  sending: Sending,
 ): OutgoingHttpHeaders => {
   const kept = passed(headers, credentialHeaders)
-  return Option.match(credential, {
-    onNone: () => kept,
-    onSome: key =>
+  return Sending.$match(sending, {
+    Nothing: () => kept,
+    Key: ({ key }) =>
       Authentication.$match(authentication, {
         Header: ({ header }) => ({ ...kept, [header]: Redacted.value(key) }),
         Bearer: () => ({
@@ -220,6 +244,15 @@ const outgoing = (
         }),
         None: () => kept,
       }),
+    // Whichever way the provider takes a key, a subscription's token is a bearer.
+    Subscription: ({ auth }) => ({
+      ...kept,
+      ...auth.headers,
+      ...Option.match(auth.token, {
+        onNone: () => ({}),
+        onSome: token => ({ authorization: `Bearer ${Redacted.value(token)}` }),
+      }),
+    }),
   })
 }
 
@@ -423,6 +456,10 @@ export const make = Effect.fn('ModelProxy.make')(function* (
   const secrets = yield* Secrets
   const permits = yield* Permits
   const clock = yield* Clock.Clock
+  const subscriptions = makeSubscriptions({
+    secrets,
+    providers: config.providers ?? subscriptionProviders(),
+  })
   const published = yield* PubSub.unbounded<ProxyEvent>()
   const routes = new Map(config.routes.map(route => [route.provider, route]))
   /** The callers granted a token, by the token's digest. */
@@ -470,13 +507,24 @@ export const make = Effect.fn('ModelProxy.make')(function* (
     )
   }
 
+  /** What a call is sent with: a subscription's current token, refreshed first where it is about to expire. */
+  const sendingWith = (credential: SecretName) =>
+    Effect.flatMap(
+      secrets.get(credential),
+      Held.$match({
+        Key: ({ key }) => Effect.succeed(Sending.Key({ key })),
+        Subscription: ({ provider }) =>
+          Effect.map(subscriptions.current(provider), auth =>
+            Sending.Subscription({ auth }),
+          ),
+      }),
+    )
+
   const credentialOf = (authentication: Authentication) =>
     Authentication.$match(authentication, {
-      Header: ({ credential }) =>
-        Effect.map(secrets.get(credential), Option.some),
-      Bearer: ({ credential }) =>
-        Effect.map(secrets.get(credential), Option.some),
-      None: () => Effect.succeedNone,
+      Header: ({ credential }) => sendingWith(credential),
+      Bearer: ({ credential }) => sendingWith(credential),
+      None: () => Effect.succeed(Sending.Nothing()),
     })
 
   /** Sends the call to its provider with the credential in its token's place, and reads what its answer refuses. */
@@ -485,8 +533,11 @@ export const make = Effect.fn('ModelProxy.make')(function* (
     readonly caller: Caller
     readonly method: string
     readonly path: string
-    readonly headers: IncomingHttpHeaders | Readonly<Record<string, string>>
-    readonly body: Readable | string
+    /** Its headers and body, as they go on a subscription or not. */
+    readonly request: (subscription: boolean) => {
+      readonly headers: IncomingHttpHeaders | Readonly<Record<string, string>>
+      readonly body: Readable | string
+    }
   }) {
     const { route, caller } = call
     const refused = (refusal: Refusal) =>
@@ -505,17 +556,21 @@ export const make = Effect.fn('ModelProxy.make')(function* (
       yield* refused(refusal)
       return Exchanged.NoCredential({ refusal, reason })
     }
+    const sending = credential.success
+    const { headers, body } = call.request(Sending.$is('Subscription')(sending))
     const sentAt = clock.currentTimeMillisUnsafe()
     const sent = yield* Effect.result(
       send({
-        url: upstreamUrl(route, call.path),
-        method: call.method,
-        headers: outgoing(
-          call.headers,
-          route.authentication,
-          credential.success,
+        url: upstreamUrl(
+          route,
+          call.path,
+          Sending.$is('Subscription')(sending)
+            ? sending.auth.baseUrl
+            : Option.none(),
         ),
-        body: call.body,
+        method: call.method,
+        headers: outgoing(headers, route.authentication, sending),
+        body,
       }),
     )
     if (Result.isFailure(sent))
@@ -605,8 +660,7 @@ export const make = Effect.fn('ModelProxy.make')(function* (
             caller,
             method: request.method ?? 'GET',
             path: target.value.path,
-            headers: request.headers,
-            body: request,
+            request: () => ({ headers: request.headers, body: request }),
           }),
         ).pipe(Effect.map(Option.some)),
         Effect.as(dropped(response), Option.none<Exchanged>()),
@@ -654,21 +708,48 @@ export const make = Effect.fn('ModelProxy.make')(function* (
   )
   const address = `http://127.0.0.1:${port}`
 
+  /** Whether a route's calls are made on a subscription now; a store that can't say leaves the call to say so. */
+  const onSubscription = (route: ProviderRoute) =>
+    Option.match(accountOf(route.authentication), {
+      onNone: () => Effect.succeed(false),
+      onSome: account =>
+        secrets.read(account).pipe(
+          Effect.map(Option.exists(Kept.$is('OAuth'))),
+          Effect.orElseSucceed(() => false),
+        ),
+    })
+
   const grant = Effect.fn('ModelProxy.grant')(function* (caller: Caller) {
     const token = yield* drawToken
-    const digest = digestOf(Redacted.value(token))
+    const providers = yield* Effect.forEach(
+      config.routes,
+      route =>
+        Effect.map(onSubscription(route), (subscription): ProviderEntry => ({
+          provider: route.provider,
+          baseUrl: `${address}/${route.provider}`,
+          ...(subscription
+            ? subscriptionEntry(route.provider, Redacted.value(token))
+            : {}),
+        })),
+      { concurrency: 'unbounded' },
+    )
+    // Pi sends a provider's placeholder as it is: each is a way in, for as long as the token.
+    const digests = [
+      ...new Set([
+        Redacted.value(token),
+        ...providers.flatMap(({ apiKey }) => apiKey ?? []),
+      ]),
+    ].map(digestOf)
     yield* Effect.acquireRelease(
-      Effect.sync(() => grants.set(digest, caller)),
-      () => Effect.sync(() => grants.delete(digest)),
+      Effect.sync(() => digests.forEach(digest => grants.set(digest, caller))),
+      () => Effect.sync(() => digests.forEach(digest => grants.delete(digest))),
     )
     return {
       token,
       baseUrls: Object.fromEntries(
-        config.routes.map(route => [
-          route.provider,
-          `${address}/${route.provider}`,
-        ]),
+        providers.map(({ provider, baseUrl }) => [provider, baseUrl]),
       ),
+      providers,
     } satisfies AgentProxy
   })
 
@@ -694,8 +775,8 @@ export const make = Effect.fn('ModelProxy.make')(function* (
       caller,
       method: 'POST',
       path: request.path,
-      headers: request.headers,
-      body: request.body,
+      request: subscription =>
+        probeRequest(route.api, options.model, subscription),
     })
     return yield* Exchanged.$match(exchanged, {
       NoCredential: ({ refusal }) =>

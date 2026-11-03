@@ -1,4 +1,12 @@
-import { DateTime, Duration, Effect, Layer, Option } from 'effect'
+import {
+  Context,
+  DateTime,
+  Duration,
+  Effect,
+  Layer,
+  Option,
+  Result,
+} from 'effect'
 import { access, constants } from 'node:fs/promises'
 import * as NodePath from 'node:path'
 
@@ -31,7 +39,8 @@ import { DISTRIBUTION_LAYOUT } from './layout'
 // the run's records are dated in the host's zone; each worker and check gets its share of the cores
 // under the machine budget, and the workers run at `worker_nice`. Both are read from the engine's
 // settings as it starts. Where the agents' parts are missing, or the secret store
-// or the model proxy can't open, the engine refuses every run, saying why.
+// or the model proxy can't open, the engine refuses every run, saying why. The secret store opens first,
+// and the Secrets group's credentials are kept on it whatever else this host lacks.
 
 /** Where an agent's parts are. */
 export interface AgentPlaces {
@@ -135,6 +144,8 @@ export interface HostingConfig {
   >
   /** Where the model proxy sends each provider's calls. */
   readonly routes: ReadonlyArray<Proxy.ProviderRoute>
+  /** The providers subscriptions are signed in to; `pi-ai`'s where none are given. */
+  readonly signIns?: Run.EngineCredentials['providers']
   /** The zone the runs' records are dated in. */
   readonly zone: Layer.Layer<DateTime.CurrentTimeZone>
 }
@@ -186,19 +197,37 @@ export const runHosting = (
         Daemon.StartingSettings,
         Git.Git,
       ])
-      const refused = (why: string) =>
+      const refused = (why: string, credentials?: Run.EngineCredentials) =>
         Run.RunHostingShape.Refused({
           reason: `this engine can't run a project: ${why}`,
+          ...(credentials === undefined ? {} : { credentials }),
         })
       const missing = yield* missingPart(config.agents)
-      if (Option.isSome(missing)) return refused(missing.value)
       const timing = Layer.provideMerge(
         Process.layerAwake,
         Layer.provide(layerWake, config.sleepCauses),
       )
-      const runner = Layer.provideMerge(config.runner, timing)
-      const proxy = Proxy.layer({ routes: config.routes }).pipe(
-        Layer.provide(config.secrets),
+      const runner = Layer.succeedContext(
+        yield* Layer.build(Layer.provideMerge(config.runner, timing)),
+      )
+      // The store opens whatever else this host lacks: the Secrets group works on it either way.
+      const opened = yield* Layer.build(
+        Layer.provide(config.secrets, runner),
+      ).pipe(Effect.result)
+      const signIns = config.signIns ?? Proxy.subscriptionProviders()
+      const credentials = Result.isSuccess(opened)
+        ? {
+            secrets: Context.get(opened.success, Secrets.Secrets),
+            providers: signIns,
+          }
+        : undefined
+      if (Option.isSome(missing)) return refused(missing.value, credentials)
+      if (Result.isFailure(opened)) return refused(opened.failure.message)
+      const proxy = Proxy.layer({
+        routes: config.routes,
+        providers: signIns,
+      }).pipe(
+        Layer.provide(Layer.succeedContext(opened.success)),
         Layer.provideMerge(Proxy.layerHeld),
       )
       return yield* Layer.build(
@@ -229,9 +258,12 @@ export const runHosting = (
             cores: coresShare(settings, config.cores),
             nice: Option.some(settings.worker_nice),
             keepAwakeHost: config.keepAwakeHost,
+            ...(credentials === undefined ? {} : { credentials }),
           }),
         ),
-        Effect.catch(error => Effect.succeed(refused(error.message))),
+        Effect.catch(error =>
+          Effect.succeed(refused(error.message, credentials)),
+        ),
       )
     }).pipe(
       Effect.tap(hosting =>

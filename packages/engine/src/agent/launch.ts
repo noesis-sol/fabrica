@@ -18,6 +18,10 @@ import type { ModelChoice } from './commands'
 export interface ProviderEntry {
   readonly provider: string
   readonly baseUrl: string
+  /** The placeholder Pi takes for its key, where a subscription needs its own kind; the agent's token otherwise. */
+  readonly apiKey?: string
+  /** Pi's compat overrides for the provider, where a subscription's requests need them (fab-mgi.11). */
+  readonly compat?: Readonly<Record<string, boolean>>
 }
 
 /** The folder of a project's session folders: `<data>/projects/<id>/sessions/`. */
@@ -50,7 +54,7 @@ export const makeSessionFolder = Effect.fn('PiAgent.makeSessionFolder')(
   },
 )
 
-/** Pi's `models.json`: every provider pointed at the model proxy, with the agent's token for its key. */
+/** Pi's `models.json`: every provider pointed at the model proxy, with its placeholder or the agent's token for its key. */
 export const modelsJson = ({
   providers,
   token,
@@ -61,9 +65,13 @@ export const modelsJson = ({
   `${JSON.stringify(
     {
       providers: Object.fromEntries(
-        providers.map(({ provider, baseUrl }) => [
+        providers.map(({ provider, baseUrl, apiKey, compat }) => [
           provider,
-          { baseUrl, apiKey: token },
+          {
+            baseUrl,
+            apiKey: apiKey ?? token,
+            ...(compat === undefined ? {} : { compat }),
+          },
         ]),
       ),
     },

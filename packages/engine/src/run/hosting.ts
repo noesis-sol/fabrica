@@ -7,6 +7,8 @@ import {
   type Option,
 } from 'effect'
 
+import type { Provider } from '@earendil-works/pi-ai/models'
+
 import type {
   Attention,
   CheckOwnPasses,
@@ -14,6 +16,7 @@ import type {
   layer as controlLayer,
 } from '../control'
 import type { RunLog } from '../runlog'
+import type { SecretsShape } from '../secrets'
 import type { Telemetry } from '../telemetry'
 import type { KeepAwakeHost } from '../time'
 import type { WorkGraph } from '../workgraph'
@@ -38,6 +41,12 @@ export type RunServices =
     >
   | DateTime.CurrentTimeZone
 
+/** The engine's secret store and the providers it signs in to, one store for the runs' proxy and the Secrets group (§20.3). */
+export interface EngineCredentials {
+  readonly secrets: SecretsShape
+  readonly providers: ReadonlyArray<Provider>
+}
+
 /** What the engine's runs run on, or why it can't run one. */
 export type RunHostingShape = Data.TaggedEnum<{
   Ready: {
@@ -50,8 +59,14 @@ export type RunHostingShape = Data.TaggedEnum<{
     readonly nice: Option.Option<number>
     /** The engine's host, which its runs keep from idle sleep. */
     readonly keepAwakeHost: KeepAwakeHost
+    /** Its credentials; where none are given, the Secrets group says the engine has none. */
+    readonly credentials?: EngineCredentials
   }
-  Refused: { readonly reason: string }
+  Refused: {
+    readonly reason: string
+    /** Its credentials, where its secret store opened though its runs are refused. */
+    readonly credentials?: EngineCredentials
+  }
 }>
 export const RunHostingShape = Data.taggedEnum<RunHostingShape>()
 

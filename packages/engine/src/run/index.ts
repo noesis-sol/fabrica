@@ -2,6 +2,7 @@
 export * from './config'
 export { type RunControl, makeRunControl } from './control'
 export {
+  type EngineCredentials,
   RunHosting,
   RunHostingShape,
   type RunServices,

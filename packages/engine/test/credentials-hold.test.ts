@@ -53,7 +53,13 @@ import { settleOf, supervisorHolds } from '../src/run/holds'
 import { makeSupervision } from '../src/run/supervisor'
 import { WorkerEnd, WorkerTurn } from '../src/run/worker'
 import { makeRunLog } from '../src/runlog'
-import { ApiKey, SecretMissing, SecretName, Secrets } from '../src/secrets'
+import {
+  ApiKey,
+  Held,
+  SecretMissing,
+  SecretName,
+  Secrets,
+} from '../src/secrets'
 import { anthropicAnswer, anthropicBadKey } from './proxy-streams'
 
 // The credentials hold (spec §14.6, H69): a call refused for its credential once a call to its provider
@@ -197,8 +203,11 @@ const proxiedHold = Effect.gen(function* () {
     get: name =>
       Option.match(Option.fromUndefinedOr(stored.get(name)), {
         onNone: () => Effect.fail(new SecretMissing({ name })),
-        onSome: value => Effect.succeed(Redacted.make(value)),
+        onSome: value =>
+          Effect.succeed(Held.Key({ key: Redacted.make(value) })),
       }),
+    read: () => Effect.succeedNone,
+    modify: () => Effect.succeedNone,
     remove: () => Effect.succeed(false),
   })
   const permits = yield* makePermits

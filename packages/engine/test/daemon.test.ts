@@ -25,8 +25,7 @@ import {
   ClientHello,
   EngineHost,
   FabricaRpcs,
-  ProtocolGroupName,
-  protocolGroups,
+  ProjectId,
   protocolVersion,
 } from '@fabrica/contracts'
 
@@ -40,7 +39,6 @@ import {
   runBridge,
   startEngine,
 } from '../src/engine'
-import { secretsHandlers } from '../src/rpc'
 
 // The engine daemon (spec §7.1, §7.2, §8.1, §8.2, §20.2): an engine started in a temporary data folder,
 // called over a real socket and through the bridge's stdio.
@@ -138,39 +136,6 @@ if (Exit.isFailure(exit)) console.log('busy')`,
 const modeOf = (path: string) =>
   Effect.promise(() => lstat(path)).pipe(Effect.map(info => info.mode & 0o777))
 
-/** Whether an exit is a defect named `NotImplemented`, as the protocol carries it. */
-/** The groups whose handlers answer `NotImplemented`: every one but those built (Engine, Tokens, Review, Projects, Backlog, Talks, Insights, Runs, Attention, Workers). */
-type Unfilled = Exclude<
-  ProtocolGroupName,
-  | 'engine'
-  | 'tokens'
-  | 'review'
-  | 'projects'
-  | 'backlog'
-  | 'talks'
-  | 'insights'
-  | 'runs'
-  | 'attention'
-  | 'workers'
->
-const unfilled = ProtocolGroupName.literals.filter(
-  (group): group is Unfilled =>
-    group !== 'engine' &&
-    group !== 'tokens' &&
-    group !== 'review' &&
-    group !== 'projects' &&
-    group !== 'backlog' &&
-    group !== 'talks' &&
-    group !== 'insights' &&
-    group !== 'runs' &&
-    group !== 'attention' &&
-    group !== 'workers',
-)
-
-/** Whether a handler's answer is an effect: the handlers built here need no service. */
-const isEffect = (answer: unknown): answer is Effect.Effect<unknown, unknown> =>
-  Effect.isEffect(answer)
-
 /** A duplex stream reading what `readable` gives and writing to `writable`. */
 const joined = (readable: PassThrough, writable: PassThrough): Duplex => {
   const duplex = new Duplex({
@@ -190,6 +155,7 @@ const joined = (readable: PassThrough, writable: PassThrough): Duplex => {
   return duplex
 }
 
+/** Whether an exit is a defect named `NotImplemented`, as the protocol carries it. */
 const answeredNotImplemented = (exit: Exit.Exit<unknown, unknown>): boolean =>
   Exit.isFailure(exit) &&
   Cause.hasDies(exit.cause) &&
@@ -419,57 +385,20 @@ describe('the socket and the data folder', () => {
   })
 })
 
-describe('the groups not served yet', () => {
+describe('a request not served yet', () => {
   it.effect(
-    'answer NotImplemented over the socket, and the connection stays',
+    'answers NotImplemented over the socket, and the connection stays',
     () =>
       Effect.gen(function* () {
         const paths = yield* scratchPaths
         yield* start(paths)
         const client = yield* clientAt(paths.socket)
-        const calls: Record<Unfilled, Effect.Effect<unknown, unknown>> = {
-          secrets: client['credentials.list'](),
-        }
-        for (const group of unfilled) {
-          const exit = yield* Effect.exit(calls[group])
-          expect(answeredNotImplemented(exit), group).toBe(true)
-        }
+        const exit = yield* Effect.exit(
+          client['projects.init']({ project: ProjectId.make('p1') }),
+        )
+        expect(answeredNotImplemented(exit)).toBe(true)
         expect((yield* client['engine.version']()).release).toBe(release)
       }),
-  )
-
-  it.effect('answer NotImplemented to every request and stream', () =>
-    Effect.gen(function* () {
-      const layers: Record<Unfilled, Layer.Layer<never>> = {
-        secrets: secretsHandlers,
-      }
-      for (const group of unfilled) {
-        const handlers = yield* Layer.build(layers[group])
-        const requests = protocolGroups[group].requests
-        expect(requests.size).toBeGreaterThan(0)
-        for (const rpc of requests.values()) {
-          const entry: unknown = handlers.mapUnsafe.get(rpc.key)
-          if (
-            typeof entry !== 'object' ||
-            entry === null ||
-            !('handler' in entry) ||
-            typeof entry.handler !== 'function'
-          ) {
-            expect.fail(`${rpc._tag} has no handler`)
-            continue
-          }
-          const answer: unknown = entry.handler(undefined, {})
-          if (!isEffect(answer)) {
-            expect.fail(`${rpc._tag} answered with no effect`)
-            continue
-          }
-          expect(
-            answeredNotImplemented(yield* Effect.exit(answer)),
-            rpc._tag,
-          ).toBe(true)
-        }
-      }
-    }),
   )
 })
 

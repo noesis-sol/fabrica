@@ -21,7 +21,7 @@ import {
   make,
   upstreamUrl,
 } from '../src/proxy'
-import { SecretMissing, SecretName, Secrets } from '../src/secrets'
+import { Held, SecretMissing, SecretName, Secrets } from '../src/secrets'
 import {
   type RecordedStream,
   anthropicAnswer,
@@ -115,8 +115,10 @@ const secrets = Secrets.of({
   list: Effect.succeed([]),
   get: name =>
     name in keys
-      ? Effect.succeed(Redacted.make(keys[name] ?? ''))
+      ? Effect.succeed(Held.Key({ key: Redacted.make(keys[name] ?? '') }))
       : Effect.fail(new SecretMissing({ name })),
+  read: () => Effect.succeedNone,
+  modify: () => Effect.succeedNone,
   remove: () => Effect.succeed(false),
 })
 

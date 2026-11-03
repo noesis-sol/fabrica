@@ -29,6 +29,18 @@ export interface ProbeRequest {
   readonly body: string
 }
 
+/** The headers of a call on a Claude subscription, as `pi-ai` 1.4.0 sends them; the Pi contract suite holds them to it. */
+export const claudeSubscriptionHeaders: Readonly<Record<string, string>> = {
+  'anthropic-version': '2023-06-01',
+  'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20',
+  'user-agent': 'claude-cli/2.1.280',
+  'x-app': 'cli',
+}
+
+/** The system line every call on a Claude subscription opens with, as `pi-ai` sends it. */
+export const claudeSubscriptionSystem =
+  "You are Claude Code, Anthropic's official CLI for Claude."
+
 /** The question every probe asks, as short as an answer can be. */
 const question = 'Say OK.'
 
@@ -39,9 +51,27 @@ const json = (path: string, body: unknown): ProbeRequest => ({
 })
 
 /** The smallest call to `model` in `api`: one token of answer, where the API takes so few. */
-export const probeRequest = (api: ModelApi, model: ModelName): ProbeRequest => {
+export const probeRequest = (
+  api: ModelApi,
+  model: ModelName,
+  /** Whether it is made on a subscription, whose request differs where the provider's does (§12.9). */
+  subscription: boolean = false,
+): ProbeRequest => {
   switch (api) {
     case 'anthropic-messages':
+      if (subscription)
+        return {
+          ...json('/v1/messages', {
+            model,
+            max_tokens: 1,
+            system: [{ type: 'text', text: claudeSubscriptionSystem }],
+            messages: [{ role: 'user', content: question }],
+          }),
+          headers: {
+            'content-type': 'application/json',
+            ...claudeSubscriptionHeaders,
+          },
+        }
       return {
         ...json('/v1/messages', {
           model,
@@ -54,11 +84,11 @@ export const probeRequest = (api: ModelApi, model: ModelName): ProbeRequest => {
         },
       }
     case 'openai-responses':
-      // The Responses API takes no fewer than 16 output tokens.
+      // A ChatGPT sign-in refuses `max_output_tokens`; the API itself takes no fewer than 16.
       return json('/responses', {
         model,
         input: question,
-        max_output_tokens: 16,
+        ...(subscription ? {} : { max_output_tokens: 16 }),
         store: false,
       })
     case 'openai-completions':

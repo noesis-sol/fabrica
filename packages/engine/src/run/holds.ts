@@ -278,12 +278,7 @@ export const minimalAgent = (input: {
       ticket,
       project: input.config.project,
       worktree: input.config.checkout,
-      providers: Object.entries(granted.baseUrls).map(
-        ([provider, baseUrl]) => ({
-          provider,
-          baseUrl,
-        }),
-      ),
+      providers: granted.providers,
       token: Redacted.value(granted.token),
       model: input.model,
       tools: Option.some(['read']),

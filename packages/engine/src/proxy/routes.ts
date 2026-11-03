@@ -78,6 +78,15 @@ export const knownRoutes: ReadonlyArray<ProviderRoute> = [
     }),
   },
   {
+    provider: 'github-copilot',
+    // A sign-in's token names its account's own base URL (§12.9): this is the individual plan's, Pi's.
+    upstream: 'https://api.individual.githubcopilot.com',
+    api: 'openai-completions',
+    authentication: Authentication.Bearer({
+      credential: SecretName.make('github-copilot'),
+    }),
+  },
+  {
     provider: 'openrouter',
     upstream: 'https://openrouter.ai/api/v1',
     // Its Anthropic models speak Anthropic Messages at `/api`, whose client adds `/v1/messages`.
@@ -117,13 +126,22 @@ export const targetOf = (url: string): Option.Option<Target> => {
     : Option.some({ provider, path: path ?? '/' })
 }
 
-/** The provider URL a call's path is sent to: the path appended to the base URL for the API it speaks. */
-export const upstreamUrl = (route: ProviderRoute, path: string): URL => {
-  const base = Option.getOrElse(
-    Option.flatMap(apiOf(path), api =>
-      Option.fromNullishOr(route.upstreamByApi?.[api]),
+/**
+ * The provider URL a call's path is sent to: the path appended to the account's own base URL where a
+ * subscription's token names one, or else to the base URL for the API it speaks.
+ */
+export const upstreamUrl = (
+  route: ProviderRoute,
+  path: string,
+  account: Option.Option<string> = Option.none(),
+): URL => {
+  const base = Option.getOrElse(account, () =>
+    Option.getOrElse(
+      Option.flatMap(apiOf(path), api =>
+        Option.fromNullishOr(route.upstreamByApi?.[api]),
+      ),
+      () => route.upstream,
     ),
-    () => route.upstream,
   )
   return new URL(`${base.replace(/\/+$/u, '')}${path}`)
 }

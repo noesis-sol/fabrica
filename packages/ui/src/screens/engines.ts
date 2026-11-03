@@ -69,6 +69,7 @@ import {
 import { AppHost, ServiceInstall } from '../app/host'
 import type * as RemoteEngines from '../app/remote-engines'
 import { type EngineProjects, runLabel } from '../console/sidebar'
+import * as Credentials from './credentials'
 
 // The Engines and projects screen (spec §18.4, §10.1, §20.3): the known engines with their versions
 // and status, each engine's projects, whether the user trusts each (§12.1), Add project, and each
@@ -97,7 +98,8 @@ import { type EngineProjects, runLabel } from '../console/sidebar'
 // missing, offers to set up (`init`); a checkout on a Windows drive, as a WSL2 engine sees it under
 // `/mnt/<letter>`, is warned about. A project is trusted or untrusted from its row, the words beside the
 // list saying what trusting it lets its own files do. Credentials are set by name and removed, never shown (§20.3); the key a
-// form holds is redacted, so no log or trace of the Model shows it. The local engine runs at login
+// form holds is redacted, so no log or trace of the Model shows it; a subscription is signed in to from
+// each engine's credentials (credentials.ts). The local engine runs at login
 // when the user chooses, which the app around the renderer installs (§7.1).
 
 /** What a project is added from: a checkout on the engine's host, or a git URL (§10.1). */
@@ -287,6 +289,8 @@ export const Model = Schema.Struct({
   credentials: Schema.Record(Schema.String, CredentialsData),
   credentialForm: CredentialForm,
   credentialSave: CredentialSave,
+  /** The sign-in going, and how the last one ended. */
+  signIn: Credentials.Model,
   /** The project whose trust is being changed, and what the last change said where it failed. */
   trusting: Schema.Option(EngineProject),
   trustProblem: Schema.Option(EngineProblem),
@@ -323,6 +327,7 @@ export const init = (): Model => ({
   credentials: {},
   credentialForm: emptyCredentialForm(localEngineName),
   credentialSave: CredentialSave.Editing({ problem: Option.none() }),
+  signIn: Credentials.init(),
   trusting: Option.none(),
   trustProblem: Option.none(),
   removing: Option.none(),
@@ -387,6 +392,7 @@ export const Message = defineMessageUnion({
   SubmittedCredential: {},
   SucceededSetCredential: { credential: EngineCredential },
   FailedSetCredential: { reason: Schema.String },
+  GotSignInMessage: { message: Credentials.Message },
   RequestedRemoveCredential: { credential: EngineCredential },
   SucceededRemoveCredential: { credential: EngineCredential },
   FailedRemoveCredential: {
@@ -693,6 +699,10 @@ export const PairEngine = Command.define('PairEngine', {
       return Message.CompletedPairing({ name: request.name, answer })
     }),
 })
+
+/** A sign-in's Message, as the screen's, for the stream the app keeps while one goes. */
+export const signInMessage = (message: Credentials.Message): Message =>
+  Message.GotSignInMessage({ message })
 
 /** What the screen's Commands need: the engine connection, and the app around the renderer. */
 export type Requires = EngineServices | AppHost
@@ -1415,6 +1425,23 @@ export const update = (
     ChoseCredentialEngine: ({ engine }) => ({
       model: editCredential(model, form => ({ ...form, engine })),
     }),
+    GotSignInMessage: ({ message: inner }) => {
+      const stepped = Credentials.update(model.signIn, inner)
+      const next = modifyFields(model, { signIn: () => stepped.model })
+      const commands = Command.mapMessages(stepped.commands, message =>
+        Message.GotSignInMessage({ message }),
+      )
+      return Option.match(Credentials.signedInOn(model.signIn, stepped.model), {
+        onNone: () => ({ model: next, commands }),
+        onSome: engine => {
+          const reloaded = reloadCredentials(next, engine)
+          return {
+            model: reloaded.model,
+            commands: [...commands, ...(reloaded.commands ?? [])],
+          }
+        },
+      })
+    },
     ChangedCredentialName: ({ name }) => ({
       model: editCredential(model, form => ({ ...form, name })),
     }),
@@ -3631,6 +3658,13 @@ const engineCredentialsView = (
         onData: credentials => credentialsList(model, engine, credentials, h),
       }),
       problemOn(model.removeProblem, engine, h),
+      h.submodel({
+        slotId: `sign-in-${engine}`,
+        view: Credentials.view,
+        model: model.signIn,
+        viewInputs: { engine },
+        toParentMessage: message => Message.GotSignInMessage({ message }),
+      }),
     ],
   )
 

@@ -366,17 +366,23 @@ const samples: Record<string, Samples> = {
         provider: 'openai',
       },
     ],
+    error: [{ _tag: 'CredentialStoreFailed', reason: 'the keyring is locked' }],
   },
   'credentials.list': {
     success: [[{ name: 'anthropic', kind: 'oauth', provider: 'anthropic' }]],
+    error: [{ _tag: 'CredentialStoreFailed', reason: 'the keyring is locked' }],
   },
   'credentials.remove': {
     payload: [{ name: 'anthropic' }],
-    error: [{ _tag: 'CredentialNotFound', name: 'anthropic' }],
+    error: [
+      { _tag: 'CredentialNotFound', name: 'anthropic' },
+      { _tag: 'CredentialStoreFailed', reason: 'the keyring is locked' },
+    ],
   },
   'credentials.login': {
     payload: [{ provider: 'anthropic' }],
     success: [
+      { _tag: 'terms', text: "The provider's terms are yours to check" },
       { _tag: 'open_url', url: 'https://claude.ai/oauth', instructions: null },
       {
         _tag: 'device_code',
@@ -384,6 +390,14 @@ const samples: Record<string, Samples> = {
         code: 'ABCD-1234',
       },
       { _tag: 'waiting', text: 'Waiting for the browser' },
+      {
+        _tag: 'asked',
+        login: 'login-1',
+        message: 'How do you sign in?',
+        placeholder: null,
+        secret: false,
+        choices: [{ id: 'browser', label: 'Browser' }],
+      },
       { _tag: 'signed_in', account: 'm@example.com' },
     ],
     error: [
@@ -393,6 +407,13 @@ const samples: Record<string, Samples> = {
         reason: 'the code expired',
       },
     ],
+  },
+  'credentials.answerLogin': {
+    payload: [
+      { login: 'login-1', answer: 'browser' },
+      { login: 'login-1', answer: '' },
+    ],
+    error: [{ _tag: 'LoginNotWaiting', login: 'login-1' }],
   },
   'projects.add': {
     payload: [
@@ -1114,6 +1135,7 @@ describe('the protocol’s groups', () => {
       'credentials.list',
       'credentials.remove',
       'credentials.login',
+      'credentials.answerLogin',
       'projects.add',
       'projects.folders',
       'projects.list',
