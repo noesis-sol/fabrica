@@ -233,11 +233,36 @@ const keychainFailed = (operation: string, code: number) =>
  */
 const SECURITY_PIECE = 3000
 
-/** What an item kept in pieces holds under its own name: this, and how many there are. */
-const PIECES_MARK = 'pieces:'
+/**
+ * An item kept in pieces holds under its own name which pieces, by their generation and count. A new
+ * value's pieces go under a generation of their own, and the one write of the item's name switches to
+ * them, so a read sees the old value or the new one whole, and a write cut short leaves the old.
+ */
+interface Pieces {
+  readonly generation: number
+  readonly count: number
+}
+
+const piecesText = ({ generation, count }: Pieces) =>
+  `pieces:${generation}:${count}`
+
+/** The pieces what is printed for an item names, where it names some. */
+const piecesIn = (text: string): Option.Option<Pieces> => {
+  const match = /^pieces:(\d+):(\d+)$/u.exec(text)
+  return match === null
+    ? Option.none()
+    : Option.some({
+        generation: Number(match[1]),
+        count: Number(match[2]),
+      })
+}
 
 /** A piece's item: `~` is in no item's name, so a piece is never one. */
-const pieceName = (name: string, index: number) => `${name}~${index}`
+const pieceName = (name: string, generation: number, index: number) =>
+  `${name}~${generation}~${index}`
+
+/** How many times a read follows an item whose pieces were replaced as it read them. */
+const PIECES_READS = 3
 
 /** The macOS Keychain, through `security`: a generic password per item, the service `fabrica`, the account the item's name. */
 export const keychain = (cli: KeyringCliShape): Keyring => {
@@ -255,30 +280,32 @@ export const keychain = (cli: KeyringCliShape): Keyring => {
     if (code !== 0) return yield* keychainFailed('read an item', code)
     return Option.some(Redacted.value(stdout).trim())
   })
-  /** How many pieces what is printed for an item says it has. */
-  const piecesIn = (text: string): number =>
-    text.startsWith(PIECES_MARK) ? Number(text.slice(PIECES_MARK.length)) : 0
   const read = Effect.fn('Keychain.read')(function* (name: string) {
-    const head = yield* printed(name)
-    if (Option.isNone(head)) return Option.none()
-    const count = piecesIn(head.value)
-    if (count === 0) return Option.some(fromBase64(Redacted.make(head.value)))
-    const pieces = yield* Effect.forEach(
-      Array.from({ length: count }, (_, index) => index),
-      index => printed(pieceName(name, index)),
-      { concurrency: 'unbounded' },
-    )
-    if (!pieces.every(Option.isSome))
-      return yield* new SecretStoreFailed({
-        store: 'keychain',
-        operation: 'read an item',
-        reason: `a piece of ${name} is missing`,
-      })
-    return Option.some(
-      fromBase64(
-        Redacted.make(pieces.map(piece => Option.getOrThrow(piece)).join('')),
-      ),
-    )
+    for (let reads = 0; reads < PIECES_READS; reads++) {
+      const head = yield* printed(name)
+      if (Option.isNone(head)) return Option.none()
+      const named = piecesIn(head.value)
+      if (Option.isNone(named))
+        return Option.some(fromBase64(Redacted.make(head.value)))
+      const { generation, count } = named.value
+      const pieces = yield* Effect.forEach(
+        Array.from({ length: count }, (_, index) => index),
+        index => printed(pieceName(name, generation, index)),
+        { concurrency: 'unbounded' },
+      )
+      if (pieces.every(Option.isSome))
+        return Option.some(
+          fromBase64(Redacted.make(pieces.map(({ value }) => value).join(''))),
+        )
+      // A write switched the item and took these pieces away as they were read: read what it wrote.
+      const now = yield* printed(name)
+      if (Option.getOrUndefined(now) === head.value) break
+    }
+    return yield* new SecretStoreFailed({
+      store: 'keychain',
+      operation: 'read an item',
+      reason: `a piece of ${name} is missing`,
+    })
   })
   const writeLine = Effect.fn('Keychain.writeLine')(function* (
     name: string,
@@ -298,45 +325,47 @@ export const keychain = (cli: KeyringCliShape): Keyring => {
     if (code !== 0 && code !== SECURITY_NOT_FOUND)
       return yield* keychainFailed('remove an item', code)
   })
-  const removePieces = (name: string, from: number, to: number) =>
+  const removePieces = (name: string, { generation, count }: Pieces) =>
     Effect.forEach(
-      Array.from(
-        { length: Math.max(0, to - from) },
-        (_, index) => from + index,
-      ),
-      index => removeItem(pieceName(name, index)),
+      Array.from({ length: count }, (_, index) => index),
+      index => removeItem(pieceName(name, generation, index)),
       { discard: true },
     )
   const piecesKept = (name: string) =>
-    Effect.map(printed(name), head =>
-      Option.match(head, { onNone: () => 0, onSome: piecesIn }),
-    )
-  // The pieces go first, so the item never names pieces it hasn't got.
+    Effect.map(printed(name), Option.flatMap(piecesIn))
   const write = Effect.fn('Keychain.write')(function* (
     name: string,
     value: Redacted.Redacted<string>,
   ) {
     const before = yield* piecesKept(name)
     const base64 = Redacted.value(toBase64(value))
-    const pieces =
-      base64.length <= SECURITY_PIECE
-        ? []
-        : (base64.match(new RegExp(`.{1,${SECURITY_PIECE}}`, 'gu')) ?? [])
-    yield* Effect.forEach(
-      pieces,
-      (piece, index) => writeLine(pieceName(name, index), piece),
-      { discard: true },
-    )
-    yield* writeLine(
-      name,
-      pieces.length === 0 ? base64 : `${PIECES_MARK}${pieces.length}`,
-    )
-    yield* removePieces(name, pieces.length, before)
+    if (base64.length <= SECURITY_PIECE) yield* writeLine(name, base64)
+    else {
+      const texts =
+        base64.match(new RegExp(`.{1,${SECURITY_PIECE}}`, 'gu')) ?? []
+      const pieces: Pieces = {
+        generation: Option.match(before, {
+          onNone: () => 0,
+          onSome: ({ generation }) => generation + 1,
+        }),
+        count: texts.length,
+      }
+      yield* Effect.forEach(
+        texts,
+        (text, index) =>
+          writeLine(pieceName(name, pieces.generation, index), text),
+        { discard: true },
+      ).pipe(
+        Effect.andThen(writeLine(name, piecesText(pieces))),
+        Effect.tapError(() => Effect.ignore(removePieces(name, pieces))),
+      )
+    }
+    if (Option.isSome(before)) yield* removePieces(name, before.value)
   })
   const remove = Effect.fn('Keychain.remove')(function* (name: string) {
     const before = yield* piecesKept(name)
     yield* removeItem(name)
-    yield* removePieces(name, 0, before)
+    if (Option.isSome(before)) yield* removePieces(name, before.value)
   })
   return {
     store: { kind: 'keychain', read, write, remove },

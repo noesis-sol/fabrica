@@ -14,6 +14,7 @@ import { openrouterProvider } from '@earendil-works/pi-ai/providers/openrouter'
 import type { EngineId, ProviderName } from '@fabrica/contracts'
 
 import { type SecretsShape, oauthStore } from '../secrets'
+import { type ModelApi, isModelApi } from './routes'
 
 // A subscription's sign-in and its token (spec §12.9, §20.3, H26, H29): `pi-ai` runs both, with the
 // engine's secret store as its credential store. The proxy asks for a subscription's token on each call;
@@ -56,6 +57,13 @@ export interface SubscriptionAuth {
   readonly token: Option.Option<Redacted.Redacted<string>>
   /** The account's own base URL, where the provider gives each one its own (GitHub Copilot's). */
   readonly baseUrl: Option.Option<string>
+  readonly headers: Readonly<Record<string, string>>
+}
+
+/** What `pi-ai`'s catalog says of a provider's model, for a call the proxy makes itself. */
+export interface CatalogEntry {
+  /** The API the model speaks, where it is one the proxy passes through and the catalog has the model. */
+  readonly api: Option.Option<ModelApi>
   readonly headers: Readonly<Record<string, string>>
 }
 
@@ -126,15 +134,16 @@ export const makeSubscriptions = (options: {
                 : 'the sign-in failed',
           }),
       }),
-    /** The headers `pi-ai`'s catalog has Pi send with a call to `model`, or else to the provider's first (GitHub Copilot's). */
-    catalogHeaders: (
-      provider: ProviderName,
-      model: string,
-    ): Readonly<Record<string, string>> =>
-      presentHeaders(
-        (models.getModel(provider, model) ?? models.getModels(provider)[0])
-          ?.headers,
-      ),
+    /** What `pi-ai`'s catalog has Pi do for a call to `model`: its API, and the provider's headers. */
+    catalogOf: (provider: ProviderName, model: string): CatalogEntry => {
+      const known = models.getModel(provider, model)
+      return {
+        api: Option.filter(Option.fromUndefinedOr(known?.api), isModelApi),
+        headers: presentHeaders(
+          (known ?? models.getModels(provider)[0])?.headers,
+        ),
+      }
+    },
     /** The subscription's current token, refreshed first where it expires within `validFor` (or five minutes). */
     current: (
       provider: ProviderName,
@@ -180,6 +189,10 @@ export const chatGptCompat: Readonly<Record<string, boolean>> = {
   supportsExplicitPromptCacheMode: false,
   supportsMidConvoEffort: false,
 }
+
+/** Whether a provider's subscription requests differ from its key's: GitHub Copilot's and OpenRouter's don't. */
+export const subscriptionRequestDiffers = (provider: ProviderName): boolean =>
+  provider === 'anthropic' || provider === 'openai'
 
 /** What an agent's Pi is given for a provider reached on a subscription, with `token` its token at the proxy. */
 export const subscriptionEntry = (

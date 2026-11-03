@@ -1023,6 +1023,29 @@ describe('a probe on GitHub Copilot', () => {
       expect(sent?.authorization).toBe('Bearer copilot')
       expect(sent?.['editor-version']).toEqual(expect.any(String))
       expect(sent?.['copilot-integration-id']).toEqual(expect.any(String))
+      // A model the catalog doesn't have goes by the route's API.
+      expect(upstream.asked[0]?.url).toBe('/chat/completions')
+
+      // Each model goes through the API pi-ai's catalog has it on, with no other provider's request.
+      const [real] = copilot
+      for (const [api, path] of [
+        ['anthropic-messages', '/v1/messages'],
+        ['openai-responses', '/responses'],
+        ['openai-completions', '/chat/completions'],
+      ] as const) {
+        const model = real?.getModels().find(known => known.api === api)
+        if (model === undefined) return expect.fail(`no model on ${api}`)
+        upstream.asked.length = 0
+        const probed = yield* proxy.probe({
+          provider: 'github-copilot',
+          model: ModelName.make(model.id),
+          run: RunId.make('run-1'),
+        })
+        expect(probed._tag).toBe('Passed')
+        expect(upstream.asked[0]?.url).toBe(path)
+        expect(upstream.asked[0]?.body).not.toContain('You are Claude Code')
+        expect(upstream.asked[0]?.headers['anthropic-beta']).toBeUndefined()
+      }
     }).pipe(Effect.scoped),
   )
 
@@ -1040,11 +1063,14 @@ describe('a probe on GitHub Copilot', () => {
       providers: subscriptionProviders(),
     })
     expect(
-      subscriptions.catalogHeaders('github-copilot', 'no-such-model'),
-    ).toHaveProperty('editor-version')
+      subscriptions.catalogOf('github-copilot', 'no-such-model'),
+    ).toMatchObject({
+      api: Option.none(),
+      headers: { 'editor-version': expect.any(String) },
+    })
     expect(
-      subscriptions.catalogHeaders('anthropic', 'claude-sonnet-4-5'),
-    ).toEqual({})
+      subscriptions.catalogOf('anthropic', 'claude-sonnet-4-5'),
+    ).toStrictEqual({ api: Option.some('anthropic-messages'), headers: {} })
   })
 })
 

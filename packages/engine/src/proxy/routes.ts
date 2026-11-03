@@ -15,6 +15,17 @@ export type ModelApi =
   | 'openai-completions'
   | 'google-generative-ai'
 
+const modelApis: ReadonlyArray<string> = [
+  'anthropic-messages',
+  'openai-responses',
+  'openai-completions',
+  'google-generative-ai',
+] satisfies ReadonlyArray<ModelApi>
+
+/** Whether `api` is one the proxy passes through. */
+export const isModelApi = (api: string | undefined): api is ModelApi =>
+  api !== undefined && modelApis.includes(api)
+
 /** How a provider takes its credential, and the credential's name in the secret store (§20.3). */
 export type Authentication = Data.TaggedEnum<{
   /** The key as a header of its own: Anthropic's `x-api-key`, Google's `x-goog-api-key`. */

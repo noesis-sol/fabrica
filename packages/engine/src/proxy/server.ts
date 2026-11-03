@@ -43,6 +43,7 @@ import {
   makeSubscriptions,
   subscriptionEntry,
   subscriptionProviders,
+  subscriptionRequestDiffers,
 } from './oauth'
 import { type Caller, Permits } from './permits'
 import { ProbeOutcome, probeRequest } from './probe'
@@ -163,6 +164,8 @@ type Exchanged = Data.TaggedEnum<{
     readonly upstream: IncomingMessage
     readonly refusal: Option.Option<Refusal>
     readonly sentAt: number
+    /** The path it was asked for, whose API its usage is read in. */
+    readonly path: string
   }
   /** The engine has no credential to send: missing, or its store or command failed. */
   NoCredential: { readonly refusal: Refusal; readonly reason: string }
@@ -532,9 +535,9 @@ export const make = Effect.fn('ModelProxy.make')(function* (
     readonly route: ProviderRoute
     readonly caller: Caller
     readonly method: string
-    readonly path: string
-    /** Its headers and body, as they go on a subscription or not. */
+    /** Its path, headers and body, as they go on a subscription or not. */
     readonly request: (subscription: boolean) => {
+      readonly path: string
       readonly headers: IncomingHttpHeaders | Readonly<Record<string, string>>
       readonly body: Readable | string
     }
@@ -557,13 +560,15 @@ export const make = Effect.fn('ModelProxy.make')(function* (
       return Exchanged.NoCredential({ refusal, reason })
     }
     const sending = credential.success
-    const { headers, body } = call.request(Sending.$is('Subscription')(sending))
+    const { path, headers, body } = call.request(
+      Sending.$is('Subscription')(sending),
+    )
     const sentAt = clock.currentTimeMillisUnsafe()
     const sent = yield* Effect.result(
       send({
         url: upstreamUrl(
           route,
-          call.path,
+          path,
           Sending.$is('Subscription')(sending)
             ? sending.auth.baseUrl
             : Option.none(),
@@ -590,7 +595,7 @@ export const make = Effect.fn('ModelProxy.make')(function* (
     }
     if (Option.isSome(refusal)) yield* refused(refusal.value)
     yield* readWindows({ route, caller, headers: upstream.headers })
-    return Exchanged.Answered({ upstream, refusal, sentAt })
+    return Exchanged.Answered({ upstream, refusal, sentAt, path })
   })
 
   /** Passes the answer on and publishes the tokens it reports, with how long the call took. */
@@ -659,8 +664,11 @@ export const make = Effect.fn('ModelProxy.make')(function* (
             route,
             caller,
             method: request.method ?? 'GET',
-            path: target.value.path,
-            request: () => ({ headers: request.headers, body: request }),
+            request: () => ({
+              path: target.value.path,
+              headers: request.headers,
+              body: request,
+            }),
           }),
         ).pipe(Effect.map(Option.some)),
         Effect.as(dropped(response), Option.none<Exchanged>()),
@@ -674,11 +682,11 @@ export const make = Effect.fn('ModelProxy.make')(function* (
             502,
             `${route.provider} couldn't be reached: ${reason}`,
           ),
-        Answered: ({ upstream, sentAt }) =>
+        Answered: ({ upstream, sentAt, path }) =>
           answer({
             route,
             caller,
-            path: target.value.path,
+            path,
             upstream,
             sentAt,
             sink: Option.some(response),
@@ -769,27 +777,24 @@ export const make = Effect.fn('ModelProxy.make')(function* (
       session: Option.none(),
       model: options.model,
     }
-    const request = probeRequest(route.api, options.model)
     const exchanged = yield* exchange({
       route,
       caller,
       method: 'POST',
-      path: request.path,
+      // On a subscription the catalog says what Pi calls this model through: GitHub Copilot's models
+      // are on three APIs, one route.
       request: subscription => {
-        const { headers, body } = probeRequest(
-          route.api,
+        if (!subscription) return probeRequest(route.api, options.model)
+        const { api, headers } = subscriptions.catalogOf(
+          route.provider,
           options.model,
-          subscription,
         )
-        return {
-          body,
-          headers: subscription
-            ? {
-                ...subscriptions.catalogHeaders(route.provider, options.model),
-                ...headers,
-              }
-            : headers,
-        }
+        const made = probeRequest(
+          Option.getOrElse(api, () => route.api),
+          options.model,
+          subscriptionRequestDiffers(route.provider),
+        )
+        return { ...made, headers: { ...headers, ...made.headers } }
       },
     })
     return yield* Exchanged.$match(exchanged, {
@@ -801,12 +806,12 @@ export const make = Effect.fn('ModelProxy.make')(function* (
             reason: `${route.provider} couldn't be reached: ${reason}`,
           }),
         ),
-      Answered: ({ upstream, refusal, sentAt }) =>
+      Answered: ({ upstream, refusal, sentAt, path }) =>
         Effect.as(
           answer({
             route,
             caller,
-            path: request.path,
+            path,
             upstream,
             sentAt,
             sink: Option.none(),
