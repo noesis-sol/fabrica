@@ -1,12 +1,4 @@
-import {
-  Array,
-  type DateTime,
-  Duration,
-  Effect,
-  Match,
-  Option,
-  Schema,
-} from 'effect'
+import { Array, type DateTime, Effect, Match, Option, Schema } from 'effect'
 import { Command, Mount, Update } from 'foldkit'
 import * as AsyncData from 'foldkit/asyncData'
 import {
@@ -39,6 +31,7 @@ import {
 import * as VirtualList from '@foldkit/ui/virtualList'
 
 import { sayElapsed } from '../app/clock'
+import * as Draw from '../app/draw'
 import { EngineProject, sameProject } from '../app/engine-project'
 import { type EngineServices, requestProject } from '../app/engine-route'
 import * as Conversation from '../console/conversation'
@@ -56,8 +49,8 @@ import { outputAttribute, showOutput, terminalRows } from '../mounts/terminal'
 // has finished, the composer keeps its text and offers to file it as a ticket. No spending panel: cost
 // is in Insights.
 //
-// The transcript is drawn at most every `drawEvery` (§18.5): a frame that arrives while a draw's wait
-// runs waits for its end, then goes on with every frame that came meanwhile. A tool call's input is
+// The transcript is drawn at most every `Draw.drawEvery` (§18.5): a frame that arrives while a draw's
+// wait runs waits for its end, then goes on with every frame that came meanwhile. A tool call's input is
 // never drawn while it streams, only once its `tool_call` brings it whole. Only the worker shown has its
 // transcript watched, so an inactive worker costs nothing (§18.5). The transcript is a virtual list
 // (§18.5): only the blocks in view are drawn, each measured as it is, so a tool call's terminal and an
@@ -94,16 +87,10 @@ export const Block = Schema.TaggedUnion({
 })
 export type Block = typeof Block.Type
 
-/** Whether a draw's wait runs: what arrives meanwhile waits for its end. */
-export const Draw = Schema.Literals(['Idle', 'Waiting'])
-export type Draw = typeof Draw.Type
-
 /** The worker's transcript: what is drawn, what waits for the next draw, and whether it ended. */
 export const Transcript = Schema.Struct({
   blocks: Schema.Array(Block),
-  /** Frames that arrived during a draw's wait, in order. */
-  waiting: Schema.Array(TranscriptItem),
-  draw: Draw,
+  ...Draw.Held.fields,
   /** The watch ended: the engine no longer has the worker, which has finished. */
   ended: Schema.Boolean,
   /** Why the watch couldn't read it, where it couldn't. */
@@ -113,8 +100,7 @@ export type Transcript = typeof Transcript.Type
 
 const emptyTranscript: Transcript = {
   blocks: [],
-  waiting: [],
-  draw: 'Idle',
+  ...Draw.idle,
   ended: false,
   failure: Option.none(),
 }
@@ -215,13 +201,10 @@ export type Message = typeof Message.Type
 
 // COMMAND
 
-/** The longest streamed text waits to be drawn, and the shortest time between two draws (§18.5). */
-export const drawEvery = Duration.millis(33)
-
-/** Waits `drawEvery` before the transcript is drawn again. */
+/** Waits `Draw.drawEvery` before the transcript is drawn again. */
 export const WaitToDraw = Command.define('WaitToDraw', {
   messages: [Message.CompletedWaitToDraw],
-  execute: Effect.as(Effect.sleep(drawEvery), Message.CompletedWaitToDraw()),
+  execute: Draw.waitToDraw(Message.CompletedWaitToDraw()),
 })
 
 /** The worker's ticket, whole: its fields, labels, links and notes. */
@@ -480,9 +463,6 @@ export const drawItems = (
 
 type Return = Update.Return<Model, Message, EngineServices>
 
-const waitingDraw: Draw = 'Waiting'
-const idleDraw: Draw = 'Idle'
-
 const showing = (model: Model, worker: Shown): boolean =>
   Option.exists(model.shown, shown => sameWorker(shown, worker))
 
@@ -552,37 +532,49 @@ const changeTranscript = (
   showing(model, worker) ? modifyFields(model, { transcript: change }) : model
 
 /**
+ * The transcript after `step` of its draws (§18.5): what it holds, and the frames it draws now, where
+ * there are any, with a wait started and the list told.
+ */
+const drawStep = (model: Model, step: Draw.Step): Return => {
+  const held = modifyFields(model, {
+    transcript: transcript =>
+      modifyFields(transcript, {
+        waiting: () => step.held.waiting,
+        draw: () => step.held.draw,
+      }),
+  })
+  return Option.match(step.draw, {
+    onNone: () => ({ model: held }),
+    onSome: items =>
+      Update.combine(held, [
+        shown => ({
+          model: modifyFields(shown, {
+            transcript: transcript => drawItems(transcript, items),
+          }),
+          commands: [WaitToDraw()],
+        }),
+        informList(model),
+      ]),
+  })
+}
+
+/**
  * A frame of the worker's transcript (§18.5): drawn now where no draw's wait runs, and a wait started;
  * else kept for the wait's end. A frame for another worker is dropped.
  */
 export const receivedTranscript = (
   model: Model,
   worker: Shown,
-  items: ReadonlyArray<TranscriptItem>,
+  items: Array.NonEmptyReadonlyArray<TranscriptItem>,
 ): Return =>
-  !showing(model, worker)
-    ? { model }
-    : model.transcript.draw === 'Idle'
-      ? Update.combine(model, [
-          shown => ({
-            model: changeTranscript(shown, worker, transcript =>
-              modifyFields(drawItems(transcript, items), {
-                draw: () => waitingDraw,
-                failure: () => Option.none(),
-              }),
-            ),
-            commands: [WaitToDraw()],
-          }),
-          informList(model),
-        ])
-      : {
-          model: changeTranscript(model, worker, transcript =>
-            modifyFields(transcript, {
-              waiting: waiting => [...waiting, ...items],
-              failure: () => Option.none(),
-            }),
-          ),
-        }
+  showing(model, worker)
+    ? drawStep(
+        changeTranscript(model, worker, transcript =>
+          modifyFields(transcript, { failure: () => Option.none() }),
+        ),
+        Draw.received(model.transcript, items),
+      )
+    : { model }
 
 /** The worker's transcript ended: the worker has finished. */
 export const endedTranscript = (model: Model, worker: Shown): Return => ({
@@ -656,26 +648,7 @@ export const update = (model: Model, message: Message): Return =>
         ? modifyFields(model, { ticket: () => AsyncData.fail(reason) })
         : model,
     }),
-    CompletedWaitToDraw: () =>
-      Array.isReadonlyArrayNonEmpty(model.transcript.waiting)
-        ? Update.combine(model, [
-            shown => ({
-              model: modifyFields(shown, {
-                transcript: transcript =>
-                  modifyFields(drawItems(transcript, transcript.waiting), {
-                    waiting: () => [],
-                  }),
-              }),
-              commands: [WaitToDraw()],
-            }),
-            informList(model),
-          ])
-        : {
-            model: modifyFields(model, {
-              transcript: transcript =>
-                modifyFields(transcript, { draw: () => idleDraw }),
-            }),
-          },
+    CompletedWaitToDraw: () => drawStep(model, Draw.waited(model.transcript)),
     ToggledWholeTicket: () => ({
       model: modifyFields(model, { wholeTicket: whole => !whole }),
     }),

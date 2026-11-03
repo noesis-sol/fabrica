@@ -20,6 +20,7 @@ import {
 
 import { dayOf } from '../../src/app/clock'
 import { Connection, localEngineName } from '../../src/app/connection'
+import * as Draw from '../../src/app/draw'
 import type { EngineProject } from '../../src/app/engine-project'
 import { AppHost, noAppHost } from '../../src/app/host'
 import { Model, initialModel } from '../../src/app/model'
@@ -367,6 +368,7 @@ const talkPanel: TalkPanel.Model = {
       ],
       context: Option.some(14_000),
       ended: false,
+      ...Draw.idle,
     },
   }),
 }

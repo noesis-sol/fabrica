@@ -259,6 +259,10 @@ describe('the run talk', () => {
         ])
         expect(Conversation.modelWords(talk)).toBe('claude-opus-5-5 · 14k ctx')
       }),
+      Command.resolve(
+        TalkPanel.WaitToDraw({ talk: runTalk }),
+        TalkPanel.Message.CompletedWaitToDraw({ talk: runTalk }),
+      ),
     )
   })
 

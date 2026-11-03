@@ -15,13 +15,14 @@ import {
   type TranscriptItem,
 } from '@fabrica/contracts'
 
+import * as Draw from '../app/draw'
 import { EngineProject } from '../app/engine-project'
 import { openTalkOn, requestTalk } from '../app/engine-route'
 import { sayTokens, tokenTotal } from './stats'
 
 // A talk as the app holds it (spec §15.4, §18.3, §18.4; Appendix A.2): the talk the engine opened, its
 // transcript folded into the lines a chat pane draws (messages, and tool calls on one line each; thinking
-// stays out), and the context its last turn used. Its requests (open, send, close) and its drawing (the
+// stays out), drawn at most every `Draw.drawEvery` (§18.5), and the context its last turn used. Its requests (open, send, close) and its drawing (the
 // header with the model and context use, the messages bottom-aligned, the composer) are this module's,
 // for the console's talk panel and the Talks screen alike.
 
@@ -50,6 +51,7 @@ export const Conversation = Schema.Struct({
   context: Schema.Option(Schema.Int),
   /** The transcript ended: the engine no longer has the talk. */
   ended: Schema.Boolean,
+  ...Draw.Held.fields,
 })
 export type Conversation = typeof Conversation.Type
 
@@ -66,6 +68,7 @@ export const opened = (
   lines: [],
   context: Option.none(),
   ended: false,
+  ...Draw.idle,
 })
 
 /** `lines` with the line `matches` finds changed by `change`; the rest keep their identity. */
@@ -144,6 +147,37 @@ export const applyTranscript = (
       applyEntry,
     ),
   )
+
+/** A conversation after a step of its draws, and whether the step started a draw's wait. */
+export interface Drawn {
+  readonly conversation: Conversation
+  readonly waits: boolean
+}
+
+/** The conversation after `step` of its draws: what it holds, and the frames it draws now. */
+const drawStep = (conversation: Conversation, step: Draw.Step): Drawn => {
+  const held: Conversation = { ...conversation, ...step.held }
+  return Option.match(step.draw, {
+    onNone: () => ({ conversation: held, waits: false }),
+    onSome: items => ({
+      conversation: applyTranscript(held, items),
+      waits: true,
+    }),
+  })
+}
+
+/**
+ * A frame of the talk's transcript (§18.5): applied now where no draw's wait runs, a wait to be
+ * started; else held for the wait's end.
+ */
+export const receivedTranscript = (
+  conversation: Conversation,
+  items: Array.NonEmptyReadonlyArray<TranscriptItem>,
+): Drawn => drawStep(conversation, Draw.received(conversation, items))
+
+/** A draw's wait ended: the frames held meanwhile are applied, and the next wait is to be started. */
+export const waitedToDraw = (conversation: Conversation): Drawn =>
+  drawStep(conversation, Draw.waited(conversation))
 
 /** The header's model and context use, as the handoff writes them: `claude-opus-5-5 · 14k ctx`. */
 export const modelWords = (conversation: Conversation): string =>

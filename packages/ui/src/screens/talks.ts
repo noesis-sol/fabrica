@@ -14,6 +14,7 @@ import {
   type TranscriptItem,
 } from '@fabrica/contracts'
 
+import * as Draw from '../app/draw'
 import { EngineProject } from '../app/engine-project'
 import type { EngineServices } from '../app/engine-route'
 import * as Conversation from '../console/conversation'
@@ -74,6 +75,8 @@ export const Message = defineMessageUnion({
   FailedSend: { reason: Schema.String },
   ClickedClose: { talk: TalkId },
   CompletedCloseTalk: {},
+  /** A draw's wait for the talk ended: what came meanwhile is drawn. */
+  CompletedWaitToDraw: { talk: TalkId },
 })
 export type Message = typeof Message.Type
 
@@ -119,6 +122,13 @@ export const CloseTalk = Command.define('CloseTalk', {
     Conversation.closeTalk(talk).pipe(Effect.as(Message.CompletedCloseTalk())),
 })
 
+/** Waits `Draw.drawEvery` before the talk's transcript is drawn again (§18.5). */
+export const WaitToDraw = Command.define('WaitToDraw', {
+  args: { talk: TalkId },
+  messages: [Message.CompletedWaitToDraw],
+  execute: ({ talk }) => Draw.waitToDraw(Message.CompletedWaitToDraw({ talk })),
+})
+
 type Return = Update.Return<Model, Message, EngineServices>
 
 /** The talks this screen holds, whose transcripts are watched, each with its project. */
@@ -147,13 +157,33 @@ const changeTalk = (
       })
     : model
 
-/** A frame of a talk's transcript, applied to the talk it is for. */
+/** The talk `talk` after `step` of its draws, and its next draw's wait where the step starts one. */
+const drawTalk = (
+  model: Model,
+  talk: TalkId,
+  step: (conversation: Conversation.Conversation) => Conversation.Drawn,
+): Return =>
+  Option.match(
+    Array.findFirst(model.talks, held => held.talk === talk),
+    {
+      onNone: () => ({ model }),
+      onSome: held => {
+        const { conversation, waits } = step(held)
+        return {
+          model: changeTalk(model, talk, () => conversation),
+          commands: waits ? [WaitToDraw({ talk })] : [],
+        }
+      },
+    },
+  )
+
+/** A frame of a talk's transcript, for the talk it is for: drawn now, or held for its draw's wait (§18.5). */
 export const receivedTranscript = (
   model: Model,
   talk: TalkId,
   items: Array.NonEmptyReadonlyArray<TranscriptItem>,
-): Model =>
-  changeTalk(model, talk, held => Conversation.applyTranscript(held, items))
+): Return =>
+  drawTalk(model, talk, held => Conversation.receivedTranscript(held, items))
 
 /** A talk's transcript ended: the engine no longer has it. */
 export const endedTranscript = (model: Model, talk: TalkId): Model =>
@@ -253,6 +283,8 @@ export const update = (model: Model, message: Message): Return =>
       commands: [CloseTalk({ talk })],
     }),
     CompletedCloseTalk: () => ({ model }),
+    CompletedWaitToDraw: ({ talk }) =>
+      drawTalk(model, talk, Conversation.waitedToDraw),
   })
 
 // The drawing.

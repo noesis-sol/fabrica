@@ -16,6 +16,7 @@ import {
   type TranscriptItem,
 } from '@fabrica/contracts'
 
+import * as Draw from '../app/draw'
 import { EngineProject, projectKey, sameProject } from '../app/engine-project'
 import { type EngineServices, requestProject } from '../app/engine-route'
 import { type EngineAttention, engineRequests } from '../app/streams'
@@ -110,6 +111,8 @@ export const Message = defineMessageUnion({
   ClickedAnswerTalk: {},
   SucceededSend: {},
   FailedSend: { reason: Schema.String },
+  /** A draw's wait for the talk ended: what came meanwhile is drawn. */
+  CompletedWaitToDraw: { talk: TalkId },
 })
 export type Message = typeof Message.Type
 
@@ -179,6 +182,13 @@ export const CloseTalk = Command.define('CloseTalk', {
   messages: [Message.CompletedCloseTalk],
   execute: ({ talk }) =>
     Conversation.closeTalk(talk).pipe(Effect.as(Message.CompletedCloseTalk())),
+})
+
+/** Waits `Draw.drawEvery` before the talk's transcript is drawn again (§18.5). */
+export const WaitToDraw = Command.define('WaitToDraw', {
+  args: { talk: TalkId },
+  messages: [Message.CompletedWaitToDraw],
+  execute: ({ talk }) => Draw.waitToDraw(Message.CompletedWaitToDraw({ talk })),
 })
 
 type Return = Update.Return<Model, Message, EngineServices>
@@ -431,34 +441,51 @@ export const requestedAnswerTalk = (
     },
   )
 
-/** A frame of a talk's transcript, applied to the talk it is for. */
+/** The open talk `talk` after `step` of its draws, and its next draw's wait where the step starts one. */
+const drawTalk = (
+  model: Model,
+  talk: TalkId,
+  step: (conversation: Conversation.Conversation) => Conversation.Drawn,
+): Return => {
+  const drawnOf = (held: Option.Option<Conversation.Conversation>) =>
+    Option.map(
+      Option.filter(held, conversation => conversation.talk === talk),
+      step,
+    )
+  const run = drawnOf(runTalk(model))
+  const answer = drawnOf(answerTalk(model))
+  return {
+    model: modifyFields(model, {
+      run: before =>
+        Option.match(run, {
+          onNone: () => before,
+          onSome: ({ conversation }) => Run.Open({ conversation }),
+        }),
+      answer: before =>
+        Option.match(answer, {
+          onNone: () => before,
+          onSome: ({ conversation }) => Answer.Open({ conversation }),
+        }),
+    }),
+    commands: [run, answer].some(drawn =>
+      Option.exists(drawn, ({ waits }) => waits),
+    )
+      ? [WaitToDraw({ talk })]
+      : [],
+  }
+}
+
+/** A frame of a talk's transcript, for the talk it is for: drawn now, or held for its draw's wait (§18.5). */
 export const receivedTranscript = (
   model: Model,
   talk: TalkId,
   items: Array.NonEmptyReadonlyArray<TranscriptItem>,
-): Model =>
-  !holds(model, talk)
-    ? model
-    : modifyFields(model, {
-        run: run =>
-          Run.guards.Open(run) && run.conversation.talk === talk
-            ? Run.Open({
-                conversation: Conversation.applyTranscript(
-                  run.conversation,
-                  items,
-                ),
-              })
-            : run,
-        answer: answer =>
-          Answer.guards.Open(answer) && answer.conversation.talk === talk
-            ? Answer.Open({
-                conversation: Conversation.applyTranscript(
-                  answer.conversation,
-                  items,
-                ),
-              })
-            : answer,
-      })
+): Return =>
+  holds(model, talk)
+    ? drawTalk(model, talk, conversation =>
+        Conversation.receivedTranscript(conversation, items),
+      )
+    : { model }
 
 /** A talk's transcript ended: the engine no longer has it. An ended answer talk gives the panel back. */
 export const endedTranscript = (model: Model, talk: TalkId): Model =>
@@ -655,6 +682,8 @@ export const update = (
           }),
       }),
     }),
+    CompletedWaitToDraw: ({ talk }) =>
+      drawTalk(model, talk, Conversation.waitedToDraw),
   })
 
 // The drawing.

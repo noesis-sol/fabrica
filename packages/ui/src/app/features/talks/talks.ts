@@ -1,5 +1,5 @@
 import { Array, Effect, Option, Schema, Stream } from 'effect'
-import { Command, Subscription, type Update } from 'foldkit'
+import { Command, Subscription, Update } from 'foldkit'
 import type { Html, HtmlBuilder } from 'foldkit/html'
 import { modifyFields } from 'foldkit/struct'
 
@@ -90,15 +90,15 @@ export const update = (model: Model): Handlers<keyof typeof messages> => ({
   GotTalksMessage: ({ message }) =>
     stepTalks(model, talks => Talks.update(talks, message)),
   RequestedAnswerTalk: () => requestAnswerTalk(model, Option.none()),
-  ReceivedTranscript: ({ talk, items }) => ({
-    model: writeTalks(
-      writeTalkPanel(
-        model,
-        TalkPanel.receivedTranscript(model.console.talkPanel, talk, items),
-      ),
-      Talks.receivedTranscript(model.screens.talks, talk, items),
-    ),
-  }),
+  ReceivedTranscript: ({ talk, items }) =>
+    Update.combine(model, [
+      held =>
+        stepTalkPanel(held, talkPanel =>
+          TalkPanel.receivedTranscript(talkPanel, talk, items),
+        ),
+      held =>
+        stepTalks(held, talks => Talks.receivedTranscript(talks, talk, items)),
+    ]),
   EndedTranscript: ({ talk }) => ({
     model: writeTalks(
       writeTalkPanel(
