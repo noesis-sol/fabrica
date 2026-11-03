@@ -5,7 +5,12 @@ import { CopilotProvider, copilotBaseUrl, copilotProvider } from './copilot'
 import type { ExtensionEnvironment } from './environment'
 import { GateDecision, GateEngine, decide, gateEngine } from './gate'
 import type { PiApi } from './pi'
-import { StandingRulesSection, verifierRules, workerRules } from './rules'
+import {
+  StandingRulesSection,
+  organRules,
+  verifierRules,
+  workerRules,
+} from './rules'
 import {
   NudgeType,
   SettledType,
@@ -18,14 +23,16 @@ import {
 import {
   type RunControl,
   WorkerToolNames,
+  organTools,
   verifierTools,
   workerTools,
 } from './tools'
 import { projectTrust } from './trust'
 
 // The first-party extension (spec §12.2), loaded into every agent's Pi: the worker's tools over the
-// control channel (the verifier's `verdict` alone for a verifier, §13.6), the gate's place in
-// `tool_call`, the standing rules in `before_agent_start` (the verifier's own for a verifier), the
+// control channel (the verifier's `verdict` alone for a verifier, §13.6; `answer` alone for an organ's
+// session, §16), the gate's place in `tool_call`, the standing rules in `before_agent_start` (a
+// verifier's and an organ's their own), the
 // settle nudge, the project's trust, and Copilot's provider pointed at the model proxy. Its facts
 // come from the environment, read once by the entry that Pi loads (`index.ts`).
 
@@ -47,17 +54,32 @@ export const makeExtension =
     if (Option.isSome(copilot))
       pi.registerProvider(CopilotProvider, copilotProvider(copilot.value))
 
-    const verifying = environment.role === 'verifier'
-    for (const tool of (verifying ? verifierTools : workerTools)({ run, turn }))
-      pi.registerTool(tool)
+    const context = { run, turn }
+    const tools = () => {
+      switch (environment.role) {
+        case 'verifier':
+          return verifierTools(context)
+        case 'organ':
+          return Option.match(environment.answerTool, {
+            onNone: () => [],
+            onSome: given => organTools(given, context),
+          })
+        case 'worker':
+          return workerTools(context)
+      }
+    }
+    for (const tool of tools()) pi.registerTool(tool)
 
     pi.on('project_trust', () => projectTrust(environment.projectTrusted))
 
     pi.on('before_agent_start', async event => {
       const options = event.systemPromptOptions
-      options.sections[StandingRulesSection] = verifying
-        ? verifierRules
-        : await Effect.runPromise(workerRules(options.cwd))
+      options.sections[StandingRulesSection] =
+        environment.role === 'verifier'
+          ? verifierRules
+          : environment.role === 'organ'
+            ? organRules
+            : await Effect.runPromise(workerRules(options.cwd))
       return undefined
     })
 

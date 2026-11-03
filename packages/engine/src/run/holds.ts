@@ -228,8 +228,19 @@ export const supervisorHolds = (input: {
   readonly usage: UsageHoldShape
   readonly credentials: CredentialsHoldShape
 }): SupervisorHolds => ({
-  usageLimited: input.usage.waitOut,
-  credentialRefused: input.credentials.waitOut,
+  usageLimited: ({ ticket, provider, resetAt }) =>
+    input.usage.waitOut({
+      ticket: Option.some(ticket),
+      provider,
+      resetAt,
+    }),
+  credentialRefused: ({ ticket, provider, account, reason }) =>
+    input.credentials.waitOut({
+      ticket: Option.some(ticket),
+      provider,
+      account,
+      reason,
+    }),
   startFailed: ({ ticket, reason }) =>
     input.environment.settled(
       Settle.Idle({ ticket, why: `its session didn't start: ${reason}` }),

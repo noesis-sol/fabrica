@@ -93,6 +93,7 @@ const loadedVerifier = Effect.fn(function* () {
   const environment: ExtensionEnvironment = {
     control: Option.some({ socket, token }),
     role: 'verifier',
+    answerTool: Option.none(),
     projectTrusted: false,
     configFolder: Option.none(),
     permissions: 'workspace',

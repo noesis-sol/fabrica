@@ -127,7 +127,8 @@ export interface UsageHoldShape {
    * carry on, at once where the hold its refusal raised has lifted since.
    */
   readonly waitOut: (input: {
-    readonly ticket: TicketId
+    /** The worker's ticket; none for an organ's call. */
+    readonly ticket: Option.Option<TicketId>
     readonly provider: ProviderName
     readonly resetAt: DateTime.Utc
   }) => Effect.Effect<void>
@@ -412,11 +413,11 @@ export const makeUsageHold = Effect.fn('UsageHold.make')(function* (input: {
           const last = yield* lastLift(provider)
           if (Option.exists(last, at => at >= DateTime.toEpochMillis(resetAt)))
             return
-          // The proxy's event not yet taken: the worker's refusal raises the hold.
+          // The proxy's event not yet taken: the refusal raises the hold.
           yield* refused({
             provider,
             model: input.modelFor(provider),
-            ticket: Option.some(ticket),
+            ticket,
             resetAt,
           })
         }

@@ -261,7 +261,7 @@ describe('the usage-limit hold', () => {
         )
         const waiting = yield* Effect.forkChild(
           kit.usage.waitOut({
-            ticket: one,
+            ticket: Option.some(one),
             provider: anthropic,
             resetAt: DateTime.makeUnsafe(resetMs),
           }),
@@ -281,7 +281,7 @@ describe('the usage-limit hold', () => {
         expect(clockHeld(yield* kit.holds.current)).toBe(false)
         // A worker whose turn ended on the same refusal carries on: its hold has lifted.
         yield* kit.usage.waitOut({
-          ticket: one,
+          ticket: Option.some(one),
           provider: anthropic,
           resetAt: DateTime.makeUnsafe(resetMs),
         })

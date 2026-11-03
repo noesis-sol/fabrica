@@ -51,7 +51,7 @@ export interface ControlSession {
   readonly project: ProjectId
   readonly ticket: TicketId
   readonly session: SessionId
-  /** The ticket's worker, or its verifier (§13.6). */
+  /** The ticket's worker, its verifier (§13.6), or an organ's session (§16). */
   readonly role: ControlRole
   readonly worktree: string
   /** The folder the socket is made in, created with mode 0700 where it isn't there. */
@@ -163,6 +163,7 @@ export const make = Effect.gen(function* () {
         wait_for: tools.waitFor,
         ask_and_wait: tools.askAndWait,
         verdict: tools.verdict,
+        answer: tools.answer,
         request_permission: tools.requestPermission,
         merge_standing: () => tools.mergeStanding,
         report_gate_decision: tools.reportGateDecision,

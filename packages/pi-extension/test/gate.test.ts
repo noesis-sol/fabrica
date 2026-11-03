@@ -475,6 +475,7 @@ describe('a gate that fails', () => {
         makeExtension({
           control: Option.none(),
           role: 'worker',
+          answerTool: Option.none(),
           projectTrusted: false,
           configFolder: Option.none(),
           permissions: 'full',

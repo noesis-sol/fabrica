@@ -118,6 +118,7 @@ export const answers = (
     defer: ended('defer'),
     wait_for: ended('wait_for'),
     verdict: ended('verdict'),
+    answer: ended('answer'),
     ask_and_wait: payload =>
       Effect.as(record('ask_and_wait', payload), {
         _tag: 'unanswered' as const,

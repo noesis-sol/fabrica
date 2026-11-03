@@ -118,6 +118,7 @@ const loaded = Effect.fn(function* (
   const environment: ExtensionEnvironment = {
     control: Option.some({ socket, token: options.token ?? token }),
     role: 'worker',
+    answerTool: Option.none(),
     projectTrusted: options.projectTrusted ?? false,
     configFolder: Option.fromUndefinedOr(options.configFolder),
     permissions: 'workspace',
@@ -524,6 +525,7 @@ describe('the first-party extension', () => {
     ).toEqual({
       control: Option.some({ socket: '/run/a.sock', token: 'secret' }),
       role: 'worker',
+      answerTool: Option.none(),
       projectTrusted: true,
       configFolder: Option.some('/data/agent-1'),
       permissions: 'full',
@@ -541,6 +543,7 @@ describe('the first-party extension', () => {
     ).toEqual({
       control: Option.none(),
       role: 'worker',
+      answerTool: Option.none(),
       projectTrusted: false,
       configFolder: Option.none(),
       permissions: 'workspace',

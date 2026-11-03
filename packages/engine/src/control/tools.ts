@@ -12,6 +12,7 @@ import {
 
 import {
   type Actor,
+  type AnswerParameters,
   Awaited,
   type CheckOwnPass,
   CheckOwnRan,
@@ -61,16 +62,23 @@ import { Outcome, OwnCheck } from './outcome'
 import type { AttentionShape, CheckOwnPassesShape } from './ports'
 import { inScope } from './token'
 
-// The worker's tools, the engine's side (spec §12.3, §13.5), and the verifier's `verdict` (§13.6):
+// The worker's tools, the engine's side (spec §12.3, §13.5), the verifier's `verdict` (§13.6) and an
+// organ session's `answer` (§16):
 // what each does to the work graph, what it refuses, and the outcome it publishes for the run loop. A
 // tool acts for its session alone: on its own ticket, or one linked to it; the verifier only reads
 // its ticket and gives its verdict. A refusal (`ToolRefusal`) is the agent's to correct; a failure in
 // the engine (the store, git) is a defect of the call, published as `ToolFailed` (§12.8).
 
-/** Whose session a channel serves: the ticket's worker, or its verifier in round `round` (§13.6). */
+/**
+ * Whose session a channel serves: the ticket's worker, its verifier in round `round` (§13.6), or an
+ * organ's session (§16), whose `answer` takes a call's answer or refuses it.
+ */
 export type ControlRole = Data.TaggedEnum<{
   Worker: {}
   Verifier: { readonly round: number }
+  Organ: {
+    readonly answer: (answer: unknown) => Effect.Effect<void, ToolRefusal>
+  }
 }>
 export const ControlRole = Data.taggedEnum<ControlRole>()
 
@@ -589,6 +597,8 @@ export const makeTools = (context: ToolContext) => {
         refuse.invalid(
           "verdict is the verifier's tool: end your turn through finish, defer, wait_for or ask_question",
         ),
+      Organ: () =>
+        refuse.invalid("verdict is the verifier's tool: answer through answer"),
       Verifier: ({ round }) => {
         const later = input.verdict.findings.flatMap(finding =>
           Option.toArray(
@@ -609,18 +619,36 @@ export const makeTools = (context: ToolContext) => {
       },
     }).pipe(Effect.withSpan('Control.verdict'))
 
-  /** A worker's tool, refused to the verifier, which only reads its ticket and gives its verdict. */
+  /** An organ session's answer: the organ takes it, or refuses it for the agent to give again (§16). */
+  const answer = (input: AnswerParameters) =>
+    ControlRole.$match(context.role, {
+      Worker: () =>
+        refuse.invalid(
+          "answer is an organ's tool: end your turn through finish, defer, wait_for or ask_question",
+        ),
+      Verifier: () =>
+        refuse.invalid("answer is an organ's tool: give your verdict"),
+      Organ: organ => Effect.as(organ.answer(input.answer), ended),
+    }).pipe(Effect.withSpan('Control.answer'))
+
+  /** A worker's tool, refused to the verifier, which only reads its ticket and gives its verdict, and to an organ's session. */
   const forWorker =
     <Input, A>(
       tool: string,
       handler: (input: Input) => Effect.Effect<A, ToolRefusal>,
     ) =>
     (input: Input): Effect.Effect<A, ToolRefusal> =>
-      ControlRole.$is('Verifier')(context.role)
-        ? refuse.invalid(
+      ControlRole.$match(context.role, {
+        Worker: () => handler(input),
+        Verifier: () =>
+          refuse.invalid(
             `${tool} is a worker's tool: the verifier reads the change and gives its verdict`,
-          )
-        : handler(input)
+          ),
+        Organ: () =>
+          refuse.invalid(
+            `${tool} is a worker's tool: an organ's session reads and answers`,
+          ),
+      })
 
   return {
     getTicket,
@@ -633,6 +661,7 @@ export const makeTools = (context: ToolContext) => {
     defer: forWorker('defer', defer),
     waitFor: forWorker('wait_for', waitFor),
     verdict,
+    answer,
     requestPermission,
     mergeStanding,
     reportGateDecision,

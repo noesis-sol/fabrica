@@ -16,6 +16,8 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from '@effect/vitest'
 import {
+  AgentRoleVariable,
+  AnswerToolVariable,
   ControlSocketVariable,
   ControlTokenVariable,
   PermissionsVariable,
@@ -26,7 +28,7 @@ import {
 import { Agent, Process } from '@fabrica/engine'
 import { tempFolder } from '@fabrica/testkit'
 
-import { StandingRulesSection, standingRules } from '../src/rules'
+import { StandingRulesSection, organRules, standingRules } from '../src/rules'
 import { NudgeText, SettledType } from '../src/settle'
 import {
   type Call,
@@ -341,7 +343,13 @@ const setting = Effect.fn(function* (replies: ReadonlyArray<Reply>) {
   const stub = yield* stubModel(replies)
   const cli = yield* piCli
   const context = yield* Layer.build(services({ cli, root, home }))
-  const start = (resume: Option.Option<string> = Option.none()) =>
+  const start = (
+    resume: Option.Option<string> = Option.none(),
+    role: {
+      readonly tools: ReadonlyArray<string>
+      readonly env: Readonly<Record<string, string>>
+    } = { tools: [], env: {} },
+  ) =>
     Effect.flatMap(Agent.PiAgent, agents =>
       agents.start({
         ticket: own,
@@ -350,12 +358,14 @@ const setting = Effect.fn(function* (replies: ReadonlyArray<Reply>) {
         providers: [{ provider: model.provider, baseUrl: stub.baseUrl }],
         token: agentToken,
         model: Option.some(model),
-        tools: Option.none(),
+        tools:
+          role.tools.length === 0 ? Option.none() : Option.some(role.tools),
         resume,
         env: {
           [ControlSocketVariable]: socket,
           [ControlTokenVariable]: token,
           [PermissionsVariable]: 'workspace',
+          ...role.env,
         },
         projectTrusted: false,
         nice: Option.none(),
@@ -660,6 +670,72 @@ describe('the Pi contract', () => {
           ['request_permission', ''],
           ['report_gate_decision', 'asked'],
           ['report_gate_decision', 'allowed'],
+        ])
+      }),
+    timeout,
+  )
+
+  it.live(
+    "gives an organ's session its answer tool as the engine gave it: Pi checks a call against it, the engine gets the rest, and the turn ends",
+    () =>
+      Effect.gen(function* () {
+        const parameters = {
+          type: 'object',
+          properties: { answer: { type: 'array', items: { type: 'string' } } },
+          required: ['answer'],
+          additionalProperties: false,
+        }
+        const { calls, stub, start } = yield* setting([
+          Reply.Call({
+            id: 'toolu_read',
+            name: 'read',
+            input: { path: 'no-such-file.txt' },
+          }),
+          Reply.Call({
+            id: 'toolu_bad',
+            name: 'answer',
+            input: { answer: 'not a list' },
+          }),
+          Reply.Call({
+            id: 'toolu_good',
+            name: 'answer',
+            input: { answer: ['src/a.ts'] },
+          }),
+        ])
+        const agent = yield* start(Option.none(), {
+          tools: ['read', 'answer'],
+          env: {
+            [AgentRoleVariable]: 'organ',
+            [AnswerToolVariable]: JSON.stringify({
+              description: 'The files it will likely change.',
+              parameters,
+            }),
+          },
+        })
+        const settled = yield* agent.prompt('Which files?')
+        expect(settled.aborted).toBe(false)
+        expect(stub.unserved).toEqual([])
+        expect(stub.calls).toHaveLength(3)
+        const [first, , last] = stub.calls
+        expect(first?.body.tools?.map(tool => tool.name).sort()).toEqual([
+          'answer',
+          'read',
+        ])
+        expect(
+          first?.body.tools?.find(tool => tool.name === 'answer')?.input_schema,
+        ).toMatchObject({ properties: parameters.properties })
+        expect(JSON.stringify(first?.body.system)).toContain(organRules)
+        expect(last === undefined ? [] : toolResults(last)).toMatchObject([
+          {
+            tool_use_id: 'toolu_bad',
+            is_error: true,
+          },
+        ])
+        expect(
+          calls.filter(call => call.rpc === 'answer').map(call => call.payload),
+        ).toEqual([{ answer: ['src/a.ts'] }])
+        expect(yield* settledEntries(sessionFile(agent.session))).toEqual([
+          { outcome: 'answer', nudged: false, aborted: false },
         ])
       }),
     timeout,

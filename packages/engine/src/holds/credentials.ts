@@ -70,11 +70,12 @@ export interface CredentialsHoldShape {
   /** A call of the run refused for its credential: the run holds for its provider, its probes forked. */
   readonly refused: (refused: CredentialRefused) => Effect.Effect<void>
   /**
-   * A worker's turn ended on its provider refusing the credential: completes once it may carry on, at
-   * once where the hold its refusal raised has lifted since and a probe goes through.
+   * A worker's turn or an organ's call (no ticket) ended on its provider refusing the credential:
+   * completes once it may carry on, at once where the hold its refusal raised has lifted since and a
+   * probe goes through.
    */
   readonly waitOut: (input: {
-    readonly ticket: TicketId
+    readonly ticket: Option.Option<TicketId>
     readonly provider: ProviderName
     readonly account: Option.Option<SecretName>
     readonly reason: string
@@ -236,13 +237,13 @@ export const makeCredentialsHold = Effect.fn('CredentialsHold.make')(
             const model = input.modelFor(provider)
             if (ProbeOutcome.$is('Passed')(yield* probeOf(provider, model)))
               return
-            // The proxy's event not yet taken: the worker's refusal raises the hold.
+            // The proxy's event not yet taken: the refusal raises the hold.
             yield* refused({
               provider,
               account,
               reason,
               model,
-              ticket: Option.some(ticket),
+              ticket,
             })
           }
           yield* holds.lifted(key)

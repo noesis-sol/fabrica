@@ -306,7 +306,7 @@ describe('the credentials hold', () => {
         // The worker whose turn ended on the refusal waits on the hold.
         const waiting = yield* Effect.forkChild(
           kit.credentials.waitOut({
-            ticket: one,
+            ticket: Option.some(one),
             provider: anthropic,
             account: Option.some(SecretName.make(anthropic)),
             reason: refusedReason,

@@ -491,6 +491,10 @@ export const VerdictTool = {
 /** The name of the one tool an organ's model is made to call. */
 export const AnswerToolName = 'answer'
 
+/** An answer's arguments as they cross the control channel: the engine alone holds the organ's schema. */
+export const AnswerParameters = Schema.Struct({ answer: Schema.Unknown })
+export type AnswerParameters = typeof AnswerParameters.Type
+
 /**
  * An organ's forced answer tool: its arguments are the envelope `{ answer }` around the organ's own
  * schema, so that they are an object whatever the answer is (a list of files, a cause).

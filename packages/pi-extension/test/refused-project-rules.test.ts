@@ -65,6 +65,7 @@ const sectionFor = (arrange: (rules: string, key: string) => Promise<void>) =>
     const environment: ExtensionEnvironment = {
       control: Option.none(),
       role: 'worker',
+      answerTool: Option.none(),
       projectTrusted: false,
       configFolder: Option.none(),
       permissions: 'workspace',

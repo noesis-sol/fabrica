@@ -3,12 +3,15 @@ import { Data, Option } from 'effect'
 import type { AgentRole, OutcomeToolNames } from '@fabrica/contracts'
 
 // The settle nudge (spec §12.3): a turn about to end with no outcome tool (a verifier's: `verdict`,
-// §13.6) gets one nudge, inside Pi, an extra model call asking for one; a second settle with none ends
+// §13.6; an organ's: `answer`, §16) gets one nudge, inside Pi, an extra model call asking for one; a second settle with none ends
 // the session as unfinished. A turn runs from a prompt (the first, a hand-back, a maintainer's
 // message, a resume) until Pi has settled, and each turn starts with no outcome and no nudge.
 
-/** An outcome tool, the call that ended the turn: a worker's, or the verifier's `verdict`. */
-export type OutcomeTool = (typeof OutcomeToolNames)[number] | 'verdict'
+/** An outcome tool, the call that ended the turn: a worker's, the verifier's `verdict`, or an organ's `answer`. */
+export type OutcomeTool =
+  | (typeof OutcomeToolNames)[number]
+  | 'verdict'
+  | 'answer'
 
 /** The turn so far: the outcome tool that ended it, if one has, and whether it was nudged. */
 export interface Turn {
@@ -66,9 +69,22 @@ export const VerifierNudgeText =
   'its ticket, or FAIL with the gaps that affect correctness or its requirements. A turn that ends ' +
   'without one gives the change no verdict.'
 
+/** An organ's nudge (§16). */
+export const OrganNudgeText =
+  'Your turn is about to end with no answer. End it through answer. A turn that ends without one ' +
+  'gives the organ no answer.'
+
 /** The nudge an agent in `role` reads. */
-export const nudgeText = (role: AgentRole): string =>
-  role === 'verifier' ? VerifierNudgeText : NudgeText
+export const nudgeText = (role: AgentRole): string => {
+  switch (role) {
+    case 'verifier':
+      return VerifierNudgeText
+    case 'organ':
+      return OrganNudgeText
+    case 'worker':
+      return NudgeText
+  }
+}
 
 /** The custom type of the entry recording, in the session, how each turn settled. */
 export const SettledType = 'fabrica-settled'

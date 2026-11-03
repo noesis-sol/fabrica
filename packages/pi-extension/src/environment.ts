@@ -3,6 +3,8 @@ import { Option, Schema } from 'effect'
 import {
   AgentRole,
   AgentRoleVariable,
+  AnswerToolGiven,
+  AnswerToolVariable,
   ControlSocketVariable,
   ControlTokenVariable,
   Permissions,
@@ -11,7 +13,7 @@ import {
 } from '@fabrica/contracts'
 
 // What the extension reads from its agent's environment, which the engine sets at spawn (spec §12.1,
-// §12.2, §12.6, §13.6, §20.2): the control socket's path and token, the agent's role, whether the user
+// §12.2, §12.6, §13.6, §16, §20.2): the control socket's path and token, the agent's role, an organ's answer tool, whether the user
 // trusts the project, the level the gate enforces, Pi's configuration folder and the home folder; and
 // the worktree, the folder Pi runs in. Read once, where the extension loads, and passed on.
 
@@ -24,8 +26,13 @@ export interface ExtensionEnvironment {
     readonly socket: string
     readonly token: string
   }>
-  /** The ticket's worker, or its verifier, whose one tool is `verdict`; a worker where the engine gave none it reads. */
+  /**
+   * The ticket's worker, its verifier, whose one tool is `verdict`, or an organ's session, whose one
+   * tool is `answer`; a worker where the engine gave none it reads.
+   */
   readonly role: AgentRole
+  /** An organ session's `answer` tool, when the engine gave one it reads. */
+  readonly answerTool: Option.Option<AnswerToolGiven>
   /** Whether the user trusts the project, so Pi may load its own settings and packages. */
   readonly projectTrusted: boolean
   /** The agent's own Pi configuration folder. */
@@ -54,6 +61,9 @@ export const readEnvironment = (
   role: Option.getOrElse(
     Schema.decodeUnknownOption(AgentRole)(variables[AgentRoleVariable]),
     () => 'worker' as const,
+  ),
+  answerTool: Schema.decodeUnknownOption(AnswerToolGiven)(
+    variables[AnswerToolVariable],
   ),
   projectTrusted: variables[ProjectTrustedVariable] === '1',
   configFolder: given(variables[PiConfigFolderVariable]),

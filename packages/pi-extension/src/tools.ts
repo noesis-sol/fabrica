@@ -3,6 +3,8 @@ import { Type } from 'typebox'
 
 import {
   AddNoteTool,
+  type AnswerToolGiven,
+  AnswerToolName,
   AskAndWaitTool,
   AskQuestionTool,
   Awaited,
@@ -18,6 +20,7 @@ import {
   VerdictTool,
   WaitForTool,
   WorkerTools,
+  answerTool,
   decodeArguments,
   parametersJsonSchema,
 } from '@fabrica/contracts'
@@ -26,17 +29,19 @@ import { Control } from './control'
 import type { PiTool } from './pi'
 import { type OutcomeTool, type Turn, ended } from './settle'
 
-// The worker's tools (spec §12.2, §12.3), and the verifier's `verdict` (§13.6), registered with Pi:
+// The worker's tools (spec §12.2, §12.3), the verifier's `verdict` (§13.6) and an organ's `answer`
+// (§16), registered with Pi:
 // each one's arguments' JSON Schema from `@fabrica/contracts`, wrapped as a TypeBox schema for Pi to
 // check first; its handler decodes the arguments again with the Effect Schema, which has the last
 // word, and forwards them to the engine over the control channel. An invalid payload, or the engine's
 // refusal, fails the call inside Pi's loop, so the agent reads why and tries again. A call that ends
 // the turn says so to the settle nudge, and asks Pi to stop after it.
 
-/** The names of the agent's own tools, the worker's and the verifier's `verdict`, which the gate always allows. */
+/** The names of the agent's own tools, the worker's, the verifier's `verdict` and an organ's `answer`, which the gate always allows. */
 export const WorkerToolNames: ReadonlySet<string> = new Set([
   ...WorkerTools.map(tool => tool.name),
   VerdictTool.name,
+  AnswerToolName,
 ])
 
 /** A worker tool's call failed: its arguments didn't decode, the engine refused it, or it couldn't reach the engine. */
@@ -129,6 +134,8 @@ interface Wiring<
   readonly ends: (
     params: Parameters['Type'],
   ) => Effect.Effect<Ending<Success['Type']>, unknown, Control>
+  /** The arguments' JSON Schema where the engine gave it (an organ's answer), else the tool's own. */
+  readonly shown?: Readonly<Record<string, unknown>>
 }
 
 /** Runs an effect needing the control channel, for Pi, interrupted when Pi aborts the call. */
@@ -143,7 +150,7 @@ const piTool = <
   },
   Success extends Schema.Top & { readonly EncodingServices: never },
 >(
-  { tool, forward, ends }: Wiring<Parameters, Success>,
+  { tool, forward, ends, shown }: Wiring<Parameters, Success>,
   { run, turn }: { readonly run: RunControl; readonly turn: Ref.Ref<Turn> },
 ): PiTool => {
   const failed = (error: unknown) =>
@@ -172,7 +179,7 @@ const piTool = <
     name: tool.name,
     label: tool.name,
     description: tool.description,
-    parameters: Type.Unsafe<unknown>(parametersJsonSchema(tool)),
+    parameters: Type.Unsafe<unknown>(shown ?? parametersJsonSchema(tool)),
     executionMode: 'sequential',
     execute: (_toolCallId, params, signal) => run(call(params), signal),
   }
@@ -273,6 +280,28 @@ export const verifierTools = (context: {
       tool: VerdictTool,
       forward: params => Effect.flatMap(Control, c => c.verdict(params)),
       ends: () => always('verdict'),
+    },
+    context,
+  ),
+]
+
+/** An organ's one tool, `answer`, as the engine gave it, which ends its turn (§16). */
+export const organTools = (
+  given: AnswerToolGiven,
+  context: {
+    readonly run: RunControl
+    readonly turn: Ref.Ref<Turn>
+  },
+): ReadonlyArray<PiTool> => [
+  piTool(
+    {
+      tool: answerTool({
+        answer: Schema.Unknown,
+        description: given.description,
+      }),
+      forward: params => Effect.flatMap(Control, c => c.answer(params)),
+      ends: () => always('answer'),
+      shown: given.parameters,
     },
     context,
   ),

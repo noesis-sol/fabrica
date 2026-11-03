@@ -62,6 +62,18 @@ You verify a change another agent made for one ticket, the one your prompt names
 - Report only gaps that affect correctness or the ticket's requirements as blocking; leave out style preferences, and don't ask for defensive code or tests of cases that can't happen.
 - Nobody reads your turns or your final message: your turn ends only through verdict, given once, PASS or FAIL with its findings. A turn that ends without one gives the change no verdict.`
 
+/**
+ * An organ session's standing rules (§16), in place of the worker's: it reads the repository, changes
+ * nothing, and answers through `answer`.
+ */
+export const organRules = `Fabrica's standing rules for an organ's session, version ${StandingRulesVersion}.
+
+You advise Fabrica on the question your prompt asks, in the project's checkout, with read-only tools.
+
+- Change nothing: you have no tool that writes, and nothing you say changes the code or the tickets by itself.
+- Read only what the question needs: your session is short, and its cost is counted.
+- Nobody reads your turns or your final message: your turn ends only through answer, given once, its arguments fitting its schema. An answer that doesn't fit is refused with why, and you may give it once more. A turn that ends without one gives no answer.`
+
 /** The rules for a project: the standing rules, then the project's own where it has any. */
 export const standingRules = (projectRules: Option.Option<string>): string =>
   Option.match(
