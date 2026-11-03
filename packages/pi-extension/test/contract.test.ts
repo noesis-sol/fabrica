@@ -724,7 +724,9 @@ describe('the Pi contract', () => {
         expect(
           first?.body.tools?.find(tool => tool.name === 'answer')?.input_schema,
         ).toMatchObject({ properties: parameters.properties })
-        expect(JSON.stringify(first?.body.system)).toContain(organRules)
+        expect(first === undefined ? '' : systemText(first)).toContain(
+          organRules,
+        )
         expect(last === undefined ? [] : toolResults(last)).toMatchObject([
           {
             tool_use_id: 'toolu_bad',
