@@ -574,8 +574,6 @@ export const make = Effect.fn('ModelProxy.make')(function* (
       },
     )
 
-  // The call ends when the agent drops it, whatever it waits on: its permit, the provider's head, its
-  // body. The upstream request is aborted, and its permit and the provider's response let go.
   const handle = (request: IncomingMessage, response: ServerResponse) =>
     Effect.gen(function* () {
       const target = targetOf(request.url ?? '')
@@ -597,16 +595,24 @@ export const make = Effect.fn('ModelProxy.make')(function* (
           401,
           "the model proxy doesn't know this token",
         )
-      yield* permits.take({ provider: route.provider, caller })
-      const exchanged = yield* exchange({
-        route,
-        caller,
-        method: request.method ?? 'GET',
-        path: target.value.path,
-        headers: request.headers,
-        body: request,
-      })
-      return yield* Exchanged.$match(exchanged, {
+      // A call the agent drops while it waits for its permit or the provider's head ends there, its
+      // upstream request aborted; once the head has come, relay sees it go and reads its usage to then.
+      const went = yield* Effect.raceFirst(
+        Effect.andThen(
+          permits.take({ provider: route.provider, caller }),
+          exchange({
+            route,
+            caller,
+            method: request.method ?? 'GET',
+            path: target.value.path,
+            headers: request.headers,
+            body: request,
+          }),
+        ).pipe(Effect.map(Option.some)),
+        Effect.as(dropped(response), Option.none<Exchanged>()),
+      )
+      if (Option.isNone(went)) return
+      return yield* Exchanged.$match(went.value, {
         NoCredential: ({ reason }) => reply(response, 401, reason),
         Unreachable: ({ reason }) =>
           reply(
@@ -625,7 +631,6 @@ export const make = Effect.fn('ModelProxy.make')(function* (
           }),
       })
     }).pipe(
-      Effect.raceFirst(dropped(response)),
       Effect.scoped,
       Effect.onInterrupt(() => Effect.sync(() => response.destroy())),
       Effect.catchCause(cause =>
