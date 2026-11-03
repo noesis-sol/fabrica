@@ -234,6 +234,65 @@ const optionValue = (
   return Option.none()
 }
 
+/** git config's options that take a value, the next word when not joined by `=`. */
+const configValues = new Set([
+  '-f',
+  '--file',
+  '--blob',
+  '--type',
+  '--default',
+  '--comment',
+  '--value',
+  '--url',
+])
+
+/**
+ * Whether git config's arguments `words` only read settings: a reading option or subcommand
+ * (`--get`, `--list`, `get`, `list`), or a name alone. Anything else writes (`<name> <value>`,
+ * `set`, `--unset`, `--edit`, …), as does a form the gate can't read.
+ */
+const configReads = (words: ReadonlyArray<Word>): boolean => {
+  if (
+    hasOption(
+      words,
+      '--add',
+      '--replace-all',
+      '--unset',
+      '--unset-all',
+      '--rename-section',
+      '--remove-section',
+      '-e',
+      '--edit',
+    )
+  )
+    return false
+  if (
+    hasOption(
+      words,
+      '--get',
+      '--get-all',
+      '--get-regexp',
+      '--get-urlmatch',
+      '--get-color',
+      '--get-colorbool',
+      '-l',
+      '--list',
+    )
+  )
+    return true
+  const named = operands(words, configValues)
+  const first = named[0]
+  if (first === undefined) return true
+  if (named.some(({ dynamic }) => dynamic)) return false
+  if (first.text === 'get' || first.text === 'list') return true
+  return (
+    named.length === 1 &&
+    !['set', 'unset', 'edit', 'rename-section', 'remove-section'].includes(
+      first.text,
+    )
+  )
+}
+
 /**
  * The folders a command may run in, none where the gate can't tell one. The gate reads a command
  * line as one list, without knowing which of its commands run (one in a subshell, after a failing
@@ -900,18 +959,15 @@ class Policy {
           this.ask(`${command} ${second} reaches the network`)
         return
       case 'config': {
-        const reading = hasOption(
-          subArgs,
-          '--get',
-          '--get-all',
-          '--get-regexp',
-          '-l',
-          '--list',
-        )
-        if (!reading && hasOption(subArgs, '--global', '--system'))
-          this.ask('git config writes git’s settings outside the worktree')
+        // A write without --worktree lands in the config every worktree shares (or the user's,
+        // or the system's), where core.fsmonitor or core.hooksPath runs in the engine's own git.
+        if (configReads(subArgs)) return
         const file = optionValue(subArgs, '-f', '--file')
-        if (!reading && Option.isSome(file)) this.written(file.value, folder)
+        if (Option.isSome(file)) this.written(file.value, folder)
+        else if (!hasOption(subArgs, '--worktree'))
+          this.ask(
+            'git config writes git’s settings outside the worktree, which other worktrees share',
+          )
         return
       }
       case 'worktree':
