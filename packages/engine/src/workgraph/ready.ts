@@ -373,6 +373,59 @@ export const finishedEpics = (
     return closing
   })
 
+/**
+ * Of the tickets `ids`, those with a child (a `parent` edge) not closed and merged: a parent runs after
+ * its subtickets (§13.4), as orchestra's do. Git is asked only of the children of parents nothing else
+ * holds.
+ */
+export const unfinishedParents = (
+  sql: SqlClient.SqlClient,
+  ids: ReadonlyArray<TicketId>,
+  onBase: OnBase,
+): Read<ReadonlySet<TicketId>> =>
+  Effect.gen(function* () {
+    if (ids.length === 0) return new Set<TicketId>()
+    const rows =
+      yield* sql<ChildRow>`SELECT edges.from_id AS parent, tickets.* FROM edges
+      JOIN tickets ON tickets.id = edges.to_id
+      WHERE edges.kind = 'parent' AND edges.from_id IN ${sql.in(ids)}
+      ORDER BY parent, id`
+    const asked = new Map<string, TicketId>(ids.map(id => [id, id]))
+    const children = new Map<TicketId, Array<Ticket>>()
+    for (const row of rows) {
+      const child = yield* ticketFromRow(row)
+      const parent = asked.get(row.parent)
+      if (parent === undefined) continue
+      const known = children.get(parent)
+      if (known === undefined) children.set(parent, [child])
+      else known.push(child)
+    }
+    const unfinished = new Set<TicketId>()
+    const asking: Array<[TicketId, ReadonlyArray<Ticket>]> = []
+    for (const [parent, each] of children) {
+      if (each.some(child => progressOf(child) === 'unfinished'))
+        unfinished.add(parent)
+      else asking.push([parent, each])
+    }
+    const merged = yield* askGit(
+      onBase,
+      asking.flatMap(([, each]) =>
+        each.flatMap(child =>
+          progressOf(child) === 'asks_git' ? [child.id] : [],
+        ),
+      ),
+    )
+    for (const [parent, each] of asking)
+      if (
+        each.some(
+          child =>
+            progressOf(child) === 'asks_git' && merged.get(child.id) !== true,
+        )
+      )
+        unfinished.add(parent)
+    return unfinished
+  })
+
 /** The tickets `id` blocks that aren't closed: what closing it offers to close with it (§11.1). */
 export const blockedTickets = (
   sql: SqlClient.SqlClient,

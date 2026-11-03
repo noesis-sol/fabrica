@@ -45,6 +45,7 @@ import {
   finishedEpics,
   isDueOpen,
   readyTickets,
+  unfinishedParents,
   whyWaiting,
 } from './ready'
 import {
@@ -1297,6 +1298,15 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
         Effect.flatMap(getTicket(id), ticket =>
           whyWaiting(sql, ticket, options),
         ),
+      )
+    }),
+    unfinishedParents: Effect.fn('WorkGraph.unfinishedParents')(function* ({
+      ids,
+      onBase,
+    }) {
+      return yield* read(
+        'unfinishedParents',
+        unfinishedParents(sql, ids, onBase),
       )
     }),
     show,

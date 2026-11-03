@@ -122,6 +122,7 @@ const gated = (input: {
 }): Gated =>
   gate({
     ready: input.ready,
+    parents: new Set(),
     running: input.running ?? [],
     free: input.free ?? 4,
     mentions: noMentions,

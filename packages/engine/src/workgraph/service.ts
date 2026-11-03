@@ -180,6 +180,11 @@ export interface WorkGraphShape {
   readonly why: (
     options: ReadyOptions & { readonly id: TicketId },
   ) => Effect.Effect<ReadonlyArray<WaitReason>, TicketNotFound | StoreFailed>
+  /** Of the tickets `ids`, those with a subticket (a `parent` edge) not closed and merged (§13.4). */
+  readonly unfinishedParents: (options: {
+    readonly ids: ReadonlyArray<TicketId>
+    readonly onBase: OnBase
+  }) => Effect.Effect<ReadonlySet<TicketId>, StoreFailed>
   readonly show: (id: TicketId) => Found<TicketDetail>
   /** Every edge, by kind, then its tickets. */
   readonly edges: () => Effect.Effect<ReadonlyArray<Edge>, StoreFailed>

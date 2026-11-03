@@ -32,19 +32,23 @@ import {
   withChanges,
 } from '../footprints'
 import { Git, type WorktreeHome, ticketBranch, worktreePath } from '../git'
-import { type StoreFailed, WorkGraph } from '../workgraph'
+import { type OnBase, type StoreFailed, WorkGraph } from '../workgraph'
 import { type RunSnapshot, inProgress } from './state'
 
 // The footprints gate (spec §13.4, H70, H81): which ready tickets may be dispatched beside those the
-// run has, and why each other is held back, in words as the log says them. A ready ticket
-// overlapping a ticket in progress (running, merging or waiting to merge), or one dispatched before
-// it in the same look, is held back; every ready ticket waits while a `solo` ticket runs or waits
-// first in line, and a solo ticket starts only with nothing else in progress. A ticket past its work
-// holds on the files its branch changed, not on what its `files` or text named; the slots it takes,
-// none for up to `concurrent` such, are counted in `free` (`slotsTakenBy`, orchestra-z8lr).
+// run has, and why each other is held back, in words as the log says them. A parent runs after its
+// subtickets: one with a subticket not closed and merged is held back, as orchestra's are. A ready
+// ticket overlapping a ticket in progress (running, merging or waiting to merge), or one dispatched
+// before it in the same look, is held back; every ready ticket waits while a `solo` ticket runs or
+// waits first in line, and a solo ticket starts only with nothing else in progress. A ticket past its
+// work holds on the files its branch changed, not on what its `files` or text named; the slots it
+// takes, none for up to `concurrent` such, are counted in `free` (`slotsTakenBy`, orchestra-z8lr).
 
 /** The label of a ticket that runs alone. */
 export const soloLabel = 'solo'
+
+/** Why a parent is held back, in words. */
+export const parentWords = 'its subtickets are not all closed and merged'
 
 /** A ready ticket as the gate weighs it: where it works, and whether it runs alone. */
 export interface ReadyTicket {
@@ -124,6 +128,8 @@ interface Beside {
  */
 export const gate = (input: {
   readonly ready: ReadonlyArray<ReadyTicket>
+  /** The ready tickets with a subticket not closed and merged. */
+  readonly parents: ReadonlySet<TicketId>
   readonly running: ReadonlyArray<RunTicket>
   readonly free: number
   readonly mentions: Mentions
@@ -150,6 +156,10 @@ export const gate = (input: {
   )
   for (const candidate of input.ready) {
     const id = candidate.ticket.id
+    if (input.parents.has(id)) {
+      held.push({ ticket: id, reason: 'parent', detail: parentWords })
+      continue
+    }
     if (Option.isSome(solo)) {
       held.push({
         ticket: id,
@@ -248,6 +258,7 @@ const gateReady = (
     readonly checkout: string
     readonly home: WorktreeHome
     readonly base: string
+    readonly onBase: OnBase
     readonly atBase: Effect.Effect<AtBase>
   },
 ): Effect.Effect<Gated, StoreFailed> =>
@@ -274,6 +285,10 @@ const gateReady = (
         Effect.orElseSucceed(() => []),
       )
 
+    const parents = yield* graph.unfinishedParents({
+      ids: input.ready.map(({ id }) => id),
+      onBase: reads.onBase,
+    })
     const readyShown = yield* Effect.forEach(
       input.ready,
       ticket =>
@@ -395,6 +410,7 @@ const gateReady = (
     })
     return gate({
       ready,
+      parents,
       running,
       free: input.free,
       mentions,
@@ -411,6 +427,8 @@ export const makeFootprintsGate = Effect.fn('FootprintsGate.make')(
     /** The check commands: `check_own`, `check_fast` and `check_full`. */
     readonly checks: ReadonlyArray<CommandSetting>
     readonly sharedFiles: ReadonlyArray<string>
+    /** Whether a closed ticket's work is on Base: asked of a parent's closed subtickets. */
+    readonly onBase: OnBase
   }) {
     const git = yield* Git
     const graph = yield* WorkGraph
@@ -468,6 +486,7 @@ export const makeFootprintsGate = Effect.fn('FootprintsGate.make')(
           checkout: input.checkout,
           home: input.home,
           base: input.base,
+          onBase: input.onBase,
           atBase,
         }),
     } satisfies FootprintsGate

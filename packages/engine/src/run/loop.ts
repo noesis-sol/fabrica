@@ -84,7 +84,7 @@ import {
 } from '../runlog'
 import { KeptAwake, Wake, inhibitorExit, keepAwake } from '../time'
 import { type RunViewSources, makeRunViewSources } from '../view'
-import { WorkGraph } from '../workgraph'
+import { type OnBase, WorkGraph } from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
 import {
   ResumeWhy,
@@ -338,6 +338,15 @@ const runStarted = Effect.fn('Run.started')(function* (
   const project = started.settings.project
   const actor: Actor = { _tag: 'engine', engine: config.engine }
   const { limit } = config.options
+  /** Whether a closed ticket's branch is on Base, as git says; one git can't tell is not. */
+  const onBase: OnBase = id =>
+    git
+      .isOnBase({
+        repo: config.checkout,
+        branch: ticketBranch(id),
+        base: started.base,
+      })
+      .pipe(Effect.orElseSucceed(() => false))
 
   // What an earlier run moved aside and left is deleted beside the start, which doesn't wait on it (§13.7).
   yield* Effect.forkDetach(clearAside(config.home))
@@ -546,6 +555,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     base: started.base,
     checks: [project.check_own, project.check_fast, project.check_full],
     sharedFiles: project.shared_files,
+    onBase,
   })
   const wakes = control.wakes
   const agents = yield* PiAgent
@@ -1213,14 +1223,7 @@ const runStarted = Effect.fn('Run.started')(function* (
   /** Closes each epic whose children are all closed and merged, as a ticket merges (§13.3). */
   const closeEpics = tracked(
     graph.closeEpics({
-      onBase: id =>
-        git
-          .isOnBase({
-            repo: config.checkout,
-            branch: ticketBranch(id),
-            base: started.base,
-          })
-          .pipe(Effect.orElseSucceed(() => false)),
+      onBase,
       actor,
     }),
   )
@@ -1416,14 +1419,7 @@ const runStarted = Effect.fn('Run.started')(function* (
   const readReady = (snapshot: RunSnapshot) =>
     Effect.gen(function* () {
       const ready = yield* graph.ready({
-        onBase: id =>
-          git
-            .isOnBase({
-              repo: config.checkout,
-              branch: ticketBranch(id),
-              base: started.base,
-            })
-            .pipe(Effect.orElseSucceed(() => false)),
+        onBase,
         setAside: inPhase(snapshot, 'set_aside').map(({ ticket }) => ticket),
       })
       return yield* RunMode.$match(config.options.mode, {
