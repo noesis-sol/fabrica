@@ -190,6 +190,7 @@ const attentionJson = [
       ],
       recommended: 0,
     },
+    drafted: false,
     consequential: false,
     maintainerOnly: false,
     blocks: ['eng-401'],

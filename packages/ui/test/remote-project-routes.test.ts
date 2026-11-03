@@ -525,6 +525,7 @@ const question = (project: ProjectId, ticket: string) =>
     title: `Question ${ticket}`,
     description: Option.none(),
     choices: Option.none(),
+    drafted: false,
     consequential: false,
     maintainerOnly: false,
     blocks: [],

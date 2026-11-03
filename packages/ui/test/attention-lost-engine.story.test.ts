@@ -72,6 +72,7 @@ const siteQuestion = AttentionRequest.cases.question.make({
   title: 'Which store keeps the sessions?',
   description: Option.none(),
   choices: Option.none(),
+  drafted: false,
   consequential: false,
   maintainerOnly: false,
   blocks: [],

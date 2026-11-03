@@ -60,6 +60,7 @@ import {
 import { isConsequential } from './consequential'
 import { withAnswer } from './design'
 import { makeSetAsides } from './set-aside'
+import { draftedLabel } from './drafted'
 
 // The attention requests (spec §15.1, §15.2, §8.5): what waits on the maintainer, across the engine's
 // projects. Questions (from workers, organs, talks or the maintainer) and maintainer tasks are read
@@ -257,10 +258,11 @@ const requestsOf = (
       graph.list({ statuses: ['open', 'in_progress'], types: ['question'] }),
       graph.list({ statuses: ['open', 'in_progress'], types: ['manual'] }),
       graph.edges(),
+      graph.list({ types: ['question'], label: draftedLabel }),
     ],
     { concurrency: 'unbounded' },
   ).pipe(
-    Effect.map(([questions, tasks, edges]) => [
+    Effect.map(([questions, tasks, edges, drafted]) => [
       ...questions.flatMap(ticket =>
         Option.toArray(ticket.question).map(question =>
           AttentionRequest.cases.question.make({
@@ -269,6 +271,7 @@ const requestsOf = (
             title: ticket.title,
             description: ticket.description,
             choices: question.choices,
+            drafted: drafted.some(({ id }) => id === ticket.id),
             consequential: isConsequential(question),
             maintainerOnly: question.maintainerOnly,
             ...linksOf(ticket.id, edges),

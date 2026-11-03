@@ -32,6 +32,7 @@ import {
 } from '@fabrica/contracts'
 
 import type { PiEvent } from '../src/agent'
+import { AttentionRequests, make as makeAttention } from '../src/attention'
 import { type ProjectRecord, Projects } from '../src/projects'
 import {
   type TalkAgentStart,
@@ -148,6 +149,17 @@ const oneProject = (checkout: string, graph: WorkGraphShape) =>
     })
   })
 
+/** The attention requests the registered modes are built on, over the one project. */
+const oneProjectAttention = (graph: WorkGraphShape) =>
+  Layer.effect(
+    AttentionRequests,
+    makeAttention({
+      list: Effect.succeed([project]),
+      changed: Stream.never,
+      graph: () => Effect.succeed(graph),
+    }),
+  )
+
 /** An engine's talks, with the registered modes, on a new work graph and a checkout holding `spec`. */
 const newEngine = Effect.gen(function* () {
   const checkout = mkdtempSync(NodePath.join(root, 'checkout-'))
@@ -180,7 +192,7 @@ const newEngine = Effect.gen(function* () {
         Layer.provide([
           yield* oneProject(checkout, graph),
           scriptedAgents(script),
-          registeredModes,
+          registeredModes.pipe(Layer.provide(oneProjectAttention(graph))),
         ]),
       ),
     ),

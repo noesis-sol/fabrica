@@ -2043,6 +2043,57 @@ const runStarted = Effect.fn('Run.started')(function* (
       )
     })
 
+  /**
+   * The open questions the run's tickets wait on (§15.3): each blocks an open ticket in the run's scope.
+   * Read only as the run would otherwise end. A deferred ticket stays out of it: no answer would free
+   * it, so a question on it alone keeps no run going.
+   */
+  const questionsWaiting = Effect.gen(function* () {
+    const [questions, open, edges] = yield* Effect.all(
+      [
+        graph.list({ statuses: ['open', 'in_progress'], types: ['question'] }),
+        graph.list({ statuses: ['open', 'in_progress'] }),
+        graph.edges(),
+      ],
+      { concurrency: 'unbounded' },
+    )
+    const scope = RunMode.$match(config.options.mode, {
+      Tickets: () => Option.none<ReadonlySet<TicketId>>(),
+      Ticket: ({ ticket }) => Option.some(descendants(ticket, edges)),
+    })
+    const waiting = new Set(
+      open
+        .filter(({ id, type }) =>
+          type === 'question'
+            ? false
+            : Option.match(scope, {
+                onNone: () => true,
+                onSome: within => within.has(id),
+              }),
+        )
+        .map(({ id }) => id),
+    )
+    return questions
+      .filter(({ id }) =>
+        edges.some(
+          edge =>
+            edge.kind === 'blocks' && edge.from === id && waiting.has(edge.to),
+        ),
+      )
+      .map(({ id }) => id)
+  })
+
+  /** The questions the run last said it waits on, so it says so only as they change. */
+  let saidWaiting: ReadonlyArray<TicketId> = []
+
+  /** The run is going on with no need of an answer: it isn't asking for one. */
+  const goesOn = Effect.andThen(
+    Effect.sync(() => {
+      saidWaiting = []
+    }),
+    Effect.as(control.setAsking(false), Option.none<Ending>()),
+  )
+
   /** A drain asked or taken back, as its record says it (§13.10). */
   const drainSaid = (reason: WakeReason) =>
     WakeReason.$is('Drain')(reason)
@@ -2179,7 +2230,7 @@ const runStarted = Effect.fn('Run.started')(function* (
       yield* machine.settle(claimed.length < Math.min(room, wanted.length))
       const after = yield* state.current
       if (inProgress(after).length > 0 || workersEnding.size > 0)
-        return Option.none<Ending>()
+        return yield* goesOn
       // Nothing running: what a merge's list found missing stops the run; a check under way, or one that
       // ended during this look, wakes it again (§17).
       const gateNow = yield* requirements.gate
@@ -2195,23 +2246,40 @@ const runStarted = Effect.fn('Run.started')(function* (
         !RequirementsGate.$is('Clear')(gate) ||
         !RequirementsGate.$is('Clear')(gateNow)
       )
-        return Option.none<Ending>()
+        return yield* goesOn
       // A verdict triage owes keeps the run, unless it drains: two can raise the environment hold (§16).
       // Read before the holds: a verdict raises its hold before it stops being owed.
-      if ((yield* triage.awaited) && !draining) return Option.none<Ending>()
+      if ((yield* triage.awaited) && !draining) return yield* goesOn
       // A hold that can lift keeps the run, unless it drains: the tickets it holds back are to come.
       // Read after the state: a ticket's turn counts toward a hold before it leaves its slot.
       if (keepsRun({ holds: yield* holds.current, heard }) && !draining)
-        return Option.none<Ending>()
+        return yield* goesOn
       // A question it will answer keeps the run too, unless it drains: what it frees is to come (§15.2).
       if ((yield* autoAnswers.awaited) && !draining)
-        return Option.none<Ending>()
+        return yield* goesOn
       // So does a guess on its way: the ticket waiting for it is to come (§16).
-      if ((yield* predictor.asking) && !draining) return Option.none<Ending>()
+      if ((yield* predictor.asking) && !draining) return yield* goesOn
       // A budget spent is a limit reached (§13.11, §14.4): whatever is still ready waits for another run.
       const limitReached =
         Option.exists(limit, most => after.dispatched >= most) ||
         anyOn(yield* holds.current, 'BUDGET')
+      // Nothing ready but questions: the run asks for the answer talk rather than end, and takes up
+      // what each answer frees as it wakes on it (§13.1, §15.3). A drain or a limit still ends it.
+      if (!limitReached && !draining) {
+        const waiting = yield* questionsWaiting
+        if (waiting.length > 0) {
+          yield* control.setAsking(true)
+          if (waiting.join() !== saidWaiting.join()) {
+            saidWaiting = waiting
+            yield* record(log, {
+              kind: 'info',
+              text: `QUESTIONS_WAITING: nothing is ready but the questions ${waiting.join(', ')}: answer them in the answer talk, or with \`fabrica answer\`, and the run takes up what they free`,
+            })
+          }
+          return Option.none<Ending>()
+        }
+      }
+      yield* control.setAsking(false)
       return Option.some(
         Ending.Done({
           kind: limitReached

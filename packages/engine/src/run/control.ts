@@ -8,15 +8,19 @@ import { WakeReason, type Wakes, makeWakes } from './wakes'
 // A run's control from outside it (spec §13.10, §8.1): stop it now, drain it (no new tickets, the
 // running ones finish and merge) or take the drain back, and where it stands. Each wakes the run's
 // loop with its reason, once per change: a second stop or drain changes nothing. The loop says when
-// its start checks have come to an answer, so `run.start` answers with their problems or the run.
+// its start checks have come to an answer, so `run.start` answers with their problems or the run,
+// and when nothing is ready but questions, which its clients read as being asked to open the answer
+// talk (§15.3).
 
 export interface RunControl {
   /** The run's wakes: the loop takes them, the control and every part of the run give them. */
   readonly wakes: Wakes
   /** The start checks' answer, given once by the loop as they end. */
   readonly checked: Deferred.Deferred<StartChecked>
-  /** Where the run stands: getting ready, running, draining, or winding down to stop. */
+  /** Where the run stands: getting ready, running, asking, draining, or winding down to stop. */
   readonly state: Effect.Effect<RunState>
+  /** The loop says whether nothing is ready but questions. */
+  readonly setAsking: (asking: boolean) => Effect.Effect<void>
   /** Whether no new ticket is to be dispatched. */
   readonly draining: Effect.Effect<boolean>
   /** Stops the run now: it ends `INTERRUPTED`. */
@@ -30,6 +34,7 @@ export interface RunControl {
 interface Standing {
   readonly draining: boolean
   readonly stopping: boolean
+  readonly asking: boolean
 }
 
 /** A run's control, the run getting ready, not draining. */
@@ -41,6 +46,7 @@ export const makeRunControl: Effect.Effect<RunControl> = Effect.gen(
     const standing = yield* Ref.make<Standing>({
       draining: false,
       stopping: false,
+      asking: false,
     })
 
     /** Sets `draining`, waking the run where it changed. */
@@ -62,8 +68,10 @@ export const makeRunControl: Effect.Effect<RunControl> = Effect.gen(
         const now = yield* Ref.get(standing)
         if (now.stopping) return 'stopping'
         if (!(yield* Deferred.isDone(checked))) return 'starting'
-        return now.draining ? 'draining' : 'running'
+        if (now.draining) return 'draining'
+        return now.asking ? 'asking' : 'running'
       }),
+      setAsking: asking => Ref.update(standing, now => ({ ...now, asking })),
       draining: Effect.map(Ref.get(standing), now => now.draining),
       stop: Effect.flatMap(
         Ref.modify(standing, now =>

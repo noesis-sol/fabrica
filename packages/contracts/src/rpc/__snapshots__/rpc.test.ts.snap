@@ -285,6 +285,9 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
                 },
               ],
             },
+            "drafted": {
+              "type": "boolean",
+            },
             "maintainerOnly": {
               "type": "boolean",
             },
@@ -311,6 +314,7 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
             "title",
             "description",
             "choices",
+            "drafted",
             "consequential",
             "maintainerOnly",
             "blocks",
@@ -6096,6 +6100,7 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
           "enum": [
             "starting",
             "running",
+            "asking",
             "draining",
             "stopping",
           ],

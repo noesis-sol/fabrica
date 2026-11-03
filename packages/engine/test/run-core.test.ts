@@ -758,11 +758,13 @@ describe('a run', () => {
   it.effect('waits on a question its worker asked about its own ticket', () =>
     Effect.gen(function* () {
       const fixture = project()
+      // Its limit ends the run with the question waiting; without one, it would wait for the answer.
       const { end, events, made } = yield* runOf(
         fixture,
         file('Drop the flag', 'ask'),
+        () => options({ limit: Option.some(1) }),
       )
-      expect(end).toEqual({ kind: 'READY_EMPTY', code: 0 })
+      expect(end).toEqual({ kind: 'LIMIT_REACHED', code: 0 })
       const asked = ofKind(events, 'asked')
       expect(asked).toEqual([
         expect.objectContaining({ ticket: made.id, title: 'Drop the flag' }),

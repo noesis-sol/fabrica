@@ -152,6 +152,7 @@ const question = (
     title: 'Which store keeps the sessions?',
     description: Option.none(),
     choices: Option.some(choices),
+    drafted: false,
     consequential: false,
     maintainerOnly: false,
     blocks: [TicketId.make('fa-7')],

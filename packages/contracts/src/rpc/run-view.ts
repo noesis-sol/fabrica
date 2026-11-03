@@ -32,10 +32,14 @@ export const RunMode = Schema.TaggedUnion({
 }).annotate({ identifier: 'RunMode' })
 export type RunMode = typeof RunMode.Type
 
-/** Where a run is: getting ready (its start's steps, H80), running, draining, or winding down to stop. */
+/**
+ * Where a run is: getting ready (its start's steps, H80), running, asking (nothing ready but questions,
+ * so it waits on the answer talk rather than end, §15.3), draining, or winding down to stop.
+ */
 export const RunState = Schema.Literals([
   'starting',
   'running',
+  'asking',
   'draining',
   'stopping',
 ])

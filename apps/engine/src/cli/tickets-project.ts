@@ -72,7 +72,7 @@ const projectOf = (client: EngineClientShape, given: Option.Option<string>) =>
   })
 
 /** Runs `use` with a client of the engine and the project, the engine's refusals in words. */
-export const withProject = <A>(
+export const withProject = <A, R = never>(
   given: Option.Option<string>,
   use: (
     client: EngineClientShape,
@@ -83,7 +83,8 @@ export const withProject = <A>(
     | ProjectNotFound
     | TicketNotFound
     | Refused
-    | RpcClientError.RpcClientError
+    | RpcClientError.RpcClientError,
+    R
   >,
 ) =>
   withEngine(client =>

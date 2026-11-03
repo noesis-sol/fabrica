@@ -11,10 +11,11 @@ import {
 } from 'effect'
 import { Argument, Command, Flag } from 'effect/cli'
 
+import type { EngineClientShape } from '@fabrica/client'
 import {
   ModelChoice,
   type ProjectId,
-  type TalkContext,
+  TalkContext,
   type TalkId,
   TicketId,
   TranscriptEntry,
@@ -50,7 +51,7 @@ interface Standing {
 const answered = ({ read, sent, shown, waiting }: Standing): boolean =>
   read && shown >= sent && !waiting
 
-const modelFlag = Flag.String('model').pipe(
+export const modelFlag = Flag.String('model').pipe(
   Flag.withDescription(
     "The talk's model, as provider/model (anthropic/claude-opus-5-5); the project's where it isn't given",
   ),
@@ -169,17 +170,27 @@ const makePrinter = Effect.fn('Cli.talkPrinter')(function* (
   return { print, flush: flushPartial }
 })
 
-/** The talk opened on `context`, on the terminal until stdin ends; closed as it ends. */
-const talkOn = (options: {
-  readonly context: (
-    project: ProjectId,
-  ) => Effect.Effect<TalkContext, ReturnType<typeof refused>>
-  readonly project: Option.Option<string>
+/** The maintainer's lines on stdin. */
+export const stdinLines = Effect.map(Stdio.Stdio, stdio =>
+  stdio.stdin.pipe(
+    // Stdin's own errors are the terminal's.
+    Stream.orDie,
+    Stream.decodeText(),
+    Stream.splitLines,
+  ),
+)
+
+/** The talk opened on `context` in the project, on the terminal until `lines` end; closed as they end. */
+export const talkIn = (options: {
+  readonly client: EngineClientShape
+  readonly project: ProjectId
+  readonly context: TalkContext
   readonly model: Option.Option<string>
+  readonly lines: Stream.Stream<string>
 }) =>
   Effect.gen(function* () {
+    const { client, project, context } = options
     const model = yield* modelOf(options.model)
-    const stdio = yield* Stdio.Stdio
     const json = yield* Json
     const standing = yield* SubscriptionRef.make<Standing>({
       read: false,
@@ -188,69 +199,101 @@ const talkOn = (options: {
       waiting: false,
     })
     const printer = yield* makePrinter(standing)
-    yield* withProject(options.project, (client, project) =>
-      Effect.gen(function* () {
-        const context = yield* options.context(project)
-        const opened = yield* Effect.acquireRelease(
-          client.rpc['talk.open']({ project, context, model }),
-          ({ talk }) => Effect.ignore(client.rpc['talk.close']({ talk })),
-        ).pipe(
-          Effect.catchTag('TalkNotOpened', ({ reason }) =>
-            Effect.fail(
-              refused(`the talk couldn't be opened: ${sanitiseLine(reason)}`),
-            ),
+    yield* Effect.gen(function* () {
+      const opened = yield* Effect.acquireRelease(
+        client.rpc['talk.open']({ project, context, model }),
+        ({ talk }) => Effect.ignore(client.rpc['talk.close']({ talk })),
+      ).pipe(
+        Effect.catchTag('TalkNotOpened', ({ reason }) =>
+          Effect.fail(
+            refused(`the talk couldn't be opened: ${sanitiseLine(reason)}`),
           ),
-        )
-        if (!json)
-          yield* Console.log(
-            `talk ${sanitiseLine(opened.talk)} · ${sanitiseLine(opened.model)}: type a message and Enter to send it, Ctrl-D to end`,
-          )
-        const watching = yield* client.rpc['talk.watchTranscript']({
-          talk: opened.talk,
-          resume: Option.none(),
-        }).pipe(
-          Stream.runForEach(item =>
-            Effect.andThen(
-              Effect.forEach(item.value, printer.print, { discard: true }),
-              SubscriptionRef.update(standing, now => ({ ...now, read: true })),
-            ),
-          ),
-          Effect.andThen(printer.flush),
-          Effect.forkScoped,
-        )
-        // Stdin's own errors are the terminal's; a message the engine refuses fails the command.
-        yield* stdio.stdin.pipe(
-          Stream.orDie,
-          Stream.decodeText(),
-          Stream.splitLines,
-          Stream.filter(line => line.trim() !== ''),
-          Stream.runForEach(text =>
-            Effect.andThen(
-              SubscriptionRef.update(standing, now => ({
-                ...now,
-                sent: now.sent + 1,
-              })),
-              client.rpc['talk.send']({ talk: opened.talk, text }),
-            ),
-          ),
-        )
-        // Every message answered, or the talk ended.
-        yield* Effect.raceFirst(
-          SubscriptionRef.changes(standing).pipe(
-            Stream.filter(answered),
-            Stream.runHead,
-          ),
-          Fiber.join(watching),
-        )
-        yield* printer.flush
-      }).pipe(
-        // The talk closes before the client does.
-        Effect.scoped,
-        Effect.catchTag('TalkNotFound', ({ talk }) =>
-          Effect.fail(talkEnded(talk)),
         ),
+      )
+      if (!json)
+        yield* Console.log(
+          `talk ${sanitiseLine(opened.talk)} · ${sanitiseLine(opened.model)}: type a message and Enter to send it, Ctrl-D to end`,
+        )
+      const watching = yield* client.rpc['talk.watchTranscript']({
+        talk: opened.talk,
+        resume: Option.none(),
+      }).pipe(
+        Stream.runForEach(item =>
+          Effect.andThen(
+            Effect.forEach(item.value, printer.print, { discard: true }),
+            SubscriptionRef.update(standing, now => ({ ...now, read: true })),
+          ),
+        ),
+        Effect.andThen(printer.flush),
+        Effect.forkScoped,
+      )
+      // A message the engine refuses fails the command.
+      yield* options.lines.pipe(
+        Stream.filter(line => line.trim() !== ''),
+        Stream.runForEach(text =>
+          Effect.andThen(
+            SubscriptionRef.update(standing, now => ({
+              ...now,
+              sent: now.sent + 1,
+            })),
+            client.rpc['talk.send']({ talk: opened.talk, text }),
+          ),
+        ),
+      )
+      // Every message answered, or the talk ended.
+      yield* Effect.raceFirst(
+        SubscriptionRef.changes(standing).pipe(
+          Stream.filter(answered),
+          Stream.runHead,
+        ),
+        Fiber.join(watching),
+      )
+      yield* printer.flush
+    }).pipe(
+      // The talk closes before the client does.
+      Effect.scoped,
+      Effect.catchTag('TalkNotFound', ({ talk }) =>
+        Effect.fail(talkEnded(talk)),
       ),
     )
+  })
+
+/** The talk opened on `context` in the project the command names, on the terminal until stdin ends. */
+const talkOn = (options: {
+  readonly context: Effect.Effect<TalkContext, ReturnType<typeof refused>>
+  readonly project: Option.Option<string>
+  readonly model: Option.Option<string>
+}) =>
+  Effect.gen(function* () {
+    const lines = yield* stdinLines
+    const context = yield* options.context
+    yield* withProject(options.project, (client, project) =>
+      talkIn({ client, project, context, model: options.model, lines }),
+    )
+  })
+
+/** The questions `texts` name, by ID. */
+const questionIds = (texts: ReadonlyArray<string>) =>
+  Effect.forEach(texts, text =>
+    Option.match(TicketId.makeOption(text), {
+      onNone: () =>
+        Effect.fail(refused(`${sanitiseLine(text)} isn't a ticket's ID`)),
+      onSome: Effect.succeed,
+    }),
+  )
+
+/** The answer talk on the terminal, on the questions named, or every open one in the project. */
+export const answerTalkOn = (options: {
+  readonly questions: ReadonlyArray<string>
+  readonly project: Option.Option<string>
+  readonly model: Option.Option<string>
+}) =>
+  talkOn({
+    context: Effect.map(questionIds(options.questions), questions =>
+      TalkContext.cases.answer.make({ questions }),
+    ),
+    project: options.project,
+    model: options.model,
   })
 
 const talkEnded = (talk: TalkId) =>
@@ -268,7 +311,7 @@ const refine = Command.make(
   },
   ({ spec, project, model }) =>
     talkOn({
-      context: () => Effect.succeed({ _tag: 'refine', spec }),
+      context: Effect.succeed({ _tag: 'refine', spec }),
       project,
       model,
     }),
@@ -285,11 +328,10 @@ const feature = Command.make(
   },
   ({ text, project, model }) =>
     talkOn({
-      context: () =>
-        Effect.succeed({
-          _tag: 'feature',
-          text: text.length === 0 ? Option.none() : Option.some(text.join(' ')),
-        }),
+      context: Effect.succeed({
+        _tag: 'feature',
+        text: text.length === 0 ? Option.none() : Option.some(text.join(' ')),
+      }),
       project,
       model,
     }),
@@ -307,22 +349,11 @@ const answer = Command.make(
     ),
   },
   ({ questions, project, model }) =>
-    talkOn({
-      context: () =>
-        Effect.forEach(questions, text =>
-          Option.match(TicketId.makeOption(text), {
-            onNone: () =>
-              Effect.fail(refused(`${sanitiseLine(text)} isn't a ticket's ID`)),
-            onSome: Effect.succeed,
-          }),
-        ).pipe(Effect.map(ids => ({ _tag: 'answer', questions: ids }))),
-      project,
-      model,
-    }),
+    answerTalkOn({ questions, project, model }),
 ).pipe(Command.withDescription('Answers questions in a talk'))
 
 const run = Command.make('run', flags, ({ project, model }) =>
-  talkOn({ context: () => Effect.succeed({ _tag: 'run' }), project, model }),
+  talkOn({ context: Effect.succeed({ _tag: 'run' }), project, model }),
 ).pipe(Command.withDescription('Talks about a run'))
 
 export const talk = Command.make('talk').pipe(

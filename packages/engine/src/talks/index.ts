@@ -2,6 +2,7 @@
 export * from './agents'
 export * from './core'
 export { registeredModes, withRunTalk } from './modes'
+export { makeAnswerMode } from './answer'
 export { featureMode } from './feature'
 export { fileTreeTool } from './file-tree'
 export { refineMode } from './refine'

@@ -67,6 +67,7 @@ const questionJson = {
   title: 'Keep the old refresh endpoint?',
   description: null,
   choices: null,
+  drafted: false,
   consequential: false,
   maintainerOnly: false,
   blocks: ['fa-20'],

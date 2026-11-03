@@ -62,6 +62,7 @@ const questionOf = (ticket: TicketId, askedFrom: Option.Option<TicketId>) =>
     title: 'Which route?',
     description: Option.none(),
     choices: Option.none(),
+    drafted: false,
     consequential: false,
     maintainerOnly: false,
     blocks: Option.toArray(askedFrom),

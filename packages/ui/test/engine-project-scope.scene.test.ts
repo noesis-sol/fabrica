@@ -307,6 +307,7 @@ describe('one project ID on two engines', () => {
           recommended: 0,
         }),
       ),
+      drafted: false,
       consequential: false,
       maintainerOnly: false,
       blocks: [],

@@ -1368,6 +1368,7 @@ const idleControls = (
 const stateWords: Record<RunState, Option.Option<string>> = {
   starting: Option.some('Starting…'),
   running: Option.none(),
+  asking: Option.some('Waiting on your answers'),
   draining: Option.some('Draining'),
   stopping: Option.some('Stopping…'),
 }

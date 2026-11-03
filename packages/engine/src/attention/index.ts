@@ -10,6 +10,7 @@ export {
 } from './auto-answer'
 export { consequentialChoices, isConsequential } from './consequential'
 export { withAnswer } from './design'
+export { draftedLabel } from './drafted'
 export {
   type AttentionProjects,
   AttentionItem,

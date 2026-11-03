@@ -1,3 +1,4 @@
+export * from './answer-talk'
 export * from './control'
 export * from './events'
 export * from './frames'

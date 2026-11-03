@@ -1324,6 +1324,12 @@ const optionsPanel = (
             ],
           )
         : h.empty,
+      request.drafted
+        ? h.p(
+            [h.DataAttribute('drafted', ''), h.Class('text-xs text-c5')],
+            ['Options drafted by the answer talk, not by who asked.'],
+          )
+        : h.empty,
       options.length === 0
         ? h.empty
         : h.div(

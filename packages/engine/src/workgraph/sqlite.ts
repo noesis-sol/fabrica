@@ -30,6 +30,7 @@ import {
 } from '@fabrica/contracts'
 
 import { isConsequential } from '../attention/consequential'
+import { draftedLabel } from '../attention/drafted'
 import {
   EdgeCycle,
   InvalidTicket,
@@ -978,6 +979,58 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
     )
   })
 
+  const draftOptions: WorkGraphShape['draftOptions'] = Effect.fn(
+    'WorkGraph.draftOptions',
+  )(function* ({ id, choices, actor }) {
+    return yield* mutate(
+      'draftOptions',
+      Effect.gen(function* () {
+        const ticket = yield* getTicket(id)
+        const asked = yield* Option.match(ticket.question, {
+          onNone: () =>
+            Effect.fail(new NotAQuestion({ id, type: ticket.type })),
+          onSome: Effect.succeed,
+        })
+        const drafted =
+          yield* sql`SELECT 1 FROM labels WHERE ticket_id = ${id} AND label = ${draftedLabel}`
+        if (
+          ticket.status === 'closed' ||
+          (Option.isSome(asked.choices) && drafted.length === 0)
+        )
+          return yield* new TransitionRefused({
+            id,
+            operation: 'draft options for',
+            status: ticket.status,
+          })
+        const at = yield* now
+        const changed = yield* makeTicket({
+          ...ticket,
+          question: Option.some(
+            yield* Question.makeEffect({
+              ...asked,
+              choices: Option.some(choices),
+              // Marked from its options too, as a question asked with them is (§15.2, H53).
+              consequential: isConsequential({
+                consequential: asked.consequential,
+                choices: Option.some(choices),
+              }),
+            }).pipe(Effect.mapError(invalid)),
+          ),
+          updatedAt: at,
+        })
+        yield* writeTicket(changed)
+        yield* appendEvent({
+          ticket: id,
+          actor,
+          change: { _tag: 'updated', fields: ['choices'] },
+          at,
+        })
+        yield* addLabel(id, draftedLabel, actor, at)
+        return changed
+      }),
+    )
+  })
+
   const answer: WorkGraphShape['answer'] = Effect.fn('WorkGraph.answer')(
     function* ({ id, answer, actor }) {
       return yield* mutate(
@@ -1341,6 +1394,7 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
     fileDiscovered,
     fileTickets,
     ask,
+    draftOptions,
     answer,
     importTickets,
     delete: deleteTicket,

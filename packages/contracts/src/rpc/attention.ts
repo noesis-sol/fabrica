@@ -35,6 +35,8 @@ export const AttentionRequest = Schema.TaggedUnion({
     description: Schema.OptionFromNullOr(Schema.String),
     /** None: filed without options; a talk drafts them. */
     choices: Schema.OptionFromNullOr(QuestionChoices),
+    /** Its options were drafted by a talk, not given by who asked it (§15.3). */
+    drafted: Schema.Boolean,
     consequential: Schema.Boolean,
     maintainerOnly: Schema.Boolean,
     blocks: Schema.Array(TicketId),

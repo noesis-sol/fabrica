@@ -273,7 +273,6 @@ describe('the command line', () => {
   /** Every command of spec §19 not yet built, as it is typed after `fabrica`. */
   const notYet: ReadonlyArray<ReadonlyArray<string>> = [
     ['init'],
-    ['answer'],
     ['report'],
   ]
 

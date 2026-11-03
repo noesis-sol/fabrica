@@ -188,6 +188,7 @@ const question = (project: ProjectId, ticket: string): AttentionRequest =>
       ],
       recommended: 1,
     },
+    drafted: false,
     consequential: false,
     maintainerOnly: false,
     blocks: ['fa-7'],

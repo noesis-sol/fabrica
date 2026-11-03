@@ -181,6 +181,7 @@ const question = decodeRequest({
     ],
     recommended: 1,
   },
+  drafted: false,
   consequential: false,
   maintainerOnly: false,
   blocks: ['fa-7'],

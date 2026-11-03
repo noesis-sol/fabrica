@@ -116,7 +116,11 @@ export interface ServeOptions extends EngineFacts {
    * Talks' agents and modes (§15.4); where none are given, the modes this release has, on what the
    * engine's runs run on (`hostedTalkAgents`): where it refuses them, a talk is refused too, saying why.
    */
-  readonly talks?: Layer.Layer<TalkAgents | TalkModes, never, RunHosting>
+  readonly talks?: Layer.Layer<
+    TalkAgents | TalkModes,
+    never,
+    RunHosting | AttentionRequests
+  >
   /**
    * What the engine's runs run on (§12, §13): its agents, the model proxy, the checks; where none is
    * given, the engine refuses every run, saying why. Built before the engine's scopes, so what it holds
@@ -253,7 +257,7 @@ export const startEngine = Effect.fn('Engine.start')(function* (
       layerRefusing('this engine was started with nowhere to install updates'),
   )
   const talks = yield* Layer.build(options.talks ?? talksOnHosting).pipe(
-    Effect.provide(runs),
+    Effect.provide(Context.merge(runs, attention)),
   )
   const facts = yield* Layer.build(options.facts ?? layerNodeHost)
   // The budget's and the sampler's are the engine's, across its runs: its handlers and its runs read them.

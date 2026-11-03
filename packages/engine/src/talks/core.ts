@@ -58,7 +58,9 @@ import { drawBase36 } from '../workgraph/ids'
 // tool's name, and the engine decodes its arguments, acts as the talk's session (on the project's
 // work graph, for the ticket tools) and answers with the result encoded, or refuses it. A tool that
 // takes the maintainer's word first asks whether it has it (`confirmed`), from what the maintainer has
-// sent the talk since it asked, and whether that opened the turn.
+// sent the talk since it asked, and whether that opened the turn. A mode may follow what arrives while
+// its talk is open (`arrivals`): each arrival is the engine's message in the transcript, and goes to the
+// agent as the maintainer's messages do.
 // A turn that settles on a failed model call, a refusal of the model proxy's or its provider's among
 // them, says so in the transcript, as no run's hold takes it up and the agent's message never comes.
 // The talk's agent is a port (`TalkAgents`), so the talks' rules are tested on a scripted session; the
@@ -136,8 +138,9 @@ export type TalkContextOf<M extends TalkMode> = Extract<
   { readonly _tag: M }
 >
 
-/** What a talk's tool acts on: the talk's project and context, the project's work graph, and the talk's session, its actor. */
+/** What a talk's tool acts on: the talk, its project and context, the project's work graph, and the talk's session, its actor. */
 export interface TalkToolContext<M extends TalkMode> {
+  readonly talk: TalkId
   readonly project: ProjectRecord
   readonly context: TalkContextOf<M>
   readonly graph: Effect.Effect<WorkGraphShape>
@@ -153,6 +156,8 @@ export interface TalkToolContext<M extends TalkMode> {
   readonly openTalk: (
     context: TalkContext,
   ) => Effect.Effect<OpenedTalk, ProjectNotFound | TalkNotOpened>
+  /** How many messages the maintainer has sent the talk so far. */
+  readonly maintainerMessages: Effect.Effect<number>
 }
 
 /** A talk's tool: the tool its agent is given, and the engine's side of a call to it. */
@@ -208,7 +213,17 @@ export interface TalkModeOf<M extends TalkMode> {
   readonly opening: (options: {
     readonly context: TalkContextOf<M>
     readonly project: ProjectRecord
+    readonly graph: Effect.Effect<WorkGraphShape>
   }) => Effect.Effect<Option.Option<string>, TalkNotOpened>
+  /**
+   * Subscribes before the opening is read, so nothing falls between them: what arrives from then on,
+   * each said to the talk as it comes.
+   */
+  readonly arrivals?: (options: {
+    readonly context: TalkContextOf<M>
+    readonly project: ProjectRecord
+    readonly graph: Effect.Effect<WorkGraphShape>
+  }) => Effect.Effect<Stream.Stream<string>, never, Scope.Scope>
 }
 
 /** The modes this engine has, by name. */
@@ -464,9 +479,21 @@ export const make = Effect.fn('Talks.make')(function* (config: TalksConfig) {
         Effect.map(drawBase36(12), random => TalkId.make(`talk-${random}`)),
     })
     const resume = Option.map(kept, ({ session }) => session)
-    const first = Option.isSome(resume)
-      ? Option.none<string>()
-      : yield* definition.opening({ context, project })
+    // The work graph failing to open is a defect of the call, as the store failing is.
+    const graph = Effect.orDie(projects.workGraph(project.id))
+    const scope = yield* Scope.fork(config.scope)
+    const opened = yield* Effect.gen(function* () {
+      const arrivals = yield* Effect.transposeOption(
+        Option.map(Option.fromUndefinedOr(definition.arrivals), follow =>
+          follow({ context, project, graph }).pipe(Scope.provide(scope)),
+        ),
+      )
+      const first = Option.isSome(resume)
+        ? Option.none<string>()
+        : yield* definition.opening({ context, project, graph })
+      return { arrivals, first }
+    }).pipe(Effect.onError(() => Scope.close(scope, Exit.void)))
+    const { arrivals, first } = opened
     // The talk's session is its tools' actor, known once its agent has started.
     const session = yield* Deferred.make<SessionId>()
     const heard = yield* Ref.make(0)
@@ -506,10 +533,10 @@ export const make = Effect.fn('Talks.make')(function* (config: TalksConfig) {
           onSome: found =>
             Effect.flatMap(Deferred.await(session), id =>
               found.call(input, {
+                talk,
                 project,
                 context,
-                // The work graph failing to open is a defect of the call, as the store failing is.
-                graph: Effect.orDie(projects.workGraph(project.id)),
+                graph,
                 actor: Actor.cases.talk.make({ session: id }),
                 confirmed,
                 openTalk: other =>
@@ -518,11 +545,11 @@ export const make = Effect.fn('Talks.make')(function* (config: TalksConfig) {
                     context: other,
                     model: Option.none(),
                   }),
+                maintainerMessages: Ref.get(heard),
               }),
             ),
         },
       )
-    const scope = yield* Scope.fork(config.scope)
     const started = yield* Effect.exit(
       Effect.gen(function* () {
         const agent = yield* agents.start({
@@ -644,6 +671,13 @@ export const make = Effect.fn('Talks.make')(function* (config: TalksConfig) {
       yield* Effect.andThen(
         engineMessage(feed, first.value),
         deliver(open, first.value),
+      )
+    if (Option.isSome(arrivals))
+      yield* Effect.forkIn(
+        Stream.runForEach(arrivals.value, text =>
+          Effect.andThen(engineMessage(feed, text), deliver(open, text)),
+        ),
+        scope,
       )
     return open.opened
   })

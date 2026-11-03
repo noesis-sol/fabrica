@@ -110,6 +110,7 @@ const questionOf = (ticket: string, title: string, blocks: Array<string>) =>
     title,
     description: null,
     choices: null,
+    drafted: false,
     consequential: false,
     maintainerOnly: false,
     blocks,

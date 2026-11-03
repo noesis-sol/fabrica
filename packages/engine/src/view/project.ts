@@ -243,7 +243,15 @@ const bannersOf = (
             lifts: Option.none(),
           }),
         ]
-      : []),
+      : header.state === 'asking'
+        ? [
+            new Banner({
+              tone: 'warning',
+              text: 'Nothing is ready but questions: answering them takes the run on',
+              lifts: Option.none(),
+            }),
+          ]
+        : []),
   ...Option.match(mergesWait, {
     onNone: () => [],
     onSome: text => [

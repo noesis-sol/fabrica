@@ -321,6 +321,16 @@ export interface WorkGraphShape {
     readonly question: NewQuestion
     readonly actor: Actor
   }) => Changed<Ticket, EdgeCycle>
+  /**
+   * Gives a question filed without options the options a talk drafted, marked so with `draftedLabel`,
+   * and marks it consequential where they say it is (§15.2, §15.3); drafted ones can be drafted again.
+   * An answered question, or one filed with options, refuses.
+   */
+  readonly draftOptions: (options: {
+    readonly id: TicketId
+    readonly choices: QuestionChoices
+    readonly actor: Actor
+  }) => Changed<Ticket, NotAQuestion | TransitionRefused>
   /** Answers a question, closing it as answered. */
   readonly answer: (options: {
     readonly id: TicketId
