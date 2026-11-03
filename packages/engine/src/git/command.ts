@@ -151,7 +151,7 @@ export const makeCommands = ({
         error =>
           new CantTell({
             read: name,
-            reason: `git ${error.command}: ${error.reason}`,
+            reason: error.message,
           }),
       ),
     )

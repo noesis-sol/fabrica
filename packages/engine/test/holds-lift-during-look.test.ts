@@ -99,12 +99,21 @@ const runParked = (input: {
         Effect.provideService(EnvironmentProbe, { probe: () => probe }),
       ),
     )
-    while (true) {
-      const event = yield* PubSub.take(records)
-      if (event.kind === 'hold' && event.hold === 'ENVIRONMENT') break
-    }
+    // A run that ends without the hold is the test's failure, not its time limit.
+    yield* Effect.raceFirst(
+      Effect.gen(function* () {
+        while (true) {
+          const event = yield* PubSub.take(records)
+          if (event.kind === 'hold' && event.hold === 'ENVIRONMENT') return
+        }
+      }),
+      Fiber.await(running),
+    )
     // The probe's wait begins as the hold's tickets are put back: the clock moves on until it probes.
-    while (!(yield* Deferred.isDone(probing))) {
+    while (
+      !(yield* Deferred.isDone(probing)) &&
+      running.pollUnsafe() === undefined
+    ) {
       yield* TestClock.adjust(ENV_PROBE)
       yield* TestClock.withLive(Effect.sleep(Duration.millis(50)))
     }

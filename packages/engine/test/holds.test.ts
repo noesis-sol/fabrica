@@ -536,15 +536,22 @@ const runHeld = (
         }),
       ),
     )
-    yield* until(
-      records,
-      event => event.kind === 'hold' && event.hold === 'ENVIRONMENT',
+    // A run that ends without the hold is the test's failure, not its time limit.
+    yield* Effect.raceFirst(
+      until(
+        records,
+        event => event.kind === 'hold' && event.hold === 'ENVIRONMENT',
+      ),
+      Fiber.await(running),
     )
     // The probe's wait begins as the hold's tickets are put back: the clock moves on until it probed.
     const probed = yield* Effect.forkChild(
       until(records, event => event.kind === 'probed' || event.kind === 'stop'),
     )
-    while (probed.pollUnsafe() === undefined) {
+    while (
+      probed.pollUnsafe() === undefined &&
+      running.pollUnsafe() === undefined
+    ) {
       yield* TestClock.adjust(ENV_PROBE)
       yield* TestClock.withLive(Effect.sleep('50 millis'))
     }

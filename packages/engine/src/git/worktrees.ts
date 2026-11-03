@@ -1,4 +1,4 @@
-import { Array, Context, Data, Effect, Layer, Option } from 'effect'
+import { Array, Context, Data, Effect, Layer, Option, Semaphore } from 'effect'
 import { join, resolve } from 'node:path'
 
 import { type CommitHash, TicketId } from '@fabrica/contracts'
@@ -110,6 +110,18 @@ const onBranch = (
 
 export const make = Effect.fn('Worktrees.make')(function* () {
   const git = yield* Git
+  /**
+   * Each checkout's lock on adding a worktree: side by side, `git worktree add` can die reading the
+   * `commondir` another add has made but not yet written (git 2.54), and a run starts its tickets together.
+   */
+  const addLocks = new Map<string, Semaphore.Semaphore>()
+  const addLock = (repo: string): Semaphore.Semaphore => {
+    const kept = addLocks.get(repo)
+    if (kept !== undefined) return kept
+    const made = Semaphore.makeUnsafe(1)
+    addLocks.set(repo, made)
+    return made
+  }
 
   const prepare = Effect.fn('Worktrees.prepare')(function* ({
     home,
@@ -140,10 +152,12 @@ export const make = Effect.fn('Worktrees.make')(function* () {
     if (Option.isSome(listed)) yield* git.pruneWorktrees({ repo })
     const path = worktreePath({ home, ticket })
     if (Option.isSome(existing)) {
-      yield* git.addWorktreeOn({ repo, path, branch })
+      yield* addLock(repo).withPermit(git.addWorktreeOn({ repo, path, branch }))
       return yield* reuse(path)
     }
-    yield* git.addWorktree({ repo, path, branch, from: base })
+    yield* addLock(repo).withPermit(
+      git.addWorktree({ repo, path, branch, from: base }),
+    )
     return Prepared.Created({ worktree: { ticket, path, branch } })
   })
 
