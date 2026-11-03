@@ -8,6 +8,7 @@ import { ModelProxy, usageProvider, watchUsageWindows } from '../proxy'
 import { RunHosting, RunHostingShape } from '../run/hosting'
 import { describeProblem } from '../settings'
 import { notImplemented } from './not-implemented'
+import { projectRequirements } from './projects-requirements'
 
 // The Projects group's handlers (spec §8.1, §10) on the daemon's Projects service: adding a checkout
 // or a clone, the host's folders a client browses for one (from the home folder its `Host` gives where
@@ -23,7 +24,8 @@ export const projectsHandlers = ProjectRpcs.toLayer(
   Effect.gen(function* () {
     const projects = yield* Projects
     const host = yield* Host
-    const proxy = RunHostingShape.$match(yield* RunHosting, {
+    const hosting = yield* RunHosting
+    const proxy = RunHostingShape.$match(hosting, {
       Ready: ({ services }) => Option.some(Context.get(services, ModelProxy)),
       Refused: () => Option.none(),
     })
@@ -56,6 +58,7 @@ export const projectsHandlers = ProjectRpcs.toLayer(
           ),
         ),
       'projects.init': notImplemented('projects.init'),
+      'projects.requirements': projectRequirements(projects, hosting),
       'projects.watchStatus': ({ resume }) => projects.watchStatus(resume),
       'projects.watchUsage': ({ project }) =>
         projects.settings(project).pipe(

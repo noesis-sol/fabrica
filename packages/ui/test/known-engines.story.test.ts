@@ -530,6 +530,7 @@ const engineAnswering = (answer: Effect.Effect<EngineHello, VersionMismatch>) =>
     'projects.settings.get': notServed,
     'projects.settings.set': notServed,
     'projects.init': notServed,
+    'projects.requirements': notServed,
     'projects.watchStatus': () => Stream.fromIterable(projectItems),
     'projects.watchUsage': () => Stream.never,
   })

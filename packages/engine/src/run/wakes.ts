@@ -25,6 +25,8 @@ export type WakeReason = Data.TaggedEnum<{
   HoldsChanged: { readonly holds: HoldsSnapshot }
   /** The run was asked to drain (no new tickets), or the drain was taken back (§13.10). */
   Drain: { readonly draining: boolean }
+  /** A check of a requires list a merge changed ended (§17): it may free the run to take tickets, or stop it. */
+  RequirementsChecked: {}
   /** Something stops the run: merging stopped, the work graph or git failed under it, a defect. */
   Stopped: {
     readonly kind: StopKind
@@ -45,6 +47,7 @@ export const readsReady = (reasons: ReadonlyArray<WakeReason>): boolean =>
       TicketsChanged: () => true,
       HoldsChanged: () => true,
       Drain: () => false,
+      RequirementsChecked: () => false,
       Stopped: () => false,
     }),
   )

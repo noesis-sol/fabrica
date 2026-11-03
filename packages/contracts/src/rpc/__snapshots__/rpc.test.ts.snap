@@ -3200,6 +3200,137 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
       ],
       "type": "object",
     },
+    "RequirementFoundEncoded": {
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "pattern": "\\S",
+          "type": "string",
+        },
+        "state": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "_tag": {
+                  "enum": [
+                    "met",
+                  ],
+                  "type": "string",
+                },
+              },
+              "required": [
+                "_tag",
+              ],
+              "type": "object",
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "_tag": {
+                  "enum": [
+                    "installed",
+                  ],
+                  "type": "string",
+                },
+                "command": {
+                  "pattern": "\\S",
+                  "type": "string",
+                },
+              },
+              "required": [
+                "_tag",
+                "command",
+              ],
+              "type": "object",
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "_tag": {
+                  "enum": [
+                    "missing",
+                  ],
+                  "type": "string",
+                },
+                "instruction": {
+                  "pattern": "\\S",
+                  "type": "string",
+                },
+              },
+              "required": [
+                "_tag",
+                "instruction",
+              ],
+              "type": "object",
+            },
+            {
+              "additionalProperties": true,
+              "properties": {
+                "_tag": {
+                  "enum": [
+                    "other_platform",
+                  ],
+                  "type": "string",
+                },
+                "platforms": {
+                  "items": {
+                    "enum": [
+                      "darwin",
+                      "linux",
+                      "win32",
+                    ],
+                    "type": "string",
+                  },
+                  "minItems": 1,
+                  "prefixItems": [
+                    {
+                      "enum": [
+                        "darwin",
+                        "linux",
+                        "win32",
+                      ],
+                      "type": "string",
+                    },
+                  ],
+                  "type": "array",
+                },
+              },
+              "required": [
+                "_tag",
+                "platforms",
+              ],
+              "type": "object",
+            },
+          ],
+        },
+      },
+      "required": [
+        "name",
+        "state",
+      ],
+      "type": "object",
+    },
+    "RequirementsNotCheckedEncoded": {
+      "additionalProperties": true,
+      "properties": {
+        "_tag": {
+          "enum": [
+            "RequirementsNotChecked",
+          ],
+          "type": "string",
+        },
+        "reason": {
+          "pattern": "\\S",
+          "type": "string",
+        },
+      },
+      "required": [
+        "_tag",
+        "reason",
+      ],
+      "type": "object",
+    },
     "RevisedEncoded": {
       "additionalProperties": true,
       "properties": {
@@ -8716,6 +8847,40 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         "$ref": "#/$defs/InitializedEncoded",
       },
       "tag": "projects.init",
+    },
+    {
+      "error": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ProjectNotFoundEncoded",
+          },
+          {
+            "$ref": "#/$defs/RequirementsNotCheckedEncoded",
+          },
+        ],
+      },
+      "group": "projects",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "project": {
+            "pattern": "^\\S+$",
+            "type": "string",
+          },
+        },
+        "required": [
+          "project",
+        ],
+        "type": "object",
+      },
+      "stream": false,
+      "success": {
+        "items": {
+          "$ref": "#/$defs/RequirementFoundEncoded",
+        },
+        "type": "array",
+      },
+      "tag": "projects.requirements",
     },
     {
       "error": {

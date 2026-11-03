@@ -545,13 +545,13 @@ export const make = Effect.gen(function* () {
     return yield* StartChecked.$match(checked, {
       Ready: () => Effect.succeed(started.run),
       // The refused run's end is written and it is gone before its start answers.
-      Problems: ({ problems }) => {
+      Problems: ({ kind, problems }) => {
         const [first, ...rest] = problems
         return Effect.andThen(
           Deferred.await(started.done),
           Effect.fail(
             new RunRefused({
-              end: 'SETUP',
+              end: kind,
               problems:
                 first === undefined
                   ? ["the run's start checks failed"]

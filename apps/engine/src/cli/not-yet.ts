@@ -24,9 +24,6 @@ export type StubFlags = Readonly<Record<string, Flag.Flag<unknown>>>
 const stubFlag = <A>(flag: Flag.Flag<A>) =>
   flag.pipe(Flag.withHidden, Flag.optional)
 
-/** A flag that takes no value: `--tickets`. */
-export const switchFlag = (name: string) => stubFlag(Flag.Boolean(name))
-
 /** A flag that takes a value: `--ticket <id>`, `--ticket=<id>`. */
 export const valueFlag = (name: string) => stubFlag(Flag.String(name))
 

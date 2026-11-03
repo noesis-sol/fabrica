@@ -182,6 +182,7 @@ const engineServing = ({
       ),
     'projects.settings.set': notServed,
     'projects.init': notServed,
+    'projects.requirements': notServed,
     'projects.watchStatus': () =>
       Stream.concat(Stream.make(rows), Stream.never),
     'projects.watchUsage': ({ project }) =>

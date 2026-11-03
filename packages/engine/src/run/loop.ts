@@ -129,6 +129,11 @@ import {
 } from './holds'
 import { record, recordBaseNote } from './records'
 import {
+  RequirementsGate,
+  makeRequirementsWatch,
+  missingLine,
+} from './requirements-step'
+import {
   SetupRetry,
   makeProjectSetup,
   setupRetries,
@@ -332,29 +337,34 @@ const runViewed = Effect.fn('Run.viewed')(function* (
   const run = log.run
   const control = given ?? (yield* makeRunControl)
   const checked = yield* view.steps.during('start_checks')(
-    runStartChecks({ config, run, log }),
+    runStartChecks({ config, run, log, steps: view.steps }),
   )
   yield* Deferred.succeed(control.checked, checked)
   if (StartChecked.$is('Problems')(checked)) {
-    // Every problem together, then the stop: exit 2 (§13.1).
-    yield* Effect.forEach(
-      checked.problems,
-      problem =>
-        record(log, {
-          kind: 'warn',
-          text: warningLine({ tag: 'SETUP', about: 'run', text: problem }),
-        }),
-      { discard: true },
-    )
-    const count = checked.problems.length
+    // Every problem together, then the stop: exit 2 (§13.1). Requirements are one list, in the stop (§17).
+    const { kind, problems } = checked
+    if (kind === 'SETUP')
+      yield* Effect.forEach(
+        problems,
+        problem =>
+          record(log, {
+            kind: 'warn',
+            text: warningLine({ tag: 'SETUP', about: 'run', text: problem }),
+          }),
+        { discard: true },
+      )
+    const count = problems.length
     yield* record(log, {
       kind: 'stop',
-      detail: 'SETUP',
-      text: `SETUP: the run didn't start: ${count === 1 ? 'a problem' : `${count} problems`}`,
+      detail: kind,
+      text:
+        kind === 'SETUP'
+          ? `SETUP: the run didn't start: ${count === 1 ? 'a problem' : `${count} problems`}`
+          : `REQUIREMENTS_MISSING: ${missingLine(problems)}`,
     })
-    const code = exitCodeOf('SETUP')
+    const code = exitCodeOf(kind)
     yield* record(log, { kind: 'end', code })
-    return { kind: 'SETUP', code } satisfies RunEnd
+    return { kind, code } satisfies RunEnd
   }
   // The exit is read once the scope closed: the workers and the merge queue are gone before the end's records.
   const exit = yield* Effect.scoped(
@@ -759,6 +769,23 @@ const runStarted = Effect.fn('Run.started')(function* (
       Effect.catchCause(onPanic(detail => stop('PANIC', `${what}: ${detail}`))),
       Effect.forkScoped,
     )
+
+  const runScope = yield* Effect.scope
+  // A merge that changes the requires list on Base has it checked before the next ticket starts (§17).
+  const requirements = yield* makeRequirementsWatch({
+    list: started.requirements,
+    base: started.base,
+    run: {
+      checkout: config.checkout,
+      installLimit: project.check_timeout,
+      log,
+      steps: view.steps,
+      saidAs: 'requirements',
+    },
+    wake: wakes.wake(WakeReason.RequirementsChecked()),
+    fork: check =>
+      watched('the requirements check')(check).pipe(Scope.provide(runScope)),
+  })
 
   /**
    * A change of the work graph the run made failed: the run stops, `TRACKER_FAILED`. One refused, its
@@ -1477,6 +1504,8 @@ const runStarted = Effect.fn('Run.started')(function* (
         Merged: ({ commit, unchecked }) =>
           ended(
             Effect.gen(function* () {
+              // Before the ticket leaves its slot: no look ends the run, or starts one, on the old list.
+              yield* requirements.merged
               yield* sessions.drop(ticket)
               yield* state.move({
                 ticket,
@@ -1697,6 +1726,7 @@ const runStarted = Effect.fn('Run.started')(function* (
             actor,
             why: `Merged by hand into ${started.base}.`,
           }).pipe(Effect.catch(error => stop('TRACKER_FAILED', error.message)))
+          yield* requirements.merged
           const title = titleOf(snapshot, entry.ticket)
           yield* state.move({
             ticket: entry.ticket,
@@ -1908,12 +1938,14 @@ const runStarted = Effect.fn('Run.started')(function* (
       const held = yield* holds.current
       const draining = yield* control.draining
       const may = mayTake({ holds: held, draining })
+      const gate = yield* requirements.gate
       const gated = yield* footprints.gate({
         ready: candidates,
         snapshot: before,
-        free: MayTake.$is('Yes')(may)
-          ? project.concurrent - slotsTaken(before, project.concurrent)
-          : 0,
+        free:
+          MayTake.$is('Yes')(may) && RequirementsGate.$is('Clear')(gate)
+            ? project.concurrent - slotsTaken(before, project.concurrent)
+            : 0,
       })
       yield* keepHeld(candidates, gated)
       const solo = new Set([
@@ -1943,6 +1975,22 @@ const runStarted = Effect.fn('Run.started')(function* (
       ready = ready.filter(ticket => !dispatched.has(ticket.id))
       const after = yield* state.current
       if (inProgress(after).length > 0) return Option.none<Ending>()
+      // Nothing running: what a merge's list found missing stops the run; a check under way, or one that
+      // ended during this look, wakes it again (§17).
+      const gateNow = yield* requirements.gate
+      if (RequirementsGate.$is('Missing')(gateNow))
+        return Option.some(
+          Ending.Stop({
+            kind: 'REQUIREMENTS_MISSING',
+            ticket: Option.none(),
+            detail: gateNow.detail,
+          }),
+        )
+      if (
+        !RequirementsGate.$is('Clear')(gate) ||
+        !RequirementsGate.$is('Clear')(gateNow)
+      )
+        return Option.none<Ending>()
       // A hold that can lift keeps the run, unless it drains: the tickets it holds back are to come.
       // Read after the state: a ticket's turn counts toward a hold before it leaves its slot.
       if (keepsRun({ holds: yield* holds.current, heard }) && !draining)

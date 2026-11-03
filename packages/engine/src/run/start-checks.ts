@@ -1,23 +1,41 @@
 import { Cause, Data, Duration, Effect, Option, Result } from 'effect'
 
-import type { CommitHash, ModelChoice, RunId } from '@fabrica/contracts'
+import type {
+  CommitHash,
+  ModelChoice,
+  Requirement,
+  RunId,
+} from '@fabrica/contracts'
 
 import { Git, GitVersion } from '../git'
 import { refusedWhy } from '../holds'
 import { BaseSynced, syncBase, syncedNote } from '../projects/base-sync'
 import { ModelProxy, ProbeOutcome, Refusal } from '../proxy'
+import {
+  RequirementsList,
+  foundWords,
+  missingItems,
+  requirementsAt,
+} from '../requirements'
 import type { RunLog } from '../runlog'
 import {
   type ResolvedSettings,
+  SettingSource,
   describeProblem,
+  describeSource,
   loadSettings,
+  sourceOf,
 } from '../settings'
+import type { Steps } from '../view/steps'
 import type { RunConfig } from './config'
 import { record, recordBaseNote } from './records'
+import { type RequirementsInput, checkInRun } from './requirements-step'
 
 // The run's start checks (spec §13.1, H80): git 2.38 or later, the project's checkout clean and on a
-// branch (Base then fetched and fast-forwarded from its upstream, §10.3), the settings valid, and each model's credential tried with the proxy's probe (H60), a subscription's token refreshed first where it expires within the hour (H69). Every
-// problem is listed together, and the run ends `SETUP`, exit 2. Each check's end is streamed as an
+// branch (Base then fetched and fast-forwarded from its upstream, §10.3), the settings valid, Base's
+// requirements met (§17), and each model's credential tried with the proxy's probe (H60), a subscription's token refreshed first where it expires within the hour (H69). Every
+// problem is listed together, and the run ends `SETUP`, exit 2; `REQUIREMENTS_MISSING`, exit 2, where
+// missing requirements are all it found. Each check's end is streamed as an
 // `info` record as it comes, so a client shows what the start is doing; a defect inside a check is a
 // problem line of its own (`Internal error in <check>: …`), never an end with nothing said (tutti-kq5).
 
@@ -28,12 +46,17 @@ export interface Started {
   /** Base's commit as the run started. */
   readonly baseCommit: CommitHash
   readonly settings: ResolvedSettings
+  /** The requires list on Base's commit as the run started, found met (§17). */
+  readonly requirements: ReadonlyArray<Requirement>
 }
 
 export type StartChecked = Data.TaggedEnum<{
   Ready: { readonly started: Started }
-  /** Every problem the checks found, in the checks' order. */
-  Problems: { readonly problems: ReadonlyArray<string> }
+  /** Every problem the checks found, in the checks' order, and the kind of stop they come to. */
+  Problems: {
+    readonly kind: 'SETUP' | 'REQUIREMENTS_MISSING'
+    readonly problems: ReadonlyArray<string>
+  }
 }>
 export const StartChecked = Data.taggedEnum<StartChecked>()
 
@@ -149,6 +172,43 @@ const settingsCheck = (config: RunConfig) =>
     ),
   )
 
+/** Base's requires list on `commit` checked: the list, and what is still missing of it (§17). */
+const requirementsCheck = (
+  settings: ResolvedSettings,
+  commit: CommitHash,
+  input: RequirementsInput,
+) =>
+  Effect.gen(function* () {
+    type Checked = {
+      readonly list: ReadonlyArray<Requirement>
+      readonly missing: ReadonlyArray<string>
+    }
+    // Only Base's list's commands run: a flag or a variable naming others is refused.
+    const given = Option.filter(
+      sourceOf(settings, 'requires'),
+      source =>
+        SettingSource.$is('Flag')(source) ||
+        SettingSource.$is('Environment')(source),
+    )
+    if (Option.isSome(given))
+      return problems<Checked>(
+        `requires is read from the settings on Base alone: ${describeSource(given.value)} gives it`,
+      )
+    const read = yield* requirementsAt({
+      repo: input.checkout,
+      revision: commit,
+    })
+    if (RequirementsList.$is('Unreadable')(read))
+      return problems<Checked>(read.reason)
+    const { list } = read
+    const checked = yield* checkInRun(list, input)
+    const missing = missingItems(checked)
+    return found<Checked>(
+      { list, missing },
+      list.length === 0 ? 'none listed' : foundWords(checked),
+    )
+  })
+
 /** A model as the settings write it: `anthropic/claude-opus-5-5`. */
 export const modelName = (choice: ModelChoice): string =>
   `${choice.provider}/${choice.model}`
@@ -258,11 +318,16 @@ const syncedCheckout = Effect.fnUntraced(function* (
     : Result.succeed(found)
 })
 
+/** Where a start isn't shown in a run view. */
+const noSteps: Pick<Steps, 'during'> = { during: () => effect => effect }
+
 /** Runs the start checks, side by side where one doesn't need another's finding. */
 export const runStartChecks = Effect.fn('Run.startChecks')(function* (input: {
   readonly config: RunConfig
   readonly run: RunId
   readonly log: RunLog['Service']
+  /** The run view's steps, which show an install under way; none, it isn't shown. */
+  readonly steps?: Pick<Steps, 'during'>
 }) {
   const { config, run, log } = input
   const [git, checked] = yield* Effect.all(
@@ -282,32 +347,79 @@ export const runStartChecks = Effect.fn('Run.startChecks')(function* (input: {
     'the settings check',
     settingsCheck(config),
   )
-  const credentials = yield* guarded(
-    log,
-    'the credentials check',
-    Result.isSuccess(settings)
-      ? credentialsCheck(settings.success.value, run)
-      : Effect.succeed(
-          found(undefined, 'not checked: the settings have problems'),
-        ),
+  const [credentials, requirements] = yield* Effect.all(
+    [
+      guarded(
+        log,
+        'the credentials check',
+        Result.isSuccess(settings)
+          ? credentialsCheck(settings.success.value, run)
+          : Effect.succeed(
+              found(undefined, 'not checked: the settings have problems'),
+            ),
+      ),
+      // Its commands run in the checkout: only one clean and on Base, or a branch's scripts would run.
+      guarded(
+        log,
+        'the requirements check',
+        Result.isSuccess(git) &&
+          Result.isSuccess(checkout) &&
+          Result.isSuccess(settings)
+          ? requirementsCheck(
+              settings.success.value,
+              checkout.success.value.commit,
+              {
+                checkout: config.checkout,
+                installLimit: settings.success.value.project.check_timeout,
+                log,
+                steps: input.steps ?? noSteps,
+                saidAs: 'start: the requirements check',
+              },
+            )
+          : Effect.succeed(
+              found(
+                { list: [], missing: [] },
+                'not checked: the checkout or the settings have problems',
+              ),
+            ),
+      ),
+    ],
+    { concurrency: 'unbounded' },
   )
-  const all = [
+  const others = [
     Result.isFailure(git) ? git.failure : [],
     Result.isFailure(checkout) ? checkout.failure : [],
     Result.isFailure(settings) ? settings.failure : [],
+    Result.isFailure(requirements) ? requirements.failure : [],
     Result.isFailure(credentials) ? credentials.failure : [],
   ].flat()
+  const missing = Result.isSuccess(requirements)
+    ? requirements.success.value.missing
+    : []
+  if (others.length === 0 && missing.length > 0)
+    return StartChecked.Problems({
+      kind: 'REQUIREMENTS_MISSING',
+      problems: missing,
+    })
   if (
-    all.length > 0 ||
+    others.length > 0 ||
     Result.isFailure(checkout) ||
-    Result.isFailure(settings)
+    Result.isFailure(settings) ||
+    Result.isFailure(requirements)
   )
-    return StartChecked.Problems({ problems: all })
+    return StartChecked.Problems({
+      kind: 'SETUP',
+      problems: [
+        ...others,
+        ...missing.map(item => `a requirement is missing: ${item}`),
+      ],
+    })
   return StartChecked.Ready({
     started: {
       base: checkout.success.value.base,
       baseCommit: checkout.success.value.commit,
       settings: settings.success.value,
+      requirements: requirements.success.value.list,
     },
   })
 })

@@ -105,6 +105,7 @@ const engineServing = ({
     'projects.settings.get': notServed,
     'projects.settings.set': notServed,
     'projects.init': ask('projects.init'),
+    'projects.requirements': notServed,
     'projects.watchStatus': () => Stream.never,
     'projects.watchUsage': () => Stream.never,
     'run.start': notServed,

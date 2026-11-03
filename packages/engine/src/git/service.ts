@@ -120,6 +120,12 @@ export interface GitShape {
     readonly repo: string
     readonly revision: string
   }) => Effect.Effect<ReadonlyArray<string>, CantTell>
+  /** The text of the file at `path` (from the repository's root) as committed at `revision`; none where it has no such file. */
+  readonly fileAt: (input: {
+    readonly repo: string
+    readonly revision: string
+    readonly path: string
+  }) => Effect.Effect<Option.Option<string>, CantTell>
   /**
    * The files tracked at `revision` that git merges by union, their `merge` attribute `union`
    * (`merge=union` in `.gitattributes`), as paths from the repository's root (spec §13.4). The
@@ -661,6 +667,45 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
       },
       exit =>
         exit.code === 0 ? Option.some(nulList(exit.stdout)) : Option.none(),
+    )
+  })
+
+  const fileAt = Effect.fn('Git.fileAt')(function* ({
+    repo,
+    revision,
+    path,
+  }: {
+    readonly repo: string
+    readonly revision: string
+    readonly path: string
+  }) {
+    const listed = yield* readExit(
+      'fileAt',
+      {
+        cwd: repo,
+        args: [
+          'ls-tree',
+          '-z',
+          '--name-only',
+          '--full-tree',
+          '--end-of-options',
+          revision,
+          '--',
+          path,
+        ],
+      },
+      exit =>
+        exit.code === 0 ? Option.some(nulList(exit.stdout)) : Option.none(),
+    )
+    if (listed.length === 0) return Option.none<string>()
+    return yield* readExit(
+      'fileAt',
+      {
+        cwd: repo,
+        args: ['cat-file', 'blob', '--end-of-options', `${revision}:${path}`],
+      },
+      exit =>
+        exit.code === 0 ? Option.some(Option.some(exit.stdout)) : Option.none(),
     )
   })
 
@@ -1226,6 +1271,7 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     changedFiles,
     diff,
     trackedFiles,
+    fileAt,
     unionMerged,
     worktrees,
     rebase,

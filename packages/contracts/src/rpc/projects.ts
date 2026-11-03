@@ -3,7 +3,7 @@ import { Rpc, RpcGroup } from 'effect/rpc'
 
 import { ProviderName, Utilization } from '../events'
 import { ProjectId, RunId } from '../ids'
-import { ProjectSettings } from '../settings'
+import { Platform, ProjectSettings } from '../settings'
 import { Text } from '../ticket'
 import { Count, Moment, Ordinal, optional } from './common'
 import { ProjectNotFound } from './errors'
@@ -12,7 +12,7 @@ import { keyedPatch, resume, streamItem } from './stream'
 
 // The Projects group (spec §8.1, §10): adding a checkout on the engine's host or a clone of a URL,
 // the host's folders a client browses for that checkout, listing and removing projects, the user's
-// trust in each (§12.1), their settings, `init`, the stream of their status that the sidebar
+// trust in each (§12.1), their settings, `init`, their requirements' state (§17), the stream of their status that the sidebar
 // shows (§18.3), and the stream of a project's provider account's usage windows that the title bar
 // shows (§12.9, H90).
 
@@ -128,6 +128,33 @@ export class InitFailed extends Schema.TaggedError<InitFailed>()('InitFailed', {
   written: Schema.Array(Text),
 }) {}
 
+/** How a requirement of the project's list was found on the engine's host (§17). */
+export const RequirementState = Schema.TaggedUnion({
+  /** Its check passed. */
+  met: {},
+  /** Its check failed, this install ran, and the check passes now. */
+  installed: { command: Text },
+  /** Its check fails: what to do about it. */
+  missing: { instruction: Text },
+  /** It is limited to other platforms, and wasn't checked. */
+  other_platform: { platforms: Schema.NonEmptyArray(Platform) },
+})
+export type RequirementState = typeof RequirementState.Type
+
+/** A requirement and how it was found. */
+export class RequirementFound extends Schema.Class<RequirementFound>(
+  'RequirementFound',
+)({
+  name: Text,
+  state: RequirementState,
+}) {}
+
+/** Base's requires list couldn't be read, or the project's commands can't run on this engine. */
+export class RequirementsNotChecked extends Schema.TaggedError<RequirementsNotChecked>()(
+  'RequirementsNotChecked',
+  { reason: Text },
+) {}
+
 /** The settings given aren't valid: every problem, as the settings file's would be. */
 export class InvalidSettings extends Schema.TaggedError<InvalidSettings>()(
   'InvalidSettings',
@@ -193,6 +220,11 @@ export const ProjectRpcs = RpcGroup.make(
     payload: { project: ProjectId },
     success: Initialized,
     error: Schema.Union([ProjectNotFound, InitFailed]),
+  }),
+  Rpc.make('projects.requirements', {
+    payload: { project: ProjectId },
+    success: Schema.Array(RequirementFound),
+    error: Schema.Union([ProjectNotFound, RequirementsNotChecked]),
   }),
   Rpc.make('projects.watchStatus', {
     payload: { resume },

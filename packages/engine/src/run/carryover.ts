@@ -5,7 +5,6 @@ import {
   type Actor,
   CommitHash,
   type EngineId,
-  type Requirement,
   TicketId,
 } from '@fabrica/contracts'
 
@@ -19,6 +18,7 @@ import {
   worktreePath,
 } from '../git'
 import { workerRulesPath } from '../projects/layout'
+import { requirementWords } from '../requirements'
 import { type RunLog, warningLine } from '../runlog'
 import { WorkGraph } from '../workgraph'
 import { record } from './records'
@@ -97,19 +97,6 @@ const location = (checkout: string) => ({
   path: runStatePath,
 })
 
-/** A requires list's entry in words: its check and what meets it, so a change to either shows. */
-const entryWords = (requirement: Requirement): string =>
-  [
-    requirement.check,
-    requirement.meets._tag === 'Install'
-      ? `install: ${requirement.meets.command}`
-      : `manual: ${requirement.meets.instruction}`,
-    ...Option.match(requirement.platforms, {
-      onNone: () => [],
-      onSome: platforms => [`on ${platforms.join(', ')}`],
-    }),
-  ].join('; ')
-
 const digest = (text: string) =>
   createHash('sha256').update(text).digest('hex').slice(0, 16)
 
@@ -131,7 +118,7 @@ export const beganNow = Effect.fn('CarryOver.beganNow')(function* (input: {
     projectRules: rules,
     requirements: project.requires.map(requirement => ({
       name: requirement.name,
-      entry: entryWords(requirement),
+      entry: requirementWords(requirement),
     })),
   } satisfies Began
 })

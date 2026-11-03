@@ -436,6 +436,7 @@ const handlers = served.toLayer({
   'projects.settings.get': notServed,
   'projects.settings.set': notServed,
   'projects.init': notServed,
+  'projects.requirements': notServed,
   'projects.watchStatus': () => Stream.fromIterable(projectItems),
   'projects.watchUsage': () => Stream.never,
 })

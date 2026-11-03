@@ -483,6 +483,27 @@ const samples: Record<string, Samples> = {
     success: [{ written: ['.fabrica/settings.json', '.fabrica/rules.md'] }],
     error: [notFound, { _tag: 'InitFailed', reason: 'disk full', written: [] }],
   },
+  'projects.requirements': {
+    payload: [{ project }],
+    success: [
+      [
+        { name: 'jq', state: { _tag: 'met' } },
+        { name: 'node', state: { _tag: 'installed', command: 'mise install' } },
+        {
+          name: 'docker',
+          state: { _tag: 'missing', instruction: 'start Docker Desktop' },
+        },
+        {
+          name: 'xvfb',
+          state: { _tag: 'other_platform', platforms: ['linux'] },
+        },
+      ],
+    ],
+    error: [
+      notFound,
+      { _tag: 'RequirementsNotChecked', reason: "settings.json isn't JSON" },
+    ],
+  },
   'projects.watchStatus': {
     payload: [{}],
     success: [
