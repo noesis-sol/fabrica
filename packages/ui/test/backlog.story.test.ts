@@ -249,7 +249,7 @@ const inputs = (
 ): Backlog.RowInputs => ({
   tickets,
   facts: loaded,
-  runView: Option.none(),
+  runTickets: [],
   today: Option.some(today),
 })
 
@@ -328,7 +328,7 @@ describe('the list', () => {
     ])
     expect(
       said(
-        Backlog.rowsOf('finished', { ...inputs(), runView: Option.some(run) }),
+        Backlog.rowsOf('finished', { ...inputs(), runTickets: run.tickets }),
       ),
     ).toEqual([
       ['fa-6', 'finished', 'merged'],

@@ -1,6 +1,6 @@
 import { Option } from 'effect'
 import { Command, Update } from 'foldkit'
-import type { Html, HtmlBuilder } from 'foldkit/html'
+import { type Html, type HtmlBuilder, createLazy } from 'foldkit/html'
 import { modifyFields } from 'foldkit/struct'
 
 import * as Review from '../../../screens/review'
@@ -56,11 +56,21 @@ export const update = (model: Model): Handlers<keyof typeof messages> => ({
   }),
 })
 
-export const view = (model: Model, h: HtmlBuilder<Message>): Html =>
+const lazyReview = createLazy()
+
+const reviewPart = (
+  review: Review.Model,
+  today: Model['today'],
+  h: HtmlBuilder<Message>,
+): Html =>
   h.submodel({
     slotId: 'review',
     view: Review.view,
-    model: model.screens.review,
-    viewInputs: { today: model.today },
+    model: review,
+    viewInputs: { today },
     toParentMessage: message => Message.GotReviewMessage({ message }),
   })
+
+/** The Review screen, memoised on its own Model and the day (§18.5). */
+export const view = (model: Model, h: HtmlBuilder<Message>): Html =>
+  lazyReview(reviewPart, [model.screens.review, model.today, h])

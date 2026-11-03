@@ -19,7 +19,7 @@ import type { ProjectRunView } from '../../streams'
 import { attentionPart } from '../attention/attention'
 import { historyView } from '../history/history'
 import { openWorker } from '../screen/screen'
-import { lazyStatsPart } from '../stats/stats'
+import { lazyStatsPart, lazyStatsRunPart } from '../stats/stats'
 import { talkPanelPart } from '../talks/talks'
 
 // The console (spec §18.3, Appendix A.1): the stats row, the run talk beside History in a row 156px
@@ -28,6 +28,7 @@ import { talkPanelPart } from '../talks/talks'
 // redraw it (§18.5).
 
 const lazyStats = createLazy()
+const lazyStatsRun = createLazy()
 const lazyTalkPanel = createLazy()
 const lazyHistory = createLazy()
 const lazyInProgress = createLazy()
@@ -196,16 +197,34 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Html => {
       h.section(
         [h.AriaLabel('Ticket stats')],
         [
-          lazyStats(lazyStatsPart, [
-            parts.stats,
-            model.scope,
-            isLive(model.connection),
-            model.runView,
-            model.runViews,
-            model.now,
-            model.attention,
-            h,
-          ]),
+          Option.match(model.runView, {
+            onNone: () =>
+              lazyStats(lazyStatsPart, [
+                parts.stats,
+                model.scope,
+                isLive(model.connection),
+                model.runViews,
+                model.now,
+                model.attention,
+                h,
+              ]),
+            onSome: view =>
+              lazyStatsRun(lazyStatsRunPart, [
+                parts.stats,
+                model.scope,
+                isLive(model.connection),
+                view.header,
+                view.totals,
+                view.tickets,
+                view.holds,
+                view.banners,
+                view.steps,
+                model.runViews,
+                model.now,
+                model.attention,
+                h,
+              ]),
+          }),
         ],
       ),
       h.div(

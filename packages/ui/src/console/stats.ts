@@ -188,6 +188,15 @@ export const OutMessage = defineMessageUnion({
 })
 export type OutMessage = typeof OutMessage.Type
 
+/**
+ * The parts of a run's view the row draws, so a change to another (a worker, the queue, the load) leaves
+ * it as it is (§18.5).
+ */
+export type StatsRun = Pick<
+  RunView,
+  'header' | 'totals' | 'tickets' | 'holds' | 'banners' | 'steps'
+>
+
 /** What the controls are given: the scope, the connection and the scoped project's run. */
 export interface ControlInputs {
   /** The project the sidebar chose: its run's controls are the row's. */
@@ -195,7 +204,7 @@ export interface ControlInputs {
   /** Whether the engine's client is held, so requests can be sent. */
   readonly live: boolean
   /** The scoped project's run view, while it has a run. */
-  readonly run: Option.Option<RunView>
+  readonly run: Option.Option<StatsRun>
 }
 
 /** The project the controls act on: the scoped one, while the engine's client is held. */
@@ -727,7 +736,7 @@ export interface Waiting {
 }
 
 /** The run's waiting tickets, in the view's order, each with why. */
-export const waitingOf = (run: RunView): ReadonlyArray<Waiting> =>
+export const waitingOf = (run: StatsRun): ReadonlyArray<Waiting> =>
   Array.getSomes(
     run.tickets.map(row =>
       Option.map(waitingWords(row.phase), why => ({ ticket: row.ticket, why })),
@@ -749,8 +758,8 @@ export interface Figures {
 }
 
 /** The figures of `runs`, each summed over them. */
-export const figuresOf = (runs: ReadonlyArray<RunView>): Figures => {
-  const sum = (of: (run: RunView) => number): number =>
+export const figuresOf = (runs: ReadonlyArray<StatsRun>): Figures => {
+  const sum = (of: (run: StatsRun) => number): number =>
     Number.sumAll(runs.map(of))
   return {
     live: sum(run => run.totals.live),
@@ -858,7 +867,7 @@ export const questionsLeft = (
 /** What the frame gives the row: what its controls are given, every project's runs, and the time. */
 export interface ViewInputs extends ControlInputs {
   /** Under All projects, every project's run going, whose figures the row sums; none in a project's scope. */
-  readonly runs: ReadonlyArray<RunView>
+  readonly runs: ReadonlyArray<StatsRun>
   /** The time now, in the viewer's zone. */
   readonly now: Option.Option<DateTime.Zoned>
   /** The scope's open attention requests, whose questions the pre-flight waits on. */
@@ -1436,7 +1445,7 @@ const controls = (
 /** The runs the row's figures are of: the scoped project's, or under All projects every one going; none without. */
 const scopeRuns = (
   inputs: ViewInputs,
-): Option.Option<Array.NonEmptyReadonlyArray<RunView>> =>
+): Option.Option<Array.NonEmptyReadonlyArray<StatsRun>> =>
   Option.isSome(inputs.project)
     ? Option.map(inputs.run, run => Array.of(run))
     : Array.isReadonlyArrayNonEmpty(inputs.runs)

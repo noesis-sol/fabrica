@@ -9,7 +9,12 @@ import {
 } from 'effect'
 import { Command, Mount, Update } from 'foldkit'
 import * as AsyncData from 'foldkit/asyncData'
-import { type Html, type HtmlBuilder, childAttributes } from 'foldkit/html'
+import {
+  type Html,
+  type HtmlBuilder,
+  childAttributes,
+  createLazy,
+} from 'foldkit/html'
 import { defineMessageUnion } from 'foldkit/message'
 import { defineTaggedUnion } from 'foldkit/schema'
 import { modifyFields } from 'foldkit/struct'
@@ -1141,7 +1146,7 @@ const figuresView = (
 }
 
 const saidView = (
-  model: Model,
+  openThinking: Model['openThinking'],
   block: Extract<Block, { readonly _tag: 'said' }>,
   h: HtmlBuilder<Message>,
 ): ReadonlyArray<Html> => [
@@ -1159,7 +1164,7 @@ const saidView = (
         ? h.empty
         : h.details(
             [
-              h.Open(model.openThinking.includes(block.id)),
+              h.Open(openThinking.includes(block.id)),
               h.OnToggle(open =>
                 Message.ToggledThinking({ message: block.id, open }),
               ),
@@ -1252,7 +1257,11 @@ const toolView = (
   ),
 ]
 
-const blockView = (model: Model, block: Block, h: HtmlBuilder<Message>): Html =>
+const blockView = (
+  openThinking: Model['openThinking'],
+  block: Block,
+  h: HtmlBuilder<Message>,
+): Html =>
   h.div(
     [
       h.DataAttribute('block', block._tag),
@@ -1262,7 +1271,9 @@ const blockView = (model: Model, block: Block, h: HtmlBuilder<Message>): Html =>
         padding: '4px 12px',
       }),
     ],
-    block._tag === 'said' ? saidView(model, block, h) : toolView(block, h),
+    block._tag === 'said'
+      ? saidView(openThinking, block, h)
+      : toolView(block, h),
   )
 
 /**
@@ -1280,7 +1291,15 @@ export const estimatedHeightPx = (block: Block): number =>
       }) +
       (block.output === '' ? 0 : outputHeightPx)
 
-const transcriptView = (model: Model, h: HtmlBuilder<Message>): Html =>
+const transcriptPart = (
+  blocks: Transcript['blocks'],
+  ended: Transcript['ended'],
+  failure: Transcript['failure'],
+  viewProblem: Model['viewProblem'],
+  list: Model['list'],
+  openThinking: Model['openThinking'],
+  h: HtmlBuilder<Message>,
+): Html =>
   h.div(
     [
       h.Role('log'),
@@ -1289,16 +1308,16 @@ const transcriptView = (model: Model, h: HtmlBuilder<Message>): Html =>
       h.Style({ fontSize: '12.5px', lineHeight: '1.35' }),
     ],
     [
-      model.transcript.blocks.length === 0
+      blocks.length === 0
         ? h.div([h.Style({ padding: '8px 12px' })], [note('Nothing yet.', h)])
         : h.submodel({
             slotId: 'transcript-list',
-            model: model.list,
+            model: list,
             view: VirtualList.view<Block>(),
             viewInputs: {
-              items: model.transcript.blocks,
+              items: blocks,
               itemToKey: blockKey,
-              itemToView: block => blockView(model, block, h),
+              itemToView: block => blockView(openThinking, block, h),
               dynamicRowHeights: true,
               itemToEstimatedRowHeightPx: estimatedHeightPx,
               contentAlignment: 'End',
@@ -1308,21 +1327,17 @@ const transcriptView = (model: Model, h: HtmlBuilder<Message>): Html =>
             },
             toParentMessage: message => Message.GotListMessage({ message }),
           }),
-      model.transcript.ended ||
-      Option.isSome(model.transcript.failure) ||
-      Option.isSome(model.viewProblem)
+      ended || Option.isSome(failure) || Option.isSome(viewProblem)
         ? h.div(
             [h.Class('flex flex-col gap-4'), h.Style({ padding: '4px 12px' })],
             [
-              model.transcript.ended
-                ? note('The worker has finished.', h)
-                : h.empty,
-              Option.match(model.transcript.failure, {
+              ended ? note('The worker has finished.', h) : h.empty,
+              Option.match(failure, {
                 onNone: () => h.empty,
                 onSome: reason =>
                   problem(`The transcript couldn't be read: ${reason}`, h),
               }),
-              Option.match(model.viewProblem, {
+              Option.match(viewProblem, {
                 onNone: () => h.empty,
                 onSome: reason => problem(`Couldn't draw it: ${reason}`, h),
               }),
@@ -1331,6 +1346,23 @@ const transcriptView = (model: Model, h: HtmlBuilder<Message>): Html =>
         : h.empty,
     ],
   )
+
+const lazyTranscript = createLazy()
+
+/**
+ * The transcript, memoised on its blocks, its end, its list and the thinking opened (§18.5): a tick or
+ * a run-view frame redraws the figures, not every block's links.
+ */
+const transcriptView = (model: Model, h: HtmlBuilder<Message>): Html =>
+  lazyTranscript(transcriptPart, [
+    model.transcript.blocks,
+    model.transcript.ended,
+    model.transcript.failure,
+    model.viewProblem,
+    model.list,
+    model.openThinking,
+    h,
+  ])
 
 const composerView = (
   model: Model,

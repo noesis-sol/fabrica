@@ -1,10 +1,10 @@
 import { Option, Schema, Stream } from 'effect'
 import { Command, Subscription, Update } from 'foldkit'
-import type { Html, HtmlBuilder } from 'foldkit/html'
+import { type Html, type HtmlBuilder, createLazy } from 'foldkit/html'
 import { modifyFields } from 'foldkit/struct'
 
 import type { EngineClientShape } from '@fabrica/client'
-import type { BacklogPatch, Ticket } from '@fabrica/contracts'
+import type { BacklogPatch, Ticket, TicketRow } from '@fabrica/contracts'
 
 import * as Backlog from '../../../screens/backlog'
 import { EngineProject } from '../../engine-project'
@@ -74,19 +74,43 @@ export const update = (model: Model): Handlers<keyof typeof messages> => ({
   },
 })
 
-export const view = (model: Model, h: HtmlBuilder<Message>): Html =>
+const lazyBacklog = createLazy()
+
+/** The ticket rows of no run, the same value while none is shown. */
+const noRunTickets: ReadonlyArray<TicketRow> = []
+
+const backlogPart = (
+  backlog: Backlog.Model,
+  project: Model['scope'],
+  tickets: Model['backlog'],
+  runTickets: ReadonlyArray<TicketRow>,
+  today: Model['today'],
+  h: HtmlBuilder<Message>,
+): Html =>
   h.submodel({
     slotId: 'backlog',
     view: Backlog.view,
-    model: model.screens.backlog,
-    viewInputs: {
-      project: model.scope,
-      tickets: model.backlog,
-      runView: model.runView,
-      today: model.today,
-    },
+    model: backlog,
+    viewInputs: { project, tickets, runTickets, today },
     toParentMessage: message => Message.GotBacklogMessage({ message }),
   })
+
+/**
+ * The Backlog screen, memoised on its slices (§18.5): of the scoped run's view it is given only the
+ * ticket rows, whose finished ones it lists, so a worker's frame or a tick leaves it as it is.
+ */
+export const view = (model: Model, h: HtmlBuilder<Message>): Html =>
+  lazyBacklog(backlogPart, [
+    model.screens.backlog,
+    model.scope,
+    model.backlog,
+    Option.match(model.runView, {
+      onNone: () => noRunTickets,
+      onSome: run => run.tickets,
+    }),
+    model.today,
+    h,
+  ])
 
 /** The project's tickets. */
 export const backlogMessages = (

@@ -20,7 +20,6 @@ import { defineView } from 'foldkit/submodel'
 import {
   Edge,
   NotReadyReason,
-  type RunView,
   type Ticket,
   TicketId,
   type TicketRow,
@@ -380,7 +379,8 @@ export interface BacklogRow {
 export interface RowInputs {
   readonly tickets: ReadonlyArray<Ticket>
   readonly facts: Option.Option<Facts>
-  readonly runView: Option.Option<RunView>
+  /** The scoped run's ticket rows, the only part of its view the screen draws; none without a run. */
+  readonly runTickets: ReadonlyArray<TicketRow>
   readonly today: Option.Option<DateTime.Zoned>
 }
 
@@ -478,7 +478,7 @@ const finishedRow = (row: TicketRow): Option.Option<BacklogRow> =>
 /** The rows of `section`. */
 export const rowsOf = (
   section: Section,
-  { tickets, facts, runView, today }: RowInputs,
+  { tickets, facts, runTickets, today }: RowInputs,
 ): ReadonlyArray<BacklogRow> => {
   const readiness = readinessOf(facts)
   const edges = Option.match(facts, {
@@ -549,10 +549,7 @@ export const rowsOf = (
         .filter(ticket => ticket.status === 'deferred')
         .map(ticket => rowOf(ticket, mark(ticket), deferNote(ticket, today)))
     case 'finished':
-      return Option.match(runView, {
-        onNone: () => [],
-        onSome: view => Array.getSomes(view.tickets.map(finishedRow)),
-      })
+      return Array.getSomes(runTickets.map(finishedRow))
     case 'closed':
       return Array.sort(
         tickets.filter(ticket => ticket.status === 'closed'),
@@ -567,7 +564,8 @@ export interface ViewInputs {
   readonly project: Option.Option<EngineProject>
   /** Its tickets, none before the stream's first snapshot. */
   readonly tickets: Option.Option<ReadonlyArray<Ticket>>
-  readonly runView: Option.Option<RunView>
+  /** The scoped run's ticket rows, whose finished ones it lists; none without a run. */
+  readonly runTickets: ReadonlyArray<TicketRow>
   readonly today: Option.Option<DateTime.Zoned>
 }
 
@@ -876,7 +874,7 @@ const backlogView = (
   const rowInputs: RowInputs = {
     tickets,
     facts,
-    runView: inputs.runView,
+    runTickets: inputs.runTickets,
     today: inputs.today,
   }
   const rows = rowsOf(model.section, rowInputs)

@@ -1,6 +1,6 @@
 import { Option } from 'effect'
 import { Command, type Update } from 'foldkit'
-import type { Html, HtmlBuilder } from 'foldkit/html'
+import { type Html, type HtmlBuilder, createLazy } from 'foldkit/html'
 import { modifyFields } from 'foldkit/struct'
 
 import * as Engines from '../../../screens/engines'
@@ -85,16 +85,31 @@ export const update = (model: Model): Handlers<keyof typeof messages> => ({
   },
 })
 
-export const view = (model: Model, h: HtmlBuilder<Message>): Html =>
+const lazyEngines = createLazy()
+
+const enginesPart = (
+  engines: Engines.Model,
+  connection: Model['connection'],
+  sidebarEngines: Engines.ViewInputs['engines'],
+  platform: Model['platform'],
+  remotes: Model['remotes'],
+  h: HtmlBuilder<Message>,
+): Html =>
   h.submodel({
     slotId: 'engines',
     view: Engines.view,
-    model: model.screens.engines,
-    viewInputs: {
-      connection: model.connection,
-      engines: model.console.sidebar.engines,
-      platform: model.platform,
-      remotes: model.remotes,
-    },
+    model: engines,
+    viewInputs: { connection, engines: sidebarEngines, platform, remotes },
     toParentMessage: message => Message.GotEnginesMessage({ message }),
   })
+
+/** The Engines screen, memoised on its own Model, the connection, the engines and the platform (§18.5). */
+export const view = (model: Model, h: HtmlBuilder<Message>): Html =>
+  lazyEngines(enginesPart, [
+    model.screens.engines,
+    model.connection,
+    model.console.sidebar.engines,
+    model.platform,
+    model.remotes,
+    h,
+  ])

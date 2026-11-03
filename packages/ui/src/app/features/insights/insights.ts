@@ -1,6 +1,6 @@
 import { Option } from 'effect'
 import { Command, Update } from 'foldkit'
-import type { Html, HtmlBuilder } from 'foldkit/html'
+import { type Html, type HtmlBuilder, createLazy } from 'foldkit/html'
 import { modifyFields } from 'foldkit/struct'
 
 import * as Sidebar from '../../../console/sidebar'
@@ -41,16 +41,34 @@ export const update = (model: Model): Handlers<keyof typeof messages> => ({
   GotInsightsMessage: ({ message }) => foldInsights(model, message),
 })
 
-export const view = (model: Model, h: HtmlBuilder<Message>): Html =>
+const lazyInsights = createLazy()
+
+const insightsPart = (
+  insights: Insights.Model,
+  scope: Model['scope'],
+  sidebar: Sidebar.Model,
+  today: Model['today'],
+  h: HtmlBuilder<Message>,
+): Html =>
   h.submodel({
     slotId: 'insights',
     view: Insights.view,
-    model: model.screens.insights,
+    model: insights,
     viewInputs: {
-      projectName: Option.flatMap(model.scope, project =>
-        Sidebar.projectName(model.console.sidebar, project),
+      projectName: Option.flatMap(scope, project =>
+        Sidebar.projectName(sidebar, project),
       ),
-      today: model.today,
+      today,
     },
     toParentMessage: message => Message.GotInsightsMessage({ message }),
   })
+
+/** The Insights screen, memoised on its own Model, the scope, the projects and the day (§18.5). */
+export const view = (model: Model, h: HtmlBuilder<Message>): Html =>
+  lazyInsights(insightsPart, [
+    model.screens.insights,
+    model.scope,
+    model.console.sidebar,
+    model.today,
+    h,
+  ])

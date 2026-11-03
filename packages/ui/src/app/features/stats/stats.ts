@@ -3,6 +3,8 @@ import { Update } from 'foldkit'
 import type { Html, HtmlBuilder } from 'foldkit/html'
 import { modifyFields } from 'foldkit/struct'
 
+import type { RunView } from '@fabrica/contracts'
+
 import * as Stats from '../../../console/stats'
 import type { Handlers, Return } from '../../feature'
 import { Message } from '../../message'
@@ -58,11 +60,14 @@ const statsPart = (
     toParentMessage: message => Message.GotStatsMessage({ message }),
   })
 
+/**
+ * The stats row in a scope with no run going, memoised on its slices (§18.5): under All projects every
+ * project's run going.
+ */
 export const lazyStatsPart = (
   stats: Stats.Model,
   project: Model['scope'],
   live: boolean,
-  run: Model['runView'],
   runViews: Model['runViews'],
   now: Model['now'],
   attention: Model['attention'],
@@ -73,7 +78,39 @@ export const lazyStatsPart = (
     {
       project,
       live,
-      run,
+      run: Option.none(),
+      runs: runViews.map(({ view }) => view),
+      now,
+      attention,
+    },
+    h,
+  )
+
+/**
+ * The stats row of the scoped project's run, memoised on each part of its view the row draws, so a
+ * change to a worker, the queue or the load leaves it as it is (§18.5).
+ */
+export const lazyStatsRunPart = (
+  stats: Stats.Model,
+  project: Model['scope'],
+  live: boolean,
+  header: RunView['header'],
+  totals: RunView['totals'],
+  tickets: RunView['tickets'],
+  holds: RunView['holds'],
+  banners: RunView['banners'],
+  steps: RunView['steps'],
+  runViews: Model['runViews'],
+  now: Model['now'],
+  attention: Model['attention'],
+  h: HtmlBuilder<Message>,
+): Html =>
+  statsPart(
+    stats,
+    {
+      project,
+      live,
+      run: Option.some({ header, totals, tickets, holds, banners, steps }),
       runs: runViews.map(({ view }) => view),
       now,
       attention,

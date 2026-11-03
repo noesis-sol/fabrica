@@ -1,6 +1,6 @@
 import { Array, Option, Predicate, Schema, Stream } from 'effect'
 import { Command, Subscription, type Update } from 'foldkit'
-import type { Html, HtmlBuilder } from 'foldkit/html'
+import { type Html, type HtmlBuilder, createLazy } from 'foldkit/html'
 import { modifyFields } from 'foldkit/struct'
 
 import type { EngineClientShape } from '@fabrica/client'
@@ -64,45 +64,90 @@ export const update = (model: Model): Handlers<keyof typeof messages> => ({
  * where its project is the scope's, the usage windows.
  */
 const workerInputs = (
-  model: Model,
   worker: Worker.Shown,
+  {
+    live,
+    now,
+    scope,
+    runView,
+    runViews,
+    usage,
+  }: Pick<Model, 'now' | 'scope' | 'runView' | 'runViews' | 'usage'> & {
+    readonly live: boolean
+  },
 ): Worker.ViewInputs => {
-  const scoped = Option.exists(model.scope, scope =>
-    sameProject(scope, worker.project),
+  const scoped = Option.exists(scope, project =>
+    sameProject(project, worker.project),
   )
   const run = scoped
-    ? model.runView
-    : Option.isNone(model.scope)
+    ? runView
+    : Option.isNone(scope)
       ? Option.map(
-          Array.findFirst(model.runViews, entry =>
+          Array.findFirst(runViews, entry =>
             sameProject(entry.project, worker.project),
           ),
           ({ view }) => view,
         )
       : Option.none()
   return {
-    live: RemoteEngines.isEngineLive(model, worker.project.engine),
-    now: model.now,
+    live,
+    now,
     row: Option.flatMap(run, view =>
       Array.findFirst(view.workers, row => row.ticket === worker.ticket),
     ),
-    usage: scoped ? model.usage : Option.none(),
+    usage: scoped ? usage : Option.none(),
     runTokens: Option.map(run, view => view.totals.tokens),
   }
 }
 
-export const view = (
-  model: Model,
+const lazyWorker = createLazy()
+
+const workerPart = (
+  shownModel: Worker.Model,
   worker: Worker.Shown,
+  live: boolean,
+  now: Model['now'],
+  scope: Model['scope'],
+  runView: Model['runView'],
+  runViews: Model['runViews'],
+  usage: Model['usage'],
   h: HtmlBuilder<Message>,
 ): Html =>
   h.submodel({
     slotId: 'worker',
     view: Worker.view,
-    model: model.screens.worker,
-    viewInputs: workerInputs(model, worker),
+    model: shownModel,
+    viewInputs: workerInputs(worker, {
+      live,
+      now,
+      scope,
+      runView,
+      runViews,
+      usage,
+    }),
     toParentMessage: message => Message.GotWorkerMessage({ message }),
   })
+
+/**
+ * The Worker view, memoised on its own Model, its engine's connection, the clock, the run views it reads
+ * its row from and the usage windows (§18.5); its transcript is memoised on its own slices within.
+ */
+export const view = (
+  model: Model,
+  worker: Worker.Shown,
+  h: HtmlBuilder<Message>,
+): Html =>
+  lazyWorker(workerPart, [
+    model.screens.worker,
+    worker,
+    RemoteEngines.isEngineLive(model, worker.project.engine),
+    model.now,
+    model.scope,
+    model.runView,
+    model.runViews,
+    model.usage,
+    h,
+  ])
 
 /** The tag of an error that ended a stream, as its reason. */
 const reasonOf = (error: { readonly _tag: string }): string => error._tag
