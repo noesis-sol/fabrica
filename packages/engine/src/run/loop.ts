@@ -68,14 +68,7 @@ import {
   HandBackWorker,
   type HandBackWorkerShape,
 } from '../merge/handbacks'
-import {
-  BaseNote,
-  BaseSynced,
-  basePushes,
-  pushSetting,
-  syncBase,
-  syncedNote,
-} from '../projects/base-sync'
+import { basePushes, pushSetting } from '../projects/base-sync'
 import { ModelProxy, Permits } from '../proxy'
 import {
   RunLog,
@@ -121,7 +114,7 @@ import {
   supervisorHolds,
   waitsOnHold,
 } from './holds'
-import { record } from './records'
+import { record, recordBaseNote } from './records'
 import {
   SetupRetry,
   makeProjectSetup,
@@ -329,33 +322,10 @@ const runViewed = Effect.fn('Run.viewed')(function* (
     yield* record(log, { kind: 'end', code })
     return { kind: 'SETUP', code } satisfies RunEnd
   }
-  // Base fetched from its upstream and fast-forwarded where it moved, or the run starts on it as it
-  // is, saying why (§10.3).
-  const synced = yield* syncBase({
-    checkout: config.checkout,
-    base: checked.started.base,
-  })
-  yield* Option.match(syncedNote(synced, checked.started.base), {
-    onNone: () => Effect.void,
-    onSome: note => recordNote(log, note),
-  })
-  const started: Started = BaseSynced.$is('FastForwarded')(synced)
-    ? { ...checked.started, baseCommit: synced.to }
-    : checked.started
-  return yield* Effect.scoped(runStarted(config, started, control, view))
+  return yield* Effect.scoped(
+    runStarted(config, checked.started, control, view),
+  )
 })
-
-/** A note of Base's sync or push as the run's record: a warning under its tag, or progress. */
-const recordNote = (log: RunLog['Service'], note: BaseNote) =>
-  BaseNote.$match(note, {
-    Warning: ({ tag, text }) =>
-      record(log, {
-        kind: 'warn',
-        detail: tag,
-        text: warningLine({ tag, about: 'run', text }),
-      }),
-    Progress: ({ text }) => record(log, { kind: 'info', text }),
-  })
 
 /** The run once its start checks passed: until it ends, within its scope. */
 const runStarted = Effect.fn('Run.started')(function* (
@@ -480,7 +450,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     checkout: config.checkout,
     base: started.base,
     push: pushSetting(project.push, config.origin),
-    say: note => recordNote(log, note),
+    say: note => recordBaseNote(log, note),
   })
 
   // The merge queue lives in a scope of its own, so the end stops it before writing its records.

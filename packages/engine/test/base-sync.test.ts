@@ -540,6 +540,28 @@ describe('a run', () => {
     }),
   )
 
+  it.effect('reads its settings from Base as the fast-forward left it', () =>
+    Effect.gen(function* () {
+      // The checkout says nothing of push (never, for a registered checkout); the upstream's commit
+      // says after_merge, and the run, starting on it, pushes after its merge.
+      const fixture = project()
+      const { remote, other } = remoteFor(fixture)
+      runCommit(other, 'push after each merge', {
+        '.fabrica/settings.json': `${JSON.stringify({ ...settings, push: 'after_merge' }, null, 2)}\n`,
+      })
+      runGit(other, 'push', '--quiet', 'origin', 'main')
+      const theirs = headOf(other, 'HEAD')
+      const { events } = yield* runOf(fixture, file('Add one', 'finish'))
+      expect(ofKind(events, 'start').map(({ commit }) => commit)).toEqual([
+        theirs,
+      ])
+      expect(ofKind(events, 'closed').length).toBe(1)
+      const merged = headOf(fixture.checkout, 'main')
+      expect(merged).not.toBe(theirs)
+      expect(headOf(remote, 'main')).toBe(merged)
+    }),
+  )
+
   it.effect('pushes nothing after a merge where push is never', () =>
     Effect.gen(function* () {
       const fixture = project({ ...settings, push: 'never' })

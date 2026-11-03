@@ -1,6 +1,7 @@
 import { Effect } from 'effect'
 
-import type { EventDraft, RunLog } from '../runlog'
+import { BaseNote } from '../projects/base-sync'
+import { type EventDraft, type RunLog, warningLine } from '../runlog'
 
 // Writing the run's records and lines (spec §13.12, H84): a record a short write cut is lost alone, as
 // the writer promises, and the run goes on; a record its schema refuses is the engine's defect.
@@ -31,3 +32,18 @@ export const say = (
         Effect.logWarning(`log lines were lost: ${error.message}`),
       ),
     )
+
+/** A note of Base's sync or push as the run's record (§10.3): a warning under its tag, or progress. */
+export const recordBaseNote = (
+  log: RunLog['Service'],
+  note: BaseNote,
+): Effect.Effect<void> =>
+  BaseNote.$match(note, {
+    Warning: ({ tag, text }) =>
+      record(log, {
+        kind: 'warn',
+        detail: tag,
+        text: warningLine({ tag, about: 'run', text }),
+      }),
+    Progress: ({ text }) => record(log, { kind: 'info', text }),
+  })

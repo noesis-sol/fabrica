@@ -3,6 +3,7 @@ import { Cause, Data, Effect, Option, Result } from 'effect'
 import type { CommitHash, ModelChoice, RunId } from '@fabrica/contracts'
 
 import { Git, GitVersion } from '../git'
+import { BaseSynced, syncBase, syncedNote } from '../projects/base-sync'
 import { ModelProxy, ProbeOutcome, Refusal } from '../proxy'
 import type { RunLog } from '../runlog'
 import {
@@ -11,10 +12,10 @@ import {
   loadSettings,
 } from '../settings'
 import type { RunConfig } from './config'
-import { record } from './records'
+import { record, recordBaseNote } from './records'
 
 // The run's start checks (spec §13.1, H80): git 2.38 or later, the project's checkout clean and on a
-// branch, the settings valid, and each model's credential tried with the proxy's probe (H60). Every
+// branch (Base then fetched and fast-forwarded from its upstream, §10.3), the settings valid, and each model's credential tried with the proxy's probe (H60). Every
 // problem is listed together, and the run ends `SETUP`, exit 2. Each check's end is streamed as an
 // `info` record as it comes, so a client shows what the start is doing; a defect inside a check is a
 // problem line of its own (`Internal error in <check>: …`), never an end with nothing said (tutti-kq5).
@@ -206,6 +207,31 @@ const credentialsCheck = (settings: ResolvedSettings, run: RunId) =>
       : found(undefined, `${models.map(modelName).join(', ')} answered`)
   })
 
+/**
+ * The checkout's finding once Base is synced with its upstream (§10.3), the sync said: Base's commit
+ * the one it was fast-forwarded to, where it was.
+ */
+const syncedCheckout = Effect.fnUntraced(function* (
+  log: RunLog['Service'],
+  checkout: string,
+  found: {
+    readonly value: { base: string; commit: CommitHash }
+    readonly said: string
+  },
+) {
+  const synced = yield* syncBase({ checkout, base: found.value.base })
+  yield* Option.match(syncedNote(synced, found.value.base), {
+    onNone: () => Effect.void,
+    onSome: note => recordBaseNote(log, note),
+  })
+  return BaseSynced.$is('FastForwarded')(synced)
+    ? Result.succeed({
+        value: { ...found.value, commit: synced.to },
+        said: found.said,
+      })
+    : Result.succeed(found)
+})
+
 /** Runs the start checks, side by side where one doesn't need another's finding. */
 export const runStartChecks = Effect.fn('Run.startChecks')(function* (input: {
   readonly config: RunConfig
@@ -213,13 +239,22 @@ export const runStartChecks = Effect.fn('Run.startChecks')(function* (input: {
   readonly log: RunLog['Service']
 }) {
   const { config, run, log } = input
-  const [git, checkout, settings] = yield* Effect.all(
+  const [git, checked] = yield* Effect.all(
     [
       guarded(log, 'the git check', gitCheck),
       guarded(log, 'the checkout check', checkoutCheck(config.checkout)),
-      guarded(log, 'the settings check', settingsCheck(config)),
     ],
     { concurrency: 'unbounded' },
+  )
+  // A clean checkout on Base has Base fetched from its upstream and fast-forwarded where it moved
+  // before its settings are read, so the run is set up as the Base it starts on says (§10.3).
+  const checkout = Result.isSuccess(checked)
+    ? yield* syncedCheckout(log, config.checkout, checked.success)
+    : checked
+  const settings = yield* guarded(
+    log,
+    'the settings check',
+    settingsCheck(config),
   )
   const credentials = yield* guarded(
     log,
