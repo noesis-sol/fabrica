@@ -53,7 +53,9 @@ const ProposedRequirement = Schema.Struct({
 
 /**
  * The organ's answer. Its text is plain strings, so that a command refused loses itself, not the answer,
- * and the JSON Schema a provider is shown holds no pattern it might not take.
+ * and the JSON Schema a provider is shown holds no pattern it might not take. A fast suite a full one names
+ * must be one of `fast`, each name once: a name that misses would run its tests twice, unsaid, so the
+ * answer is given back with the error.
  */
 export const ScoutAnswer = Schema.Struct({
   fast: Schema.Array(FastSuite),
@@ -63,13 +65,27 @@ export const ScoutAnswer = Schema.Struct({
   stack: Schema.Array(Schema.String),
   requirements: Schema.Array(ProposedRequirement),
   ci_only: Schema.Array(CiStep),
-})
+}).check(
+  Schema.makeFilter(({ fast, full }) => {
+    const names = fast.map(suite => suite.name)
+    const twice = names.find((name, index) => names.indexOf(name) !== index)
+    if (twice !== undefined)
+      return `Two fast suites are named ${JSON.stringify(twice)}: give each a name of its own`
+    const unknown = full
+      .flatMap(suite => suite.runs_fast_suites)
+      .find(name => !names.includes(name))
+    return (
+      unknown === undefined ||
+      `runs_fast_suites names ${JSON.stringify(unknown)}, which no fast suite is called: name each exactly as fast does`
+    )
+  }),
+)
 export type ScoutAnswer = typeof ScoutAnswer.Type
 
 const instructions = `You are the scout of a project being set up. With read-only tools you read its repository: manifests, task runners, scripts, test configuration, CI workflows, the README. You run nothing and change nothing. You propose how its work is checked and set up, for its maintainer to tick, and end by calling answer. Propose only what the repository shows.
 
 - fast: the suites that check a change quickly enough to run on every merge (type checks, lint, unit tests), each its own entry, none repeated.
-- full: the suites that run only once at the end of a run. In runs_fast_suites name each fast suite whose tests it already runs, some or all of them, as a slow mode of the same runner runs the quick tests but no linter; else leave it empty. Set own_runner where it is the project's own runner of every suite, a script or a target of its own. Never write a command that runs a fast suite and then a full one: no test runs twice.
+- full: the suites that run only once at the end of a run. In runs_fast_suites name each fast suite whose tests it already runs, some or all of them, exactly as fast names it, as a slow mode of the same runner runs the quick tests but no linter; else leave it empty. Set own_runner where it is the project's own runner of every suite, a script or a target of its own. Never write a command that runs a fast suite and then a full one: no test runs twice.
 - own: the project's command for checking one change alone, where it has one; else null.
 - setup: the command that makes a fresh checkout ready to work in, as a lockfile's exact install; else null.
 - stack: the languages, runners and frameworks it uses, a short name each.
@@ -234,13 +250,17 @@ export const proposalsOf = (answer: ScoutAnswer): ScoutProposals => {
         `the full suite ${suite.name}`,
         `the project's own full runner, ${runner.name}, stands for the full tier`,
       )
+  // By command: a suite named again under another name runs the same tests. A refused one's name counts.
+  const alreadyRun = new Set(
+    answer.fast
+      .filter(suite => runBy.has(writtenOut(suite.name)))
+      .map(suite => suite.command),
+  )
   const fullCommands =
     runner !== undefined || tier.length === 0
       ? tier.map(suite => suite.command)
       : [
-          ...fast
-            .filter(suite => !runBy.has(suite.name))
-            .map(suite => suite.command),
+          ...fastCommands.filter(command => !alreadyRun.has(command)),
           ...tier.map(suite => suite.command),
         ]
 

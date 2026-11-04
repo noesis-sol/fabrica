@@ -115,6 +115,45 @@ describe("the scout's question", () => {
   })
 })
 
+describe('the fast suites a full suite names', () => {
+  it.each([
+    ['another name', 'quick'],
+    ['a name in another case', 'QUICK TESTS'],
+    ['a command', 'pytest -m "not slow"'],
+  ])('gives back an answer naming %s, as no test may run twice', (_, name) => {
+    expect(() =>
+      decodeAnswer(
+        recorded({
+          fast: [fastSuite('quick tests', 'pytest -m "not slow"')],
+          full: [fullSuite('all', 'pytest', { runs_fast_suites: [name] })],
+        }),
+      ),
+    ).toThrow('which no fast suite is called')
+  })
+
+  it('gives back an answer with two fast suites of one name, which it could not tell apart', () => {
+    expect(() =>
+      decodeAnswer(
+        recorded({
+          fast: [
+            fastSuite('tests', 'pytest a'),
+            fastSuite('tests', 'pytest b'),
+          ],
+          full: [fullSuite('c', 'pytest c', { runs_fast_suites: ['tests'] })],
+        }),
+      ),
+    ).toThrow('Two fast suites are named "tests"')
+  })
+
+  it('takes a suite named under another name to be run too', () => {
+    const proposals = proposalsFrom({
+      fast: [fastSuite('a', 'pytest'), fastSuite('b', 'pytest')],
+      full: [fullSuite('all', 'pytest --all', { runs_fast_suites: ['a'] })],
+    })
+    expect(proposals.checkFull).toEqual(Option.some('pytest --all'))
+  })
+})
+
 describe('the check suites proposed', () => {
   it('makes a full tier that runs the fast one check_full alone', () => {
     const proposals = proposalsFrom({
