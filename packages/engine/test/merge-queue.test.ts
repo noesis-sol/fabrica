@@ -536,16 +536,21 @@ describe('the merge queue', () => {
         'src/b.ts': 'export const b = 2\n',
       })
       commit(checkout, 'Base moves', { 'docs/c.md': 'c\n' })
-      // The rebase's checkout of Base's commit runs this hook, which waits: the rebase is in progress.
+      // The rebase's checkout of Base's commit writes docs/c.md through this filter, which waits: the
+      // rebase is in progress. A filter, since the engine's git runs no hook.
       const started = freshPath('started')
       const release = freshPath('release')
-      const hook = join(checkout, '.git', 'hooks', 'post-checkout')
-      mkdirSync(dirname(hook), { recursive: true })
+      const filter = freshPath('filter')
       writeFileSync(
-        hook,
-        `#!/bin/sh\n: > '${started}'\nwhile [ ! -e '${release}' ]; do sleep 0.05; done\n`,
+        filter,
+        `#!/bin/sh\n: > '${started}'\nwhile [ ! -e '${release}' ]; do sleep 0.05; done\ncat\n`,
       )
-      chmodSync(hook, 0o755)
+      chmodSync(filter, 0o755)
+      git(checkout, 'config', 'filter.wait.smudge', filter)
+      writeFileSync(
+        join(checkout, '.git', 'info', 'attributes'),
+        'docs/c.md filter=wait\n',
+      )
 
       const seen = yield* Ref.make<ReadonlyArray<MergeUpdate>>([])
       const subscribed = yield* Deferred.make<void>()

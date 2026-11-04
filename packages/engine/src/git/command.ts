@@ -11,7 +11,8 @@ import { CantTell, GitFailed } from './errors'
 // How every git command the engine runs is run (spec §11.7, §13.7, §20.2, H59, H85): through the
 // process runner, so it gets the allowlisted environment and never git's local variables; with no
 // prompt, no pager and no editor, so it never waits for input; in the C locale, so its output parses
-// the same everywhere. Revisions go after `--end-of-options` and pathspecs after `--`, in each command.
+// the same everywhere; with no fsmonitor and no hooks, so it never runs what a worktree's configuration
+// names. Revisions go after `--end-of-options` and pathspecs after `--`, in each command.
 
 /** The variables every git command gets, over the allowlisted environment. */
 export const GIT_ENVIRONMENT: Readonly<Record<string, string>> = {
@@ -28,6 +29,20 @@ const READ_ENVIRONMENT: Readonly<Record<string, string>> = {
   ...GIT_ENVIRONMENT,
   GIT_OPTIONAL_LOCKS: '0',
 }
+
+/**
+ * What every git command runs with over any configuration (spec §12.6, §20.2): no fsmonitor, no hooks.
+ * A worker can write `core.fsmonitor` or `core.hooksPath` into its worktree's configuration, and put a
+ * hook in the repository's, and git reads them inside the engine's status, rebase and merge, which
+ * would run the worker's commands outside the gate. The engine needs no hook of a repository; a
+ * remote's own hooks are the remote's, and run still.
+ */
+const PINNED_CONFIGURATION: ReadonlyArray<string> = [
+  '-c',
+  'core.fsmonitor=false',
+  '-c',
+  'core.hooksPath=/dev/null',
+]
 
 /**
  * What network commands (clone, fetch, push) run with where the host's git configuration names no ssh
@@ -105,7 +120,7 @@ export const makeCommands = ({
   ): Effect.Effect<CommandOutcome> =>
     runner.run({
       command: 'git',
-      args: ['--no-pager', ...args],
+      args: ['--no-pager', ...PINNED_CONFIGURATION, ...args],
       cwd,
       env: environment,
       network,

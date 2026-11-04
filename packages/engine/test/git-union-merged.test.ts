@@ -96,7 +96,8 @@ const olderGit = (version: string): string => {
     join(folder, 'git'),
     [
       '#!/bin/sh',
-      `if [ "$2" = version ]; then echo "git version ${version}"; exit 0; fi`,
+      'for arg in "$@"; do last="$arg"; done',
+      `if [ "$last" = version ]; then echo "git version ${version}"; exit 0; fi`,
       'for arg in "$@"; do case "$arg" in --source*) echo "unknown option" >&2; exit 129;; esac; done',
       `exec "${join(gitFolder, 'git')}" "$@"`,
       '',
