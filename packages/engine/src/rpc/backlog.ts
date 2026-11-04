@@ -100,8 +100,9 @@ export const whyOf = (reasons: ReadonlyArray<WaitReason>): Why => {
 
 /**
  * Sends a change of the work graph on its backlog stream: its ticket as it is now, or its going. A
- * link added or removed changes no ticket, so its ticket is sent again all the same: a client drawing
- * the links (the Backlog screen's graph, §18.4) asks for them afresh.
+ * link added or removed changes no ticket, nor does a merge conflict whose kept value it already held,
+ * so its ticket is sent again all the same: a client drawing them (the Backlog screen's graph and its
+ * conflicts, §18.4) asks for them afresh.
  */
 export const sendChange =
   (graph: WorkGraphShape, feed: KeyedFeed<Ticket, TicketId, BacklogItem>) =>
@@ -111,7 +112,9 @@ export const sendChange =
       onSome: id =>
         graph.show(id).pipe(
           Effect.flatMap(({ ticket }) =>
-            event.change._tag === 'linked' || event.change._tag === 'unlinked'
+            event.change._tag === 'linked' ||
+            event.change._tag === 'unlinked' ||
+            event.change._tag === 'merge_conflict'
               ? feed.resend(ticket)
               : feed.upsert(ticket),
           ),
@@ -455,6 +458,15 @@ export const makeBacklogHandlers = Effect.gen(function* () {
     return yield* graph.edges().pipe(Effect.orDie)
   })
 
+  const conflicts = Effect.fn('Backlog.conflicts')(function* ({
+    project,
+  }: {
+    readonly project: ProjectId
+  }) {
+    const graph = yield* graphOf(project)
+    return yield* graph.conflicts().pipe(Effect.orDie)
+  })
+
   /** A backlog stream for `graph`: subscribed to its changes before its tickets are read, so none is missed. */
   const startFeed = (project: ProjectId, graph: WorkGraphShape) =>
     Effect.gen(function* () {
@@ -555,6 +567,7 @@ export const makeBacklogHandlers = Effect.gen(function* () {
     'tickets.ready': ready,
     'tickets.why': why,
     'tickets.edges': edges,
+    'tickets.conflicts': conflicts,
     'tickets.import': importBeads,
     'tickets.watch': watch,
   })

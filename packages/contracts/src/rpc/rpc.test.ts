@@ -676,6 +676,31 @@ const samples: Record<string, Samples> = {
     success: [[], [edge, { from: ticket, to: other, kind: 'parent' }]],
     error: [notFound],
   },
+  'tickets.conflicts': {
+    payload: [{ project }],
+    success: [
+      [],
+      [
+        {
+          seq: 7,
+          ticket,
+          field: 'title',
+          kept: 'Ours',
+          other: 'Theirs',
+          useOther: { title: 'Theirs' },
+        },
+        {
+          seq: 8,
+          ticket,
+          field: 'status',
+          kept: 'open',
+          other: 'closed',
+          useOther: null,
+        },
+      ],
+    ],
+    error: [notFound],
+  },
   'tickets.import': {
     payload: [{ project, beads: '{"id":"bd-1","title":"x"}\n' }],
     success: [
@@ -1202,6 +1227,7 @@ describe('the protocol’s groups', () => {
       'tickets.ready',
       'tickets.why',
       'tickets.edges',
+      'tickets.conflicts',
       'tickets.import',
       'run.start',
       'run.stop',

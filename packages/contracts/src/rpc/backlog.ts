@@ -13,6 +13,7 @@ import {
   Resolution,
   Text,
   Ticket,
+  TicketEvent,
   TicketMetadata,
   TicketStatus,
   TicketType,
@@ -75,6 +76,25 @@ export const TicketChanges = Schema.Struct({
   metadata: Schema.optionalKey(TicketMetadata),
 })
 export type TicketChanges = typeof TicketChanges.Type
+
+/**
+ * A field a sync's merge kept one side of (§11.4, §11.7), nothing having changed it since: its open
+ * `merge_conflict` event, the values as the ticket's file writes them.
+ */
+export class TicketConflict extends Schema.Class<TicketConflict>(
+  'TicketConflict',
+)({
+  /** The event's. */
+  seq: TicketEvent.fields.seq,
+  ticket: TicketId,
+  field: Text,
+  /** The value the merge kept, which the ticket holds. */
+  kept: Schema.Json,
+  /** The value it didn't. */
+  other: Schema.Json,
+  /** What `tickets.update` takes to set the field to `other`; none where it can't set that value. */
+  useOther: Schema.OptionFromNullOr(TicketChanges),
+}) {}
 
 /** One thing that keeps a ticket from being ready (§13.3, §13.4), in the log's words where it has them. */
 export const NotReady = Schema.TaggedUnion({
@@ -210,6 +230,12 @@ export const BacklogRpcs = RpcGroup.make(
   Rpc.make('tickets.edges', {
     payload: { project: ProjectId },
     success: Schema.Array(Edge),
+    error: ProjectNotFound,
+  }),
+  /** The sync's merge conflicts still open (§11.7), oldest first, as the backlog lists them (§18.4). */
+  Rpc.make('tickets.conflicts', {
+    payload: { project: ProjectId },
+    success: Schema.Array(TicketConflict),
     error: ProjectNotFound,
   }),
   /** A `bd export` JSONL file's text: the client reads it, so a remote engine needn't. */

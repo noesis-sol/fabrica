@@ -184,6 +184,7 @@ const facts = (forProject: EngineProject = scoped): Backlog.Facts =>
     ],
     edges,
     drafted: [],
+    conflicts: [],
   })
 
 const openIds = [id('fa-1'), id('fa-2'), id('fa-3'), id('fa-q1')]

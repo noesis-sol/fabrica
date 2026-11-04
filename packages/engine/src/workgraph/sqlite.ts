@@ -31,6 +31,7 @@ import {
 } from '@fabrica/contracts'
 
 import { isConsequential } from '../attention/consequential'
+import { openConflicts } from './conflicts'
 import {
   EdgeCycle,
   InvalidTicket,
@@ -1296,6 +1297,24 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
     },
   )
 
+  const conflicts: WorkGraphShape['conflicts'] = Effect.fn(
+    'WorkGraph.conflicts',
+  )(function* () {
+    const [eventRows, ticketRows] = yield* read(
+      'conflicts',
+      sql.withTransaction(
+        Effect.all([
+          sql<EventRow>`SELECT * FROM events WHERE ticket_id IN (SELECT ticket_id FROM events WHERE type = 'merge_conflict') ORDER BY seq`,
+          sql<TicketRow>`SELECT * FROM tickets WHERE id IN (SELECT ticket_id FROM events WHERE type = 'merge_conflict')`,
+        ]),
+      ),
+    )
+    return openConflicts({
+      events: yield* Effect.forEach(eventRows, eventFromRow),
+      tickets: yield* Effect.forEach(ticketRows, ticketFromRow),
+    })
+  })
+
   const history: WorkGraphShape['history'] = Effect.fn('WorkGraph.history')(
     function* (id) {
       const rows = yield* read(
@@ -1398,6 +1417,7 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
     answer,
     importTickets,
     delete: deleteTicket,
+    conflicts,
     history,
     doneSince,
     changes,

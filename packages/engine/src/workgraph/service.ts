@@ -21,6 +21,7 @@ import type {
   QuestionChoices,
   Resolution,
   Ticket,
+  TicketConflict,
   TicketEvent,
   TicketId,
   TicketMetadata,
@@ -355,6 +356,11 @@ export interface WorkGraphShape {
     readonly id: TicketId
     readonly actor: Actor
   }) => Changed<void>
+  /** The sync's merge conflicts still open (`conflicts.ts`), oldest first. */
+  readonly conflicts: () => Effect.Effect<
+    ReadonlyArray<TicketConflict>,
+    StoreFailed
+  >
   /** Every event of the ticket, oldest first; a deleted ticket's too. */
   readonly history: (
     id: TicketId,

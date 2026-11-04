@@ -336,7 +336,12 @@ const ticketFields = {
   updatedAt: IsoMoment,
 }
 
-const encodeTicketFields = Schema.encodeSync(Schema.Struct(ticketFields))
+const TicketFields = Schema.Struct(ticketFields)
+/** A ticket's fields, decoded from what its file writes. */
+export type TicketFields = typeof TicketFields.Type
+
+const encodeTicketFields = Schema.encodeSync(TicketFields)
+const decodeTicketFields = Schema.decodeUnknownOption(TicketFields)
 
 /**
  * Each changing field of a ticket as its file writes it, in canonical text. Throws where
@@ -346,6 +351,17 @@ export const fieldTexts = (ticket: Ticket): Record<ClockedField, string> => {
   const encoded = encodeTicketFields(ticket)
   return byClockedField(field => canonicalJson(encoded[field]))
 }
+
+/**
+ * `ticket`'s fields with `field` as `value`, which is as its file writes it; none where the field can't
+ * hold it. Throws where `fieldTexts` does.
+ */
+export const fieldsWith = (
+  ticket: Ticket,
+  field: ClockedField,
+  value: Schema.Json,
+): Option.Option<TicketFields> =>
+  decodeTicketFields({ ...encodeTicketFields(ticket), [field]: value })
 
 /** A ticket file's record, version 1: the ticket's fields, its times ISO, beside its labels, edges, notes and clocks. */
 const TicketRecordV1 = Schema.Struct({

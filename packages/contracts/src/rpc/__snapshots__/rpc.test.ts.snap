@@ -6332,6 +6332,152 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
       ],
       "type": "object",
     },
+    "TicketConflictEncoded": {
+      "additionalProperties": true,
+      "properties": {
+        "field": {
+          "pattern": "\\S",
+          "type": "string",
+        },
+        "kept": {},
+        "other": {},
+        "seq": {
+          "minimum": 1,
+          "type": "integer",
+        },
+        "ticket": {
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)+(?:\\.[1-9][0-9]*)*$",
+          "type": "string",
+        },
+        "useOther": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "acceptance": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "deferUntil": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "description": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "design": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "metadata": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "files": {
+                      "items": {
+                        "pattern": "\\S",
+                        "type": "string",
+                      },
+                      "type": "array",
+                    },
+                    "predicted_files": {
+                      "items": {
+                        "pattern": "\\S",
+                        "type": "string",
+                      },
+                      "type": "array",
+                    },
+                    "result_kind": {
+                      "enum": [
+                        "summary",
+                        "contract_changed",
+                        "migration_added",
+                        "decision_recorded",
+                      ],
+                      "type": "string",
+                    },
+                    "spec": {
+                      "pattern": "\\S",
+                      "type": "string",
+                    },
+                  },
+                  "type": "object",
+                },
+                "model": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[^/\\s]+\\/\\S+$",
+                      "type": "string",
+                    },
+                    {
+                      "type": "null",
+                    },
+                  ],
+                },
+                "priority": {
+                  "maximum": 4,
+                  "minimum": 0,
+                  "type": "integer",
+                },
+                "status": {
+                  "enum": [
+                    "open",
+                    "deferred",
+                  ],
+                  "type": "string",
+                },
+                "title": {
+                  "allOf": [
+                    {
+                      "pattern": "^[^\\n\\r]*$",
+                    },
+                  ],
+                  "pattern": "\\S",
+                  "type": "string",
+                },
+              },
+              "type": "object",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+      },
+      "required": [
+        "seq",
+        "ticket",
+        "field",
+        "kept",
+        "other",
+        "useOther",
+      ],
+      "type": "object",
+    },
     "TicketDetailEncoded": {
       "additionalProperties": true,
       "properties": {
@@ -9965,6 +10111,33 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
         "type": "array",
       },
       "tag": "tickets.edges",
+    },
+    {
+      "error": {
+        "$ref": "#/$defs/ProjectNotFoundEncoded",
+      },
+      "group": "backlog",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "project": {
+            "pattern": "^\\S+$",
+            "type": "string",
+          },
+        },
+        "required": [
+          "project",
+        ],
+        "type": "object",
+      },
+      "stream": false,
+      "success": {
+        "items": {
+          "$ref": "#/$defs/TicketConflictEncoded",
+        },
+        "type": "array",
+      },
+      "tag": "tickets.conflicts",
     },
     {
       "error": {

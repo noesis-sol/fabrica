@@ -95,11 +95,20 @@ const verifierRounds = statements(
     PRIMARY KEY (ticket_id, round))`,
 )
 
+/**
+ * The tickets with a sync's merge conflict (§11.7): the Backlog screen asks for them on each of its
+ * frames, and a run's events are many.
+ */
+const mergeConflictEvents = statements(
+  `CREATE INDEX events_merge_conflict ON events (ticket_id) WHERE type = 'merge_conflict'`,
+)
+
 /** The engine's migrations, in order. */
 export const migrations: Migrations = {
   '0001_work_graph': workGraph,
   '0002_check_own_passes': checkOwnPasses,
   '0003_verifier_rounds': verifierRounds,
+  '0004_events_merge_conflict': mergeConflictEvents,
 }
 
 /** The schema version a set of migrations brings a database to: its highest number. */
