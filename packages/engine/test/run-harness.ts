@@ -365,6 +365,8 @@ export const runnerConfig = (): RunnerConfig => ({
   self: process.pid,
   killGrace: Duration.seconds(2),
   outputGrace: Duration.millis(200),
+  // The stub exits in real time: a poll on TestClock would wait out `killGrace` for each one stopped.
+  treePoll: TestClock.withLive(Effect.sleep('25 millis')),
 })
 
 export const gitConfig: GitConfig = {

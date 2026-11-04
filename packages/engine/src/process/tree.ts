@@ -94,12 +94,14 @@ export const treeOf = ({
   return [...found.values()].filter(row => !row.zombie)
 }
 
-/** What ending a tree needs from its host: the process table, and the deadlines its grace and polls count on. */
+/** What ending a tree needs from its host: the process table, the deadlines its grace counts on, and its poll. */
 export interface TreeHost {
   readonly listProcesses: Effect.Effect<
     Option.Option<ReadonlyArray<ProcessRow>>
   >
   readonly deadlines: DeadlinesShape
+  /** The wait before a terminated tree is listed again, to see whether it is gone before its grace ends. */
+  readonly poll: Effect.Effect<void>
   /** The engine's own process, whose group is never signalled. */
   readonly self: number
 }
@@ -122,8 +124,8 @@ const signalGroup = (pgid: number, signal: NodeJS.Signals): void => {
   }
 }
 
-/** How often a terminated tree is listed again, to see whether it is gone before its grace ends. */
-const POLL = Duration.millis(25)
+/** A host's wait before a terminated tree is listed again. */
+export const treePoll: Effect.Effect<void> = Effect.sleep(Duration.millis(25))
 
 /**
  * Ends the tree of the command whose process is `pid`, a group leader: terminates every group in it,
@@ -171,7 +173,7 @@ export const endTree = Effect.fn('ProcessTree.end')(function* ({
         treeOf({ rows: rows.value, pids, groups }).length === 0
       )
         return
-      yield* host.deadlines.sleep(POLL)
+      yield* host.poll
     }
   })
   const terminated = yield* signalTree('SIGTERM')

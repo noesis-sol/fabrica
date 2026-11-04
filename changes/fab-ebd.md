@@ -2,5 +2,5 @@
   ticket goes straight back in the queue, set aside or with its setup failed, and the run lasts until that end's
   wake, where it could end `READY_EMPTY` with the ticket unworked. A setup that fails while the hold is on is put
   back the same way.
-- A process tree's end looks for the tree gone on the process boundary's deadlines, as its grace counts: the
-  whole-run tests, on TestClock over live processes, no longer wait out a kill grace for each stopped process.
+- The whole-run tests give a process tree's end a poll on the live clock, rather than TestClock's, so they no
+  longer wait out a kill grace for each stopped process.

@@ -39,6 +39,7 @@ import {
   endTree,
   groupHasMembers,
   listProcesses,
+  treePoll,
 } from './tree'
 
 // The engine's one module for starting external commands (spec §12.1, §20.2, H61, H73, H74, H85):
@@ -126,6 +127,8 @@ export interface RunnerConfig {
   readonly killGrace: Duration.Input
   /** How long output is read after a command exits (spec §12.1: 2 s). */
   readonly outputGrace: Duration.Input
+  /** The wait before a terminated tree is listed again; `treePoll` where none is given. */
+  readonly treePoll?: Effect.Effect<void>
 }
 
 export const DEFAULT_OUTPUT_LIMIT = 32 * 1024 * 1024
@@ -294,6 +297,7 @@ export const make = Effect.fn('ProcessRunner.make')(function* (
   const tree: TreeHost = {
     listProcesses: config.listProcesses,
     deadlines,
+    poll: config.treePoll ?? treePoll,
     self: config.self,
   }
   /**
