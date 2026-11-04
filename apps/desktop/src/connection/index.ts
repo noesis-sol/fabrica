@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 
 import { SshPromptAnswer } from '@fabrica/client'
 
-import { askpassNodeOf } from './askpass'
+import { askpassHelperOf } from './askpass'
 import {
   FingerprintRead,
   FingerprintRequest,
@@ -39,8 +39,8 @@ const localEngineAsks = makeLocalEngineAsks(request =>
 const host: TransportHost = {
   env: process.env,
   localEngine: localEngineAsks.reach,
-  askpass: Option.map(askpassNodeOf(process.argv), node => ({
-    node,
+  askpass: Option.map(askpassHelperOf(process.argv), helper => ({
+    helper,
     folder: tmpdir(),
     prompts: asked.prompts,
   })),

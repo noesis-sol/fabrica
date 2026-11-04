@@ -8,11 +8,13 @@ export default defineProject({
     name: 'desktop',
     include: ['src/**/*.test.ts', 'test/**/*.test.ts'],
     // The packaged app's smoke test runs on an artifact, by its own config (vitest.smoke.config.ts), and
-    // its update test on a published release's (vitest.update-smoke.config.ts).
+    // its update test on a published release's (vitest.update-smoke.config.ts); Windows' askpass helper's
+    // test on an installed app's (vitest.windows-askpass.config.ts).
     exclude: [
       ...configDefaults.exclude,
       'test/smoke.test.ts',
       'test/update-smoke.test.ts',
+      'test/windows-askpass.test.ts',
     ],
   },
 })

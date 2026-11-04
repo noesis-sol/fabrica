@@ -14,12 +14,14 @@ import {
 import type { RpcClientError } from 'effect/rpc'
 import { Socket, type SocketServer } from 'effect/socket'
 import { execFile } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import * as NodePath from 'node:path'
 
 import { NodeSocketServer } from '@effect/platform-node'
 
 import type { SshDestination } from '../destination'
+import { AskpassHelper } from '../ssh-prompt'
 import {
   type BridgeCommand,
   type BridgeEnd,
@@ -79,11 +81,11 @@ export type SshPrompting = Data.TaggedEnum<{
   /** Never (`BatchMode`): only keys ssh-agent holds, and hosts `known_hosts` knows. */
   None: {}
   /**
-   * Relayed to `prompts` through `SSH_ASKPASS`: a helper run by `node`, which ssh starts for each
-   * prompt, in a private folder made under `folder` for each connection.
+   * Relayed to `prompts` through `SSH_ASKPASS`: `helper`, which ssh starts for each prompt, with a
+   * private folder made under `folder` for each connection.
    */
   Relay: {
-    readonly node: string
+    readonly helper: AskpassHelper
     readonly folder: string
     readonly prompts: SshPrompts
   }
@@ -323,11 +325,13 @@ export const checkSshVersion = (options: {
   })
 
 // The relay. ssh runs `SSH_ASKPASS` with its prompt as the one argument (and `SSH_ASKPASS_PROMPT` set to
-// `confirm` or `none` for a yes-or-no or a notice) and reads the answer from its stdout. The helper,
-// written into the connection's private folder, sends the prompt as one JSON line to the connection's
-// socket there and prints the answer it gets back; it never reads its stdin, which is the bridge's. A
-// notice gets no answer: ssh stops its helper once the person has done what it asked (touched their
-// security key), which ends the helper's connection.
+// `confirm` or `none` for a yes-or-no or a notice) and reads the answer from its stdout. The helper sends
+// the prompt as one JSON line to the address in `FABRICA_ASKPASS`, and prints the answer it gets back; it
+// never reads its stdin, which is the bridge's. The address is a socket in the connection's private
+// folder, or on Windows a named pipe. The helper is the script below, written into that folder, or a
+// program the caller ships that speaks the same protocol (the Windows app's,
+// apps/desktop/build/askpass.c). A notice gets no answer: ssh stops its helper once the person has done
+// what it asked (touched their security key), which ends the helper's connection.
 
 /** What the helper sends: ssh's prompt, and its `SSH_ASKPASS_PROMPT`. */
 const AskpassRequest = Schema.Struct({
@@ -370,6 +374,21 @@ socket.on('end', () => {
 })
 socket.on('error', () => {})
 `
+
+/** Where a connection's relay listens: a socket in its private `folder`, or on Windows a named pipe. */
+export const askpassAddress = ({
+  platform,
+  folder,
+  nonce,
+}: {
+  readonly platform: NodeJS.Platform
+  readonly folder: string
+  /** What makes a pipe's name, which no folder keeps private, the connection's alone. */
+  readonly nonce: string
+}): string =>
+  platform === 'win32'
+    ? `\\\\.\\pipe\\fabrica-askpass-${nonce}`
+    : NodePath.join(folder, 'ask.sock')
 
 /** `text` quoted as one word for /bin/sh, and for the login shells ssh runs a command with. */
 export const shQuote = (text: string): string =>
@@ -477,9 +496,26 @@ interface SshRun {
   readonly asking: Stream.Stream<boolean>
 }
 
+/** Writes the relay's own script and its launcher into `folder`: what ssh runs. */
+const writeNodeHelper = (node: string, folder: string) =>
+  Effect.gen(function* () {
+    const script = NodePath.join(folder, 'askpass.mjs')
+    const helper = NodePath.join(folder, 'askpass')
+    yield* fileStep(() => writeFile(script, helperScript, { mode: 0o600 }))
+    yield* fileStep(() =>
+      writeFile(
+        helper,
+        `#!/bin/sh\nexec ${shQuote(node)} ${shQuote(script)} "$@"\n`,
+        { mode: 0o700 },
+      ),
+    )
+    yield* fileStep(() => chmod(helper, 0o700))
+    return helper
+  })
+
 /**
- * The relay's variables for one connection (its private folder, helper and socket, gone with its scope),
- * and whether a prompt of the connection's waits on its answer.
+ * The relay's variables for one connection (its private folder, and its helper and address, gone with
+ * its scope), and whether a prompt of the connection's waits on its answer.
  */
 const openRelay = (
   relay: Extract<SshPrompting, { readonly _tag: 'Relay' }>,
@@ -493,18 +529,15 @@ const openRelay = (
       ),
       made => Effect.promise(() => rm(made, { recursive: true, force: true })),
     )
-    const script = NodePath.join(folder, 'askpass.mjs')
-    const helper = NodePath.join(folder, 'askpass')
-    const path = NodePath.join(folder, 'ask.sock')
-    yield* fileStep(() => writeFile(script, helperScript, { mode: 0o600 }))
-    yield* fileStep(() =>
-      writeFile(
-        helper,
-        `#!/bin/sh\nexec ${shQuote(relay.node)} ${shQuote(script)} "$@"\n`,
-        { mode: 0o700 },
-      ),
-    )
-    yield* fileStep(() => chmod(helper, 0o700))
+    const path = askpassAddress({
+      platform: process.platform,
+      folder,
+      nonce: randomBytes(16).toString('hex'),
+    })
+    const helper = yield* AskpassHelper.$match(relay.helper, {
+      Node: ({ node }) => writeNodeHelper(node, folder),
+      Executable: ({ path: program }) => Effect.succeed(program),
+    })
     const server: SocketServer.SocketServer['Service'] =
       yield* NodeSocketServer.make({ path }).pipe(Effect.mapError(openFailed))
     const waiting = yield* SubscriptionRef.make(0)

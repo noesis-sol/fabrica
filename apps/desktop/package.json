@@ -15,7 +15,8 @@
     "build": "electron-vite build",
     "package": "electron-vite build && electron-builder --config electron-builder.yml --publish never",
     "smoke": "vitest run --config vitest.smoke.config.ts",
-    "smoke:update": "vitest run --config vitest.update-smoke.config.ts"
+    "smoke:update": "vitest run --config vitest.update-smoke.config.ts",
+    "test:windows-askpass": "vitest run --config vitest.windows-askpass.config.ts"
   },
   "devDependencies": {
     "@effect/platform-node": "4.0.0",

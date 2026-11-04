@@ -1,17 +1,16 @@
-import { Option, Schema } from 'effect'
+import { Schema } from 'effect'
 
 import { describe, expect, it } from '@effect/vitest'
 import { SshPromptAnswer, SshPromptEvent } from '@fabrica/client'
 
-import { askpassArguments, askpassNodeOf } from '../src/connection/askpass'
 import { sshAnswersChannels } from '../src/main/features/ssh-answers'
 import { type MainIpc, makeIpcRegistrar } from '../src/main/ipc'
-import { askpassNode, makePromptDesk } from '../src/main/ssh-prompts'
+import { makePromptDesk } from '../src/main/ssh-prompts'
 import { type PreloadIpc, channels, makeApi } from '../src/preload/api'
 
 // Main's and the preload's part in ssh's prompts (spec §9.1): main holds each prompt the connection
 // process asks until the page answers it or it is withdrawn, and asks the page again at each load; the
-// preload and main decode both ways; the askpass helper runs on the Node the app has.
+// preload and main decode both ways.
 
 const encodeEvent = Schema.encodeSync(SshPromptEvent)
 
@@ -72,24 +71,6 @@ describe("main's prompts", () => {
     desk.pageLoaded()
     expect(toPage).toEqual([asked(1), withdrawn(1)])
     expect(toConnection).toEqual([])
-  })
-
-  it('runs the helper on the Node the app has: none on Windows', () => {
-    const resources = '/Applications/Fabrica.app/Contents/Resources'
-    expect(
-      askpassNode({ platform: 'darwin', packaged: true, resources }),
-    ).toEqual(Option.some(`${resources}/engine/node/bin/node`))
-    expect(
-      askpassNode({ platform: 'linux', packaged: false, resources }),
-    ).toEqual(Option.some('node'))
-    expect(
-      askpassNode({ platform: 'win32', packaged: true, resources }),
-    ).toEqual(Option.none())
-    const node = Option.some(`${resources}/engine/node/bin/node`)
-    expect(askpassNodeOf(['electron', ...askpassArguments(node)])).toEqual(node)
-    expect(askpassNodeOf(askpassArguments(Option.none()))).toEqual(
-      Option.none(),
-    )
   })
 })
 

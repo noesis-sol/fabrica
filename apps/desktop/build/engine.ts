@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { type EngineTarget, distributionName } from '@fabrica/engine-app/layout'
 
 import engineManifest from '../../engine/package.json' with { type: 'json' }
+import { stageAskpass } from './askpass.ts'
 
 // The engine distribution the packaged app embeds (spec §22.2), staged by electron-builder's beforePack
 // hook for each platform and architecture it packs, into `stage/engine`, which electron-builder.yml's
@@ -127,7 +128,7 @@ export interface PackingApp {
   readonly arch: number
 }
 
-/** electron-builder's beforePack hook: stages the engine the app being packed embeds. */
+/** electron-builder's beforePack hook: stages the engine the app being packed embeds, and Windows' askpass helper. */
 export default async function stageAppEngine(
   packing: PackingApp,
 ): Promise<void> {
@@ -141,4 +142,11 @@ export default async function stageAppEngine(
     stage: stageFolder,
     env: process.env,
   })
+  if (packing.electronPlatformName === 'win32') {
+    await stageAskpass({
+      source: NodePath.join(desktop, 'build', 'askpass.c'),
+      stage: NodePath.join(desktop, 'stage', 'askpass'),
+      env: process.env,
+    })
+  }
 }

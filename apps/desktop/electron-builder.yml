@@ -8,8 +8,8 @@
 # comes through @electron/get, from the cache the electron package's install filled, checked against its
 # release's SHASUMS256.txt (§20.4).
 #
-# The hooks: beforePack stages the engine distribution the app embeds (build/engine.ts), which
-# extraResources copy into its resources; afterPack flips the fuses (§20.1, build/fuses.ts), before
+# The hooks: beforePack stages the engine distribution the app embeds (build/engine.ts), and for Windows
+# builds its SSH_ASKPASS helper (build/askpass.ts), which extraResources copy into its resources; afterPack flips the fuses (§20.1, build/fuses.ts), before
 # anything is signed, since flipping changes the binary.
 #
 # Signing runs only where its secrets are (§20.5). macOS: CSC_LINK and CSC_KEY_PASSWORD (the Developer ID
@@ -108,6 +108,9 @@ win:
   extraResources:
     - from: stage/engine
       to: engine-release
+    # electron-builder signs an .exe among the extra resources as it copies it.
+    - from: stage/askpass
+      to: askpass
 
 nsis:
   oneClick: true

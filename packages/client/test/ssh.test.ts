@@ -33,6 +33,7 @@ import {
 import { Toolbox, layerToolbox, shStub, tempFolder } from '@fabrica/testkit'
 
 import {
+  AskpassHelper,
   type EngineClientShape,
   Link,
   SshDestination,
@@ -464,7 +465,7 @@ describe('the SSH bridge', () => {
           const client = yield* clientOver(
             env,
             SshPrompting.Relay({
-              node: process.execPath,
+              helper: AskpassHelper.Node({ node: process.execPath }),
               folder: dir,
               prompts,
             }),
@@ -490,7 +491,7 @@ describe('the SSH bridge', () => {
           clientOver(
             env,
             SshPrompting.Relay({
-              node: process.execPath,
+              helper: AskpassHelper.Node({ node: process.execPath }),
               folder: dir,
               prompts,
             }),
@@ -508,7 +509,11 @@ describe('the SSH bridge', () => {
         })
         const client = yield* clientOver(
           env,
-          SshPrompting.Relay({ node: process.execPath, folder: dir, prompts }),
+          SshPrompting.Relay({
+            helper: AskpassHelper.Node({ node: process.execPath }),
+            folder: dir,
+            prompts,
+          }),
         )
         expect(Link.$is('Up')(yield* client.link)).toBe(true)
         expect((yield* Ref.get(secrets)).map(prompt => prompt.text)).toEqual([
@@ -525,7 +530,7 @@ describe('the SSH bridge', () => {
           clientOver(
             env,
             SshPrompting.Relay({
-              node: process.execPath,
+              helper: AskpassHelper.Node({ node: process.execPath }),
               folder: dir,
               prompts,
             }),
@@ -544,7 +549,7 @@ describe('the SSH bridge', () => {
           clientOver(
             env,
             SshPrompting.Relay({
-              node: process.execPath,
+              helper: AskpassHelper.Node({ node: process.execPath }),
               folder: dir,
               prompts,
             }),

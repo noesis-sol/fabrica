@@ -2,7 +2,9 @@
 # targets on that target's own runner (dmg and zip per macOS architecture, AppImage, deb and rpm per Linux
 # architecture, NSIS for Windows x64), with the engine distribution it embeds built first, and every
 # artifact smoke-tested: installed or unpacked as a user would, then launched and driven by
-# apps/desktop/test/smoke.test.ts through Playwright's Electron support. The packages are kept for a week.
+# apps/desktop/test/smoke.test.ts through Playwright's Electron support. The Windows app's SSH_ASKPASS
+# helper, which packaging builds with the runner's clang, is also run as installed against a stub ssh. The
+# packages are kept for a week.
 #
 # Signing runs only where its secrets are (§20.5), as release.yml's: for macOS APPLE_CERTIFICATE (a
 # Developer ID Application certificate and its key, as a base64 .p12) and APPLE_CERTIFICATE_PASSWORD, and
@@ -300,4 +302,17 @@ jobs:
           if ($install.ExitCode -ne 0) { throw "the installer exited with $($install.ExitCode)" }
           $env:FABRICA_SMOKE_APP = Join-Path $folder 'Fabrica.exe'
           mise exec -- pnpm --filter @fabrica/desktop smoke
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # The helper the installer put in the app's resources, against a stub ssh on this Windows.
+      - name: Test the installed askpass helper
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $stub = Join-Path $env:RUNNER_TEMP 'stub-ssh.exe'
+          clang -O2 apps/desktop/test/stub-ssh.c -o $stub
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:FABRICA_ASKPASS_RESOURCES = Join-Path $env:RUNNER_TEMP 'Fabrica\resources'
+          $env:FABRICA_ASKPASS_STUB_SSH = $stub
+          mise exec -- pnpm --filter @fabrica/desktop test:windows-askpass
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -1,9 +1,18 @@
-import { Schema } from 'effect'
+import { Data, Schema } from 'effect'
 
 // What ssh asks while it connects, relayed through `SSH_ASKPASS` to the user in the app (spec §9.1),
 // and their answers: the connection process asks them of main, main of the page, and the answers come
 // back the same way. Each crosses a process boundary and is decoded there, so this module has no Node in
 // it; `transports/ssh.ts` asks them of `SshPrompts`.
+
+/** What ssh runs for each prompt it relays (`SSH_ASKPASS`), as main names it to the connection process. */
+export type AskpassHelper = Data.TaggedEnum<{
+  /** The relay's own script, run by this `node` through a `/bin/sh` launcher, written for each connection. */
+  Node: { readonly node: string }
+  /** A program at `path` that speaks the relay's protocol itself: Windows' ssh runs no script. */
+  Executable: { readonly path: string }
+}>
+export const AskpassHelper = Data.taggedEnum<AskpassHelper>()
 
 /** One thing ssh asks or says, about the connection to `destination`. */
 export const SshPrompt = Schema.TaggedUnion({

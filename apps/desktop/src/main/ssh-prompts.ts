@@ -1,8 +1,9 @@
 import { Option, Schema } from 'effect'
 
-import { SshPromptAnswer, SshPromptEvent } from '@fabrica/client'
+import { AskpassHelper, SshPromptAnswer, SshPromptEvent } from '@fabrica/client'
 
 import { bundledNode } from './local-engine'
+import { windowsAskpass } from './windows-askpass'
 
 // Main's part in ssh's prompts (spec §9.1): the connection process asks what ssh asks as it connects
 // (an unknown host's key, a passphrase), main asks the page and hands the page's answers back. Main holds
@@ -67,12 +68,13 @@ export const makePromptDesk = (host: PromptDeskHost) => {
 }
 
 /**
- * The Node the connection process's `SSH_ASKPASS` helper runs on: in a packaged app for macOS or Linux,
- * the one the engine distribution it bundles carries (Electron's own won't run as Node: the RunAsNode
- * fuse is off); in a development build, the `node` on the PATH; none on Windows, whose ssh runs no shell
- * script, until the app ships a helper of its own: there ssh asks nothing.
+ * What the connection process's ssh runs as `SSH_ASKPASS`. On macOS and Linux, the relay's script, on
+ * Node: in a packaged app the one the engine distribution it bundles carries (Electron's own won't run as
+ * Node: the RunAsNode fuse is off); in a development build, the `node` on the PATH. On Windows, whose ssh
+ * runs no shell script, the packaged app's own program; a development build has none built, so there ssh
+ * asks nothing.
  */
-export const askpassNode = ({
+export const askpassHelper = ({
   platform,
   packaged,
   resources,
@@ -80,7 +82,15 @@ export const askpassNode = ({
   readonly platform: NodeJS.Platform
   readonly packaged: boolean
   readonly resources: string
-}): Option.Option<string> =>
-  platform === 'win32'
-    ? Option.none()
-    : Option.some(packaged ? bundledNode(resources) : 'node')
+}): Option.Option<AskpassHelper> => {
+  if (platform === 'win32') {
+    return packaged
+      ? Option.some(
+          AskpassHelper.Executable({ path: windowsAskpass(resources) }),
+        )
+      : Option.none()
+  }
+  return Option.some(
+    AskpassHelper.Node({ node: packaged ? bundledNode(resources) : 'node' }),
+  )
+}

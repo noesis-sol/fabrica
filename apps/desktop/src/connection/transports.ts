@@ -9,7 +9,11 @@ import {
 } from 'effect'
 import { Socket } from 'effect/socket'
 
-import { ConnectionFailed, ConnectionRefused } from '@fabrica/client'
+import {
+  type AskpassHelper,
+  ConnectionFailed,
+  ConnectionRefused,
+} from '@fabrica/client'
 import {
   SshPrompting,
   type SshPrompts,
@@ -33,8 +37,8 @@ import { ConnectionTarget } from './target'
 // answers there, starting it where none does (§7.1); why it couldn't is said to the page, whose client
 // tries again later. Over TLS, a WebSocket to the engine's listener, its certificate checked against the
 // fingerprint pinned at pairing and its token presented. Its ssh's prompts (an unknown host's key, a passphrase, a password) are relayed to the
-// app through `SSH_ASKPASS`, by a helper the Node main names runs; where main names none (Windows, until
-// the app ships a helper of its own), ssh asks nothing (`BatchMode`): it reaches hosts `known_hosts`
+// app through `SSH_ASKPASS`, by the helper main names; where main names none (a development build on
+// Windows, which has no helper built), ssh asks nothing (`BatchMode`): it reaches hosts `known_hosts`
 // knows with keys ssh-agent holds. A failure trying again won't mend (a changed host key, a refused
 // sign-in, no fabrica on the host, a TLS engine's changed certificate or refused token) is a refusal,
 // which the relay says to the page.
@@ -50,8 +54,8 @@ export interface TransportHost {
   readonly localEngine: Effect.Effect<LocalEngineReach>
   /** How ssh's prompts reach the user: none asks nothing. */
   readonly askpass: Option.Option<{
-    /** The Node the `SSH_ASKPASS` helper runs on. */
-    readonly node: string
+    /** What ssh runs as `SSH_ASKPASS`. */
+    readonly helper: AskpassHelper
     /** Where each connection's private folder for the helper is made. */
     readonly folder: string
     readonly prompts: SshPrompts

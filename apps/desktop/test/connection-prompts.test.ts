@@ -4,6 +4,7 @@ import * as NodePath from 'node:path'
 
 import { describe, expect, it, layer } from '@effect/vitest'
 import {
+  AskpassHelper,
   SshPromptEvent,
   connectionRefused,
   portSocket,
@@ -172,7 +173,7 @@ describe('a connection over ssh', () => {
                   env: tools.env({ STUB_DIR: dir, STUB_PROMPT: hostKeyText }),
                   localEngine: engineAnswers,
                   askpass: Option.some({
-                    node: process.execPath,
+                    helper: AskpassHelper.Node({ node: process.execPath }),
                     folder: dir,
                     prompts: asked.prompts,
                   }),

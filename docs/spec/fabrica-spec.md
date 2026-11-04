@@ -370,7 +370,7 @@ In the app, the connection process (a `utilityProcess`) owns every transport (it
 ### 9.1 Reaching an engine
 
 - \[DECISION\] An engine listens only on its local socket unless TLS is configured. Clients reach remote engines through SSH: the app's "Add engine" takes an SSH destination (`user@host`, or a host from `~/.ssh/config`), and the connection process runs the SSH stdio bridge (§8.2), one `ssh` process per engine connection, every stream multiplexed over it (H30).
-- Host keys are SSH's own (`known_hosts`): a first connection to an unknown host shows its fingerprint for the user to accept; a changed key refuses the connection, as `ssh` does. Interactive prompts (a key's passphrase, a password) are relayed to the app through `SSH_ASKPASS` \[VERIFY on Windows' OpenSSH\].
+- Host keys are SSH's own (`known_hosts`): a first connection to an unknown host shows its fingerprint for the user to accept; a changed key refuses the connection, as `ssh` does. Interactive prompts (a key's passphrase, a password) are relayed to the app through `SSH_ASKPASS`, on Windows by a small program the app ships, which speaks the relay's protocol over a named pipe \[VERIFY on Windows' OpenSSH\].
 - The app keeps its known engines (name, SSH destination or TLS address, the engine's ID and protocol version) in its own state; pairing tokens in `safeStorage`.
 
 ### 9.2 Installing and updating

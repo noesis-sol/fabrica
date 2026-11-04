@@ -39,7 +39,7 @@ import {
 import { AppPage } from './navigation'
 import { makeFingerprintDesk, makePairings } from './pairing'
 import { type BrokeredPage, localTarget, makeBroker } from './ports'
-import { askpassNode, makePromptDesk } from './ssh-prompts'
+import { askpassHelper, makePromptDesk } from './ssh-prompts'
 import { makeAppState, safeStorageBox } from './state'
 import { makeUpdateStatusCell } from './updateStatus'
 import {
@@ -187,7 +187,7 @@ const broker = makeBroker<MessagePortMain>({
     const child = utilityProcess.fork(
       connectionProcess,
       askpassArguments(
-        askpassNode({
+        askpassHelper({
           platform: process.platform,
           packaged: app.isPackaged,
           resources: process.resourcesPath,

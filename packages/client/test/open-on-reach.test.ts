@@ -22,7 +22,7 @@ import { describe, expect, layer } from '@effect/vitest'
 import { EngineHello, EngineId, EngineRpcs } from '@fabrica/contracts'
 import { Toolbox, layerToolbox, shStub, tempFolder } from '@fabrica/testkit'
 
-import { Link, SshDestination, make } from '../src'
+import { AskpassHelper, Link, SshDestination, make } from '../src'
 import {
   SshPrompting,
   type SshPrompts,
@@ -216,7 +216,7 @@ describe('a connection over the SSH bridge, opened once the engine is reached', 
             clientOver(
               env,
               SshPrompting.Relay({
-                node: process.execPath,
+                helper: AskpassHelper.Node({ node: process.execPath }),
                 folder: dir,
                 prompts: held.prompts,
               }),
@@ -241,7 +241,7 @@ describe('a connection over the SSH bridge, opened once the engine is reached', 
             clientOver(
               env,
               SshPrompting.Relay({
-                node: process.execPath,
+                helper: AskpassHelper.Node({ node: process.execPath }),
                 folder: dir,
                 prompts: {
                   hostKey: () => Effect.succeed(false),
