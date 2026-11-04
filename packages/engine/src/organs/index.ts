@@ -2,3 +2,4 @@
 export * from './runtime'
 export * from './predictor'
 export * from './triage'
+export * from './scout'
