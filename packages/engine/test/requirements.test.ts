@@ -735,6 +735,46 @@ describe('a merge that changes the list on Base', () => {
     WHOLE_RUNS,
   )
 
+  it.effect(
+    'stops OFF_BRANCH, running none of it, where the checkout went off Base: a branch’s script would run',
+    () => {
+      const fixture = project({ ...settings, concurrent: 2 })
+      const go = `${fixture.data}-go`
+      return withRuns(
+        fixture,
+        Effect.gen(function* () {
+          const first = yield* file('First', `wait ${go}`)
+          const { records, running } = yield* startRun(fixture)
+          yield* until(records, isDispatchOf(first.id))
+          git(fixture.checkout, 'checkout', '--quiet', '-b', 'feature')
+          commit(fixture.checkout, 'a branch’s script', {
+            'check.sh': 'touch ran-branch-script\n',
+          })
+          const side = `${fixture.data}-side`
+          git(fixture.checkout, 'worktree', 'add', '--quiet', side, 'main')
+          commit(side, 'a list that runs a script', {
+            '.fabrica/settings.json': JSON.stringify({
+              ...settings,
+              concurrent: 2,
+              requires: [
+                { name: 'tool', check: 'sh check.sh', manual: 'by hand' },
+              ],
+            }),
+          })
+          yield* file('Second', 'finish')
+          expect(yield* Fiber.join(running)).toEqual({
+            kind: 'OFF_BRANCH',
+            code: 5,
+          })
+          expect(existsSync(join(fixture.checkout, 'ran-branch-script'))).toBe(
+            false,
+          )
+        }),
+      )
+    },
+    WHOLE_RUNS,
+  )
+
   it.effect('runs none of a list a branch changed until it merges', () => {
     const fixture = project({ ...settings, concurrent: 1 })
     const go = `${fixture.data}-go`

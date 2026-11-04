@@ -790,6 +790,7 @@ const runStarted = Effect.fn('Run.started')(function* (
       saidAs: 'requirements',
     },
     wake: wakes.wake(WakeReason.RequirementsChecked()),
+    offBase: detail => stop('OFF_BRANCH', detail),
     fork: check =>
       watched('the requirements check')(check).pipe(Scope.provide(runScope)),
   })

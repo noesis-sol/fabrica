@@ -90,6 +90,8 @@ export const makeRequirementsWatch = Effect.fn('Run.requirementsWatch')(
     readonly baseCommit: CommitHash
     readonly run: RequirementsInput
     readonly wake: Effect.Effect<void>
+    /** The checkout went off Base during the run: it stops, `OFF_BRANCH` (§13.11). */
+    readonly offBase: (detail: string) => Effect.Effect<void>
     readonly fork: (check: Effect.Effect<void>) => Effect.Effect<unknown>
   }) {
     const { run, base } = input
@@ -107,6 +109,14 @@ export const makeRequirementsWatch = Effect.fn('Run.requirementsWatch')(
       checking.withPermit(
         Effect.gen(function* () {
           if ((yield* Ref.get(watched)).generation !== generation) return
+          // Its commands run in the checkout: off Base, a branch's scripts would run, as at the start.
+          const branch = yield* (yield* Git)
+            .currentBranch({ repo: run.checkout })
+            .pipe(Effect.orElseSucceed(() => Option.none<string>()))
+          if (!Option.contains(branch, base))
+            return yield* input.offBase(
+              `the checkout ${run.checkout} went off ${base}, so the changed requires list wasn't checked: put it back on ${base}, then run again`,
+            )
           const found = yield* checkInRun(list, run)
           const items = missingItems(found)
           const gate =
