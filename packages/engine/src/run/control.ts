@@ -21,6 +21,8 @@ export interface RunControl {
   readonly draining: Effect.Effect<boolean>
   /** Stops the run now: it ends `INTERRUPTED`. */
   readonly stop: Effect.Effect<void>
+  /** Waits for the run to be asked to stop: what runs before its loop, which reads the wake, is cut short by it. */
+  readonly stopped: Effect.Effect<void>
   readonly drain: Effect.Effect<void>
   readonly undrain: Effect.Effect<void>
 }
@@ -35,6 +37,7 @@ export const makeRunControl: Effect.Effect<RunControl> = Effect.gen(
   function* () {
     const wakes = yield* makeWakes
     const checked = yield* Deferred.make<StartChecked>()
+    const stopAsked = yield* Deferred.make<void>()
     const standing = yield* Ref.make<Standing>({
       draining: false,
       stopping: false,
@@ -68,15 +71,19 @@ export const makeRunControl: Effect.Effect<RunControl> = Effect.gen(
         ),
         changed =>
           changed
-            ? wakes.wake(
-                WakeReason.Stopped({
-                  kind: 'INTERRUPTED',
-                  ticket: Option.none(),
-                  detail: 'the run was stopped',
-                }),
+            ? Effect.andThen(
+                Deferred.succeed(stopAsked, undefined),
+                wakes.wake(
+                  WakeReason.Stopped({
+                    kind: 'INTERRUPTED',
+                    ticket: Option.none(),
+                    detail: 'the run was stopped',
+                  }),
+                ),
               )
             : Effect.void,
       ),
+      stopped: Deferred.await(stopAsked),
       drain: setDraining(true),
       undrain: setDraining(false),
     } satisfies RunControl

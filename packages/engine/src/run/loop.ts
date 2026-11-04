@@ -337,7 +337,13 @@ const runViewed = Effect.fn('Run.viewed')(function* (
   const run = log.run
   const control = given ?? (yield* makeRunControl)
   const checked = yield* view.steps.during('start_checks')(
-    runStartChecks({ config, run, log, steps: view.steps }),
+    runStartChecks({
+      config,
+      run,
+      log,
+      steps: view.steps,
+      stopped: control.stopped,
+    }),
   )
   yield* Deferred.succeed(control.checked, checked)
   if (StartChecked.$is('Problems')(checked)) {
@@ -1703,6 +1709,8 @@ const runStarted = Effect.fn('Run.started')(function* (
       .pipe(Effect.orElseSucceed(() => Option.none<CommitHash>()))
     if (Option.isNone(now) || now.value === baseSeen) return
     baseSeen = now.value
+    // Whoever moved it, a merge the run didn't make may have changed the list too (§17).
+    yield* requirements.merged
     const snapshot = yield* state.current
     const saved = (yield* sessions.all).filter(entry =>
       outOfHand(snapshot, entry.ticket),
@@ -1726,7 +1734,6 @@ const runStarted = Effect.fn('Run.started')(function* (
             actor,
             why: `Merged by hand into ${started.base}.`,
           }).pipe(Effect.catch(error => stop('TRACKER_FAILED', error.message)))
-          yield* requirements.merged
           const title = titleOf(snapshot, entry.ticket)
           yield* state.move({
             ticket: entry.ticket,

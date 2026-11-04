@@ -65,6 +65,16 @@ const engineWith = (requires: ReadonlyArray<object>) =>
     return { checkout, command }
   })
 
+/** Runs git in `checkout`, as the fixture does. */
+const gitIn =
+  (checkout: string) =>
+  (...args: ReadonlyArray<string>) =>
+    execFileSync('git', args, {
+      cwd: checkout,
+      stdio: 'ignore',
+      env: fixtureEnvironment(places),
+    })
+
 const exitCodeOf = (exit: Exit.Exit<unknown, unknown>): number =>
   Exit.isSuccess(exit)
     ? 0
@@ -129,35 +139,56 @@ describe('fabrica requires', () => {
   )
 
   it.live(
-    'runs Base’s list whatever the checkout has out, never a branch’s',
+    'refuses a checkout off Base or with uncommitted changes, running nothing: a command there would run its scripts',
     () =>
       Effect.gen(function* () {
         const { checkout, command } = yield* engineWith([
           { name: 'on-base', check: 'touch on-base', manual: 'never asked' },
         ])
-        const git = (...args: ReadonlyArray<string>) =>
-          execFileSync('git', args, {
-            cwd: checkout,
-            stdio: 'ignore',
-            env: fixtureEnvironment(places),
-          })
-        git('checkout', '--quiet', '-b', 'feature')
-        writeFileSync(
-          NodePath.join(checkout, '.fabrica/settings.json'),
-          JSON.stringify({
-            ...scriptedSettings,
-            requires: [
-              { name: 'on-branch', check: 'touch on-branch', manual: 'do it' },
-            ],
-          }),
+        const git = gitIn(checkout)
+        writeFileSync(NodePath.join(checkout, 'README.md'), 'changed\n')
+        const dirty = yield* command('requires')
+        expect(exitCodeOf(dirty.exit)).toBe(1)
+        expect(dirty.err.join('\n')).toContain(
+          "has uncommitted changes, and the list's commands run there: README.md",
         )
-        git('add', '--all')
-        git('commit', '--quiet', '--message', 'a branch’s entry')
+        git('checkout', '--quiet', '--', 'README.md')
+        git('checkout', '--quiet', '-b', 'feature')
+        const offBase = yield* command('requires')
+        expect(exitCodeOf(offBase.exit)).toBe(1)
+        expect(offBase.err.join('\n')).toContain("isn't on main")
+        expect(existsSync(NodePath.join(checkout, 'on-base'))).toBe(false)
+        git('checkout', '--quiet', 'main')
         const { exit, out } = yield* command('requires')
         expect(exit).toStrictEqual(Exit.void)
         expect(out).toEqual(['on-base: met'])
-        expect(existsSync(NodePath.join(checkout, 'on-branch'))).toBe(false)
       }).pipe(Effect.scoped),
+  )
+
+  it.live('runs Base’s list alone, never the list a branch has', () =>
+    Effect.gen(function* () {
+      const { checkout, command } = yield* engineWith([
+        { name: 'on-base', check: 'touch on-base', manual: 'never asked' },
+      ])
+      const git = gitIn(checkout)
+      git('checkout', '--quiet', '-b', 'feature')
+      writeFileSync(
+        NodePath.join(checkout, '.fabrica/settings.json'),
+        JSON.stringify({
+          ...scriptedSettings,
+          requires: [
+            { name: 'on-branch', check: 'touch on-branch', manual: 'do it' },
+          ],
+        }),
+      )
+      git('add', '--all')
+      git('commit', '--quiet', '--message', 'a branch’s entry')
+      git('checkout', '--quiet', 'main')
+      const { exit, out } = yield* command('requires')
+      expect(exit).toStrictEqual(Exit.void)
+      expect(out).toEqual(['on-base: met'])
+      expect(existsSync(NodePath.join(checkout, 'on-branch'))).toBe(false)
+    }).pipe(Effect.scoped),
   )
 
   it.live('--markdown prints the list for the README, and runs nothing', () =>

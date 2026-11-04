@@ -172,11 +172,16 @@ const settingsCheck = (config: RunConfig) =>
     ),
   )
 
-/** Base's requires list on `commit` checked: the list, and what is still missing of it (§17). */
+/**
+ * Base's requires list on `commit` checked: the list, and what is still missing of it (§17). A stop cuts
+ * it short, its command's tree ended and no further install started: nothing is missing, as the run ends
+ * `INTERRUPTED` at its first look, before any ticket (§13.10).
+ */
 const requirementsCheck = (
   settings: ResolvedSettings,
   commit: CommitHash,
   input: RequirementsInput,
+  stopped: Effect.Effect<void>,
 ) =>
   Effect.gen(function* () {
     type Checked = {
@@ -201,11 +206,15 @@ const requirementsCheck = (
     if (RequirementsList.$is('Unreadable')(read))
       return problems<Checked>(read.reason)
     const { list } = read
-    const checked = yield* checkInRun(list, input)
-    const missing = missingItems(checked)
+    const finished = yield* Effect.raceFirst(
+      Effect.map(checkInRun(list, input), Option.some),
+      Effect.as(stopped, Option.none()),
+    )
+    if (Option.isNone(finished))
+      return found<Checked>({ list, missing: [] }, 'cut short by a stop')
     return found<Checked>(
-      { list, missing },
-      list.length === 0 ? 'none listed' : foundWords(checked),
+      { list, missing: missingItems(finished.value) },
+      list.length === 0 ? 'none listed' : foundWords(finished.value),
     )
   })
 
@@ -328,6 +337,8 @@ export const runStartChecks = Effect.fn('Run.startChecks')(function* (input: {
   readonly log: RunLog['Service']
   /** The run view's steps, which show an install under way; none, it isn't shown. */
   readonly steps?: Pick<Steps, 'during'>
+  /** Waits for the run to be asked to stop; none, it never is. */
+  readonly stopped?: Effect.Effect<void>
 }) {
   const { config, run, log } = input
   const [git, checked] = yield* Effect.all(
@@ -375,6 +386,7 @@ export const runStartChecks = Effect.fn('Run.startChecks')(function* (input: {
                 steps: input.steps ?? noSteps,
                 saidAs: 'start: the requirements check',
               },
+              input.stopped ?? Effect.never,
             )
           : Effect.succeed(
               found(

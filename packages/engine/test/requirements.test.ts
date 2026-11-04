@@ -464,8 +464,90 @@ const startRun = (fixture: Project) =>
     const running = yield* Effect.forkChild(
       runProject(configOf(fixture, options()), control),
     )
-    return { records, running }
+    return { control, records, running }
   })
+
+/** Whether a record says an install of `name` starts. */
+const isInstallOf = (name: string) => (event: RunEvent) =>
+  event.kind === 'info' && event.text.includes(`: installing ${name}:`)
+
+/** Two tickets' whole merges on a busy machine. */
+const WHOLE_RUNS = 60_000
+
+describe('a stop', () => {
+  it.effect(
+    'cuts a start’s install short, its command ended, and starts no further one',
+    () => {
+      const fixture = project(
+        withSettings([
+          {
+            name: 'slow',
+            check: 'false',
+            install: 'sleep 60; touch slow-done',
+          },
+          { name: 'next', check: 'false', install: 'touch next-done' },
+        ]),
+      )
+      return withRuns(
+        fixture,
+        Effect.gen(function* () {
+          const made = yield* file('One', 'finish')
+          const { control, records, running } = yield* startRun(fixture)
+          yield* until(records, isInstallOf('slow'))
+          yield* control.stop
+          expect(yield* Fiber.join(running)).toEqual({
+            kind: 'INTERRUPTED',
+            code: 130,
+          })
+          expect(existsSync(join(fixture.checkout, 'slow-done'))).toBe(false)
+          expect(existsSync(join(fixture.checkout, 'next-done'))).toBe(false)
+          const events = yield* eventsOf(fixture)
+          expect(events.some(isInstallOf('next'))).toBe(false)
+          expect(events.some(isDispatchOf(made.id))).toBe(false)
+        }),
+      )
+    },
+    WHOLE_RUNS,
+  )
+
+  it.effect(
+    'ends an install a merge’s list started, with the run',
+    () => {
+      const fixture = project({ ...settings, concurrent: 1 })
+      const go = `${fixture.data}-go`
+      return withRuns(
+        fixture,
+        Effect.gen(function* () {
+          const { first } = yield* chained(`wait ${go}`)
+          const { control, records, running } = yield* startRun(fixture)
+          yield* until(records, isDispatchOf(first.id))
+          commit(fixture.checkout, 'a slow tool', {
+            '.fabrica/settings.json': JSON.stringify({
+              ...settings,
+              concurrent: 1,
+              requires: [
+                {
+                  name: 'slow',
+                  check: 'false',
+                  install: 'sleep 60; touch slow-done',
+                },
+              ],
+            }),
+          })
+          writeFileSync(go, '')
+          yield* until(records, isInstallOf('slow'))
+          yield* control.stop
+          expect(yield* Fiber.join(running)).toEqual({
+            kind: 'INTERRUPTED',
+            code: 130,
+          })
+          expect(existsSync(join(fixture.checkout, 'slow-done'))).toBe(false)
+        }),
+      )
+    },
+    WHOLE_RUNS,
+  )
+})
 
 /** A first ticket whose stub does `script`, and a second only ready once the first has merged. */
 const chained = (script: string) =>
@@ -479,9 +561,6 @@ const chained = (script: string) =>
     })
     return { first, second }
   })
-
-/** Two tickets' whole merges on a busy machine. */
-const WHOLE_RUNS = 60_000
 
 describe('a merge that changes the list on Base', () => {
   it.effect(
@@ -578,6 +657,45 @@ describe('a merge that changes the list on Base', () => {
         }),
       )
     },
+  )
+
+  it.effect(
+    'takes a list a merge the run didn’t make changed, before its next ticket starts',
+    () => {
+      const fixture = project({ ...settings, concurrent: 2 })
+      const go = `${fixture.data}-go`
+      return withRuns(
+        fixture,
+        Effect.gen(function* () {
+          const first = yield* file('First', `wait ${go}`)
+          const { records, running } = yield* startRun(fixture)
+          yield* until(records, isDispatchOf(first.id))
+          // The maintainer's merge: Base moves with no ticket of the run's in it.
+          commit(fixture.checkout, 'a new tool', {
+            '.fabrica/settings.json': JSON.stringify({
+              ...settings,
+              concurrent: 2,
+              requires: [
+                {
+                  name: 'tool',
+                  check: hasMarker('tool'),
+                  install: 'touch tool',
+                },
+              ],
+            }),
+          })
+          const second = yield* file('Second', 'finish')
+          yield* until(records, isDispatchOf(second.id))
+          expect(existsSync(join(fixture.checkout, 'tool'))).toBe(true)
+          writeFileSync(go, '')
+          expect(yield* Fiber.join(running)).toEqual({
+            kind: 'READY_EMPTY',
+            code: 0,
+          })
+        }),
+      )
+    },
+    WHOLE_RUNS,
   )
 
   it.effect('runs none of a list a branch changed until it merges', () => {
