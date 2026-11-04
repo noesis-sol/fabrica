@@ -2,6 +2,7 @@ import {
   Data,
   Deferred,
   Effect,
+  Fiber,
   Option,
   Redacted,
   Schema,
@@ -12,6 +13,7 @@ import {
   AgentRoleVariable,
   type FileDiff,
   ModelName,
+  type ProviderName,
   SessionId,
   type ModelChoice as SettingsModel,
   type Ticket,
@@ -21,7 +23,7 @@ import {
   VerdictTool,
 } from '@fabrica/contracts'
 
-import { type ModelChoice, PiAgent } from '../agent'
+import { type Agent, type ModelChoice, PiAgent } from '../agent'
 import { CheckOwnPassedAtVariable } from '../checks'
 import {
   CheckOwnPasses,
@@ -34,6 +36,13 @@ import { Git, type Worktree } from '../git'
 import { ModelProxy } from '../proxy'
 import { type VerifierRound, WorkGraph } from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
+import {
+  callFailedAfter,
+  liftOf,
+  outlastedBy,
+  watchHeldInTurn,
+} from './hold-outlasted'
+import { record } from './records'
 import { recordTurns } from './turns'
 import { type WorkerContext, modelOf, runVariables, standingOf } from './worker'
 
@@ -47,6 +56,8 @@ import { type WorkerContext, modelOf, runVariables, standingOf } from './worker'
 // (`handBackPrompt`), at most `verifier.rounds` times, and a round that disagrees with an earlier one
 // to the worker to ask the maintainer. The rounds are kept with the ticket in the work graph, so a
 // ticket dispatched again (its question answered, carried over, undeferred) goes on from its last.
+// A turn a hold outlasts (`hold-outlasted.ts`) gives no answer: its session waits for the lift and is
+// asked to carry on, for as long as the run lasts, the run's end interrupting the wait with the rest.
 
 export type { VerifierRound } from '../workgraph'
 
@@ -261,6 +272,30 @@ const drawSession = Effect.map(drawBase36(16), random =>
   SessionId.make(`verifier-${random}`),
 )
 
+/** What the verifier is told once a hold that outlasted its turn has lifted. */
+const carryOnPrompt = (provider: ProviderName): string =>
+  `Your turn ended as a hold kept ${provider}'s model call waiting past its timeout and retries; the hold has lifted. Carry on, and give your verdict through ${VerdictTool.name}.`
+
+/** One turn of the verifier's session on `message`: the held provider that outlasted it, if one did. */
+const turnOf = (input: {
+  readonly agent: Agent
+  readonly model: Option.Option<ModelChoice>
+  readonly held: Stream.Stream<ReadonlySet<ProviderName>>
+  readonly message: string
+}) =>
+  Effect.gen(function* () {
+    const heldInTurn = yield* watchHeldInTurn(input.model, input.held)
+    // Read to the turn's settle, so that the turn's last call is known as the prompt returns.
+    const heard = yield* (yield* input.agent.events).pipe(
+      Stream.takeUntil(event => event.type === 'agent_settled'),
+      Stream.runFold(() => false, callFailedAfter),
+      Effect.forkScoped,
+    )
+    const { disposition } = yield* input.agent.prompt(input.message)
+    if (disposition === 'handled') return Option.none<ProviderName>()
+    return yield* outlastedBy(yield* Fiber.join(heard), heldInTurn)
+  }).pipe(Effect.scoped)
+
 /** The diff from the branch's merge base with Base to its HEAD, in words. */
 const changeOf = Effect.fn('Verifier.change')(function* (
   context: WorkerContext,
@@ -404,20 +439,34 @@ const verifyRound = Effect.fn('Verifier.round')(function* (input: {
     model: Schema.is(ModelName)(modelText) ? modelText : 'none',
     events: yield* agent.events,
   })
-  yield* agent.prompt(
-    verifierPrompt({
-      ticket: detail.ticket,
-      round: input.round,
-      rounds: project.verifier.rounds,
-      diff,
-      checkOwn: input.checkOwn,
-      passedAt,
-      earlier: input.earlier,
-    }),
-  )
-  // The verdict is published before its tool answers, and the turn settles after: it is here.
-  const verified = yield* Deferred.poll(answered)
-  return Option.isSome(verified) ? yield* verified.value : Verified.Unanswered()
+  let message = verifierPrompt({
+    ticket: detail.ticket,
+    round: input.round,
+    rounds: project.verifier.rounds,
+    diff,
+    checkOwn: input.checkOwn,
+    passedAt,
+    earlier: input.earlier,
+  })
+  for (;;) {
+    const outlasted = yield* turnOf({
+      agent,
+      model,
+      held: context.heldProviders,
+      message,
+    })
+    // The verdict is published before its tool answers, and the turn settles after: it is here.
+    const verified = yield* Deferred.poll(answered)
+    if (Option.isSome(verified)) return yield* verified.value
+    if (Option.isNone(outlasted)) return Verified.Unanswered()
+    yield* record(context.log, {
+      kind: 'info',
+      ticket,
+      text: `  ${ticket}'s verifier waits for the hold on ${outlasted.value} to lift: it outlasted its turn in round ${input.round}`,
+    })
+    yield* liftOf(context.heldProviders, outlasted.value)
+    message = carryOnPrompt(outlasted.value)
+  }
 })
 
 /**

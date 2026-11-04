@@ -788,6 +788,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     run,
     started,
     requirements: requirements.list,
+    heldProviders: held,
     log,
     merges,
     setup,

@@ -76,10 +76,13 @@ import { noTelemetry } from './run-harness'
 // again, or asks the maintainer where the hand-back says the rounds disagree, and resumed commits
 // another file and finishes; as the verifier (`FABRICA_AGENT_ROLE=verifier`) it gives, round by
 // round, the verdicts its ticket's `verify:` line lists (`PASS`, `FAIL`, `DISAGREE`, or `none` for
-// no verdict), the last one for every later round.
+// no verdict), the last one for every later round. `HELD` has the provider refuse a call of the verifier's
+// for its usage limit and ends its turn on a failed call once the proxy keeps a call at its permit, as Pi
+// does, giving a PASS once told to carry on; `HELD-ANSWERED` does the same but its last call was answered;
+// `FAILED` ends its turn on a failed call with nothing held.
 
 const STUB = `import { execFileSync } from 'node:child_process'
-import { appendFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { connect } from 'node:net'
 import { join } from 'node:path'
 const args = process.argv.slice(2)
@@ -147,6 +150,23 @@ const verdictOf = (word, round) => {
     findings: [{ gap: 'src/x.ts:1 has no test, round ' + round, blocking: true }],
   }
 }
+const modelCall = (body, signal) => {
+  const { providers } = JSON.parse(readFileSync(join(process.env.PI_CODING_AGENT_DIR, 'models.json'), 'utf8'))
+  const { baseUrl, apiKey } = providers.anthropic
+  return fetch(baseUrl + '/v1/messages', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': apiKey },
+    body: JSON.stringify({ model: 'claude-test', ...body }),
+    signal,
+  })
+}
+const refusedUntilHeld = async () => {
+  await modelCall({ refuse: true })
+  for (let answered = true; answered; )
+    answered = await modelCall({}, AbortSignal.timeout(300)).then(() => true, () => false)
+}
+const lastCall = stopReason =>
+  out({ type: 'message_end', message: { role: 'assistant', provider: 'anthropic', stopReason } })
 const verify = async message => {
   // A worker's tool is refused to the verifier, and so is a round disagreeing with itself.
   await tryCall('add_note', { body: 'the verifier writes nothing' })
@@ -158,6 +178,13 @@ const verify = async message => {
   const round = Number(message.match(/round (\\d+) of at most/)?.[1] ?? '1')
   const word = script[Math.min(round, script.length) - 1]
   if (word === 'none') return
+  if (word === 'FAILED') return lastCall('error')
+  if (word === 'HELD' && message.startsWith('Your turn ended as a hold'))
+    return call('verdict', { verdict: verdictOf('PASS', round) })
+  if (word === 'HELD' || word === 'HELD-ANSWERED') {
+    await refusedUntilHeld()
+    return lastCall(word === 'HELD' ? 'error' : 'stop')
+  }
   return call('verdict', { verdict: verdictOf(word, round) })
 }
 const work = async message => {
@@ -207,6 +234,7 @@ const handle = command => {
         .finally(() => {
           out({ type: 'agent_end', messages: [], willRetry: false })
           out({ type: 'agent_settled', aborted: false })
+          note({ event: 'settled' })
         })
     case 'abort':
       return respond(command.id, 'abort')
@@ -355,13 +383,23 @@ const engine = EngineId.make('engine-1')
 export const maintainer: Actor = { _tag: 'maintainer' }
 export const run = RunId.make('run-1')
 
-/** A loopback Anthropic taking every call. */
+/** A loopback Anthropic taking every call but one asking to be refused, for its usage limit, reset an hour past the epoch. */
 export const fakeProvider = Effect.acquireRelease(
   Effect.callback<{ readonly url: string; readonly close: () => void }>(
     resume => {
       const server = createServer((request, response) => {
-        request.resume()
+        let body = ''
+        request.on('data', chunk => {
+          body += String(chunk)
+        })
         request.on('end', () => {
+          if (body.includes('"refuse":true')) {
+            response.writeHead(429, {
+              'anthropic-ratelimit-unified-reset': '3600',
+            })
+            response.end()
+            return
+          }
           response.writeHead(200, {
             'content-type': anthropicAnswer.contentType,
           })
@@ -549,8 +587,15 @@ export const phasesOf = (events: ReadonlyArray<RunEvent>, ticket: TicketId) =>
     .filter(event => event.ticket === ticket)
     .map(event => `${event.to ?? 'out'} (${event.cause})`)
 
-/** Runs the project with one ticket whose verifier gives `verify`: its end, records, ticket and stubs' log. */
-export const runOne = (fixture: Project, verify: string) =>
+/**
+ * Runs the project with one ticket whose verifier gives `verify`, `during` running beside the run: its
+ * end, records, ticket and stubs' log.
+ */
+export const runOne = (
+  fixture: Project,
+  verify: string,
+  during: (ticket: TicketId) => Effect.Effect<void> = () => Effect.void,
+) =>
   Effect.gen(function* () {
     const provider = yield* fakeProvider
     return yield* Effect.gen(function* () {
@@ -564,7 +609,10 @@ export const runOne = (fixture: Project, verify: string) =>
         },
         actor: maintainer,
       })
-      const end = yield* runProject(configOf(fixture))
+      const [end] = yield* Effect.all(
+        [runProject(configOf(fixture)), during(made.id)],
+        { concurrency: 'unbounded' },
+      )
       const { events } = yield* readEvents({
         root: fixture.checkout,
         run: Option.some(run),

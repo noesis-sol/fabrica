@@ -17,6 +17,7 @@ import {
   ModelName,
   ModelOverride,
   PermissionsVariable,
+  type ProviderName,
   type Requirement,
   type RunId,
   type SessionId,
@@ -130,6 +131,8 @@ export interface WorkerContext {
   readonly started: Started
   /** The requires list on Base as the run holds it now, a merge's change taken (§17). */
   readonly requirements: Effect.Effect<ReadonlyArray<Requirement>>
+  /** The providers the run's holds hold (`heldProviders`): their value now, then each change. */
+  readonly heldProviders: Stream.Stream<ReadonlySet<ProviderName>>
   readonly log: RunLog['Service']
   readonly merges: MergeQueueShape
   /** The project's setup, as a dispatch sets its worktree up (§13.8). */

@@ -27,6 +27,12 @@ import type { Worktree } from '../git'
 import type { HandBackClockShape } from '../merge/handbacks'
 import { ProxyEvent, Refusal } from '../proxy'
 import type { SecretName } from '../secrets'
+import {
+  callFailedAfter,
+  liftOf,
+  outlastedBy,
+  watchHeldInTurn,
+} from './hold-outlasted'
 import { WorkerEnd, WorkerTurn } from './worker'
 
 // Each worker's supervision (spec §12.8, §14.5, H37): every path that starts or resumes a worker runs
@@ -291,26 +297,13 @@ const heardAfter = (heard: Heard, event: PiEvent, at: number): Heard => {
   if (event.type === 'tool_execution_start')
     open.set(event.toolCallId, event.toolName)
   if (event.type === 'tool_execution_end') open.delete(event.toolCallId)
-  const callFailed =
-    event.type === 'message_end' && event.message.role === 'assistant'
-      ? event.message.stopReason === 'error'
-      : heard.callFailed
-  return { at, doing: doingOf(event), open, callFailed }
+  return {
+    at,
+    doing: doingOf(event),
+    open,
+    callFailed: callFailedAfter(heard.callFailed, event),
+  }
 }
-
-/** A provider `model`'s calls wait on among those held; any of them for Pi's own model, which isn't known. */
-const heldFor = (
-  model: Option.Option<ModelChoice>,
-  held: ReadonlySet<ProviderName>,
-): Option.Option<ProviderName> =>
-  Option.fromUndefinedOr(
-    [...held].find(provider =>
-      Option.match(model, {
-        onNone: () => true,
-        onSome: choice => choice.provider === provider,
-      }),
-    ),
-  )
 
 /** A refusal the model proxy gave the attempt's session, with no call through since. */
 interface Refused {
@@ -482,15 +475,9 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
       )
       // Whether its provider was held during the turn: a call kept waiting at its permit ends in Pi with
       // no refusal of this session's.
-      const heldInTurn = yield* Ref.make(Option.none<ProviderName>())
-      yield* options.heldProviders.pipe(
-        Stream.runForEach(held =>
-          Option.match(heldFor(input.model, held), {
-            onNone: () => Effect.void,
-            onSome: provider => Ref.set(heldInTurn, Option.some(provider)),
-          }),
-        ),
-        Effect.forkScoped,
+      const heldInTurn = yield* watchHeldInTurn(
+        input.model,
+        options.heldProviders,
       )
       const monitors = yield* FiberSet.make<void>()
       yield* Option.match(input.limit, {
@@ -547,7 +534,7 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
       return {
         came,
         refused: yield* Ref.get(attempt.refused),
-        outlasted: callFailed ? yield* Ref.get(heldInTurn) : Option.none(),
+        outlasted: yield* outlastedBy(callFailed, heldInTurn),
       }
     }).pipe(Effect.scoped)
 
@@ -619,14 +606,6 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
       )
       return HandBackEnd.AtLimit()
     })
-
-  /** A hold on `provider` has lifted, or wasn't on. */
-  const liftOf = (provider: ProviderName) =>
-    options.heldProviders.pipe(
-      Stream.filter(held => !held.has(provider)),
-      Stream.runHead,
-      Effect.asVoid,
-    )
 
   /**
    * A ticket's worker under §12.8's policies, its end told as `ended` makes it; `limited`, where given,
@@ -799,7 +778,7 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
             }),
           HoldOutlasted: ({ provider }) =>
             Effect.gen(function* () {
-              yield* liftOf(provider)
+              yield* liftOf(options.heldProviders, provider)
               return resumed(
                 'a hold',
                 carryOn(
