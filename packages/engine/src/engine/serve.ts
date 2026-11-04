@@ -29,7 +29,7 @@ import { RunHosting, refusingRuns } from '../run/hosting'
 import {
   TalkAgents,
   TalkModes,
-  refusingTalkAgents,
+  hostedTalkAgents,
   registeredModes,
 } from '../talks'
 import {
@@ -113,9 +113,8 @@ export interface ServeOptions extends EngineFacts {
   /** `fabrica serve`'s flags for the TLS listener, each over the engine's setting of the same name. */
   readonly listen?: ListenSettings
   /**
-   * Talks' agents and modes (§15.4), which may be built on what the engine's runs run on
-   * (`hostedTalkAgents`); where none are given, the modes this release has, on agents that are refused,
-   * as a talk's agent reaches its model only through the model proxy.
+   * Talks' agents and modes (§15.4); where none are given, the modes this release has, on what the
+   * engine's runs run on (`hostedTalkAgents`): where it refuses them, a talk is refused too, saying why.
    */
   readonly talks?: Layer.Layer<TalkAgents | TalkModes, never, RunHosting>
   /**
@@ -176,13 +175,8 @@ const listenerCertificate = (paths: EnginePaths, settings: ListenSettings) => {
   })
 }
 
-/** The talks where none are given: a talk's agent reaches its model only through the model proxy. */
-const talksRefused = Layer.merge(
-  registeredModes,
-  refusingTalkAgents(
-    "this engine can't start a talk's agent: talks reach their model through the model proxy, which it wasn't given",
-  ),
-)
+/** The talks where none are given: a talk's agent reaches its model through the same agents and model proxy as a run's. */
+const talksOnHosting = Layer.merge(registeredModes, hostedTalkAgents)
 
 /** The runs' hosting where none is given: a run's workers reach their models only through the model proxy. */
 const runsRefused = refusingRuns(
@@ -258,7 +252,7 @@ export const startEngine = Effect.fn('Engine.start')(function* (
     options.update ??
       layerRefusing('this engine was started with nowhere to install updates'),
   )
-  const talks = yield* Layer.build(options.talks ?? talksRefused).pipe(
+  const talks = yield* Layer.build(options.talks ?? talksOnHosting).pipe(
     Effect.provide(runs),
   )
   const facts = yield* Layer.build(options.facts ?? layerNodeHost)

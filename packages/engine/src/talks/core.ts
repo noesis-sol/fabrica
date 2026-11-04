@@ -59,6 +59,8 @@ import { drawBase36 } from '../workgraph/ids'
 // work graph, for the ticket tools) and answers with the result encoded, or refuses it. A tool that
 // takes the maintainer's word first asks whether it has it (`confirmed`), from what the maintainer has
 // sent the talk since it asked, and whether that opened the turn.
+// A turn that settles on a failed model call, a refusal of the model proxy's or its provider's among
+// them, says so in the transcript, as no run's hold takes it up and the agent's message never comes.
 // The talk's agent is a port (`TalkAgents`), so the talks' rules are tested on a scripted session; the
 // engine's are Pi's, through the model proxy (`agents.ts`).
 
@@ -587,11 +589,34 @@ export const make = Effect.fn('Talks.make')(function* (config: TalksConfig) {
       lock: yield* Semaphore.make(1),
     }
     const reader = yield* makeTranscriptReader()
+    // Why the last model call failed; Pi may retry it, so it is read once the turn settles.
+    const failedCall = yield* Ref.make(Option.none<string>())
     yield* Effect.forkIn(
       events.pipe(
         Stream.runForEach(event =>
           Effect.gen(function* () {
             const entries = yield* reader.read(event)
+            if (
+              event.type === 'message_end' &&
+              event.message.role === 'assistant'
+            )
+              yield* Ref.set(
+                failedCall,
+                event.message.stopReason === 'error'
+                  ? Option.some(
+                      event.message.errorMessage ??
+                        'its provider gave no reason',
+                    )
+                  : Option.none(),
+              )
+            if (event.type === 'agent_settled') {
+              const failed = yield* Ref.getAndSet(failedCall, Option.none())
+              if (Option.isSome(failed))
+                yield* engineMessage(
+                  feed,
+                  `The model couldn't be called, so this turn has no answer: ${failed.value}`,
+                )
+            }
             yield* feed.write(entries)
             if (entries.some(TranscriptEntry.guards.turn_end)) yield* feed.flush
           }),

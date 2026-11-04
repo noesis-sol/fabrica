@@ -1,7 +1,7 @@
-import { Effect, Layer, Option, Stdio } from 'effect'
+import { Effect, Option, Stdio } from 'effect'
 import { fileURLToPath } from 'node:url'
 
-import { Daemon, LoginService, Talks, Update } from '@fabrica/engine'
+import { Daemon, LoginService, Update } from '@fabrica/engine'
 
 import { engineHost, hostFacts, hostPaths } from './host'
 import { agentPlaces, onHost, runHosting } from './hosting'
@@ -45,7 +45,6 @@ export const serve = (flags: Update.ServeFlags) =>
         places: Update.installPlaces(facts.home),
         host: { platform: host.platform, arch: host.arch },
       }),
-      talks: Layer.merge(Talks.registeredModes, Talks.hostedTalkAgents),
       runs: runHosting(
         onHost({
           paths,

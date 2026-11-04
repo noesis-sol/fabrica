@@ -7,7 +7,8 @@
  * `long` (a turn that runs until aborted), `wedged` (answers no abort, ignores SIGTERM), `slow-exit`
  * (exits a while after SIGTERM), `slow-abort` (answers an abort a while later), `silent` (answers
  * nothing), `handled` (an extension handles every prompt, so no turn runs), `exit-at-start`,
- * `with-child` (starts a child in a group of its own, as Pi's bash tool does), `dialog` (an extension asks the UI before the turn settles).
+ * `with-child` (starts a child in a group of its own, as Pi's bash tool does), `dialog` (an extension asks the UI before the turn settles),
+ * `model-refused` (its model call fails, and the turn settles), `model-retried` (its call fails, and Pi's retry goes through).
  */
 export const PI_STUB = `import { spawn } from 'node:child_process'
 import { appendFileSync, readFileSync } from 'node:fs'
@@ -73,6 +74,11 @@ const handle = command => {
       turn = true
       out({ type: 'agent_start' })
       if (mode === 'long') return
+      if (mode === 'model-refused' || mode === 'model-retried') {
+        out({ type: 'message_end', message: { role: 'assistant', stopReason: 'error', errorMessage: 'no credential is kept under anthropic' } })
+        if (mode === 'model-retried') out({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } })
+        return settle(false)
+      }
       out({ type: 'mystery_kind', detail: 1 })
       out({ type: 'mystery_kind', detail: 2 })
       out({ type: 'tool_execution_start', toolCallId: 't1' })

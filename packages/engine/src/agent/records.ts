@@ -53,6 +53,8 @@ export const PiMessage = Schema.Struct({
   usage: optional(PiUsage),
   /** Why a model's message ended: `error` where its call failed. */
   stopReason: optional(Schema.String),
+  /** What its provider said, where its call failed. */
+  errorMessage: optional(Schema.String),
 })
 export type PiMessage = typeof PiMessage.Type
 

@@ -43,6 +43,7 @@ import {
   type Tool,
   ToolCallId,
   ToolRefusal,
+  TranscriptEntry,
   controlTokenClient,
   decodeProjectSettings,
 } from '@fabrica/contracts'
@@ -73,7 +74,6 @@ import {
   Talks,
   hostedTalkAgents,
   piTalkAgents,
-  registeredModes,
   talkAgentTools,
   talkTool,
   layer as talksLayer,
@@ -601,8 +601,8 @@ describe('the Talks service on PiAgent', () => {
 
   const runContext: TalkContext = { _tag: 'run' }
 
-  const talksOn = Effect.fn(function* () {
-    const { places, context } = yield* onStub('normal')
+  const talksOn = Effect.fn(function* (mode = 'normal') {
+    const { places, context } = yield* onStub(mode)
     const settings = yield* Effect.orDie(
       decodeProjectSettings({ model: 'anthropic/claude-x' }),
     )
@@ -671,6 +671,46 @@ describe('the Talks service on PiAgent', () => {
       }).pipe(Effect.scoped),
   )
 
+  /** What the maintainer reads of a turn on the stub in `mode`: its engine's messages, up to the turn's end. */
+  const engineLines = (mode: string) =>
+    Effect.gen(function* () {
+      const { talks } = yield* talksOn(mode)
+      const opened = yield* talks.open({
+        project,
+        context: runContext,
+        model: Option.none(),
+      })
+      const watched = yield* talks
+        .watchTranscript({ talk: opened.talk, resume: Option.none() })
+        .pipe(
+          Stream.flatMap(item => Stream.fromIterable(item.value)),
+          Stream.takeUntil(TranscriptEntry.guards.turn_end),
+          Stream.runCollect,
+          Effect.forkScoped,
+        )
+      yield* talks.send({ talk: opened.talk, text: 'Hello.' })
+      const seen = yield* Fiber.join(watched)
+      return seen.flatMap(entry =>
+        TranscriptEntry.guards.message(entry) && entry.role === 'engine'
+          ? [entry.text]
+          : [],
+      )
+    })
+
+  it.live("says why where the turn's model call was refused", () =>
+    Effect.gen(function* () {
+      expect(yield* engineLines('model-refused')).toEqual([
+        "The model couldn't be called, so this turn has no answer: no credential is kept under anthropic",
+      ])
+    }).pipe(Effect.scoped),
+  )
+
+  it.live("says nothing of a failed call Pi's retry made good", () =>
+    Effect.gen(function* () {
+      expect(yield* engineLines('model-retried')).toEqual([])
+    }).pipe(Effect.scoped),
+  )
+
   it.live(
     "a new talk's opening is sent as its first prompt, in its own session folder",
     () =>
@@ -701,7 +741,7 @@ describe('the Talks service on PiAgent', () => {
   )
 })
 
-/** The Talks group of a daemon on `runs`, its talks' agents on them, with a project set to a model. */
+/** The Talks group of a daemon on `runs`, given no talks of its own, with a project set to a model. */
 const daemonOn = Effect.fn(function* (
   places: ScriptedPlaces,
   runs: (data: string) => Layer.Layer<RunHosting>,
@@ -719,7 +759,6 @@ const daemonOn = Effect.fn(function* (
     release: '1.2.3',
     git: engineGit(places),
     runs: runs(paths.data),
-    talks: Layer.merge(registeredModes, hostedTalkAgents),
   })
   const protocol = yield* Layer.build(
     RpcClient.layerProtocolSocket().pipe(
@@ -744,7 +783,7 @@ const daemonOn = Effect.fn(function* (
   return { client, id }
 })
 
-describe('the daemon, its talks on its run hosting', () => {
+describe('the daemon, given no talks, on its run hosting', () => {
   it.live("opens the project's run talk on a Pi through its model proxy", () =>
     Effect.gen(function* () {
       const places = makeScriptedPlaces()

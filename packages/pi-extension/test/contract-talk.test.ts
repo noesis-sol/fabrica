@@ -1,4 +1,4 @@
-import { Duration, Effect, Layer, Option, Schema } from 'effect'
+import { Duration, Effect, Fiber, Layer, Option, Schema, Stream } from 'effect'
 import { mkdir, readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -233,6 +233,34 @@ describe('Pi in a talk', () => {
         expect(JSON.stringify(stub.calls[1]?.body.messages)).toContain(
           'ask the maintainer in one line first',
         )
+      }),
+    timeout,
+  )
+
+  it.live(
+    'ends on what the provider said where the model call is refused, with nothing reported',
+    () =>
+      Effect.gen(function* () {
+        // No reply is left to give: the stub refuses the call with a client error.
+        const { calls, start } = yield* setting([])
+        const agent = yield* start(['file_tree'])
+        const heard = yield* (yield* agent.events).pipe(
+          Stream.takeUntil(event => event.type === 'agent_settled'),
+          Stream.runCollect,
+          Effect.forkScoped,
+        )
+        const settled = yield* agent.prompt('Are you there?')
+        const events = yield* Fiber.join(heard)
+        expect(settled.aborted).toBe(false)
+        const [failed] = events.flatMap(event =>
+          event.type === 'message_end' && event.message.role === 'assistant'
+            ? [event.message]
+            : [],
+        )
+        // What the talk's transcript says of it (`talks/core.ts`).
+        expect(failed?.stopReason).toBe('error')
+        expect(failed?.errorMessage).toContain("the stub can't serve")
+        expect(calls).toEqual([])
       }),
     timeout,
   )

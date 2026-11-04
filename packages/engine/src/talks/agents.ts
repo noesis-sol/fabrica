@@ -35,7 +35,7 @@ import {
 // the first-party extension and a control channel of the talk's own, and Pi's readers where the mode
 // reads code, never its shell or writers. It reaches its model through the model proxy under an agent
 // token of its own, counted to none of the project's runs, so no run's budget pays for it and no run's
-// hold waits it out: a refused call ends its turn with the provider's refusal for the maintainer to read.
+// hold waits it out: a refused call ends its turn, and the talk's transcript says why (`core.ts`).
 
 /** What the agents work from. */
 export interface PiTalkAgentsConfig {
