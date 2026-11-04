@@ -77,6 +77,7 @@ import {
   HandBackWorker,
   type HandBackWorkerShape,
 } from '../merge/handbacks'
+import { makeOrganRuntime, makePredictor } from '../organs'
 import { onPanic } from '../panic'
 import { basePushes, pushSetting } from '../projects/base-sync'
 import { ModelProxy, Permits } from '../proxy'
@@ -726,6 +727,26 @@ const runStarted = Effect.fn('Run.started')(function* (
       provider: choice.provider,
       modelId: choice.model,
     })),
+  })
+  const organs = yield* makeOrganRuntime({
+    project: config.project,
+    run,
+    checkout: config.checkout,
+    projectTrusted: config.projectTrusted,
+    sockets: config.sockets,
+    settings: project,
+    log: Option.some(log),
+    holds: Option.some({ usage, credentials, held }),
+    billing: () => 'api_key',
+  })
+  // The predictor's guess at a ticket naming no files (§16): an answer's record wakes the run as any
+  // change of the work graph does, and a guess lost wakes it too.
+  const predictor = yield* makePredictor({
+    organs,
+    checkout: config.checkout,
+    base: started.base,
+    enabled: project.organs.predictor.enabled,
+    woken: wakes.wake(WakeReason.TicketsChanged()),
   })
   const workers = yield* FiberSet.make<void>()
   const stop = (
@@ -1996,13 +2017,15 @@ const runStarted = Effect.fn('Run.started')(function* (
       // Whatever woke this look, a merge the run didn't make may have changed the list (§17).
       yield* requirements.baseMoved
       const gate = yield* requirements.gate
+      const free =
+        MayTake.$is('Yes')(may) && RequirementsGate.$is('Clear')(gate)
+          ? project.concurrent - slotsTaken(before, project.concurrent)
+          : 0
       const gated = yield* footprints.gate({
         ready: candidates,
         snapshot: before,
-        free:
-          MayTake.$is('Yes')(may) && RequirementsGate.$is('Clear')(gate)
-            ? project.concurrent - slotsTaken(before, project.concurrent)
-            : 0,
+        free,
+        guessing: waiting => predictor.offer({ ready: waiting, free }),
       })
       yield* keepHeld(candidates, gated)
       const solo = new Set([
@@ -2056,6 +2079,8 @@ const runStarted = Effect.fn('Run.started')(function* (
       // A question it will answer keeps the run too, unless it drains: what it frees is to come (§15.2).
       if ((yield* autoAnswers.awaited) && !draining)
         return Option.none<Ending>()
+      // So does a guess on its way: the ticket waiting for it is to come (§16).
+      if ((yield* predictor.asking) && !draining) return Option.none<Ending>()
       const limitReached = Option.exists(
         limit,
         most => after.dispatched >= most,

@@ -19,6 +19,7 @@ export {
   footprintParts,
   namesFunctions,
   ticketFootprint,
+  ticketText,
   withChanges,
 } from './footprint'
 export {

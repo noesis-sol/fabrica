@@ -484,7 +484,7 @@ const attentionLayer = Layer.effect(
 )
 
 /** Every service a run runs on, live, over the boundaries' stand-ins. */
-const services = (fixture: Project, provider: string) => {
+export const services = (fixture: Project, provider: string) => {
   const runner = Layer.provideMerge(runnerLayer(runnerConfig()), liveDeadlines)
   const gitServices = Layer.provideMerge(
     worktreesLayer,

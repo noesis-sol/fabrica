@@ -132,7 +132,10 @@ const readText = (
   }
 }
 
-const textOf = (ticket: FootprintTicket['ticket']): string =>
+/** The text a ticket's footprint is read from: its title, description, design and acceptance, never its notes. */
+export const ticketText = (
+  ticket: Pick<Ticket, 'title' | 'description' | 'design' | 'acceptance'>,
+): string =>
   [
     ticket.title,
     ...[ticket.description, ticket.design, ticket.acceptance].flatMap(field =>
@@ -170,8 +173,11 @@ export const namesFunctions = (input: {
   const { ticket } = input.ticket
   return (
     Option.getOrElse(ticket.metadata.files, () => []).length === 0 &&
-    readText(textOf(ticket), specOf(ticket, input.repository), input.repository)
-      .functions.length > 0
+    readText(
+      ticketText(ticket),
+      specOf(ticket, input.repository),
+      input.repository,
+    ).functions.length > 0
   )
 }
 
@@ -196,7 +202,7 @@ export const ticketFootprint = (input: {
       areas,
     }
   const text = readText(
-    textOf(ticket),
+    ticketText(ticket),
     specOf(ticket, input.repository),
     input.repository,
   )

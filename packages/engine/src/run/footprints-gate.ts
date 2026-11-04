@@ -42,7 +42,8 @@ import { type RunSnapshot, inProgress } from './state'
 // before it in the same look, is held back; every ready ticket waits while a `solo` ticket runs or
 // waits first in line, and a solo ticket starts only with nothing else in progress. A ticket past its
 // work holds on the files its branch changed, not on what its `files` or text named; the slots it
-// takes, none for up to `concurrent` such, are counted in `free` (`slotsTakenBy`, orchestra-z8lr).
+// takes, none for up to `concurrent` such, are counted in `free` (`slotsTakenBy`, orchestra-z8lr). A
+// ticket the predictor is guessing for waits for its answer, its slot left to the others (§16).
 
 /** The label of a ticket that runs alone. */
 export const soloLabel = 'solo'
@@ -225,6 +226,10 @@ export interface GateInput {
   readonly snapshot: RunSnapshot
   /** The slots free, as the run's holds allow. */
   readonly free: number
+  /** Offers the predictor the tickets about to run, and answers those not to run before its guess (§16). */
+  readonly guessing: (
+    taken: ReadonlyArray<Taken>,
+  ) => Effect.Effect<ReadonlySet<TicketId>>
 }
 
 /** The gate over the run's state: it reads each footprint, and Base's files once per Base commit. */
@@ -408,14 +413,23 @@ const gateReady = (
       ),
       read: readerIn(checkout),
     })
-    return gate({
-      ready,
-      parents,
-      running,
-      free: input.free,
-      mentions,
-      apart: at.apart,
-    })
+    // A ticket about to run that waits for its guess stays in the queue, neither held back nor in a
+    // slot, which the next in line takes; it may be the predictor's to weigh in turn.
+    const waiting = new Set<TicketId>()
+    for (;;) {
+      const gated = gate({
+        ready: ready.filter(({ ticket }) => !waiting.has(ticket.id)),
+        parents,
+        running,
+        free: input.free,
+        mentions,
+        apart: at.apart,
+      })
+      const guessing = yield* input.guessing(gated.take)
+      if (!gated.take.some(({ ticket }) => guessing.has(ticket.id)))
+        return gated
+      for (const ticket of guessing) waiting.add(ticket)
+    }
   })
 
 /** The run's footprints gate, over the checkout and its Base, for the project's settings. */
