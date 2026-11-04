@@ -2,6 +2,7 @@
 // under way and the run's workers as the maintainer reaches them.
 export {
   Delivered,
+  Release,
   type WorkerDesk,
   type WorkerLive,
   actionOf,

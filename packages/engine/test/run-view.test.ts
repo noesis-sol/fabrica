@@ -35,6 +35,7 @@ import { noSpend } from '../src/cost'
 import type { RunSnapshot, RunStateShape } from '../src/run'
 import {
   Delivered,
+  Release,
   type RunViewItem,
   type ViewInputs,
   actionOf,
@@ -590,7 +591,9 @@ describe("the maintainer's messages to a worker", () => {
         // Steered, the engine sends it nothing until it is released.
         yield* TestClock.adjust(Duration.seconds(10))
         expect(yield* prompts).toEqual(['Keep the old route too'])
-        expect(yield* desk.release(first)).toBe(true)
+        expect(
+          Option.map(yield* desk.release(first), Release.$is('Released')),
+        ).toEqual(Option.some(true))
         yield* Fiber.join(turns)
         expect(yield* prompts).toEqual([
           'Keep the old route too',

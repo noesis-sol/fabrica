@@ -24,6 +24,7 @@ import {
   PermissionShown,
   type ProjectNotFound,
   QuestionAnswer,
+  ReleaseWorkerTool,
   RunEventsTool,
   RunLogTool,
   RunMode,
@@ -55,6 +56,7 @@ import type { ProjectsShape } from '../projects/service'
 import { given, whyOf } from '../rpc/backlog'
 import type { RunsShape } from '../run/registry'
 import { logPath, readEvents } from '../runlog'
+import { Release } from '../view'
 import {
   type TalkModeOf,
   type TalkTool,
@@ -71,7 +73,9 @@ import {
 // allowing a permission request take the maintainer's word first: the first call is refused with the
 // line to ask, naming exactly what it would do, and only the same call in the turn the maintainer's next
 // message opens goes through (`confirmed`), so none comes by the model's word alone; that the message
-// says yes is for the model to read. Its work graph changes are the talk's session's.
+// says yes is for the model to read. A message steers the worker, which, unless it settles its ticket,
+// waits for its release: the message's answer says so, and the talk can release it. Its work graph
+// changes are the talk's session's.
 
 /** What the talk's tools act on, beside the talk's own context. */
 export interface RunTalkServices {
@@ -86,7 +90,7 @@ const answeredBy = 'the run talk'
 export const runInstructions = [
   "You are the console's conversation with this project's run: the maintainer talks to you to see what the run is doing and to steer it.",
   'Read before you answer: run_view, run_events, the ticket tools, worker_transcript, run_log and open_requests tell you where things stand. Answer shortly, from what they say.',
-  "Act only on the maintainer's instructions, through your commands: message a worker; start, drain or undrain a run; hold a ticket until another merges; file, update, defer or label tickets; answer a question in the maintainer's words; open the answer talk. Say what you did, in a line.",
+  "Act only on the maintainer's instructions, through your commands: message or release a worker; start, drain or undrain a run; hold a ticket until another merges; file, update, defer or label tickets; answer a question in the maintainer's words; open the answer talk. Say what you did, in a line, with what else its answer says the maintainer should hear: a worker you message waits for its release, which you give only when they say so.",
   'Before you stop a run, close or cancel a ticket, or allow a permission request, confirm in one line. The call is refused with confirm_first and the line to ask: ask the maintainer that, end your turn, and call it again, the same call, only when their next message says yes; if it says anything else, drop it.',
   'You have no other tools: you edit no code and run no git or shell command. What needs code goes to a worker, as a message or a ticket.',
 ].join('\n\n')
@@ -386,7 +390,24 @@ export const runMode = ({
         Effect.as({
           text: `Run talk messaged the worker of ${ticket}`,
           ticket,
+          also: `Unless it settles its ticket, the worker now waits for its release: ${ReleaseWorkerTool.name} hands it back to the engine.`,
         }),
+      ),
+    ),
+    command(ReleaseWorkerTool, ({ ticket }, { project }) =>
+      runs.release({ project: project.id, ticket }).pipe(
+        onTheWorker,
+        Effect.flatMap(
+          Release.$match({
+            Released: () =>
+              Effect.succeed({
+                text: `Run talk released the worker of ${ticket}`,
+                ticket,
+              }),
+            NotSteered: () =>
+              Effect.fail(refuse(`the worker of ${ticket} isn't steered`)),
+          }),
+        ),
       ),
     ),
     command(StartRunTool, ({ ticket, limit }, { project }) =>

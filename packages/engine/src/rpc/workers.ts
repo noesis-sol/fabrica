@@ -19,7 +19,7 @@ export const workersHandlers = WorkerRpcs.toLayer(
       'worker.interrupt': ({ project, ticket }) =>
         runs.interrupt({ project, ticket }),
       'worker.release': ({ project, ticket }) =>
-        runs.release({ project, ticket }),
+        Effect.asVoid(runs.release({ project, ticket })),
       'worker.watchTranscript': ({ project, ticket, resume }) =>
         runs.watchTranscript({ project, ticket, resume }),
     }),

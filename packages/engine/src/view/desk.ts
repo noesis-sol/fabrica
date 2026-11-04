@@ -83,6 +83,13 @@ export type Delivered = Data.TaggedEnum<{
 }>
 export const Delivered = Data.taggedEnum<Delivered>()
 
+/** What a release did: handed a steered worker back, or found it not steered and did nothing. */
+export type Release = Data.TaggedEnum<{
+  Released: {}
+  NotSteered: {}
+}>
+export const Release = Data.taggedEnum<Release>()
+
 export interface WorkerDesk {
   /** The ticket's worker, from its dispatch: a second dispatch of the ticket keeps its row and transcript. */
   readonly enter: (input: {
@@ -116,7 +123,8 @@ export interface WorkerDesk {
   /** Aborts the worker's running turn and steers it; false: no such worker. */
   readonly interrupt: (ticket: TicketId) => Effect.Effect<boolean>
   /** Hands the worker back to the engine; false: no such worker. */
-  readonly release: (ticket: TicketId) => Effect.Effect<boolean>
+  /** Hands a steered worker back to the engine. None: no such worker. */
+  readonly release: (ticket: TicketId) => Effect.Effect<Option.Option<Release>>
   /** The worker's transcript, as a snapshot or the patches after `resume`; none: no such worker. */
   readonly watchTranscript: (
     ticket: TicketId,
@@ -382,14 +390,13 @@ export const makeWorkerDesk = Effect.fn('WorkerDesk.make')(function* (options: {
 
   const release = Effect.fn('WorkerDesk.release')(function* (ticket: TicketId) {
     const found = yield* slotOf(ticket)
-    if (Option.isNone(found)) return false
+    if (Option.isNone(found)) return Option.none<Release>()
     const slot = found.value
     const was = (yield* Ref.get(slot.entry)).live.steered
-    if (was) {
-      yield* steered(slot, false)
-      yield* Queue.offer(slot.inbox, Steer.Released())
-    }
-    return true
+    if (!was) return Option.some(Release.NotSteered())
+    yield* steered(slot, false)
+    yield* Queue.offer(slot.inbox, Steer.Released())
+    return Option.some(Release.Released())
   })
 
   const leave = (ticket: TicketId) =>

@@ -333,6 +333,7 @@ describe('the run talk’s tools', () => {
           'run_log',
           'open_requests',
           'message_worker',
+          'release_worker',
           'start_run',
           'drain_run',
           'undrain_run',
@@ -442,7 +443,16 @@ describe('a run driven from the talk', () => {
           ),
         ).toStrictEqual({
           text: `Run talk messaged the worker of ${ticket}`,
+          also: 'Unless it settles its ticket, the worker now waits for its release: release_worker hands it back to the engine.',
         })
+        expect(
+          answerOf(yield* callOn('let it go on', 'release_worker', { ticket })),
+        ).toStrictEqual({
+          text: `Run talk released the worker of ${ticket}`,
+        })
+        expect(
+          refusalOf(yield* callOn('again', 'release_worker', { ticket })),
+        ).toMatchObject({ issue: `the worker of ${ticket} isn't steered` })
         expect(
           answerOf(yield* callOn('see it', 'worker_transcript', { ticket })),
         ).toBeInstanceOf(Array)
@@ -461,6 +471,7 @@ describe('a run driven from the talk', () => {
           expect.arrayContaining([
             expect.objectContaining({ tool: 'undrain_run' }),
             expect.objectContaining({ tool: 'message_worker', ticket }),
+            expect.objectContaining({ tool: 'release_worker', ticket }),
           ]),
         )
         expect(

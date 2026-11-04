@@ -61,7 +61,12 @@ import {
 import { variableOf } from '../settings'
 import { Telemetry } from '../telemetry'
 import { localNow } from '../time'
-import { type RunViewHandle, type RunViewItem, makeRunView } from '../view'
+import {
+  type Release,
+  type RunViewHandle,
+  type RunViewItem,
+  makeRunView,
+} from '../view'
 import { WorkGraph } from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
 import { type RunConfig, RunMode } from './config'
@@ -167,10 +172,10 @@ export interface RunsShape {
   readonly interrupt: (
     input: WorkerAt,
   ) => Effect.Effect<void, ProjectNotFound | WorkerNotFound>
-  /** Hands a steered worker back to the engine. */
+  /** Hands a steered worker back to the engine, or says it isn't steered. */
   readonly release: (
     input: WorkerAt,
-  ) => Effect.Effect<void, ProjectNotFound | WorkerNotFound>
+  ) => Effect.Effect<Release, ProjectNotFound | WorkerNotFound>
   /** The worker's transcript, sent only to a client that asks for it (§8.3); ends as its part in the run ends. */
   readonly watchTranscript: (
     input: WorkerAt & { readonly resume: Option.Option<Resume> },
@@ -721,7 +726,10 @@ export const make = Effect.gen(function* () {
 
   const release = Effect.fn('Runs.release')(function* (at: WorkerAt) {
     const sources = yield* workerOf(at)
-    yield* Effect.flatMap(sources.workers.release(at.ticket), found(at))
+    const released = yield* sources.workers.release(at.ticket)
+    if (Option.isNone(released))
+      return yield* Effect.fail(new WorkerNotFound({ ...at }))
+    return released.value
   })
 
   const watchTranscript = (

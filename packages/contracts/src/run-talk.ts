@@ -133,11 +133,19 @@ export type AnswerTalkOpened = typeof AnswerTalkOpened.Type
 export const MessageWorkerTool = {
   name: 'message_worker',
   description:
-    "Sends a worker a message, steering it: the maintainer's instruction, by its ticket. The engine sends it nothing more until it is released; a ticket merging holds the message until it has.",
+    "Sends a worker a message, steering it: the maintainer's instruction, by its ticket. Unless it settles its ticket, it waits for its release (release_worker): the engine sends it nothing more until then. A ticket merging holds the message until it has. Its answer says so: tell the maintainer.",
   parameters: Schema.Struct({
     ticket: NamedTicket("The worker's ticket."),
     text: Text,
   }),
+  success: Acted,
+} satisfies AnyTool
+
+export const ReleaseWorkerTool = {
+  name: 'release_worker',
+  description:
+    "Releases a steered worker on the maintainer's instruction, by its ticket: it goes back to the engine and carries on with its ticket. Refused for a worker that isn't steered.",
+  parameters: Schema.Struct({ ticket: NamedTicket("The worker's ticket.") }),
   success: Acted,
 } satisfies AnyTool
 
