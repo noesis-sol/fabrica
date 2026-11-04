@@ -1092,7 +1092,11 @@ describe('an agent’s configuration', () => {
         const agent = yield* proxy.grant(caller('t-1'))
         const token = Redacted.value(agent.token)
         const written: unknown = JSON.parse(
-          modelsJson({ providers: agent.providers, token }),
+          modelsJson({
+            providers: agent.providers,
+            token,
+            model: Option.none(),
+          }),
         )
         expect(written).toStrictEqual({
           providers: {

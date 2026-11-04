@@ -16,7 +16,9 @@ import { defineConfig } from 'vitest/config'
 //
 // The test reads nothing of the host's environment itself (spec §24): what it is given is read here, the
 // app's executable and the few variables the app can't start without, the display's on Linux, and on
-// Windows the system's own (there is no engine on Windows to keep from the host's PATH, §7.6).
+// Windows the system's own (there is no engine on Windows to keep from the host's PATH, §7.6), and whether
+// WSL2 has a distribution for the Windows app's engine (FABRICA_SMOKE_WSL=1, as app.yml says where it has).
+// Its stub model takes a local model's port (stub-model.ts), so it wants one of those free.
 const hostVariables =
   process.platform === 'win32'
     ? ['PATH', 'PATHEXT', 'SystemRoot', 'SystemDrive', 'windir', 'ComSpec']
@@ -35,10 +37,12 @@ export default defineConfig({
   test: {
     name: 'smoke',
     include: ['test/smoke.test.ts'],
-    testTimeout: 180_000,
+    // A run of a ticket on a 2-core runner; on Windows, the engine unpacked into WSL2, whose first boot is slow.
+    testTimeout: 600_000,
     hookTimeout: 60_000,
     provide: {
       smokeApp: process.env['FABRICA_SMOKE_APP'] ?? '',
+      smokeWsl: process.env['FABRICA_SMOKE_WSL'] === '1',
       smokeHost,
     },
   },

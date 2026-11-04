@@ -1,13 +1,11 @@
 import { Context, Effect, Layer, Option, Scope } from 'effect'
 import { FetchHttpClient } from 'effect/http'
 import type { SqlClient } from 'effect/sql'
-import * as NodePath from 'node:path'
 
 import type { SqliteClient } from '@effect/sql-sqlite-node'
 import {
   type EngineSettings,
   type Host,
-  type ListenAddress,
   decodeEngineSettings,
   formatListenAddress,
 } from '@fabrica/contracts'
@@ -43,6 +41,7 @@ import {
 import { Updater, layerRefusing } from '../update/service'
 import { MachineBudget, makeMachineBudget } from './budget'
 import { engineDatabaseLayer, storedEngineSettings } from './database'
+import { type ListenSettings, absoluteListenPaths } from './listen-settings'
 import {
   LoadReads,
   LoadSampler,
@@ -94,15 +93,6 @@ export type DaemonServices =
   | LoadSampler
   | Telemetry
   | TelemetryStore
-
-/** The TLS listener's settings (§9.3), as the engine's settings and `fabrica serve`'s flags name them. */
-export interface ListenSettings {
-  readonly listen: Option.Option<ListenAddress>
-  /** The certificate's PEM file; none: the engine's own. */
-  readonly listen_certificate: Option.Option<string>
-  /** Its private key's PEM file. */
-  readonly listen_key: Option.Option<string>
-}
 
 const noListen: ListenSettings = {
   listen: Option.none(),
@@ -165,18 +155,6 @@ const listenSettings = (
   ),
   listen_key: Option.orElse(flags.listen_key, () => settings.listen_key),
 })
-
-/** The listener's settings with their files' paths absolute: a relative path is taken from where the engine runs. */
-export const absoluteListenPaths = (
-  settings: ListenSettings,
-): ListenSettings => {
-  const absolute = Option.map((path: string) => NodePath.resolve(path))
-  return {
-    listen: settings.listen,
-    listen_certificate: absolute(settings.listen_certificate),
-    listen_key: absolute(settings.listen_key),
-  }
-}
 
 /** The listener's certificate: the user's, where both its files are given, else the engine's own. */
 const listenerCertificate = (paths: EnginePaths, settings: ListenSettings) => {

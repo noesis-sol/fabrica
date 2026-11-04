@@ -8,7 +8,7 @@ import { type ElectronApplication, _electron } from 'playwright-core'
 
 import { ReleaseVersion } from '@fabrica/contracts'
 import { LAUNCHER } from '@fabrica/engine/update'
-import { Toolbox, type Tools, layerToolbox } from '@fabrica/testkit'
+import { Toolbox, type Tools, layerToolbox, shStub } from '@fabrica/testkit'
 
 import { appId, userDataSwitch } from '../src/main/dataFolder'
 import { bundledEngine, installedLauncher } from '../src/main/local-engine'
@@ -190,7 +190,19 @@ export const stopEngine = (
     }
   })
 
-/** The toolbox the app's PATH is on POSIX; none on Windows, where there is no engine to keep from the host's. */
+/**
+ * The toolbox the app's PATH is on POSIX; none on Windows, where there is no engine to keep from the host's.
+ * Its keyring CLIs answer as an empty keyring does: an engine with no keyring and no passphrase refuses every
+ * run (§20.3), and a test's is no place for the host's own.
+ */
 export const toolbox: Layer.Layer<Toolbox, unknown> = posix
-  ? layerToolbox({ tools: ['git'] })
+  ? layerToolbox({
+      tools: ['git', 'sh'],
+      stubs: {
+        // Not found, as `security find-generic-password` says of an item it hasn't.
+        security: shStub('exit 44'),
+        // `lookup` finds nothing, saying nothing, and `search` confirms it is missing.
+        'secret-tool': shStub('[ "$1" = search ]'),
+      },
+    })
   : Layer.succeed(Toolbox)({ bin: '', home: '', env: () => ({}) })

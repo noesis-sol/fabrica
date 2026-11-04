@@ -788,6 +788,9 @@ export const make = Effect.fn('ModelProxy.make')(function* (
           ...(subscription
             ? subscriptionEntry(route.provider, Redacted.value(token))
             : {}),
+          ...(Authentication.$is('None')(route.authentication)
+            ? { localApi: route.api }
+            : {}),
         })),
       { concurrency: 'unbounded' },
     )

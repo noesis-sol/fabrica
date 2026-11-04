@@ -22,6 +22,8 @@ export interface ProviderEntry {
   readonly apiKey?: string
   /** Pi's compat overrides for the provider, where a subscription's requests need them (fab-mgi.11). */
   readonly compat?: Readonly<Record<string, boolean>>
+  /** The API a local model speaks: Pi's catalog has no such provider, so Pi is told it with the agent's model. */
+  readonly localApi?: string
 }
 
 /** The folder of a project's session folders: `<data>/projects/<id>/sessions/`. */
@@ -54,23 +56,44 @@ export const makeSessionFolder = Effect.fn('PiAgent.makeSessionFolder')(
   },
 )
 
-/** Pi's `models.json`: every provider pointed at the model proxy, with its placeholder or the agent's token for its key. */
+/**
+ * Pi's `models.json`: every provider pointed at the model proxy, with its placeholder or the agent's token
+ * for its key. A local model is named too (`ollama/…`, §12.5): Pi knows only the models it is told of on a
+ * provider its catalog hasn't, and refuses such a provider where it is told of none.
+ */
 export const modelsJson = ({
   providers,
   token,
+  model,
 }: {
   readonly providers: ReadonlyArray<ProviderEntry>
   readonly token: string
+  /** The model the agent starts on. */
+  readonly model: Option.Option<ModelChoice>
 }): string =>
   `${JSON.stringify(
     {
       providers: Object.fromEntries(
-        providers.map(({ provider, baseUrl, apiKey, compat }) => [
+        providers.map(({ provider, baseUrl, apiKey, compat, localApi }) => [
           provider,
           {
             baseUrl,
             apiKey: apiKey ?? token,
             ...(compat === undefined ? {} : { compat }),
+            ...Option.match(
+              Option.filter(
+                model,
+                choice =>
+                  localApi !== undefined && choice.provider === provider,
+              ),
+              {
+                onNone: () => ({}),
+                onSome: ({ modelId }) => ({
+                  api: localApi,
+                  models: [{ id: modelId }],
+                }),
+              },
+            ),
           },
         ]),
       ),
@@ -88,10 +111,12 @@ export const configFolder = Effect.fn('PiAgent.configFolder')(function* ({
   root,
   providers,
   token,
+  model,
 }: {
   readonly root: string
   readonly providers: ReadonlyArray<ProviderEntry>
   readonly token: string
+  readonly model: Option.Option<ModelChoice>
 }) {
   const folder = yield* Effect.acquireRelease(
     Effect.tryPromise({
@@ -108,7 +133,7 @@ export const configFolder = Effect.fn('PiAgent.configFolder')(function* ({
   )
   yield* writeFileWhole(
     { root: folder, path: 'models.json' },
-    modelsJson({ providers, token }),
+    modelsJson({ providers, token, model }),
     { mode: 0o600 },
   ).pipe(Effect.mapError(error => error.message))
   return folder

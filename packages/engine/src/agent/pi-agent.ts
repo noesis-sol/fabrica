@@ -457,6 +457,7 @@ export const make = Effect.fn('PiAgent.make')(function* (
         root: config.configRoot,
         providers: options.providers,
         token: options.token,
+        model: options.model,
       }).pipe(
         Effect.mapError(message =>
           fail(AgentStartFailure.Folders({ message })),

@@ -57,6 +57,7 @@ export {
   pathsIn,
   prepareFolders,
 } from './paths'
+export { type ListenSettings, absoluteListenPaths } from './listen-settings'
 export {
   EngineScopes,
   type EngineScopesShape,
@@ -64,11 +65,9 @@ export {
 } from './scopes'
 export {
   type DaemonServices,
-  type ListenSettings,
   type RunHostingNeeds,
   type ServeOptions,
   StartingSettings,
-  absoluteListenPaths,
   serveEngine,
   startEngine,
 } from './serve'

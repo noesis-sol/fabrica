@@ -4,7 +4,10 @@ import * as NodePath from 'node:path'
 
 import { formatListenAddress } from '@fabrica/contracts'
 
-import { type ListenSettings, absoluteListenPaths } from '../engine/serve'
+import {
+  type ListenSettings,
+  absoluteListenPaths,
+} from '../engine/listen-settings'
 import { RESTART_EXIT_CODE } from '../service/definition'
 import type { ServiceManager } from '../service/outcome'
 
