@@ -65,6 +65,9 @@ export const mergeCheckInput = (
   cores: turn.config.cores,
   passedAt: Option.none(),
   nice: Option.none(),
+  ...(turn.config.started === undefined
+    ? {}
+    : { started: turn.config.started }),
 })
 
 /** What a ride came to. */

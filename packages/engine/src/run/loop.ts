@@ -52,6 +52,7 @@ import {
   makeCostAccount,
   spendFields,
 } from '../cost'
+import { LoadProcesses, SampledTree } from '../engine/load'
 import { footprintParts } from '../footprints'
 import { Git, Worktrees, isClean, ticketBranch } from '../git'
 import {
@@ -63,6 +64,7 @@ import {
   makeHolds,
   makeUsageHold,
   stopping,
+  workersHeld,
 } from '../holds'
 import {
   AfterMerge,
@@ -137,6 +139,7 @@ import {
   settleOf,
   supervisorHolds,
 } from './holds'
+import { apartFromMachine, makeRunMachine } from './machine'
 import { record, recordBaseNote } from './records'
 import {
   RequirementsGate,
@@ -498,6 +501,13 @@ const runStarted = Effect.fn('Run.started')(function* (
       slotsTaken(snapshot, project.concurrent),
     ),
   })
+  // The run's seat in the machine budget, its slots as its scheduler counts them (§7.3, H56).
+  const machine = yield* makeRunMachine({
+    holds,
+    slots: Effect.map(state.current, snapshot =>
+      slotsTaken(snapshot, project.concurrent),
+    ),
+  })
   const wake = yield* Wake
   const clock = heldClock(holds, duration =>
     Effect.flatMap(wake.deadline(duration), wake.waitUntil),
@@ -526,6 +536,7 @@ const runStarted = Effect.fn('Run.started')(function* (
   // The merge queue lives in a scope of its own, so the end stops it before writing its records; the
   // run's scope closes it where the run never reached its end.
   const mergeScope = yield* Scope.fork(yield* Effect.scope)
+  const measuring = yield* LoadProcesses
   const merges = yield* makeMergeQueue({
     home: config.home,
     base: started.base,
@@ -539,6 +550,10 @@ const runStarted = Effect.fn('Run.started')(function* (
     },
     train: project.merge.train,
     cores: config.cores,
+    started: pid =>
+      measuring.track(
+        SampledTree.MergeCheck({ project: config.project, run, pid }),
+      ),
     actor,
   }).pipe(
     Effect.provideService(MergeSetup, MergeSetup.of(setup)),
@@ -728,7 +743,11 @@ const runStarted = Effect.fn('Run.started')(function* (
   const supervision = yield* makeSupervision({
     proxy: yield* proxy.events,
     holds: supervisorHolds({ environment, usage, credentials }),
-    clock,
+    // A machine hold stops the hand-backs' clock, not the workers' quiet (§13.7, §14.3).
+    clock: {
+      ...clock,
+      held: holds.changes.pipe(Stream.map(workersHeld), Stream.changes),
+    },
     heldProviders: held,
     ticketLimit: project.ticket_limit,
     fallbacks: project.model_fallbacks.map(choice => ({
@@ -2027,6 +2046,8 @@ const runStarted = Effect.fn('Run.started')(function* (
         )
           workersEnding.delete(reason.ticket)
       yield* Effect.forEach(reasons, drainSaid, { discard: true })
+      // What woke it may have freed a slot, which another run waits on.
+      yield* machine.moved
       const starting = reasons.some(reason => WakeReason.$is('Started')(reason))
       if (readsReady(reasons)) {
         yield* autoAnswers.sweep
@@ -2068,14 +2089,17 @@ const runStarted = Effect.fn('Run.started')(function* (
       // Whether the run may take work: one snapshot of plain values, read once for this look (§14).
       const held = yield* holds.current
       const draining = yield* control.draining
-      const may = mayTake({ holds: held, draining })
+      const may = mayTake({ holds: apartFromMachine(held), draining })
       // Whatever woke this look, a merge the run didn't make may have changed the list (§17).
       yield* requirements.baseMoved
       const gate = yield* requirements.gate
-      const free =
-        MayTake.$is('Yes')(may) && RequirementsGate.$is('Clear')(gate)
-          ? project.concurrent - slotsTaken(before, project.concurrent)
-          : 0
+      const free = yield* machine.free({
+        room:
+          MayTake.$is('Yes')(may) && RequirementsGate.$is('Clear')(gate)
+            ? project.concurrent - slotsTaken(before, project.concurrent)
+            : 0,
+        wanted: candidates.length > 0,
+      })
       const gated = yield* footprints.gate({
         ready: candidates,
         snapshot: before,
@@ -2091,12 +2115,14 @@ const runStarted = Effect.fn('Run.started')(function* (
       ])
       yield* view.seen(candidates, ticket => solo.has(ticket.id))
       const dispatched = new Set<TicketId>()
-      for (const taken of gated.take) {
+      const granted = yield* machine.claim(gated.take.length)
+      for (const taken of gated.take.slice(0, granted)) {
         const n = yield* state.dispatch({
           ticket: taken.ticket.id,
           title: taken.ticket.title,
           limit,
         })
+        yield* machine.release
         if (Option.isNone(n)) continue
         dispatched.add(taken.ticket.id)
         yield* dispatchOne(
@@ -2195,6 +2221,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     ),
     watched("the holds' changes"),
   )
+  yield* machine.watch.pipe(watched("the machine budget's changes"))
   yield* wakes.wake(WakeReason.Started())
 
   let ending = Option.none<Ending>()

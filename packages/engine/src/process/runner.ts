@@ -72,6 +72,8 @@ export interface Command extends Invocation {
   readonly timeLimit: Duration.Input
   /** The bytes each of stdout and stderr may hold before the command is cut; 32 MiB without one. */
   readonly outputLimit?: number
+  /** Told the command's process as it starts, for what measures its tree (§7.4). */
+  readonly started?: (pid: number) => Effect.Effect<void>
 }
 
 /** A command that runs alongside the engine, an agent's: its output streamed, its stdin a pipe. */
@@ -389,6 +391,7 @@ export const make = Effect.fn('ProcessRunner.make')(function* (
         CommandOutcome.Cut({ stream, limit }),
       )
       yield* prioritize(command, spawned.pid)
+      if (command.started !== undefined) yield* command.started(spawned.pid)
       const first: FirstEnd = yield* Effect.raceAll<Effect.Effect<FirstEnd>>([
         Effect.as(Deferred.await(spawned.exited), 'exited'),
         Effect.map(deadlines.sleep(command.timeLimit), () =>

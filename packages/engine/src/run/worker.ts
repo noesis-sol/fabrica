@@ -29,6 +29,8 @@ import {
 import { PiAgent } from '../agent'
 import { ControlRole, ControlServer, Outcome, type OwnCheck } from '../control'
 import type { CostAccount } from '../cost'
+import { workerShare } from '../engine/budget'
+import { LoadProcesses, SampledTree } from '../engine/load'
 import { readFileText } from '../files'
 import { Git, Prepared, type Worktree, Worktrees } from '../git'
 import {
@@ -36,6 +38,7 @@ import {
   type MergeSetupShape,
   SetupOutcome,
 } from '../merge'
+import { coreShareVariables } from '../process'
 import { ModelProxy } from '../proxy'
 import type { RunLog } from '../runlog'
 import type { WorkerDesk } from '../view'
@@ -497,6 +500,18 @@ export const runWorker = Effect.fn('Run.worker')(function* (
   })
   const modelName = Schema.is(ModelName)(modelText) ? modelText : 'none'
   yield* context.desk.enter({ ticket, session, model: modelName })
+  // Its share as it starts, its slot counted already (§7.3); it and its checks measured as its own (§7.4).
+  const cores = yield* workerShare(config.cores)
+  const { track } = yield* LoadProcesses
+  const measured = (pid: number) =>
+    track(
+      SampledTree.Worker({
+        project: config.project,
+        run: context.run,
+        ticket,
+        pid,
+      }),
+    )
   const channel = yield* control.open({
     project: config.project,
     ticket,
@@ -509,8 +524,9 @@ export const runWorker = Effect.fn('Run.worker')(function* (
       command: project.check_own,
       checkout: config.checkout,
       timeLimit: project.check_timeout,
-      cores: config.cores,
+      cores,
       nice: config.nice,
+      started: measured,
     },
     mergeStanding: standingOf(context.merges, ticket),
   })
@@ -544,10 +560,15 @@ export const runWorker = Effect.fn('Run.worker')(function* (
     model,
     tools: Option.none(),
     resume,
-    env: { ...channel.environment, ...runVariables(started) },
+    env: {
+      ...channel.environment,
+      ...coreShareVariables(cores),
+      ...runVariables(started),
+    },
     projectTrusted: config.projectTrusted,
     nice: config.nice,
   })
+  yield* measured(agent.pid)
   yield* watcher.started(agent.session.file)
   yield* (yield* agent.events).pipe(
     Stream.runForEach(watcher.heard),

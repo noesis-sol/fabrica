@@ -10,6 +10,7 @@ import {
   protocolVersion,
 } from '@fabrica/contracts'
 
+import { LoadSampler } from '../engine/load'
 import { Engine } from '../engine/service'
 import { Runs } from '../run/registry'
 import { UpdateFailure, updateFailed } from '../update/failure'
@@ -21,7 +22,7 @@ import { notImplemented } from './not-implemented'
 // status and settings, its stop, and its update, on the daemon's Engine service, its Updater, its runs
 // and the server's connections. An update installs the release (verified, unpacked, linked) and answers once it
 // has, then restarts the engine as a stop would, its runs wound down first; one update at a time, and
-// none once the engine is stopping. The status and load streams are their own tickets'.
+// none once the engine is stopping. The load stream is the host's samples (§7.4); the status stream is its own ticket's.
 
 /** The Engine group's handlers. */
 export const engineHandlers = EngineRpcs.toLayer(
@@ -29,6 +30,7 @@ export const engineHandlers = EngineRpcs.toLayer(
     const engine = yield* Engine
     const runs = yield* Runs
     const updater = yield* Updater
+    const load = yield* LoadSampler
     const protocol = yield* RpcServer.Protocol
     const updates = yield* Semaphore.make(1)
     const from = engine.version.release
@@ -93,7 +95,7 @@ export const engineHandlers = EngineRpcs.toLayer(
       'engine.stop': () => engine.stop,
       'engine.update': ({ to }) => update(to),
       'engine.watchStatus': notImplemented('engine.watchStatus'),
-      'engine.watchLoad': notImplemented('engine.watchLoad'),
+      'engine.watchLoad': ({ resume }) => load.watch(resume),
     })
   }),
 )

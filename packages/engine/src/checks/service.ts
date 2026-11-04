@@ -8,6 +8,7 @@ import type {
   TreeHash,
 } from '@fabrica/contracts'
 
+import { withCommandShare } from '../engine/budget'
 import { openFileTruncating } from '../files'
 import { Git } from '../git'
 import {
@@ -52,6 +53,8 @@ export interface CheckInput {
   readonly passedAt: Option.Option<TreeHash>
   /** The nice value it runs at (a worker's `check_own`); none for the engine's own priority. */
   readonly nice: Option.Option<number>
+  /** Told its process as it starts, for what measures its tree (§7.4). */
+  readonly started?: (pid: number) => Effect.Effect<void>
 }
 
 /** The variable naming the tree a ticket's last `check_own` pass ran on, for a check or a verifier (spec §13.6). */
@@ -133,23 +136,29 @@ export const make = Effect.gen(function* () {
     const log = writer.success
 
     const stopwatch = yield* startStopwatch
-    const outcome = yield* runner.run({
-      command: 'sh',
-      args: shellArgs(command),
-      cwd: worktree,
-      env: {
-        ...coreShareVariables(input.cores),
-        ...Option.match(input.passedAt, {
+    const runWith = (cores: number) =>
+      runner.run({
+        command: 'sh',
+        args: shellArgs(command),
+        cwd: worktree,
+        env: {
+          ...coreShareVariables(cores),
+          ...Option.match(input.passedAt, {
+            onNone: () => ({}),
+            onSome: tree => ({ [CheckOwnPassedAtVariable]: tree }),
+          }),
+        },
+        timeLimit: input.timeLimit,
+        ...Option.match(input.nice, {
           onNone: () => ({}),
-          onSome: tree => ({ [CheckOwnPassedAtVariable]: tree }),
+          onSome: nice => ({ nice }),
         }),
-      },
-      timeLimit: input.timeLimit,
-      ...Option.match(input.nice, {
-        onNone: () => ({}),
-        onSome: nice => ({ nice }),
-      }),
-    })
+        ...(input.started === undefined ? {} : { started: input.started }),
+      })
+    // A worker's own check runs on its worker's share; every other is the engine's own (§7.3, H56).
+    const outcome = yield* input.suite === 'own'
+      ? runWith(input.cores)
+      : withCommandShare(input.cores, runWith)
     const seconds = toSeconds(yield* elapsed(stopwatch))
 
     /** Keeps the output in the log, then reads what the check left; none where the log can't be kept. */

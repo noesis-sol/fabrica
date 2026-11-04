@@ -94,6 +94,8 @@ export interface CheckOwnRun {
   readonly cores: number
   /** `worker_nice`; none for the engine's own priority. */
   readonly nice: Option.Option<number>
+  /** Told the check's process as it starts, measured as its worker's (§7.4). */
+  readonly started?: (pid: number) => Effect.Effect<void>
 }
 
 /** The agent's session the tools act for, and the services they act through. */
@@ -378,6 +380,7 @@ export const makeTools = (context: ToolContext) => {
       cores: run.cores,
       passedAt,
       nice: run.nice,
+      ...(run.started === undefined ? {} : { started: run.started }),
     })
     yield* publish(Outcome.Checked({ check: outcome.record }))
     return yield* CheckOutcome.$match(outcome, {

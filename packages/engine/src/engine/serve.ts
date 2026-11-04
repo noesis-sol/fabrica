@@ -41,7 +41,14 @@ import {
   telemetryLayer,
 } from '../telemetry'
 import { Updater, layerRefusing } from '../update/service'
+import { MachineBudget, makeMachineBudget } from './budget'
 import { engineDatabaseLayer, storedEngineSettings } from './database'
+import {
+  LoadReads,
+  LoadSampler,
+  layerLoadSampler,
+  layerNodeLoadReads,
+} from './load'
 import { acquireEngineLock } from './lock'
 import { EngineFiles, type EnginePaths, prepareFolders } from './paths'
 import { EngineScopes, engineScopesLayer } from './scopes'
@@ -84,6 +91,7 @@ export type DaemonServices =
   | TalkAgents
   | TalkModes
   | RunHosting
+  | LoadSampler
   | Telemetry
   | TelemetryStore
 
@@ -106,6 +114,8 @@ export interface ServeOptions extends EngineFacts {
   readonly paths: EnginePaths
   /** The host's facts: this machine's (`layerNodeHost`) where none are given; a test gives its own. */
   readonly facts?: Layer.Layer<Host>
+  /** What the load sampler reads of its host: this machine (`layerNodeLoadReads`) where none are given. */
+  readonly loadReads?: Layer.Layer<LoadReads>
   /** The engine's Git: git on its host (`hostLayer`) where none is given; a test gives its own. */
   readonly git?: Layer.Layer<Git>
   /** What installs the engine's updates (§9.2); where none is given, the engine refuses every update. */
@@ -271,6 +281,18 @@ export const startEngine = Effect.fn('Engine.start')(function* (
   )
   const talks = yield* Layer.build(options.talks ?? talksRefused)
   const facts = yield* Layer.build(options.facts ?? layerNodeHost)
+  // The budget's and the sampler's are the engine's, across its runs: its handlers and its runs read them.
+  const budget = yield* makeMachineBudget(settings).pipe(Effect.provide(facts))
+  const load = yield* Layer.build(layerLoadSampler).pipe(
+    Effect.provide(
+      Context.mergeAll(
+        facts,
+        telemetry,
+        exported,
+        yield* Layer.build(options.loadReads ?? layerNodeLoadReads),
+      ),
+    ),
+  )
   const services: Context.Context<DaemonServices> = Context.mergeAll(
     attention,
     database,
@@ -284,9 +306,10 @@ export const startEngine = Effect.fn('Engine.start')(function* (
     tokens,
     talks,
     runs,
+    load,
     telemetry,
     exported,
-  )
+  ).pipe(Context.add(MachineBudget, budget))
   yield* Layer.buildWithScope(
     localRpcServer(
       options.paths.socket,

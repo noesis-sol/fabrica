@@ -65,26 +65,66 @@ export const listProcesses: Effect.Effect<
   )
 }).pipe(Effect.withSpan('ProcessTree.list'))
 
+/** One process and its resident memory, as the process table lists them (§7.4). */
+export interface ProcessMemoryRow extends ProcessRow {
+  readonly rssBytes: number
+}
+
+const MEMORY_ROW = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\d+)\s*$/
+
+/** Reads `ps -A -o pid=,ppid=,pgid=,stat=,rss=` output, its memory in kilobytes; a line it can't read is skipped. */
+export const parseProcessMemoryTable = (
+  text: string,
+): ReadonlyArray<ProcessMemoryRow> =>
+  text.split('\n').flatMap(line => {
+    const rss = MEMORY_ROW.exec(line)?.[5]
+    if (rss === undefined) return []
+    return parseProcessTable(line).map(row => ({
+      ...row,
+      rssBytes: Number(rss) * 1024,
+    }))
+  })
+
+/** Every process of the host with its memory, from `ps`, or none when `ps` can't tell. */
+export const listProcessMemory: Effect.Effect<
+  Option.Option<ReadonlyArray<ProcessMemoryRow>>
+> = Effect.callback<Option.Option<ReadonlyArray<ProcessMemoryRow>>>(resume => {
+  execFile(
+    '/bin/ps',
+    ['-A', '-o', 'pid=,ppid=,pgid=,stat=,rss='],
+    { env: { LC_ALL: 'C' }, maxBuffer: 64 * 1024 * 1024, timeout: 10_000 },
+    (error, stdout) => {
+      resume(
+        Effect.succeed(
+          error === null
+            ? Option.some(parseProcessMemoryTable(stdout))
+            : Option.none(),
+        ),
+      )
+    },
+  )
+}).pipe(Effect.withSpan('ProcessTree.listMemory'))
+
 /**
  * The live processes of a tree: those `pids` names, the members of `groups`, and every descendant
  * of either, through their parents. Zombies are left out.
  */
-export const treeOf = ({
+export const treeOf = <Row extends ProcessRow>({
   rows,
   pids,
   groups,
 }: {
-  readonly rows: ReadonlyArray<ProcessRow>
+  readonly rows: ReadonlyArray<Row>
   readonly pids: ReadonlySet<number>
   readonly groups: ReadonlySet<number>
-}): ReadonlyArray<ProcessRow> => {
-  const children = new Map<number, Array<ProcessRow>>()
+}): ReadonlyArray<Row> => {
+  const children = new Map<number, Array<Row>>()
   for (const row of rows) {
     const siblings = children.get(row.ppid)
     if (siblings === undefined) children.set(row.ppid, [row])
     else siblings.push(row)
   }
-  const found = new Map<number, ProcessRow>()
+  const found = new Map<number, Row>()
   const pending = rows.filter(row => pids.has(row.pid) || groups.has(row.pgid))
   for (let row = pending.pop(); row !== undefined; row = pending.pop()) {
     if (found.has(row.pid)) continue

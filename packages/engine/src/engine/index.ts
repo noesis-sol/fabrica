@@ -11,10 +11,34 @@ export {
   startDetached,
 } from './bridge'
 export {
+  type Live,
+  MachineBudget,
+  type MachineBudgetShape,
+  type RunSeat,
+  coreShare,
+  makeMachineBudget,
+  withCommandShare,
+  workerShare,
+} from './budget'
+export {
   StoredSettingsInvalid,
   engineDatabaseLayer,
   engineMigrations,
 } from './database'
+export {
+  type CoreTimes,
+  type KernelReading,
+  LOAD_INTERVAL,
+  LoadProcesses,
+  LoadReads,
+  LoadSampler,
+  type LoadSamplerShape,
+  SampledTree,
+  layerLoadSampler,
+  layerNodeLoadReads,
+  parseDarwinKernel,
+  parseLinuxKernel,
+} from './load'
 export { EngineAlreadyRunning, LockFailed, acquireEngineLock } from './lock'
 export {
   DataFolderFailed,

@@ -48,7 +48,9 @@ import {
   checkOwnPassesLayer,
   layer as controlLayer,
 } from '../control'
+import { MachineBudget } from '../engine/budget'
 import { storedSettingsDocument } from '../engine/database'
+import { LoadProcesses } from '../engine/load'
 import { EngineScopes } from '../engine/scopes'
 import { Engine } from '../engine/service'
 import { Projects } from '../projects/service'
@@ -293,6 +295,8 @@ export const make = Effect.gen(function* () {
   const hosting = yield* RunHosting
   const attention = yield* AttentionRequests
   const telemetry = yield* Telemetry
+  const budget = yield* MachineBudget
+  const loadProcesses = yield* LoadProcesses
   const sql = yield* SqlClient.SqlClient
   const going = yield* Ref.make<ReadonlyMap<ProjectId, Going>>(new Map())
   const startLock = yield* Semaphore.make(1)
@@ -554,6 +558,8 @@ export const make = Effect.gen(function* () {
           Effect.provideService(WorkGraph, graph),
           Effect.provideService(Telemetry, telemetry),
           Effect.provideContext(services),
+          Effect.provideService(MachineBudget, budget),
+          Effect.provideService(LoadProcesses, loadProcesses),
           Effect.catchCause(cause =>
             Effect.logError(`the run ${run} of ${project} failed`, cause),
           ),

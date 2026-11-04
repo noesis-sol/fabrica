@@ -37,7 +37,7 @@ import { DISTRIBUTION_LAYOUT } from './layout'
 // on with the credential in the engine's secret store. Processes run on the host, their time limits
 // counted in time awake; the host is kept from idle sleep while a run goes, and its battery watched;
 // the run's records are dated in the host's zone; each worker and check gets its share of the cores
-// under the machine budget, and the workers run at `worker_nice`. Both are read from the engine's
+// from the machine budget, which the daemon gives its runs, and the workers run at `worker_nice`. Both are read from the engine's
 // settings as it starts. Where the agents' parts are missing, or the secret store
 // or the model proxy can't open, the engine refuses every run, saying why. The secret store opens first,
 // and the Secrets group's credentials are kept on it whatever else this host lacks.

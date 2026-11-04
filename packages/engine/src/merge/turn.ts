@@ -36,6 +36,8 @@ export interface MergeConfig {
   readonly train: number
   /** The merge check's share of the machine's cores, at least 1. */
   readonly cores: number
+  /** Told a merge check's process as it starts, for what measures its memory (§7.4). */
+  readonly started?: (pid: number) => Effect.Effect<void>
   /** Who the queue's changes to the work graph are made by: the engine. */
   readonly actor: Actor
 }

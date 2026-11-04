@@ -63,7 +63,7 @@ export interface RunConfig {
   readonly sockets: string
   readonly options: RunOptions
   readonly settings: RunSettingsInputs
-  /** A worker's and a check's share of the machine's cores, at least 1. */
+  /** A worker's and a check's share of the machine's cores, at least 1, where no machine budget is given (§7.3). */
   readonly cores: number
   /** `worker_nice`; none for the engine's own priority. */
   readonly nice: Option.Option<number>

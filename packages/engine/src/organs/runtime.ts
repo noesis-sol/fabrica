@@ -63,6 +63,7 @@ import {
   priceOf,
   spendFields,
 } from '../cost'
+import { withCommandShare } from '../engine/budget'
 import type { CredentialsHoldShape, UsageHoldShape } from '../holds'
 import { Deadlines, coreShareVariables } from '../process'
 import { type Caller, ModelProxy, Permits, ProxyEvent, Refusal } from '../proxy'
@@ -682,162 +683,164 @@ export const makeOrganRuntime = Effect.fn('Organs.make')(function* (
 
   const session = <A>(question: OrganSessionQuestion<A>) =>
     asked(question, asking =>
-      Effect.gen(function* () {
-        const { provider, model: modelId } = asking.choice
-        const prompt = yield* question.prompt
-        yield* permitted(asking)
-        const ticket = TicketId.make(asking.session)
-        const tool = answerTool({
-          answer: question.answer,
-          description: question.description,
-        })
-        const decode = Schema.decodeUnknownEffect(question.answer, {
-          onExcessProperty: 'error',
-        })
-        // The answer, or what lost it.
-        const answered = yield* Deferred.make<A, AnswerLost>()
-        const take = (given: unknown) =>
-          decode(given).pipe(
-            Effect.matchEffect({
-              onSuccess: answer =>
-                Effect.asVoid(Deferred.succeed(answered, answer)),
-              onFailure: issue =>
-                Effect.fail(
-                  ToolRefusal.cases.invalid.make({ issue: issue.message }),
-                ),
-            }),
-          )
-        const channel = yield* control.open({
-          project: config.project,
-          ticket,
-          session: asking.session,
-          role: ControlRole.Organ({ answer: take }),
-          worktree: config.checkout,
-          folder: config.sockets,
-          questionWait: Duration.zero,
-          checkOwn: {
-            command: CommandSetting.cases.None.make({}),
-            checkout: config.checkout,
-            timeLimit: limits.session,
-            cores: question.cores,
-            nice: Option.none(),
-          },
-          mergeStanding: Effect.succeed('not_queued'),
-        })
-        yield* channel.outcomes.pipe(
-          Stream.runForEach(outcome =>
-            Outcome.$is('Unfinished')(outcome)
-              ? Deferred.fail(
-                  answered,
-                  new AnswerLost({
-                    reason: 'its session settled twice with no answer',
-                  }),
-                )
-              : Outcome.$is('ToolFailed')(outcome)
+      withCommandShare(question.cores, cores =>
+        Effect.gen(function* () {
+          const { provider, model: modelId } = asking.choice
+          const prompt = yield* question.prompt
+          yield* permitted(asking)
+          const ticket = TicketId.make(asking.session)
+          const tool = answerTool({
+            answer: question.answer,
+            description: question.description,
+          })
+          const decode = Schema.decodeUnknownEffect(question.answer, {
+            onExcessProperty: 'error',
+          })
+          // The answer, or what lost it.
+          const answered = yield* Deferred.make<A, AnswerLost>()
+          const take = (given: unknown) =>
+            decode(given).pipe(
+              Effect.matchEffect({
+                onSuccess: answer =>
+                  Effect.asVoid(Deferred.succeed(answered, answer)),
+                onFailure: issue =>
+                  Effect.fail(
+                    ToolRefusal.cases.invalid.make({ issue: issue.message }),
+                  ),
+              }),
+            )
+          const channel = yield* control.open({
+            project: config.project,
+            ticket,
+            session: asking.session,
+            role: ControlRole.Organ({ answer: take }),
+            worktree: config.checkout,
+            folder: config.sockets,
+            questionWait: Duration.zero,
+            checkOwn: {
+              command: CommandSetting.cases.None.make({}),
+              checkout: config.checkout,
+              timeLimit: limits.session,
+              cores,
+              nice: Option.none(),
+            },
+            mergeStanding: Effect.succeed('not_queued'),
+          })
+          yield* channel.outcomes.pipe(
+            Stream.runForEach(outcome =>
+              Outcome.$is('Unfinished')(outcome)
                 ? Deferred.fail(
                     answered,
                     new AnswerLost({
-                      reason: `${outcome.tool} failed in the engine: ${outcome.reason}`,
+                      reason: 'its session settled twice with no answer',
                     }),
                   )
-                : Effect.void,
-          ),
-          Effect.forkScoped,
-        )
-        const granted = yield* proxy.grant(asking.caller)
-        const agent = yield* agents.start({
-          ticket,
-          project: config.project,
-          worktree: config.checkout,
-          providers: granted.providers,
-          token: Redacted.value(granted.token),
-          model: Option.some({ provider, modelId }),
-          tools: Option.some(organSessionTools),
-          resume: Option.none(),
-          env: {
-            ...channel.environment,
-            ...coreShareVariables(question.cores),
-            [AgentRoleVariable]: 'organ',
-            [AnswerToolVariable]: JSON.stringify(toolJsonSchema(tool)),
-          },
-          projectTrusted: config.projectTrusted,
-          // The engine's own priority: an organ isn't a worker (H73).
-          nice: Option.none(),
-        })
-        // Pi gives a refused answer back to the model, once: refused by Pi's check of its JSON Schema,
-        // which the engine never hears of, or by the organ's schema above.
-        yield* (yield* agent.events).pipe(
-          Stream.filter(
-            event =>
-              event.type === 'tool_execution_end' &&
-              event.toolName === AnswerToolName &&
-              event.isError,
-          ),
-          Stream.drop(1),
-          Stream.runForEach(() =>
-            Deferred.fail(
-              answered,
-              new AnswerLost({ reason: 'its answer was refused twice' }),
+                : Outcome.$is('ToolFailed')(outcome)
+                  ? Deferred.fail(
+                      answered,
+                      new AnswerLost({
+                        reason: `${outcome.tool} failed in the engine: ${outcome.reason}`,
+                      }),
+                    )
+                  : Effect.void,
             ),
-          ),
-          Effect.forkScoped,
-        )
-        // Whether the provider was held during the turn: a hold on another caller's refusal outlasting
-        // Pi's own retries ends the turn with no refusal of this session's, and no answer lost by it.
-        const heldInTurn = yield* Ref.make(false)
-        yield* Option.match(config.holds, {
-          onNone: () => Effect.void,
-          onSome: ({ held }) =>
-            held.pipe(
-              Stream.filter(providers => providers.has(provider)),
-              Stream.runForEach(() => Ref.set(heldInTurn, true)),
-              Effect.forkScoped,
-              Effect.asVoid,
-            ),
-        })
-        const waitOut = yield* waitsOn(provider)
-        const turns = Effect.gen(function* () {
-          let message = `${question.instructions}\n\n${prompt}`
-          for (;;) {
-            yield* Ref.set(asking.refused, Option.none())
-            yield* Ref.set(heldInTurn, false)
-            const came = yield* within(
-              Effect.raceFirst(
-                Effect.as(agent.prompt(message), Option.none<A>()),
-                Effect.map(Deferred.await(answered), Option.some),
-              ),
-              provider,
-              limits.session,
-              "the session's turn",
-            )
-            if (Option.isSome(came)) return came.value
-            const polled = yield* Deferred.poll(answered)
-            if (Option.isSome(polled)) return yield* polled.value
-            const refusal = yield* Ref.get(asking.refused)
-            const waited =
-              Option.isSome(refusal) && (yield* waitOut(refusal.value))
-            if (!waited && !(yield* Ref.get(heldInTurn)))
-              return yield* new AnswerLost({
-                reason: 'its session settled with no answer',
-              })
-            yield* permitted(asking)
-            message = `Your turn ended as ${provider} couldn't be called, and it may be called again: carry on, and end through ${AnswerToolName}.`
-          }
-        })
-        const ended = yield* Effect.exit(turns)
-        const stats = yield* Effect.option(agent.sessionStats)
-        if (Option.isSome(stats))
-          yield* asking.used(
-            {
-              input: stats.value.tokens.input,
-              output: stats.value.tokens.output,
-              cache_write: stats.value.tokens.cacheWrite,
-              cache_read: stats.value.tokens.cacheRead,
-            },
-            stats.value.assistantMessages,
+            Effect.forkScoped,
           )
-        return yield* ended
-      }),
+          const granted = yield* proxy.grant(asking.caller)
+          const agent = yield* agents.start({
+            ticket,
+            project: config.project,
+            worktree: config.checkout,
+            providers: granted.providers,
+            token: Redacted.value(granted.token),
+            model: Option.some({ provider, modelId }),
+            tools: Option.some(organSessionTools),
+            resume: Option.none(),
+            env: {
+              ...channel.environment,
+              ...coreShareVariables(cores),
+              [AgentRoleVariable]: 'organ',
+              [AnswerToolVariable]: JSON.stringify(toolJsonSchema(tool)),
+            },
+            projectTrusted: config.projectTrusted,
+            // The engine's own priority: an organ isn't a worker (H73).
+            nice: Option.none(),
+          })
+          // Pi gives a refused answer back to the model, once: refused by Pi's check of its JSON Schema,
+          // which the engine never hears of, or by the organ's schema above.
+          yield* (yield* agent.events).pipe(
+            Stream.filter(
+              event =>
+                event.type === 'tool_execution_end' &&
+                event.toolName === AnswerToolName &&
+                event.isError,
+            ),
+            Stream.drop(1),
+            Stream.runForEach(() =>
+              Deferred.fail(
+                answered,
+                new AnswerLost({ reason: 'its answer was refused twice' }),
+              ),
+            ),
+            Effect.forkScoped,
+          )
+          // Whether the provider was held during the turn: a hold on another caller's refusal outlasting
+          // Pi's own retries ends the turn with no refusal of this session's, and no answer lost by it.
+          const heldInTurn = yield* Ref.make(false)
+          yield* Option.match(config.holds, {
+            onNone: () => Effect.void,
+            onSome: ({ held }) =>
+              held.pipe(
+                Stream.filter(providers => providers.has(provider)),
+                Stream.runForEach(() => Ref.set(heldInTurn, true)),
+                Effect.forkScoped,
+                Effect.asVoid,
+              ),
+          })
+          const waitOut = yield* waitsOn(provider)
+          const turns = Effect.gen(function* () {
+            let message = `${question.instructions}\n\n${prompt}`
+            for (;;) {
+              yield* Ref.set(asking.refused, Option.none())
+              yield* Ref.set(heldInTurn, false)
+              const came = yield* within(
+                Effect.raceFirst(
+                  Effect.as(agent.prompt(message), Option.none<A>()),
+                  Effect.map(Deferred.await(answered), Option.some),
+                ),
+                provider,
+                limits.session,
+                "the session's turn",
+              )
+              if (Option.isSome(came)) return came.value
+              const polled = yield* Deferred.poll(answered)
+              if (Option.isSome(polled)) return yield* polled.value
+              const refusal = yield* Ref.get(asking.refused)
+              const waited =
+                Option.isSome(refusal) && (yield* waitOut(refusal.value))
+              if (!waited && !(yield* Ref.get(heldInTurn)))
+                return yield* new AnswerLost({
+                  reason: 'its session settled with no answer',
+                })
+              yield* permitted(asking)
+              message = `Your turn ended as ${provider} couldn't be called, and it may be called again: carry on, and end through ${AnswerToolName}.`
+            }
+          })
+          const ended = yield* Effect.exit(turns)
+          const stats = yield* Effect.option(agent.sessionStats)
+          if (Option.isSome(stats))
+            yield* asking.used(
+              {
+                input: stats.value.tokens.input,
+                output: stats.value.tokens.output,
+                cache_write: stats.value.tokens.cacheWrite,
+                cache_read: stats.value.tokens.cacheRead,
+              },
+              stats.value.assistantMessages,
+            )
+          return yield* ended
+        }),
+      ),
     ).pipe(Effect.withSpan('Organs.session'))
 
   const runtime: OrganRuntime = { ask, session }

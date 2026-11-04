@@ -47,6 +47,10 @@ export class HostLoad extends Schema.Class<HostLoad>('HostLoad')({
   mergeCheck: Schema.OptionFromNullOr(Bytes),
 }) {}
 
+/** The engine's load stream's items (§8.3). */
+export const HostLoadItem = streamItem(HostLoad, HostLoad)
+export type HostLoadItem = typeof HostLoadItem.Type
+
 /** The machine the engine runs on. */
 export class EngineHost extends Schema.Class<EngineHost>('EngineHost')({
   platform: Platform,
@@ -135,7 +139,7 @@ export const EngineRpcs = RpcGroup.make(
   }),
   Rpc.make('engine.watchLoad', {
     payload: { resume },
-    success: streamItem(HostLoad, HostLoad),
+    success: HostLoadItem,
     stream: true,
   }),
 )

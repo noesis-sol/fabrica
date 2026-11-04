@@ -32,7 +32,10 @@ import {
   Outcome,
   OwnCheck,
 } from '../control'
+import { workerShare } from '../engine/budget'
+import { LoadProcesses, SampledTree } from '../engine/load'
 import { Git, type Worktree } from '../git'
+import { coreShareVariables } from '../process'
 import { ModelProxy } from '../proxy'
 import { type VerifierRound, WorkGraph } from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
@@ -357,6 +360,18 @@ const verifyRound = Effect.fn('Verifier.round')(function* (input: {
     worker: modelOf(detail.ticket, started),
   })
   const session = yield* drawSession
+  // In its ticket's slot: its share as it starts, and it and its checks measured as the ticket's (§7.3, §7.4).
+  const cores = yield* workerShare(config.cores)
+  const { track } = yield* LoadProcesses
+  const measured = (pid: number) =>
+    track(
+      SampledTree.Worker({
+        project: config.project,
+        run: context.run,
+        ticket,
+        pid,
+      }),
+    )
   const channel = yield* control.open({
     project: config.project,
     ticket,
@@ -369,8 +384,9 @@ const verifyRound = Effect.fn('Verifier.round')(function* (input: {
       command: project.check_own,
       checkout: config.checkout,
       timeLimit: project.check_timeout,
-      cores: config.cores,
+      cores,
       nice: config.nice,
+      started: measured,
     },
     mergeStanding: standingOf(context.merges, ticket),
   })
@@ -421,6 +437,7 @@ const verifyRound = Effect.fn('Verifier.round')(function* (input: {
     resume: Option.none(),
     env: {
       ...channel.environment,
+      ...coreShareVariables(cores),
       ...runVariables(started),
       [AgentRoleVariable]: 'verifier',
       ...Option.match(passedAt, {

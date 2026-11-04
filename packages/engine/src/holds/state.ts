@@ -108,6 +108,14 @@ export const clockHeld = (snapshot: HoldsSnapshot): boolean =>
   )
 
 /**
+ * Whether the workers wait on their permits, so their quiet isn't counted (§12.8, §14.2, §14.6): while
+ * a provider's calls are held. Not while the machine is: its workers run on, and the budget lifts only
+ * as one ends, so one stuck has to be noticed.
+ */
+export const workersHeld = (snapshot: HoldsSnapshot): boolean =>
+  snapshot.on.some(on => on.hold === 'USAGE_LIMIT' || on.hold === 'CREDENTIALS')
+
+/**
  * The providers the run's holds hold (§14.2, §14.6): a usage limit's and a refused credential's. The
  * proxy grants their calls no permit.
  */
