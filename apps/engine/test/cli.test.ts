@@ -271,10 +271,7 @@ describe('fabrica engine', () => {
 
 describe('the command line', () => {
   /** Every command of spec §19 not yet built, as it is typed after `fabrica`. */
-  const notYet: ReadonlyArray<ReadonlyArray<string>> = [
-    ['init'],
-    ['report'],
-  ]
+  const notYet: ReadonlyArray<ReadonlyArray<string>> = [['init'], ['report']]
 
   it.effect.each(notYet.map(command => command.join(' ')))(
     'says `fabrica %s` isn’t built yet',

@@ -2256,8 +2256,7 @@ const runStarted = Effect.fn('Run.started')(function* (
       if (keepsRun({ holds: yield* holds.current, heard }) && !draining)
         return yield* goesOn
       // A question it will answer keeps the run too, unless it drains: what it frees is to come (§15.2).
-      if ((yield* autoAnswers.awaited) && !draining)
-        return yield* goesOn
+      if ((yield* autoAnswers.awaited) && !draining) return yield* goesOn
       // So does a guess on its way: the ticket waiting for it is to come (§16).
       if ((yield* predictor.asking) && !draining) return yield* goesOn
       // A budget spent is a limit reached (§13.11, §14.4): whatever is still ready waits for another run.

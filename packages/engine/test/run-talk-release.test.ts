@@ -16,6 +16,7 @@ import {
   Actor,
   ProjectId,
   SessionId,
+  TalkId,
   TicketId,
   WorkerNotFound,
 } from '@fabrica/contracts'
@@ -131,6 +132,7 @@ const talkIn = Effect.fn(function* (scope: Scope.Scope) {
   }
   const mode = runMode({ runs, attention, projects })
   const context: TalkToolContext<'run'> = {
+    talk: TalkId.make('talk-1'),
     project: {
       id: project,
       name: 'Work',
@@ -143,6 +145,7 @@ const talkIn = Effect.fn(function* (scope: Scope.Scope) {
     context: { _tag: 'run' },
     graph: unused,
     actor: Actor.cases.talk.make({ session: SessionId.make('s-talk') }),
+    maintainerMessages: Effect.succeed(0),
     // A release or a message that asked would die here.
     confirmed: () => unused,
     openTalk: () => unused,

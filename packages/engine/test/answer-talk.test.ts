@@ -166,6 +166,7 @@ const attentionOver = (graph: WorkGraphShape) =>
       list: Effect.succeed([project]),
       changed: Stream.never,
       graph: () => Effect.succeed(graph),
+      events: () => Effect.succeed([]),
     }),
   )
 
