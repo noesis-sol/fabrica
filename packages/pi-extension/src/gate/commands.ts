@@ -299,28 +299,64 @@ const configReads = (words: ReadonlyArray<Word>): boolean => {
 /** What `find` does with what it finds, beyond reading it. */
 const findActions = new Set(['-delete', '-exec', '-execdir', '-ok', '-okdir'])
 
-/** `find`'s arguments past the options before its roots (`-H`, `-L`, `-O2`, `-D tree`, BSD's `-f root`). */
+/** `find`'s primaries that `-f` and a root attached (BSD's `-froot`) would read otherwise. */
+const findPrimaries =
+  /^-f(?:alse|ollow|print|print0|printf|ls|stype|iles0-from)$/u
+
+/** `find`'s arguments past the options before its roots (`-H`, `-L`, `-O2`, `-D tree`, `--`), and the roots they give (BSD's `-f root`). */
 const findOptions = (
   args: ReadonlyArray<Word>,
 ): {
-  readonly options: ReadonlyArray<Word>
   readonly words: ReadonlyArray<Word>
   readonly rootsGiven: ReadonlyArray<Word>
 } => {
-  const options: Array<Word> = []
   const rootsGiven: Array<Word> = []
   let index = 0
   for (; index < args.length; index++) {
     const word = args[index]
     if (word === undefined || word.dynamic) break
+    if (word.text === '--') {
+      index++
+      break
+    }
     if (word.text === '-D' || word.text === '-f') {
       const value = args[index + 1]
       if (word.text === '-f' && value !== undefined) rootsGiven.push(value)
       index++
-    } else if (/^-(?:[HLPEXdsx]+|O\d*)$/u.test(word.text)) options.push(word)
-    else break
+    } else if (/^-(?:[HLPEXdsx]+|O\d*)$/u.test(word.text)) continue
+    else if (word.text.startsWith('-f') && !findPrimaries.test(word.text)) {
+      rootsGiven.push({
+        text: word.text.slice(2),
+        pattern: word.pattern.slice(2),
+        dynamic: false,
+      })
+    } else break
   }
-  return { options, words: args.slice(index), rootsGiven }
+  return { words: args.slice(index), rootsGiven }
+}
+
+/** A word of `find -exec`'s command: `{}`, alone or in a longer word, stands for anything below `root`, a link among it. */
+const foundWord = (part: Word, root: Word): Word =>
+  part.text.includes('{}')
+    ? {
+        text: part.text.replaceAll('{}', () => `${root.text}/**`),
+        pattern: part.pattern.replaceAll(
+          /\\?\{\\?\}/gu,
+          () => `${root.pattern}/**`,
+        ),
+        dynamic: part.dynamic || root.dynamic,
+      }
+    : part
+
+/** A link's target as the system reads it: from the folder the link is made in, which `link` names. */
+const fromLink = (target: Word, link: Word): Word => {
+  const slash = link.pattern.lastIndexOf('/')
+  if (slash === -1 || /^[/~]/u.test(target.text)) return target
+  return {
+    text: `${link.text.slice(0, link.text.lastIndexOf('/'))}/${target.text}`,
+    pattern: `${link.pattern.slice(0, slash)}/${target.pattern}`,
+    dynamic: target.dynamic || link.dynamic,
+  }
 }
 
 /**
@@ -674,7 +710,7 @@ class Policy {
   }
 
   find(args: ReadonlyArray<Word>, cwd: Folders, depth: number): void {
-    const { options, words, rootsGiven } = findOptions(args)
+    const { words, rootsGiven } = findOptions(args)
     const start = words.findIndex(
       ({ text, dynamic }) =>
         !dynamic && (text.startsWith('-') || text === '(' || text === '!'),
@@ -687,8 +723,10 @@ class Policy {
       given.length > 0 ? given : [{ text: '.', pattern: '.', dynamic: false }]
     const expression = start === -1 ? [] : words.slice(start)
     if (
-      (options.some(({ text }) => text.includes('L')) ||
-        expression.some(({ text }) => text === '-follow')) &&
+      args.some(
+        ({ text }) =>
+          /^-[HLPEXdsx]*L[HLPEXdsx]*$/u.test(text) || text === '-follow',
+      ) &&
       expression.some(({ text }) => findActions.has(text))
     )
       this.ask('find follows links as it walks, where the gate can’t tell')
@@ -707,9 +745,7 @@ class Policy {
       const runIn = word.text.endsWith('dir') ? unknownFolder : cwd
       for (const root of roots)
         this.words(
-          inner.map(part =>
-            part.text === '{}' ? syntheticWord(root, '/_') : part,
-          ),
+          inner.map(part => foundWord(part, root)),
           runIn,
           depth,
         )
@@ -762,11 +798,15 @@ class Policy {
         return
       }
       const target = optionValue(args, '-t', '--target-directory')
-      if (name === 'ln' && hasOption(args, '-s', '--symbolic'))
-        for (const linked of Option.isNone(target) && all.length > 1
-          ? all.slice(0, -1)
-          : all)
-          this.linked(linked, cwd)
+      if (name === 'ln' && hasOption(args, '-s', '--symbolic')) {
+        const named = Option.isNone(target) && all.length > 1
+        const link = Option.match(target, {
+          onNone: () => (named ? all.at(-1) : undefined),
+          onSome: folder => syntheticWord(folder, '/_'),
+        })
+        for (const made of named ? all.slice(0, -1) : all)
+          this.linked(link === undefined ? made : fromLink(made, link), cwd)
+      }
       Option.match(
         Option.orElse(target, () =>
           all.length > 1 ? Option.fromUndefinedOr(all.at(-1)) : Option.none(),

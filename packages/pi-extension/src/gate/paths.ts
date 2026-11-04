@@ -62,6 +62,9 @@ const segments = (pattern: string): ReadonlyArray<string> => {
   return parts
 }
 
+/** What makes a segment a glob: wildcards, and what zsh's `extendedglob` reads. A word holds no bare parenthesis (`shell.ts`). */
+const globChars = new Set(['*', '?', '[', '#', '^'])
+
 /** An escaped segment's literal text, or none when it holds an unescaped wildcard. */
 const literal = (segment: string): Option.Option<string> => {
   let text = ''
@@ -70,8 +73,7 @@ const literal = (segment: string): Option.Option<string> => {
     if (char === '\\') {
       text += segment[index + 1] ?? ''
       index++
-    } else if (char === '*' || char === '?' || char === '[')
-      return Option.none()
+    } else if (globChars.has(char)) return Option.none()
     else text += char
   }
   return Option.some(text)
@@ -79,7 +81,7 @@ const literal = (segment: string): Option.Option<string> => {
 
 /** A glob segment can match `..` when it opens with a literal dot and holds a wildcard. */
 const canMatchParent = (segment: string): boolean =>
-  segment.startsWith('.') || segment.startsWith('\\.')
+  /^\\?\./u.test(segment) && /[*?[]/u.test(segment)
 
 /** One step of a path: a name to go through, or a wildcard. */
 type Step = Data.TaggedEnum<{
@@ -98,7 +100,7 @@ const Step = Data.taggedEnum<Step>()
 /**
  * The entries a wildcard segment may match, read generously: without regard to case (`nocaseglob`)
  * or a leading dot (`dotglob`), with `?` as `*` (one character may be several bytes), and any entry
- * where it holds what the gate doesn't read (a bracket, an extended glob, a character outside ASCII).
+ * where it holds what the gate doesn't read (a bracket, zsh's `extendedglob`, a character outside ASCII).
  */
 const matcher = (segment: string): ((name: string) => boolean) => {
   const parts = ['']
@@ -107,7 +109,7 @@ const matcher = (segment: string): ((name: string) => boolean) => {
     if (escaped) index++
     const char = segment[index] ?? ''
     if (!escaped && (char === '*' || char === '?')) parts.push('')
-    else if (!/^[ -~]$/u.test(char) || (!escaped && /[[()|#^~]/u.test(char)))
+    else if (!/^[ -~]$/u.test(char) || (!escaped && /[[#^~]/u.test(char)))
       return () => true
     else parts[parts.length - 1] += char.toLowerCase()
   }
@@ -446,7 +448,7 @@ export const worst = (found: ReadonlyArray<Confinement>): Confinement =>
 
 /** `path`, plain text a tool opens as it is, in the escaped form `confine` reads: no braces or wildcards in it. */
 export const escapedPath = (path: string): string =>
-  path.replace(/[\\*?[{},]/gu, '\\$&')
+  path.replace(/[\\*?[{},#^]/gu, '\\$&')
 
 /** Where `pattern`, a path or a shell glob in its escaped form, lands: outside where any alternative does. */
 export const confine = (

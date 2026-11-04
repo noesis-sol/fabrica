@@ -11,7 +11,7 @@ import { Data, Option } from 'effect'
 export interface Word {
   /** The word's text, its quotes removed; a dynamic part as written. */
   readonly text: string
-  /** Its escaped form: a quoted or escaped `\ { } * ? [ ] , ~` behind a backslash. */
+  /** Its escaped form: a quoted or escaped `\ { } * ? [ ] , ~ # ^` behind a backslash. */
   readonly pattern: string
   /** Part of it is known only when it runs. */
   readonly dynamic: boolean
@@ -63,7 +63,19 @@ const skipped = new Map<string, number | 'rest'>([
   ['case', 'rest'],
 ])
 
-const special = new Set(['\\', '{', '}', '*', '?', '[', ']', ',', '~'])
+const special = new Set([
+  '\\',
+  '{',
+  '}',
+  '*',
+  '?',
+  '[',
+  ']',
+  ',',
+  '~',
+  '#',
+  '^',
+])
 const breaking = new Set([' ', '\t', '\n', ';', '&', '|', '(', ')', '<', '>'])
 const nameStart = /[A-Za-z_]/u
 const nameChar = /[A-Za-z0-9_]/u
@@ -151,9 +163,25 @@ class Reader {
         continue
       }
       if (char === '(') {
+        // Among a command's words, or against a word, it is no subshell: an extended glob (`@(out)`,
+        // zsh's `(out)/x`), which matches what the gate would read as a command. A function's `()`,
+        // an array's `=(` and `time (…)` aside.
+        const before = this.source[this.index - 1] ?? ' '
+        if (
+          (words.some(({ text }) => text !== 'time' && text !== '-p') ||
+            !breaking.has(before)) &&
+          this.peek(1) !== ')' &&
+          before !== '='
+        )
+          throw new Unparsable({
+            reason: 'a parenthesis among a command’s words',
+          })
         this.index++
         finish()
         this.list(')')
+        const after = this.peek()
+        if (after !== '' && after !== '`' && !breaking.has(after))
+          throw new Unparsable({ reason: 'a parenthesis against a word' })
         continue
       }
       if (char === ';' || char === '&' || char === '|' || char === ')') {
