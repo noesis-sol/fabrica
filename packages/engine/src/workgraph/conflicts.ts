@@ -25,6 +25,8 @@ import { StatusChange, statusChangeOf } from './status-change'
 // "use the other value" does, a later merge's conflict on it among them; so does the field holding
 // neither side's value, and the ticket's deletion. Which side the merge kept is the one the ticket
 // holds, so only a field the ticket's file holds, one with a clock, has a conflict to list.
+// An event says what it can change, not whether it did: deferring a deferred ticket ends a conflict on
+// its status too, as the event can't tell it from a real defer (fab-6u4).
 
 /** The fields of a ticket an event changes, by the name the merge's conflicts give them. */
 const fieldsChangedBy = (change: TicketChange): ReadonlyArray<string> =>

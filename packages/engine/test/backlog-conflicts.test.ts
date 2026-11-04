@@ -456,6 +456,35 @@ describe('the open conflicts', () => {
       }).pipe(Effect.provide(graphLayer)),
   )
 
+  it.effect(
+    'deferring a deferred ticket anew ends a conflict on its status, though the status stays',
+    () =>
+      Effect.gen(function* () {
+        const graph = yield* WorkGraph
+        const sql = yield* SqliteClient.SqliteClient
+        const { id: ticket } = yield* fileTask
+        yield* graph.defer({
+          id: ticket,
+          until: Option.none(),
+          actor: maintainer,
+        })
+        yield* recordConflict(sql, {
+          ticket,
+          field: 'status',
+          ours: 'deferred',
+          theirs: 'open',
+        })
+        expect(yield* graph.conflicts()).toHaveLength(1)
+        const deferred = yield* graph.defer({
+          id: ticket,
+          until: Option.some(DateTime.makeUnsafe(at)),
+          actor: maintainer,
+        })
+        expect(deferred.status).toBe('deferred')
+        expect(yield* graph.conflicts()).toEqual([])
+      }).pipe(Effect.provide(graphLayer)),
+  )
+
   it.effect('an answer supersedes the conflicts on what it changes', () =>
     Effect.gen(function* () {
       const graph = yield* WorkGraph
