@@ -91,6 +91,10 @@ export const Tokens = Schema.Struct({
 })
 export type Tokens = typeof Tokens.Type
 
+/** All of `tokens`, its cache's included: what the console shows and a token budget counts (§14.4). */
+export const tokenTotal = (tokens: Tokens): number =>
+  tokens.input + tokens.output + tokens.cache_write + tokens.cache_read
+
 /** Tokens by model. */
 export const TokensByModel = Schema.Record(ModelName, Tokens)
 export type TokensByModel = typeof TokensByModel.Type

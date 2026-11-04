@@ -69,9 +69,12 @@ export const mayTake = (snapshot: TakeSnapshot): MayTake => {
   return MayTake.Yes()
 }
 
-/** Whether the run waits on a hold that can lift, rather than ending with nothing in progress. */
+/**
+ * Whether the run waits on a hold that can lift, rather than ending with nothing in progress. A budget
+ * spent stays spent (§14.4): whatever else holds, no ticket is to come.
+ */
 const waitsOnHold = (holds: HoldsSnapshot): boolean =>
-  holds.on.length > 0 && Option.isNone(holds.gaveUp)
+  holds.on.length > 0 && Option.isNone(holds.gaveUp) && !anyOn(holds, 'BUDGET')
 
 /**
  * Whether the holds keep a look from ending the run, `holds` read after its state: one that can lift

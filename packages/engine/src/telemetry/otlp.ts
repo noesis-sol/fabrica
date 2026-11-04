@@ -100,7 +100,7 @@ const rowsExport = (options: {
             Effect.sync(() => exporter.push(logRecordOf(row, at))),
           ),
         )
-      return Telemetry.of({ record, flush: telemetry.flush })
+      return Telemetry.of({ ...telemetry, record })
     }),
   )
 

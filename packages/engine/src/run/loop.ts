@@ -58,6 +58,7 @@ import {
   QUICK_SETTLE,
   anyOn,
   heldProviders,
+  makeBudgetWatch,
   makeCredentialsHold,
   makeHolds,
   makeUsageHold,
@@ -734,6 +735,14 @@ const runStarted = Effect.fn('Run.started')(function* (
       provider: choice.provider,
       modelId: choice.model,
     })),
+  })
+  // The budgets (§14.4), read before any look so that a project already over its budget takes no ticket.
+  const budgets = yield* makeBudgetWatch({
+    budgets: project.budgets,
+    project: config.project,
+    cost,
+    holds,
+    ticketOver: supervision.overBudget,
   })
   const organs = yield* makeOrganRuntime({
     project: config.project,
@@ -2130,10 +2139,10 @@ const runStarted = Effect.fn('Run.started')(function* (
         return Option.none<Ending>()
       // So does a guess on its way: the ticket waiting for it is to come (§16).
       if ((yield* predictor.asking) && !draining) return Option.none<Ending>()
-      const limitReached = Option.exists(
-        limit,
-        most => after.dispatched >= most,
-      )
+      // A budget spent is a limit reached (§13.11, §14.4): whatever is still ready waits for another run.
+      const limitReached =
+        Option.exists(limit, most => after.dispatched >= most) ||
+        anyOn(yield* holds.current, 'BUDGET')
       return Option.some(
         Ending.Done({
           kind: limitReached
@@ -2174,6 +2183,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     Effect.catch(error => stop('TRACKER_FAILED', error.message)),
     watched("the work graph's changes"),
   )
+  yield* budgets.pipe(watched('the budgets'))
   // Each change of the holds since the start: a lift wakes the run, and one that gave up stops it.
   yield* holds.changes.pipe(
     Stream.filter(snapshot => snapshot !== holdsAtStart),

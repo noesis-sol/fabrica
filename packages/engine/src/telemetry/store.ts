@@ -17,13 +17,14 @@ import { Reactivity } from 'effect/reactivity'
 import { SqlClient } from 'effect/sql'
 
 import { SqliteClient } from '@effect/sql-sqlite-node'
+import type { ProjectId } from '@fabrica/contracts'
 
 import { migrate } from '../workgraph/migrations'
 import { batchesWritten, observe, prunesRun, rowsLost } from './metrics'
 import { telemetryMigrations } from './migrations'
 import { type RetentionSettings, prune } from './retention'
 import { type Columns, type TelemetryRow, columnsOf, rowTables } from './rows'
-import { Telemetry } from './service'
+import { type Measured, Telemetry, nothingMeasured } from './service'
 
 // The telemetry store (spec §21, H65): `<data>/telemetry.db`, one per engine, its own SQLite database,
 // never the work graph's. Recorded rows go through a queue to one writer fiber, which writes what
@@ -202,7 +203,37 @@ export const makeTelemetry = Effect.fn('Telemetry.make')(function* (
     if (queued) yield* Deferred.await(done)
   }).pipe(Effect.withSpan('Telemetry.flush'))
 
-  return Telemetry.of({ record, flush })
+  const projectSpent = (project: ProjectId) =>
+    Effect.gen(function* () {
+      yield* flush
+      const tables = yield* sql<Measured>`
+      SELECT coalesce(sum(input + output + cache_write + cache_read), 0) AS tokens,
+        coalesce(sum(cost_usd), 0) AS usd
+      FROM model_calls WHERE project = ${project}
+      UNION ALL
+      SELECT coalesce(sum(input + output + cache_write + cache_read), 0),
+        coalesce(sum(cost_usd), 0)
+      FROM daily WHERE kind = 'ModelCall' AND project = ${project}`
+      return tables.reduce(
+        (total, table) => ({
+          tokens: total.tokens + table.tokens,
+          usd: total.usd + table.usd,
+        }),
+        nothingMeasured,
+      )
+    }).pipe(
+      Effect.catch(error =>
+        Effect.as(
+          Effect.logWarning(
+            `telemetry: what ${project} spent couldn't be read: ${error.message}`,
+          ),
+          nothingMeasured,
+        ),
+      ),
+      Effect.withSpan('Telemetry.projectSpent'),
+    )
+
+  return Telemetry.of({ record, flush, projectSpent })
 })
 
 /**

@@ -70,7 +70,7 @@ import {
 } from '../src/run'
 import { layerRunLog, readEvents } from '../src/runlog'
 import { Held, SecretMissing, SecretName, Secrets } from '../src/secrets'
-import { Telemetry } from '../src/telemetry'
+import { Telemetry, nothingMeasured } from '../src/telemetry'
 import { layerWake, noBattery, noSleepCauses } from '../src/time'
 import { WorkGraph, makeWorkGraph, storeLayer } from '../src/workgraph'
 import { anthropicAnswer, anthropicBadKey } from './proxy-streams'
@@ -93,8 +93,9 @@ vi.setConfig({ testTimeout: 30_000 })
  * `defer`, `wait_for <ticket>` (then finishes once a note says it waited), `ask`, or `nothing` (settles
  * with no outcome); `hang` (commits its file, runs `check_own`, and works until it is stopped),
  * `wait <file>` (finishes once the file is there) or `commit_defer` (commits its file, then defers);
- * `spend` and `spend_defer` call the model once through the model proxy, as `models.json` points its
- * providers, and tell a round-trip of the ticket's model, then finish or defer. A
+ * `spend`, `spend_defer` and `spend_hang` call the model once through the model proxy, as `models.json`
+ * points its providers, and tell a round-trip of the ticket's model, then finish, defer or work until
+ * they are stopped. A
  * session resumed with `switch_session` (a carry-over, an answer, an undefer) finishes instead of
  * hanging, deferring or asking. It keeps what it was prompted with and every call in its session folder.
  */
@@ -170,7 +171,8 @@ const work = async () => {
     git('commit', '--quiet', '--message', ticket.title)
   }
   if (action === 'nothing') return
-  if (action === 'spend' || action === 'spend_defer') await spend(ticket.model ?? 'anthropic/claude-test')
+  if (action === 'spend' || action === 'spend_defer' || (action === 'spend_hang' && !resumed)) await spend(ticket.model ?? 'anthropic/claude-test')
+  if (action === 'spend_hang' && !resumed) return new Promise(() => {})
   if (action === 'spend_defer') return call('defer', { reason: 'it needs a decision first' })
   if (action === 'hang' && !resumed) {
     commitOwn()
@@ -390,7 +392,11 @@ const liveMergeWaits = Layer.succeed(MergeWaits, {
 
 /** Telemetry that keeps no row: the rows a run's calls make are cost.test.ts's. */
 export const noTelemetry = Layer.succeed(Telemetry)(
-  Telemetry.of({ record: () => Effect.void, flush: Effect.void }),
+  Telemetry.of({
+    record: () => Effect.void,
+    flush: Effect.void,
+    projectSpent: () => Effect.succeed(nothingMeasured),
+  }),
 )
 
 const engine = EngineId.make('engine-1')

@@ -35,7 +35,7 @@ import {
   type StepKind,
   Text,
   TicketId,
-  type Tokens,
+  tokenTotal,
 } from '@fabrica/contracts'
 
 import { sayElapsed, sayMoment, secondsSince } from '../app/clock'
@@ -726,9 +726,7 @@ export const update = (model: Model, message: Message): Return =>
 
 // The figures.
 
-/** All of a run's tokens, its cache's included. */
-export const tokenTotal = (tokens: Tokens): number =>
-  tokens.input + tokens.output + tokens.cache_write + tokens.cache_read
+export { tokenTotal }
 
 /** A count of tokens as the handoff writes it: `512`, `34k`, `1.2M`. */
 export const sayTokens = (count: number): string =>

@@ -6,7 +6,7 @@ import { beforeAll, describe, expect, it } from '@effect/vitest'
 import { ProjectId, RunId, TicketId } from '@fabrica/contracts'
 
 import { handBackFields, makeHandBackTally } from '../src/run/hand-backs'
-import { Telemetry, TelemetryRow } from '../src/telemetry'
+import { Telemetry, TelemetryRow, nothingMeasured } from '../src/telemetry'
 import {
   binFolder,
   file,
@@ -43,6 +43,7 @@ describe('the hand-back tally', () => {
             Telemetry.of({
               record: row => Ref.update(rows, all => [...all, row]),
               flush: Effect.void,
+              projectSpent: () => Effect.succeed(nothingMeasured),
             }),
           ),
         )

@@ -19,8 +19,10 @@ import type {
 // The model proxy's permits (spec §12.9): every model call takes one before the proxy reaches the
 // provider, and holds it until the call's response has been read. The holds fill it in: the
 // usage-limit hold (§14.2) and the credentials hold (§14.6) grant none for a held provider, the
-// per-provider caps make a call wait its turn, budgets (§14.4) stop a run's calls. Taking a permit
-// waits; it never refuses a call.
+// per-provider caps make a call wait its turn. Taking a permit waits; it never refuses a call. Budgets
+// (§14.4) act on what a call spent once its response has ended (`holds/budget.ts`), by interrupting the
+// ticket and holding the run's dispatch: a running worker's calls go on while it finishes, so none waits
+// here for them.
 //
 // The usage and credentials parts (§14.2, §14.6, H20, H69): each run gives the permits the providers
 // its holds hold, a usage limit's or a refused credential's, as they change, for as long as it runs; a
@@ -62,7 +64,7 @@ export class Permits extends Context.Service<Permits, PermitsShape>()(
   '@fabrica/engine/proxy/Permits',
 ) {}
 
-/** Permits for every call at once: no hold, no cap, no budget. */
+/** Permits for every call at once: no hold, no cap. */
 export const layerOpen: Layer.Layer<Permits> = Layer.succeed(Permits)(
   Permits.of({ take: () => Effect.void, hold: () => Effect.void }),
 )

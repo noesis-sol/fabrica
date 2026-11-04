@@ -1,4 +1,4 @@
-import { Effect, Option, Ref, Stream } from 'effect'
+import { Effect, Option, Stream, SubscriptionRef } from 'effect'
 
 import type {
   ProjectId,
@@ -55,6 +55,8 @@ export interface CostAccount {
   readonly run: Effect.Effect<RunSpend>
   /** What each ticket and the run spent so far, read at once: the run view's figures (§18.3, §18.4). */
   readonly spent: Effect.Effect<Spent>
+  /** The same figures now, then as they change: at least the latest, for what acts on them (§14.4). */
+  readonly changes: Stream.Stream<Spent>
 }
 
 /** What each ticket and the run spent so far. */
@@ -80,13 +82,15 @@ const added = <K>(
     onSome: key => new Map(map).set(key, add(map.get(key) ?? noSpend)),
   })
 
+const figures = ({ tickets, run }: State): Spent => ({ tickets, run })
+
 /** A cost account for `options.run`, recording into telemetry. */
 export const makeCostAccount = Effect.fn('CostAccount.make')(function* (
   options: CostAccountOptions,
 ) {
   const telemetry = yield* Telemetry
   const prices = options.prices ?? piPriceTable()
-  const state = yield* Ref.make<State>({
+  const state = yield* SubscriptionRef.make<State>({
     tickets: new Map(),
     turns: new Map(),
     run: { workers: noSpend, untied: noSpend },
@@ -124,7 +128,7 @@ export const makeCostAccount = Effect.fn('CostAccount.make')(function* (
           outcome: 'answered',
         })
         return Effect.andThen(
-          Ref.update(state, current => ({
+          SubscriptionRef.update(state, current => ({
             tickets: added(current.tickets, caller.ticket, add),
             turns: added(current.turns, caller.session, add),
             run: Option.isSome(caller.ticket)
@@ -137,7 +141,7 @@ export const makeCostAccount = Effect.fn('CostAccount.make')(function* (
     })
 
   const takeTurn = (session: SessionId) =>
-    Ref.modify(state, current => {
+    SubscriptionRef.modify(state, current => {
       const turns = new Map(current.turns)
       turns.delete(session)
       return [current.turns.get(session) ?? noSpend, { ...current, turns }]
@@ -148,11 +152,12 @@ export const makeCostAccount = Effect.fn('CostAccount.make')(function* (
     takeTurn,
     ticket: ticket =>
       Effect.map(
-        Ref.get(state),
+        SubscriptionRef.get(state),
         current => current.tickets.get(ticket) ?? noSpend,
       ),
-    run: Effect.map(Ref.get(state), current => current.run),
-    spent: Effect.map(Ref.get(state), ({ tickets, run }) => ({ tickets, run })),
+    run: Effect.map(SubscriptionRef.get(state), current => current.run),
+    spent: Effect.map(SubscriptionRef.get(state), figures),
+    changes: Stream.map(SubscriptionRef.changes(state), figures),
   } satisfies CostAccount
 })
 

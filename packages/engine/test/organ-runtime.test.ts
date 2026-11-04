@@ -97,7 +97,7 @@ import {
 } from '../src/proxy'
 import { makeRunLog } from '../src/runlog'
 import { Held, Kept, SecretName, Secrets } from '../src/secrets'
-import { Telemetry, type TelemetryRow } from '../src/telemetry'
+import { Telemetry, type TelemetryRow, nothingMeasured } from '../src/telemetry'
 import { layerWake, noSleepCauses } from '../src/time'
 import { WorkGraph, makeWorkGraph, storeLayer } from '../src/workgraph'
 import { anthropicAnswer, anthropicBadKey } from './proxy-streams'
@@ -606,6 +606,7 @@ const telemetryOf = () => {
             rows.push(row)
           }),
         flush: Effect.void,
+        projectSpent: () => Effect.succeed(nothingMeasured),
       }),
     ),
   }

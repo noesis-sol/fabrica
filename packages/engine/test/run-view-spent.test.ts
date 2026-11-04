@@ -28,7 +28,7 @@ import {
 import { makeCostAccount } from '../src/cost'
 import { type Caller, ProxyEvent } from '../src/proxy'
 import type { RunSnapshot, RunStateShape } from '../src/run'
-import { Telemetry } from '../src/telemetry'
+import { Telemetry, nothingMeasured } from '../src/telemetry'
 import { type RunViewItem, makeRunView } from '../src/view'
 
 // The run view's spending (spec §12.9, §18.3, §18.4, H91): a worker's row carries what its ticket's
@@ -133,7 +133,11 @@ describe("the run view's spending", () => {
         }).pipe(
           Effect.provideService(
             Telemetry,
-            Telemetry.of({ record: () => Effect.void, flush: Effect.void }),
+            Telemetry.of({
+              record: () => Effect.void,
+              flush: Effect.void,
+              projectSpent: () => Effect.succeed(nothingMeasured),
+            }),
           ),
         )
         const view = yield* makeRunView({

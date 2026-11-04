@@ -45,6 +45,7 @@ import {
   Telemetry,
   TelemetryRow,
   makeTelemetry,
+  nothingMeasured,
   prune,
   telemetryStoreLayer,
 } from '../src/telemetry'
@@ -126,6 +127,7 @@ const accountOf = (options: {
         Telemetry.of({
           record: row => Ref.update(rows, kept => [...kept, row]),
           flush: Effect.void,
+          projectSpent: () => Effect.succeed(nothingMeasured),
         }),
       ),
     )
@@ -629,6 +631,7 @@ describe('cost through the model proxy', () => {
             Telemetry.of({
               record: row => Queue.offer(rows, row),
               flush: Effect.void,
+              projectSpent: () => Effect.succeed(nothingMeasured),
             }),
           ),
         )
