@@ -57,8 +57,8 @@ export const TURNS_KEPT = 3
 /** The most of those turns the organ is given: their end. */
 export const TURNS_TEXT_KEPT = 8_000
 
-/** The most of a tool call's input or output a turn keeps: its end. */
-const TOOL_TEXT_KEPT = 1_500
+/** The most of a message's text, a tool call's input or its output a turn keeps: its end. */
+export const PART_TEXT_KEPT = 1_500
 
 /** The most of the git state's file lists the organ is given: their end. */
 const GIT_TEXT_KEPT = 2_000
@@ -95,33 +95,29 @@ const notesText = (notes: ReadonlyArray<Note>): string =>
 
 /** The transcript's last `TURNS_KEPT` turns as text: messages and tool calls in the order they began. */
 export const lastTurns = (entries: ReadonlyArray<TranscriptEntry>): string => {
-  let current: Array<string> = []
+  // A message or a tool call: what says what it is, and its text as far as it has come.
+  let current: Array<{ readonly head: string; body: string }> = []
   const turns = [current]
-  // Where a message's or a tool call's later text goes: its line, in the turn it began in.
-  const lines = new Map<
-    string,
-    { readonly turn: Array<string>; readonly at: number; text: string }
-  >()
-  const open = (id: string, line: string) => {
-    lines.set(id, { turn: current, at: current.length, text: line })
-    current.push(line)
+  const parts = new Map<string, { readonly head: string; body: string }>()
+  const open = (id: string, head: string, body = '') => {
+    const part = { head, body }
+    parts.set(id, part)
+    current.push(part)
   }
   const more = (id: string, text: string) => {
-    const line = lines.get(id)
-    if (line === undefined) return
-    line.text = keptEnd(`${line.text}${text}`, TOOL_TEXT_KEPT)
-    line.turn[line.at] = line.text
+    const part = parts.get(id)
+    if (part !== undefined) part.body += text
   }
   for (const entry of entries)
     TranscriptEntry.match(entry, {
-      message: ({ id, role, text }) => open(id, `${role}: ${text}`),
+      message: ({ id, role, text }) => open(id, `${role}: `, text),
       text: ({ message, delta }) => more(message, delta),
       thinking: () => {},
       tool_input: () => {},
       tool_call: ({ id, tool, input }) =>
         open(
           id,
-          `tool ${tool} ${keptEnd(JSON.stringify(input), TOOL_TEXT_KEPT)}:\n`,
+          `tool ${tool} ${keptEnd(JSON.stringify(input), PART_TEXT_KEPT)}:\n`,
         ),
       tool_output: ({ id, chunk }) => more(id, chunk),
       tool_end: ({ id, ok }) => {
@@ -136,7 +132,11 @@ export const lastTurns = (entries: ReadonlyArray<TranscriptEntry>): string => {
     turns
       .filter(turn => turn.length > 0)
       .slice(-TURNS_KEPT)
-      .map(turn => turn.join('\n'))
+      .map(turn =>
+        turn
+          .map(({ head, body }) => `${head}${keptEnd(body, PART_TEXT_KEPT)}`)
+          .join('\n'),
+      )
       .join('\n---\n'),
     TURNS_TEXT_KEPT,
   )

@@ -43,6 +43,7 @@ import {
   NOTES_KEPT,
   OrganOutcome,
   type OrganRuntime,
+  PART_TEXT_KEPT,
   type SetAsideTicket,
   TURNS_KEPT,
   TURNS_TEXT_KEPT,
@@ -598,10 +599,50 @@ describe('what the organ is given', () => {
     expect(text).toContain('(the tool failed)')
   })
 
+  it("keeps a part's end whole however it streamed, what it is and how much was cut", () => {
+    const chunk = 'y'.repeat(100)
+    const text = lastTurns([
+      TranscriptEntry.cases.tool_call.make({
+        id: ToolCallId.make('t-1'),
+        tool: 'bash',
+        input: { command: 'pnpm test' },
+        at: DateTime.makeUnsafe(0),
+      }),
+      ...Array.from({ length: 50 }, () =>
+        TranscriptEntry.cases.tool_output.make({
+          id: ToolCallId.make('t-1'),
+          chunk,
+        }),
+      ),
+      TranscriptEntry.cases.tool_end.make({
+        id: ToolCallId.make('t-1'),
+        ok: false,
+        at: DateTime.makeUnsafe(0),
+      }),
+      message('m-1', 'npm '),
+      ...Array.from({ length: 20 }, () =>
+        TranscriptEntry.cases.text.make({
+          message: MessageId.make('m-1'),
+          delta: chunk,
+        }),
+      ),
+    ])
+    const output = 5_000 + '\n(the tool failed)'.length
+    expect(text).toContain(
+      `tool bash {"command":"pnpm test"}:\n(${output - PART_TEXT_KEPT} characters cut)\n`,
+    )
+    expect(text).toContain('(the tool failed)\nassistant: (')
+    expect(text).toContain(`(${2_004 - PART_TEXT_KEPT} characters cut)`)
+  })
+
   it("keeps the end of a session's long turns", () => {
     const text = lastTurns([
-      message('m-1', `${'x'.repeat(TURNS_TEXT_KEPT)}the end`),
+      ...Array.from({ length: 20 }, (_, at) =>
+        message(`m-${at}`, `${at}: ${'x'.repeat(PART_TEXT_KEPT - 10)}`),
+      ),
+      message('m-last', 'the end'),
     ])
+    expect(text.startsWith('(')).toBe(true)
     expect(text).toContain('characters cut)\n')
     expect(text.endsWith('the end')).toBe(true)
     expect(text.length).toBeLessThan(TURNS_TEXT_KEPT + 40)

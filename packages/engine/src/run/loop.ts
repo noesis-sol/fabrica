@@ -2116,6 +2116,9 @@ const runStarted = Effect.fn('Run.started')(function* (
         !RequirementsGate.$is('Clear')(gateNow)
       )
         return Option.none<Ending>()
+      // A verdict triage owes keeps the run, unless it drains: two can raise the environment hold (§16).
+      // Read before the holds: a verdict raises its hold before it stops being owed.
+      if ((yield* triage.awaited) && !draining) return Option.none<Ending>()
       // A hold that can lift keeps the run, unless it drains: the tickets it holds back are to come.
       // Read after the state: a ticket's turn counts toward a hold before it leaves its slot.
       if (keepsRun({ holds: yield* holds.current, heard }) && !draining)
@@ -2125,8 +2128,6 @@ const runStarted = Effect.fn('Run.started')(function* (
         return Option.none<Ending>()
       // So does a guess on its way: the ticket waiting for it is to come (§16).
       if ((yield* predictor.asking) && !draining) return Option.none<Ending>()
-      // So does a verdict triage owes, unless it drains: two can raise the environment hold (§16).
-      if ((yield* triage.awaited) && !draining) return Option.none<Ending>()
       const limitReached = Option.exists(
         limit,
         most => after.dispatched >= most,
