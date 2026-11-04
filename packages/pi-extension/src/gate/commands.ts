@@ -55,6 +55,8 @@ const gitVariables = new Set([
   'GIT_OBJECT_DIRECTORY',
   'GIT_NAMESPACE',
   'GIT_TEMPLATE_DIR',
+  'GIT_CONFIG_COUNT',
+  'GIT_CONFIG_PARAMETERS',
 ])
 
 const shells = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh', 'ash', 'hush'])
@@ -88,16 +90,11 @@ const copierValues = new Set([
   '--group',
 ])
 
-/** An option of `sed` that edits in place, its suffix attached; the options before it in a group take no value. */
-const sedInPlace = /^(?:-[a-dghjkm-zA-HJ-Z]*[iI]|--in-place(?:=|$))/u
+/** `sed`'s short option that edits in place, its suffix attached; those before it in a group take no value on BSD, where `-l` takes none. */
+const sedInPlace = /^-[a-dghj-zA-HJ-Z]*[iI]/u
 
 /** `sed`'s options that take a script. */
 const sedScripts = new Set(['-e', '-f', '--expression', '--file'])
-
-/** Whether `text` is an option of `sed` giving a script, attached or in the next word. */
-const isSedScript = (text: string): boolean =>
-  /^--(?:expression|file)(?:=|$)/u.test(text) ||
-  Option.isSome(valuedShort(text, sedScripts))
 
 /** `sort`'s options that take a value. */
 const sortValues = new Set([
@@ -247,8 +244,15 @@ const valuedShort = (
   return Option.none()
 }
 
+/** Whether `text`, an option with any value joined by `=`, names the long option `long`, which it may shorten as GNU's and git's parsers let it. */
+const namesLong = (text: string, long: string): boolean => {
+  const name = text.split('=')[0] ?? ''
+  return name.length > 2 && name.startsWith('--') && long.startsWith(name)
+}
+
 /** Whether `text`, an option, leaves its value to the next word. */
 const takesNextWord = (text: string, values: ReadonlySet<string>): boolean =>
+  (!text.includes('=') && [...values].some(value => namesLong(text, value))) ||
   values.has(text) ||
   Option.exists(valuedShort(text, values), ({ start }) => start === text.length)
 
@@ -292,11 +296,41 @@ const hasOption = (
       !dynamic &&
       options.some(option =>
         option.startsWith('--')
-          ? text === option || text.startsWith(`${option}=`)
+          ? namesLong(text, option)
           : text === option ||
             (/^-[A-Za-z]+$/u.test(text) && text.includes(option.slice(1))),
       ),
   )
+
+/** Whether `words` hold the option `option`, up to `--`, where `values` are the options that take a value: the letters of a value are no options. */
+const hasFlag = (
+  words: ReadonlyArray<Word>,
+  values: ReadonlySet<string>,
+  ...options: ReadonlyArray<string>
+): boolean => {
+  for (let index = 0; index < words.length; index++) {
+    const word = words[index]
+    if (word === undefined || word.text === '--') return false
+    const { text, dynamic } = word
+    if (!dynamic && text.startsWith('-') && text !== '-') {
+      const end = Option.match(valuedShort(text, values), {
+        onNone: () => text.length,
+        onSome: ({ start }) => start - 1,
+      })
+      if (
+        options.some(option =>
+          option.startsWith('--')
+            ? namesLong(text, option)
+            : !text.startsWith('--') &&
+              text.slice(1, end).includes(option[1] ?? ''),
+        )
+      )
+        return true
+    }
+    if (takesNextWord(text, values)) index++
+  }
+  return false
+}
 
 /** The values given to the option called `names` in `words` (`-t dir`, `-tdir`, `-rt dir`, `--target=dir`), read up to `--`; `values` are the options that take one. */
 const optionValues = (
@@ -311,13 +345,14 @@ const optionValues = (
     const { text } = word
     const equals = text.indexOf('=')
     if (text.startsWith('--') && equals !== -1) {
-      if (names.includes(text.slice(0, equals)))
+      if (names.some(name => namesLong(text, name)))
         found.push(attachedValue(word, equals + 1))
       continue
     }
     const short = valuedShort(text, values)
     const named =
       names.includes(text) ||
+      names.some(name => namesLong(text, name)) ||
       Option.exists(short, ({ option }) => names.includes(option))
     const next = takesNextWord(text, values)
     if (named && next) {
@@ -329,6 +364,10 @@ const optionValues = (
   }
   return found
 }
+
+/** The settings that change what git runs. */
+const gitRunsSetting =
+  /^(?:alias\.|core\.(?:hookspath|sshcommand|fsmonitor)=|init\.templatedir=)/iu
 
 /** git config's options that take a value, the next word when not joined by `=`. */
 const configValues = new Set([
@@ -391,6 +430,45 @@ const configReads = (words: ReadonlyArray<Word>): boolean => {
 
 /** What `find` does with what it finds, beyond reading it. */
 const findActions = new Set(['-delete', '-exec', '-execdir', '-ok', '-okdir'])
+
+/** What `sed`'s arguments say, read up to `--`: whether it edits in place, whether an option gives a script, and its words but the in-place option and any script known only when it runs. */
+const sedArguments = (
+  args: ReadonlyArray<Word>,
+): {
+  readonly inPlace: boolean
+  readonly scripted: boolean
+  readonly words: ReadonlyArray<Word>
+} => {
+  const words: Array<Word> = []
+  let inPlace = false
+  let scripted = false
+  for (let index = 0; index < args.length; index++) {
+    const word = args[index]
+    if (word === undefined) break
+    const { text, dynamic } = word
+    if (text === '--') {
+      words.push(...args.slice(index))
+      break
+    }
+    if (sedInPlace.test(text) || namesLong(text, '--in-place')) {
+      inPlace = true
+      continue
+    }
+    const script =
+      namesLong(text, '--expression') ||
+      namesLong(text, '--file') ||
+      Option.isSome(valuedShort(text, sedScripts))
+    if (script) scripted = true
+    if (script && dynamic) continue
+    words.push(word)
+    const value = args[index + 1]
+    if (takesNextWord(text, sedScripts) && value !== undefined) {
+      words.push(value)
+      index++
+    }
+  }
+  return { inPlace, scripted, words }
+}
 
 /** `find`'s primaries writing to the file named by the word after them. */
 const findOutputs = new Set(['-fprint', '-fprint0', '-fprintf', '-fls'])
@@ -653,7 +731,11 @@ class Policy {
         this.ask(`the gate can’t read the command: ${reason}`)
         return joined(cwd, unknownFolder)
       },
-      Parsed: ({ commands }) => {
+      Parsed: ({ commands, codes }) => {
+        if (codes)
+          this.ask(
+            "a $'…' character code can spell anything, and the gate doesn’t decode it",
+          )
         if (commands.length > 1) this.several = true
         // Set anywhere, even after a `cd` (in a loop, it runs before the next one), they move it.
         const texts = commands.flatMap(({ words }) =>
@@ -929,7 +1011,10 @@ class Policy {
     }
     if (copiers.has(name)) {
       const all = operands(args, copierValues)
-      if (name === 'install' && hasOption(args, '-d', '--directory')) {
+      if (
+        name === 'install' &&
+        hasFlag(args, copierValues, '-d', '--directory')
+      ) {
         for (const folder of all) this.written(folder, cwd)
         return
       }
@@ -939,7 +1024,7 @@ class Policy {
         copierValues,
       )
       const lastNames = targets.length === 0 && all.length > 1
-      if (name === 'ln' && hasOption(args, '-s', '--symbolic')) {
+      if (name === 'ln' && hasFlag(args, copierValues, '-s', '--symbolic')) {
         for (const folder of targets)
           for (const made of all)
             this.linked(fromLink(made, syntheticWord(folder, '/_')), cwd)
@@ -951,9 +1036,9 @@ class Policy {
             all.slice(0, -1),
             last,
             // BSD's `-F` removes the folder first, so the link takes its place.
-            hasOption(args, '-T', '-F', '--no-target-directory')
+            hasFlag(args, copierValues, '-T', '-F', '--no-target-directory')
               ? 'never a folder'
-              : hasOption(args, '-n', '-h', '--no-dereference')
+              : hasFlag(args, copierValues, '-n', '-h', '--no-dereference')
                 ? 'kept'
                 : 'followed',
             cwd,
@@ -990,13 +1075,9 @@ class Policy {
       return
     }
     if (name === 'sed') {
-      const rest = args.filter(({ text }) => !sedInPlace.test(text))
-      if (rest.length === args.length) return
-      const scripted = rest.some(({ text }) => isSedScript(text))
-      const all = operands(
-        rest.filter(({ text, dynamic }) => !dynamic || !isSedScript(text)),
-        sedScripts,
-      )
+      const { inPlace, scripted, words } = sedArguments(args)
+      if (!inPlace) return
+      const all = operands(words, sedScripts)
       for (const file of scripted ? all : all.slice(1)) this.written(file, cwd)
       return
     }
@@ -1055,12 +1136,18 @@ class Policy {
         index++
         if (
           setting !== undefined &&
-          (setting.dynamic ||
-            /^(?:alias\.|core\.(?:hookspath|sshcommand|fsmonitor)=|init\.templatedir=)/iu.test(
-              setting.text,
-            ))
+          (setting.dynamic || gitRunsSetting.test(setting.text))
         )
           this.ask(`git -c ${setting.text} changes what git runs`)
+      } else if (text === '--config-env' || text.startsWith('--config-env=')) {
+        const setting = text.includes('=')
+          ? attachedValue(word, text.indexOf('=') + 1)
+          : args[++index]
+        if (
+          setting !== undefined &&
+          (setting.dynamic || gitRunsSetting.test(setting.text))
+        )
+          this.ask(`git --config-env ${setting.text} changes what git runs`)
       } else if (
         text === '--git-dir' ||
         text === '--work-tree' ||
@@ -1069,12 +1156,7 @@ class Policy {
       ) {
         this.ask(`git ${text} points git at another repository or worktree`)
         if (!text.includes('=')) index++
-      } else if (
-        text === '--namespace' ||
-        text === '--config-env' ||
-        text === '--super-prefix'
-      )
-        index++
+      } else if (text === '--namespace' || text === '--super-prefix') index++
     }
     const rest = args.slice(index)
     const sub = rest[0]

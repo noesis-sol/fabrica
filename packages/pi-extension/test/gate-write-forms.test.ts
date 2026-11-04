@@ -67,6 +67,22 @@ const commands: ReadonlyArray<readonly [Expected, string]> = [
   ['allowed', 'sed -e s/a/b/ /tmp/x'],
   ['allowed', 'sed -ei /tmp/x'],
   ['asked', 'sed -bi s/a/b/ /tmp/x'],
+  ['asked', 'sed -li s/a/b/ /tmp/x'],
+  ['asked', 'sed -li.bak s/a/b/ /tmp/x'],
+  ['asked', 'sed -nlI.bak s/a/b/ /tmp/x'],
+  // A value or an operand opening `-i` is no option, and leaves the next word to be read.
+  ['asked', 'sed -i -f -i /tmp/x'],
+  ['asked', 'sed -i --file -i /tmp/x'],
+  ['asked', 'sed -i s/a/b/ -- -i/../../x'],
+  ['asked', 'sed -i.bak -- s/a/b/ -i/../../x'],
+  ['asked', 'sed -i s/a/b/ -- -e"$x"'],
+  ['allowed', 'sed -e -i /tmp/x'],
+  ['allowed', 'sed -- -i /tmp/x'],
+  // A long option shortened, as GNU's parser lets it.
+  ['asked', 'sed --in s/a/b/ /tmp/x'],
+  ['asked', 'sed --in=.bak s/a/b/ /tmp/x'],
+  ['asked', 'sed -i --expr=s/a/b/ /tmp/x'],
+  ['asked', 'sed -i --expr s/a/b/ /tmp/x'],
   // A suffix or a script known only when it runs is still one.
   ['asked', 'sed --in-place="$x" s/a/b/ /tmp/x'],
   ['asked', 'sed -i"$x" s/a/b/ /tmp/x'],
@@ -88,6 +104,15 @@ const commands: ReadonlyArray<readonly [Expected, string]> = [
   ['asked', 'mv -ft /tmp/x src/a.ts'],
   ['asked', 'mv src/a.ts --target-directory=/tmp/x'],
   ['asked', 'mv --target-directory /tmp/x src/a.ts'],
+  ['asked', 'cp --target=/tmp/x a.ts'],
+  ['asked', 'cp --target /tmp/x a.ts'],
+  ['asked', 'mv --t=/tmp/x a.ts'],
+  // The letters of an attached value are no options.
+  ['asked', 'install -tout a.ts'],
+  ['asked', 'ln -s -Sn ../x src/deep/up'],
+  ['asked', 'ln --sym ../x src/deep/up'],
+  ['allowed', 'ln -tsrc /tmp/x'],
+  ['allowed', 'install -tsrc /tmp/x'],
   ['asked', 'install -t/tmp/x src/a.ts'],
   ['asked', 'ln -t/tmp/x src/a.ts'],
   ['asked', 'mkdir -pm 755 /tmp/x'],
@@ -129,6 +154,15 @@ const commands: ReadonlyArray<readonly [Expected, string]> = [
   ['asked', 'git init --template="$t"'],
   ['asked', 'git -c init.templateDir=src/t init'],
   ['asked', 'GIT_TEMPLATE_DIR=src/t git init'],
+  ['asked', 'git --config-env=init.templateDir=T init'],
+  ['asked', 'git --config-env init.templateDir=T init'],
+  ['asked', 'git --config-env=core.hooksPath=T status'],
+  ['asked', 'GIT_CONFIG_COUNT=1 git init'],
+  ['asked', 'GIT_CONFIG_PARAMETERS=x git init'],
+  ['asked', 'git init --templ=/tmp/x'],
+  ['asked', 'git init --sep=/tmp/x'],
+  ['asked', 'git init --sep /tmp/x'],
+  ['allowed', 'git --config-env=user.name=T status'],
   ['allowed', 'git -C src init new'],
   // `sort`'s output.
   ['asked', 'sort -o /tmp/x a.ts'],
@@ -136,6 +170,8 @@ const commands: ReadonlyArray<readonly [Expected, string]> = [
   ['asked', 'sort -uo /tmp/x a.ts'],
   ['asked', 'sort --output=/tmp/x a.ts'],
   ['asked', 'sort --output /tmp/x a.ts'],
+  ['asked', 'sort --out=/tmp/x a.ts'],
+  ['asked', 'sort --out /tmp/x a.ts'],
   ['asked', 'sort a.ts -o /tmp/x'],
   ['asked', 'sort -o src/x -o /tmp/x a.ts'],
   ['asked', 'sort -o out/x a.ts'],
@@ -248,6 +284,32 @@ describe('the gate’s forms of a write', () => {
         expect(outcome(findings)).not.toBe('allowed')
       }),
     )
+
+  it.effect('reads the rest of a line a character code is on', () =>
+    Effect.gen(function* () {
+      const { worktree } = yield* scene
+      const context = { worktree, home: Option.none<string>() }
+      const code = "$'\\x41'"
+      for (const command of [
+        `rm -rf /tmp/x ${code}`,
+        `rm -rf /tmp/x; echo ${code}`,
+        `git branch -D other; echo ${code}`,
+      ])
+        expect(outcome(commandFindings(command, context)), command).toBe(
+          'refused',
+        )
+      for (const command of [
+        `git commit -m ${code}`,
+        `git reset --hard main; echo ${code}`,
+      ]) {
+        const findings = commandFindings(command, context)
+        expect(
+          findings.some(({ _tag }) => _tag === 'BranchWrite'),
+          command,
+        ).toBe(true)
+      }
+    }),
+  )
 
   it.effect('asks about a tool’s file URL it can’t read', () =>
     Effect.gen(function* () {

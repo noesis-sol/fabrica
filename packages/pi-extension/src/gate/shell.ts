@@ -24,7 +24,11 @@ export interface SimpleCommand {
 }
 
 export type Script = Data.TaggedEnum<{
-  Parsed: { readonly commands: ReadonlyArray<SimpleCommand> }
+  Parsed: {
+    readonly commands: ReadonlyArray<SimpleCommand>
+    /** A `$'…'` holds a character code, which can spell an option or a name anywhere, and isn't decoded. */
+    readonly codes: boolean
+  }
   Unparsable: { readonly reason: string }
 }>
 export const Script = Data.taggedEnum<Script>()
@@ -95,6 +99,8 @@ class Reader {
   readonly pending: Array<HereDocument> = []
   /** How many backtick substitutions the reader is inside, where a backtick closes one. */
   backticks = 0
+  /** A `$'…'` held a character code. */
+  codes = false
 
   constructor(
     readonly source: string,
@@ -401,10 +407,8 @@ class Reader {
           if (this.index >= this.source.length)
             throw new Unparsable({ reason: "a $' doesn’t close" })
           if (this.peek() === '\\') {
-            // A code can spell anything, an option or a command's name, and isn't decoded here; a
-            // control can't, so a word holding one is read as unknown, as the rest that aren't themselves.
-            if (/[0-7xuU]/u.test(this.peek(1)))
-              throw new Unparsable({ reason: "a character code in a $'…'" })
+            // Only a quote and a backslash stand for themselves here: what the rest make is unread.
+            if (/[0-7xuU]/u.test(this.peek(1))) this.codes = true
             if (!'\\\'"?'.includes(this.peek(1))) dynamic = true
             content += this.peek(1)
             this.index += 2
@@ -462,5 +466,5 @@ export const parseScript = (
       return Script.Unparsable({ reason: error.reason })
     throw error
   }
-  return Script.Parsed({ commands: reader.commands })
+  return Script.Parsed({ commands: reader.commands, codes: reader.codes })
 }
