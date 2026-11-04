@@ -201,6 +201,17 @@ export const pushBase = Effect.fn('BaseSync.push')(function* ({
     if (Option.isNone(found)) return BasePushed.NoUpstream()
     if (Option.isNone(commit))
       return BasePushed.NotPushed({ reason: `${base} has no commit` })
+    // git-lfs uploads in its pre-push hook, which the engine's git doesn't run (§10.3, §20.2): a push
+    // would land pointers whose objects the remote doesn't have.
+    const lfs = yield* git.lfsFiles({
+      repo: checkout,
+      revision: `refs/heads/${base}`,
+    })
+    if (lfs.length > 0) {
+      return BasePushed.NotPushed({
+        reason: `${base} has ${lfs.length} files under git-lfs (${lfs[0]} first), whose objects the engine's push doesn't upload: push it by hand`,
+      })
+    }
     const { remote, ref, tracking } = found.value
     const upstream = trackingName(tracking)
     const pushed = yield* git.push({

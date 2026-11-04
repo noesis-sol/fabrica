@@ -34,8 +34,8 @@ const READ_ENVIRONMENT: Readonly<Record<string, string>> = {
  * What every git command runs with over any configuration (spec §12.6, §20.2): no fsmonitor, no hooks.
  * A worker can write `core.fsmonitor` or `core.hooksPath` into its worktree's configuration, and put a
  * hook in the repository's, and git reads them inside the engine's status, rebase and merge, which
- * would run the worker's commands outside the gate. The engine needs no hook of a repository; a
- * remote's own hooks are the remote's, and run still.
+ * would run the worker's commands outside the gate. So no hook of a repository runs for the engine,
+ * git-lfs's `pre-push` among them (§10.3); a remote's own hooks are the remote's, and run still.
  */
 const PINNED_CONFIGURATION: ReadonlyArray<string> = [
   '-c',

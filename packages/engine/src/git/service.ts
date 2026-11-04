@@ -139,6 +139,15 @@ export interface GitShape {
     readonly repo: string
     readonly revision: string
   }) => Effect.Effect<ReadonlyArray<string>, CantTell>
+  /**
+   * The files of `revision` that git-lfs holds (`filter=lfs`), by the attributes as `unionMerged` reads
+   * them: their objects reach a remote only through git-lfs's own `pre-push` hook, which the engine's
+   * git doesn't run (spec §10.3).
+   */
+  readonly lfsFiles: (input: {
+    readonly repo: string
+    readonly revision: string
+  }) => Effect.Effect<ReadonlyArray<string>, CantTell>
   /** The repository's worktrees, its main one first. */
   readonly worktrees: (input: {
     readonly repo: string
@@ -722,15 +731,23 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
         : Option.none(),
     )
 
-  const unionMerged = Effect.fn('Git.unionMerged')(function* ({
-    repo,
-    revision,
-  }: {
-    readonly repo: string
-    readonly revision: string
-  }) {
+  /** The files of `revision` whose `attribute` is `value`, the read named `name`. */
+  const filesWith = Effect.fn('Git.filesWith')(function* (
+    name: string,
+    {
+      repo,
+      revision,
+      attribute,
+      value: wanted,
+    }: {
+      readonly repo: string
+      readonly revision: string
+      readonly attribute: string
+      readonly value: string
+    },
+  ) {
     const [files, top, git] = yield* Effect.all(
-      [trackedFiles({ repo, revision }), topOf('unionMerged', repo), version],
+      [trackedFiles({ repo, revision }), topOf(name, repo), version],
       { concurrency: 'unbounded' },
     )
     const source =
@@ -738,24 +755,54 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
       gitAtLeast(git.version, CHECK_ATTR_SOURCE_GIT)
         ? [`--source=${revision}`]
         : []
-    const unioned = yield* Effect.forEach(argumentBatches(files), paths =>
+    const found = yield* Effect.forEach(argumentBatches(files), paths =>
       readExit(
-        'unionMerged',
+        name,
         {
           cwd: top,
-          args: ['check-attr', '-z', ...source, 'merge', '--', ...paths],
+          args: ['check-attr', '-z', ...source, attribute, '--', ...paths],
         },
         exit =>
           exit.code === 0
-            ? Option.map(parseCheckAttr(exit.stdout, 'merge'), values =>
+            ? Option.map(parseCheckAttr(exit.stdout, attribute), values =>
                 values.flatMap(({ path, value }) =>
-                  value === 'union' ? [path] : [],
+                  value === wanted ? [path] : [],
                 ),
               )
             : Option.none(),
       ),
     )
-    return unioned.flat()
+    return found.flat()
+  })
+
+  const unionMerged = Effect.fn('Git.unionMerged')(function* ({
+    repo,
+    revision,
+  }: {
+    readonly repo: string
+    readonly revision: string
+  }) {
+    return yield* filesWith('unionMerged', {
+      repo,
+      revision,
+      attribute: 'merge',
+      value: 'union',
+    })
+  })
+
+  const lfsFiles = Effect.fn('Git.lfsFiles')(function* ({
+    repo,
+    revision,
+  }: {
+    readonly repo: string
+    readonly revision: string
+  }) {
+    return yield* filesWith('lfsFiles', {
+      repo,
+      revision,
+      attribute: 'filter',
+      value: 'lfs',
+    })
   })
 
   const worktrees = Effect.fn('Git.worktrees')(function* ({
@@ -1299,6 +1346,7 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     trackedFiles,
     fileAt,
     unionMerged,
+    lfsFiles,
     worktrees,
     rebase,
     abortRebase,

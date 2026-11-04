@@ -2,3 +2,5 @@
   `core.fsmonitor` or `core.hooksPath` a worker writes into its worktree's configuration, or a hook in the
   repository, no longer runs inside the engine's status, rebase or merge, outside the gate. A project's own hooks
   don't run on the engine's merges, worktrees and pushes either; a remote's still do (§12.6, §20.2).
+- Because git-lfs uploads in its `pre-push` hook, the engine no longer pushes a Base with files under git-lfs: the
+  run says so, rather than land pointers whose objects the remote doesn't have, and it is pushed by hand (§10.3).
