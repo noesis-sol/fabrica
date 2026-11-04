@@ -11,7 +11,7 @@ import {
 } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { describe, expect, layer } from '@effect/vitest'
+import { describe, expect, layer, vi } from '@effect/vitest'
 
 import {
   Toolbox,
@@ -27,6 +27,10 @@ import { signFile } from './sign-checksums'
 // checks (macOS's and glibc's floors, libatomic, the CPU against the native inventory's baselines, the
 // arm64 build under Rosetta) with uname, sysctl, sw_vers, getconf and ldd stubbed; the signature and the
 // archive's SHA-256; and the new fabrica's --version run where it is installed, its stdout alone read.
+
+// An install is many stubs and archives of its own, and a test several installs: 12 s of the default 15
+// at a load of 105 (fab-i1w).
+vi.setConfig({ testTimeout: 30_000 })
 
 const script = join(import.meta.dirname, 'install.sh')
 

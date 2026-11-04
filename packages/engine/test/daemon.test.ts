@@ -264,23 +264,27 @@ describe('one engine per data folder', () => {
       }),
   )
 
-  it.effect('of two engines taking the lock at once, exactly one gets it', () =>
-    Effect.gen(function* () {
-      const root = yield* scratch
-      for (const trial of [1, 2, 3, 4, 5, 6, 7, 8]) {
-        const lock = NodePath.join(root, `engine-${trial}.lock`)
-        const both = yield* Effect.promise(() =>
-          Promise.all([takeLockInChild(lock), takeLockInChild(lock)]),
-        )
-        expect(
-          both.map(({ answer }) => answer).toSorted(),
-          `trial ${trial}`,
-        ).toEqual(['busy', 'got'])
-        yield* Effect.promise(() =>
-          Promise.all(both.map(({ release }) => release())),
-        )
-      }
-    }),
+  // Sixteen Nodes, each importing Effect: 11 s of the default 15 at a load of 105 (fab-i1w).
+  it.effect(
+    'of two engines taking the lock at once, exactly one gets it',
+    () =>
+      Effect.gen(function* () {
+        const root = yield* scratch
+        for (const trial of [1, 2, 3, 4, 5, 6, 7, 8]) {
+          const lock = NodePath.join(root, `engine-${trial}.lock`)
+          const both = yield* Effect.promise(() =>
+            Promise.all([takeLockInChild(lock), takeLockInChild(lock)]),
+          )
+          expect(
+            both.map(({ answer }) => answer).toSorted(),
+            `trial ${trial}`,
+          ).toEqual(['busy', 'got'])
+          yield* Effect.promise(() =>
+            Promise.all(both.map(({ release }) => release())),
+          )
+        }
+      }),
+    30_000,
   )
 
   it.effect('replaces the socket an engine that died left behind', () =>

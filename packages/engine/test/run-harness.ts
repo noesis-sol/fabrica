@@ -81,9 +81,10 @@ import { anthropicAnswer, anthropicBadKey } from './proxy-streams'
 // its RPC protocol, which does what its ticket's description says (`stub: finish`, `stub: defer`, …)
 // through the real control socket, and the model provider is a loopback server.
 
-// A whole run is many processes of its own, dispatches and merges: on a loaded machine (load average
-// 30-70) one passes in more than the test kit's limit (fab-50w). Every test file running them has this one.
-vi.setConfig({ testTimeout: 30_000 })
+// A whole run is many processes of its own, dispatches and merges: on a loaded machine one passes in more
+// than the test kit's limit (fab-50w), up to 24 s at a load of 105, in step with the load, and a run's
+// machine reaches 150 (fab-i1w). Every test file running them has this one.
+vi.setConfig({ testTimeout: 60_000 })
 
 /**
  * A stub of `pi --mode rpc`. On its prompt it reads its ticket with `get_ticket` over the control
