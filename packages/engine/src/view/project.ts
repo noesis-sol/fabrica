@@ -85,9 +85,11 @@ export interface ViewInputs {
 /** A ticket's facts where the work graph's aren't known: a task at the middle priority. */
 const unknownFacts: TicketFacts = { type: 'task', priority: 2, solo: false }
 
-/** Whether two values say the same, as they cross. */
-export const same = (a: unknown, b: unknown): boolean =>
-  JSON.stringify(a) === JSON.stringify(b)
+/** What a value says, as it crosses. */
+const says = (value: unknown): string => JSON.stringify(value)
+
+/** Whether two values say the same. */
+export const same = (a: unknown, b: unknown): boolean => says(a) === says(b)
 
 /** `next`, or `before` where it says the same. */
 const kept = <A>(before: Option.Option<A>, next: A): A =>
@@ -290,9 +292,12 @@ export const projectView = (
         : [],
     ),
   ]
-  const earlierSteps = Option.getOrElse(
-    part('steps'),
-    (): ReadonlyArray<EngineStep> => [],
+  // By what each says, the first of those that say the same taken: read once per write, as a read per
+  // step and earlier step is cubic in the steps over a run's writes.
+  const earlierSteps = new Map(
+    Option.getOrElse(part('steps'), (): ReadonlyArray<EngineStep> => [])
+      .toReversed()
+      .map(step => [says(step), step]),
   )
   // A worker is on the view while its ticket is in progress (its part in the run can't end there).
   const inProgress = new Set(
@@ -351,14 +356,7 @@ export const projectView = (
     load: kept(part('load'), inputs.load),
     steps: keptList(
       part('steps'),
-      steps.map(step =>
-        kept(
-          Option.fromUndefinedOr(
-            earlierSteps.find(earlier => same(earlier, step)),
-          ),
-          step,
-        ),
-      ),
+      steps.map(step => earlierSteps.get(says(step)) ?? step),
     ),
   }
 }
