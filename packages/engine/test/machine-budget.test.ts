@@ -478,6 +478,7 @@ const file = (
   project: ProjectId,
   title: string,
   script: string,
+  files: ReadonlyArray<string> = [],
 ) =>
   client['tickets.create']({
     project,
@@ -490,7 +491,15 @@ const file = (
       priority: Option.none(),
       labels: Option.none(),
       parent: Option.none(),
-      metadata: Option.none(),
+      metadata:
+        files.length === 0
+          ? Option.none()
+          : Option.some({
+              files: Option.some(files),
+              spec: Option.none(),
+              predicted_files: Option.none(),
+              result_kind: Option.none(),
+            }),
       model: Option.none(),
     } satisfies NewTicket,
   })
@@ -611,6 +620,49 @@ describe('a run on the engine', () => {
 
       yield* client['run.stop']({ project: wanting })
       yield* wantingRun.ended
+    }),
+  )
+
+  it.live('holds no ticket back for one that has no slot', () =>
+    Effect.gen(function* () {
+      const client = yield* newEngine(2)
+      const busy = yield* addProject(client, 'busy', {
+        ...scriptedSettings,
+        concurrent: 2,
+      })
+      yield* file(client, busy, 'First', 'hang')
+      yield* file(client, busy, 'Second', 'hang')
+      const overlapping = yield* addProject(client, 'overlapping', {
+        ...scriptedSettings,
+        concurrent: 2,
+      })
+      yield* file(client, overlapping, 'One', 'hang', ['a.ts'])
+      yield* file(client, overlapping, 'Two', 'hang', ['a.ts'])
+
+      const busyRun = yield* startRun(client, busy)
+      yield* busyRun.until(2, isDispatch)
+      const overlappingRun = yield* startRun(client, overlapping)
+      yield* overlappingRun.until(1, isMachineHold)
+      const seen = yield* overlappingRun.seen
+      expect(seen.filter(isDispatch)).toEqual([])
+      expect(
+        seen.filter(
+          event => event.kind === 'phase' && event.to === 'held_back',
+        ),
+      ).toEqual([])
+
+      // Once one has a slot, the other waits on it, in words.
+      yield* client['run.stop']({ project: busy })
+      yield* busyRun.ended
+      yield* overlappingRun.until(
+        1,
+        event => event.kind === 'phase' && event.to === 'held_back',
+      )
+      yield* overlappingRun.until(1, isDispatch)
+      expect((yield* overlappingRun.seen).filter(isDispatch)).toHaveLength(1)
+
+      yield* client['run.stop']({ project: overlapping })
+      yield* overlappingRun.ended
     }),
   )
 

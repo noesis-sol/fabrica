@@ -95,6 +95,8 @@ export interface Gated {
   readonly take: ReadonlyArray<Taken>
   readonly held: ReadonlyArray<HeldBack>
   readonly solo: Option.Option<SoloInLine>
+  /** The tickets nothing holds back but a free slot: the machine budget holds a run for these (§14.3). */
+  readonly noSlot: ReadonlyArray<TicketId>
 }
 
 /** How a reason names a ticket in progress by its phase (`running fa-7`); none for one not in progress. */
@@ -139,6 +141,7 @@ export const gate = (input: {
   let room = Math.max(0, input.free)
   const take: Array<Taken> = []
   const held: Array<HeldBack> = []
+  const noSlot: Array<TicketId> = []
   const beside: Array<Beside> = input.running.flatMap(running =>
     Option.match(namedAs(running.phase), {
       onNone: () => [],
@@ -182,6 +185,7 @@ export const gate = (input: {
           reason: 'solo',
           detail: `waits to run alone, after ${busy.join(', ')}`,
         })
+      else noSlot.push(id)
       continue
     }
     let holding = Option.none<string>()
@@ -208,7 +212,10 @@ export const gate = (input: {
       held.push({ ticket: id, reason: 'overlap', detail: holding.value })
       continue
     }
-    if (room <= 0) continue
+    if (room <= 0) {
+      noSlot.push(id)
+      continue
+    }
     room -= 1
     take.push({ ...candidate, likely })
     beside.push({
@@ -217,7 +224,7 @@ export const gate = (input: {
       named: `running ${id}`,
     })
   }
-  return { take, held, solo }
+  return { take, held, solo, noSlot }
 }
 
 /** What the run gates: its ready tickets, most urgent first, against its state. */

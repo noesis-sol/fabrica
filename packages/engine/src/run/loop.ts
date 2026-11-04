@@ -2094,7 +2094,8 @@ const runStarted = Effect.fn('Run.started')(function* (
       // Whatever woke this look, a merge the run didn't make may have changed the list (§17).
       yield* requirements.baseMoved
       const gate = yield* requirements.gate
-      // The gate says what the run would take in its own slots; the budget, what it may (§7.3).
+      // The run's own slots, and of them what the budget leaves (§7.3): a ticket with no slot is taken
+      // for nothing, so nothing is held back for it.
       const room =
         MayTake.$is('Yes')(may) && RequirementsGate.$is('Clear')(gate)
           ? project.concurrent - slotsTaken(before, project.concurrent)
@@ -2103,16 +2104,16 @@ const runStarted = Effect.fn('Run.started')(function* (
       const gated = yield* footprints.gate({
         ready: candidates,
         snapshot: before,
-        free: room,
+        free,
         guessing: waiting => predictor.offer({ ready: waiting, free }),
       })
-      const wanted = withinLimit({
+      const taking = withinLimit({
         snapshot: before,
         limit,
         items: gated.take,
         ticketOf: ({ ticket }) => ticket.id,
       })
-      const claimed = wanted.slice(0, yield* machine.claim(wanted.length))
+      const claimed = taking.slice(0, yield* machine.claim(taking.length))
       yield* keepHeld(candidates, { ...gated, take: claimed })
       const solo = new Set([
         ...gated.take
@@ -2140,7 +2141,14 @@ const runStarted = Effect.fn('Run.started')(function* (
       }
       // Dispatched tickets leave the ready set the look keeps: they are the run's now.
       ready = ready.filter(ticket => !dispatched.has(ticket.id))
-      yield* machine.settle(claimed.length < wanted.length)
+      // Short of the tickets it would take in its own slots, for the budget alone, it holds (§14.3).
+      const wanted = withinLimit({
+        snapshot: before,
+        limit,
+        items: [...gated.take.map(({ ticket }) => ticket.id), ...gated.noSlot],
+        ticketOf: ticket => ticket,
+      })
+      yield* machine.settle(claimed.length < Math.min(room, wanted.length))
       const after = yield* state.current
       if (inProgress(after).length > 0 || workersEnding.size > 0)
         return Option.none<Ending>()
