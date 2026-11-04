@@ -540,6 +540,7 @@ describe('the first-party extension', () => {
       role: 'worker',
       answerTool: Option.none(),
       talkTools: [],
+      organFilesRoot: false,
       projectTrusted: true,
       configFolder: Option.some('/data/agent-1'),
       permissions: 'full',
