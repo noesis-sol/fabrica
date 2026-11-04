@@ -26,6 +26,7 @@ import {
   makeCheckout,
   makeScriptedPlaces,
   scriptedHosting,
+  scriptedSettings,
 } from './scripted-run'
 
 // The Review cards an ended run left (spec §15.1, §15.6, §18.3), over RPC on a scripted agent: a ticket
@@ -142,6 +143,56 @@ const isReviewOf = (ticket: TicketId) => (request: AttentionRequest) =>
   request._tag === 'review' && request.ticket === ticket
 
 describe('the Review card of a ticket an ended run set aside', () => {
+  it.live(
+    "says why from the run's records, past its end and an engine's restart",
+    () =>
+      Effect.gen(function* () {
+        const data = yield* Effect.promise(() =>
+          mkdtemp(NodePath.join(places.root, 'e')),
+        )
+        const paths = pathsIn({ data, socketFolder: data })
+        // Its own check fails, so its worker never finishes, and the run sets it aside as unfinished.
+        const checkout = makeCheckout(places, {
+          ...scriptedSettings,
+          check_own: 'false',
+        })
+        const { project, aside } = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const client = yield* engineAt(paths)
+            const { id: project } = yield* client['projects.add']({
+              source: ProjectSource.cases.path.make({ path: checkout }),
+              name: Option.some('work'),
+            })
+            const aside = yield* file(client, project, 'Aside', 'finish')
+            const { run } = yield* client['run.start']({
+              project,
+              mode: RunMode.cases.tickets.make({}),
+              flags: noFlags,
+            })
+            // With nothing else to do, the run ends by itself, and its records' stream with it.
+            yield* client['run.watchEvents']({
+              project,
+              run: Option.some(run),
+              resume: Option.none(),
+            }).pipe(Stream.runDrain)
+            expect(
+              (yield* client['attention.list']({
+                project: Option.some(project),
+              })).find(isReviewOf(aside)),
+            ).toMatchObject({ title: 'Aside', reason: 'UNFINISHED' })
+            return { project, aside }
+          }),
+        )
+
+        const client = yield* engineAt(paths)
+        expect(
+          (yield* client['attention.list']({
+            project: Option.some(project),
+          })).find(isReviewOf(aside)),
+        ).toMatchObject({ title: 'Aside', reason: 'UNFINISHED' })
+      }),
+  )
+
   it.live('is there after the engine restarts, with its reason', () =>
     Effect.gen(function* () {
       const data = yield* Effect.promise(() =>
