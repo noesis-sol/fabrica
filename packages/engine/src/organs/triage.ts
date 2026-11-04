@@ -172,8 +172,15 @@ export interface SetAsideTicket {
 }
 
 export interface TriageShape {
-  /** Puts the set-aside ticket in the organ's line, unless a refused credential holds the run. */
-  readonly setAside: (input: SetAsideTicket) => Effect.Effect<void>
+  /**
+   * Sets the ticket aside through `moved`, which frees its slot, and puts it in the organ's line, unless a
+   * refused credential holds the run. Its verdict is owed before `moved` runs, so a run that sees the
+   * ticket out of its slot sees the verdict owed; the organ reads it once `moved` is done.
+   */
+  readonly setAside: (
+    input: SetAsideTicket,
+    moved: Effect.Effect<void>,
+  ) => Effect.Effect<void>
   /** Whether a verdict is owed: a ticket in line, or being read. */
   readonly awaited: Effect.Effect<boolean>
   /** Stops the queue, and says how many tickets it leaves unread. */
@@ -308,17 +315,22 @@ export const makeTriage = Effect.fn('Triage.make')(function* (input: {
   )
 
   return {
-    setAside: taken =>
-      Effect.gen(function* () {
-        if (anyOn(yield* holds.current, 'CREDENTIALS'))
-          return yield* record(log, {
-            kind: 'info',
-            ticket: taken.ticket,
-            text: `TRIAGE: ${taken.ticket} isn't read: a refused credential holds the run, and may have stopped it`,
-          })
-        yield* Ref.update(owed, count => count + 1)
-        yield* Queue.offer(line, taken)
-      }),
+    setAside: (taken, moved) =>
+      Effect.uninterruptible(
+        Effect.gen(function* () {
+          if (anyOn(yield* holds.current, 'CREDENTIALS')) {
+            yield* moved
+            return yield* record(log, {
+              kind: 'info',
+              ticket: taken.ticket,
+              text: `TRIAGE: ${taken.ticket} isn't read: a refused credential holds the run, and may have stopped it`,
+            })
+          }
+          yield* Ref.update(owed, count => count + 1)
+          yield* moved
+          yield* Queue.offer(line, taken)
+        }),
+      ),
     awaited: Effect.map(Ref.get(owed), count => count > 0),
     stop: Effect.gen(function* () {
       yield* Fiber.interrupt(queue)

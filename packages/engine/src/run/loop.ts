@@ -925,9 +925,9 @@ const runStarted = Effect.fn('Run.started')(function* (
           graph.defer({ id: ticket, until: Option.none(), actor }),
         ),
       ),
-      Effect.andThen(
+      triage.setAside(
+        { ticket, reason, detail: note },
         asideInRun(ticket, reason, note),
-        triage.setAside({ ticket, reason, detail: note }),
       ),
     )
 
@@ -1220,33 +1220,33 @@ const runStarted = Effect.fn('Run.started')(function* (
         Deferred: ({ reason }) =>
           Effect.gen(function* () {
             yield* settled(ticket, 'defer', `deferred: ${reason}`)
-            yield* sessions.left({
-              ticket,
-              left: SessionLeft.cases.set_aside.make({}),
-            })
-            yield* state.move({
-              ticket,
-              to: Phase.cases.set_aside.make({ reason: 'DEFERRED' }),
-              cause: reason,
-            })
-            yield* record(log, {
-              kind: 'deferred',
-              ticket,
-              title,
-              reason: 'DEFERRED',
-              detail: reason,
-              text: warningLine({
-                tag: 'DEFERRED',
-                about: 'ticket',
-                text: `${ticket} set aside: ${reason}`,
+            yield* triage.setAside(
+              { ticket, reason: 'DEFERRED', detail: reason },
+              Effect.gen(function* () {
+                yield* sessions.left({
+                  ticket,
+                  left: SessionLeft.cases.set_aside.make({}),
+                })
+                yield* state.move({
+                  ticket,
+                  to: Phase.cases.set_aside.make({ reason: 'DEFERRED' }),
+                  cause: reason,
+                })
+                yield* record(log, {
+                  kind: 'deferred',
+                  ticket,
+                  title,
+                  reason: 'DEFERRED',
+                  detail: reason,
+                  text: warningLine({
+                    tag: 'DEFERRED',
+                    about: 'ticket',
+                    text: `${ticket} set aside: ${reason}`,
+                  }),
+                  ...(yield* spentBy(ticket)),
+                })
               }),
-              ...(yield* spentBy(ticket)),
-            })
-            yield* triage.setAside({
-              ticket,
-              reason: 'DEFERRED',
-              detail: reason,
-            })
+            )
           }),
         WaitsFor: ({ ticket: other, needs }) =>
           Effect.gen(function* () {
@@ -1666,31 +1666,33 @@ const runStarted = Effect.fn('Run.started')(function* (
           ),
         SetAside: ({ reason, detail }) =>
           ended(
-            Effect.gen(function* () {
-              yield* sessions.left({
-                ticket,
-                left: SessionLeft.cases.set_aside.make({}),
-              })
-              yield* state.move({
-                ticket,
-                to: Phase.cases.set_aside.make({ reason }),
-                cause: detail,
-              })
-              yield* record(log, {
-                kind: 'deferred',
-                ticket,
-                title,
-                reason,
-                detail,
-                text: warningLine({
-                  tag: reason,
-                  about: 'ticket',
-                  text: `${ticket} set aside: ${detail}`,
-                }),
-                ...(yield* spentBy(ticket)),
-              })
-              yield* triage.setAside({ ticket, reason, detail })
-            }),
+            triage.setAside(
+              { ticket, reason, detail },
+              Effect.gen(function* () {
+                yield* sessions.left({
+                  ticket,
+                  left: SessionLeft.cases.set_aside.make({}),
+                })
+                yield* state.move({
+                  ticket,
+                  to: Phase.cases.set_aside.make({ reason }),
+                  cause: detail,
+                })
+                yield* record(log, {
+                  kind: 'deferred',
+                  ticket,
+                  title,
+                  reason,
+                  detail,
+                  text: warningLine({
+                    tag: reason,
+                    about: 'ticket',
+                    text: `${ticket} set aside: ${detail}`,
+                  }),
+                  ...(yield* spentBy(ticket)),
+                })
+              }),
+            ),
           ),
         // Nothing merges without a merge check (H62): the ticket is left for a run that has one.
         NoMergeCheck: () =>

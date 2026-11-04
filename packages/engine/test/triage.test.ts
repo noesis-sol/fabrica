@@ -131,7 +131,7 @@ const triageOver = (
       sleep: Effect.sleep,
       agent: Effect.die('the minimal agent is the probe override'),
       reopen: tickets => Ref.update(reopened, kept => [...kept, ...tickets]),
-      probed: Effect.void,
+      probed: lift => lift,
     }).pipe(
       Effect.provideService(EnvironmentProbe, {
         probe: () => Effect.succeed(ProbeOutcome.Passed()),
@@ -242,7 +242,7 @@ describe('a verdict', () => {
             ),
           )
           const ticket = yield* filed('Build one')
-          yield* triage.setAside(setAside(ticket))
+          yield* triage.setAside(setAside(ticket), Effect.void)
           expect(yield* came).toBe(ticket)
           const notes = yield* notesOf(ticket)
           expect(notes.map(({ body, author }) => ({ body, author }))).toEqual([
@@ -299,7 +299,7 @@ describe('a verdict', () => {
             body: 'the last note',
             actor: maintainer,
           })
-          yield* triage.setAside(setAside(ticket))
+          yield* triage.setAside(setAside(ticket), Effect.void)
           yield* came
           const [prompt] = yield* Ref.get(prompts)
           expect(prompt).toContain(`Ticket ${ticket}: Build one`)
@@ -327,7 +327,7 @@ describe('a verdict', () => {
           Effect.succeed(outcome),
         )
         const ticket = yield* filed('Build one')
-        yield* triage.setAside(setAside(ticket))
+        yield* triage.setAside(setAside(ticket), Effect.void)
         yield* came
         expect(yield* notesOf(ticket)).toEqual([])
         expect(ofKind(yield* records, 'triage')).toEqual([])
@@ -348,12 +348,12 @@ describe('environment verdicts', () => {
             )
           const one = yield* filed('One')
           const two = yield* filed('Two')
-          yield* triage.setAside(setAside(one))
+          yield* triage.setAside(setAside(one), Effect.void)
           yield* came
           expect((yield* holds.current).on).toEqual([])
           // A ticket's turn that worked ends the idle series, not this one.
           yield* environment.settled(Settle.Worked())
-          yield* triage.setAside(setAside(two))
+          yield* triage.setAside(setAside(two), Effect.void)
           yield* came
           const [hold] = (yield* holds.current).on
           expect(hold?.hold).toBe('ENVIRONMENT')
@@ -385,7 +385,10 @@ describe('environment verdicts', () => {
             answers,
             (_, at) =>
               Effect.gen(function* () {
-                yield* triage.setAside(setAside(yield* filed(`Ticket ${at}`)))
+                yield* triage.setAside(
+                  setAside(yield* filed(`Ticket ${at}`)),
+                  Effect.void,
+                )
                 yield* came
               }),
             { discard: true },
@@ -405,7 +408,7 @@ describe('environment verdicts', () => {
           )
           yield* holds.raise({ hold: 'ENVIRONMENT', why: 'already on' })
           const one = yield* filed('One')
-          yield* triage.setAside(setAside(one))
+          yield* triage.setAside(setAside(one), Effect.void)
           yield* came
           expect(yield* Ref.get(reopened)).toEqual([one])
         }),
@@ -445,7 +448,7 @@ describe('a credentials hold', () => {
           provider: 'anthropic',
           why: "anthropic's sign-in was refused",
         })
-        yield* triage.setAside(setAside(during))
+        yield* triage.setAside(setAside(during), Effect.void)
         expect(yield* triage.awaited).toBe(false)
         expect(yield* Ref.get(asked)).toEqual([])
         expect(yield* notesOf(during)).toEqual([])
@@ -459,7 +462,7 @@ describe('a credentials hold', () => {
           why: 'signed in',
         })
         const after = yield* filed('After')
-        yield* triage.setAside(setAside(after))
+        yield* triage.setAside(setAside(after), Effect.void)
         expect(yield* came).toBe(after)
         expect(yield* Ref.get(asked)).toEqual([after])
       }),
@@ -485,8 +488,8 @@ describe("the organ's queue", () => {
             }),
           },
         )
-        yield* triage.setAside(setAside(one))
-        yield* triage.setAside(setAside(two))
+        yield* triage.setAside(setAside(one), Effect.void)
+        yield* triage.setAside(setAside(two), Effect.void)
         expect(yield* came).toBe(one)
         expect(yield* came).toBe(two)
         expect(yield* notesOf(one)).toEqual([])
@@ -518,8 +521,8 @@ describe("the organ's queue", () => {
         )
         const one = yield* filed('One')
         const two = yield* filed('Two')
-        yield* triage.setAside(setAside(one))
-        yield* triage.setAside(setAside(two))
+        yield* triage.setAside(setAside(one), Effect.void)
+        yield* triage.setAside(setAside(two), Effect.void)
         expect(yield* triage.awaited).toBe(true)
         yield* Deferred.await(reached)
         expect(yield* Ref.get(asked)).toEqual([one])
@@ -531,6 +534,32 @@ describe("the organ's queue", () => {
     ),
   )
 
+  it.effect(
+    'owes the verdict before the ticket leaves its slot, and reads it after',
+    () =>
+      scoped(
+        Effect.gen(function* () {
+          const { triage, came, asked } = yield* triageOver(() =>
+            answering(verdict('code', 'medium')),
+          )
+          const ticket = yield* filed('One')
+          const during = yield* Ref.make<ReadonlyArray<unknown>>([])
+          yield* triage.setAside(
+            setAside(ticket),
+            Effect.gen(function* () {
+              const owed = yield* triage.awaited
+              // A chance for the queue to go early, were the ticket in line already.
+              yield* Effect.yieldNow
+              yield* Ref.set(during, [owed, yield* Ref.get(asked)])
+            }),
+          )
+          expect(yield* Ref.get(during)).toEqual([true, []])
+          expect(yield* came).toBe(ticket)
+          expect(yield* triage.awaited).toBe(false)
+        }),
+      ),
+  )
+
   it.effect('stopped, says what it leaves unread', () =>
     scoped(
       Effect.gen(function* () {
@@ -538,8 +567,8 @@ describe("the organ's queue", () => {
         const { triage, records } = yield* triageOver(() =>
           Effect.andThen(Deferred.succeed(reached, undefined), Effect.never),
         )
-        yield* triage.setAside(setAside(yield* filed('One')))
-        yield* triage.setAside(setAside(yield* filed('Two')))
+        yield* triage.setAside(setAside(yield* filed('One')), Effect.void)
+        yield* triage.setAside(setAside(yield* filed('Two')), Effect.void)
         yield* Deferred.await(reached)
         yield* triage.stop
         expect(ofKind(yield* records, 'info')).toMatchObject([
@@ -729,7 +758,10 @@ const anthropicModel = () => {
 
 const triaging = (extra: object = {}) => ({
   ...settings,
-  organs: { triage: { model: anthropicModel(), ...extra } },
+  organs: {
+    triage: { model: anthropicModel(), ...extra },
+    predictor: { enabled: false },
+  },
 })
 
 describe('a whole run', () => {
