@@ -45,10 +45,10 @@ import { RunLog, layerRunLog } from '../src/runlog'
 import {
   configOf,
   file as fileTicket,
-  options,
   project as harnessProject,
-  setUpRuns,
   settings as harnessSettings,
+  options,
+  setUpRuns,
   withRuns,
 } from './run-harness'
 import {
