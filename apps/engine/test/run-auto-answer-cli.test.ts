@@ -72,7 +72,7 @@ describe('fabrica run --auto-answer', () => {
   it.live.each([
     ['bare', '--auto-answer'],
     ['with a duration', '--auto-answer=10m'],
-  ])('%s starts the run answering', ([, flag]) =>
+  ] as const)('%s starts the run answering', ([, flag]) =>
     Effect.gen(function* () {
       const { command } = yield* runEngine
       const started = yield* command('run', flag)

@@ -51,8 +51,8 @@ import type { TicketDetail, WorkGraphShape } from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
 import {
   autoAnswerText,
-  autoAnswerer,
   autoAnsweredLabel,
+  autoAnswerer,
   optionToAnswer,
 } from './auto-answer'
 import { isConsequential } from './consequential'

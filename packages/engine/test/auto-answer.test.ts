@@ -31,8 +31,8 @@ import { sessionFolder } from '../src/agent'
 import {
   autoAnswerFields,
   autoAnsweredLabel,
-  makeAutoAnswers,
   make as makeAttention,
+  makeAutoAnswers,
 } from '../src/attention'
 import type { AutoAnswered } from '../src/control/ports'
 import { runProject } from '../src/run'
