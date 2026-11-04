@@ -456,6 +456,40 @@ describe('the open conflicts', () => {
       }).pipe(Effect.provide(graphLayer)),
   )
 
+  it.effect('an answer supersedes the conflicts on what it changes', () =>
+    Effect.gen(function* () {
+      const graph = yield* WorkGraph
+      const sql = yield* SqliteClient.SqliteClient
+      const question = yield* graph.ask({
+        question: {
+          title: 'Keep it?',
+          consequential: false,
+          maintainerOnly: false,
+        },
+        actor: maintainer,
+      })
+      yield* recordConflict(sql, {
+        ticket: question.id,
+        field: 'status',
+        ours: 'open',
+        theirs: 'closed',
+      })
+      yield* recordConflict(sql, {
+        ticket: question.id,
+        field: 'resolution',
+        ours: null,
+        theirs: 'answered',
+      })
+      expect(yield* graph.conflicts()).toHaveLength(2)
+      yield* graph.answer({
+        id: question.id,
+        answer: 'Yes',
+        actor: maintainer,
+      })
+      expect(yield* graph.conflicts()).toEqual([])
+    }).pipe(Effect.provide(graphLayer)),
+  )
+
   it.effect('a field holding neither side’s value has no conflict left', () =>
     Effect.gen(function* () {
       const graph = yield* WorkGraph
