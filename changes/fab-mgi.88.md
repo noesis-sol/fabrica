@@ -7,3 +7,5 @@
 - The app builds again: `update/relaunch.ts` imported the TLS listener's settings from the engine's serving,
   which brought the whole engine and DuckDB into Electron's main bundle, and electron-vite failed on DuckDB's
   native packages. They are a module of their own, `engine/listen-settings.ts`.
+- `mise.lock` holds Node and pnpm for `windows-x64`: without them the App workflow's Windows job stopped at its
+  mise step, before it packaged anything.
