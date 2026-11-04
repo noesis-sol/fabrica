@@ -703,14 +703,13 @@ const runStarted = Effect.fn('Run.started')(function* (
     probe: probeFor,
     modelFor,
   })
-  yield* (yield* Permits).hold({
-    run,
-    held: holds.changes.pipe(Stream.map(heldProviders)),
-  })
+  const held = holds.changes.pipe(Stream.map(heldProviders))
+  yield* (yield* Permits).hold({ run, held })
   const supervision = yield* makeSupervision({
     proxy: yield* proxy.events,
     holds: supervisorHolds({ environment, usage, credentials }),
     clock,
+    heldProviders: held,
     ticketLimit: project.ticket_limit,
     fallbacks: project.model_fallbacks.map(choice => ({
       provider: choice.provider,

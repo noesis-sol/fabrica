@@ -104,7 +104,7 @@ export const suiteAfter = (awaiting: Option.Option<Awaiting>): CheckSuite =>
 export type WorkerAnswer = Data.TaggedEnum<{
   /** Its turn settled: git says what it did. */
   Settled: {}
-  /** Its turn ended on the usage limit, the run holding for it by then. */
+  /** Its turn ended on the usage limit, the run holding for it by then, or outlasted by a hold. */
   AtLimit: {}
   /** It deferred its ticket. */
   Deferred: { readonly reason: string }
@@ -392,9 +392,9 @@ export const takenMessage = (
 ): string =>
   `Your hand-back for ${job.turn.worktree.ticket} is over: ${why}. Your branch is taken as it is, at ${short(at)}, and the merge check runs on it. Stop here.`
 
-/** What the worker is given again once the usage limit its turn ended on lifts, its hand-back still open. */
+/** What the worker is given again once the hold its turn ended on lifts, its hand-back still open. */
 export const carryOnPrompt = (job: HandBackJob): string =>
-  `The usage limit has lifted: carry on with hand-back ${job.attempt} for ${job.turn.worktree.ticket}, which asked:\n\n${job.prompt}`
+  `The hold on your provider has lifted: carry on with hand-back ${job.attempt} for ${job.turn.worktree.ticket}, which asked:\n\n${job.prompt}`
 
 /** What the worker is told when its hand-back is over, its branch put back. */
 export const overMessage = (

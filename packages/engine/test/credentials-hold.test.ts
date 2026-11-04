@@ -470,6 +470,7 @@ describe('the credentials hold', () => {
             sleep: duration => Effect.sleep(duration),
             held: holds.changes.pipe(Stream.map(clockHeld), Stream.changes),
           },
+          heldProviders: holds.changes.pipe(Stream.map(heldProviders)),
           ticketLimit: Option.none(),
           fallbacks: [],
         })

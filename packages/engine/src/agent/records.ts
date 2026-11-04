@@ -45,12 +45,14 @@ export const PiUsage = Schema.Struct({
 })
 export type PiUsage = typeof PiUsage.Type
 
-/** A transcript message as the engine reads it: who wrote it and, for a model's, which model and what it cost. */
+/** A transcript message as the engine reads it: who wrote it and, for a model's, which model, what it cost and how it ended. */
 export const PiMessage = Schema.Struct({
   role: Schema.String,
   provider: optional(Schema.String),
   model: optional(Schema.String),
   usage: optional(PiUsage),
+  /** Why a model's message ended: `error` where its call failed. */
+  stopReason: optional(Schema.String),
 })
 export type PiMessage = typeof PiMessage.Type
 

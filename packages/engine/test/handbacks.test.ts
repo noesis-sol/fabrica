@@ -904,7 +904,7 @@ describe('a hand-back at the usage limit', () => {
         commit(worktree.path, 'the change', { 'src/b.ts': 'b\n' })
         const held = yield* SubscriptionRef.make(false)
         const { worker, heard } = scripted(({ prompt }) =>
-          prompt.startsWith('The usage limit has lifted')
+          prompt.startsWith('The hold on your provider has lifted')
             ? settled(() => {
                 commit(worktree.path, 'the fix', {
                   'src/fixed.ts': 'fixed\n',

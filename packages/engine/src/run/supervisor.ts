@@ -32,15 +32,18 @@ import { WorkerEnd, WorkerTurn } from './worker'
 // Each worker's supervision (spec §12.8, §14.5, H37): every path that starts or resumes a worker runs
 // it under `watch`, which applies the policies of §12.8's table to what goes wrong with it. A rate
 // limit is waited out with an exponential backoff (a `Schedule`) and the session resumed; a usage
-// limit or a refused credential waits on its hold (§14.2, §14.6) and resumes; an agent that gives no
+// limit or a refused credential waits on its hold (§14.2, §14.6) and resumes, as does a turn whose model
+// call failed with no refusal of its own while its provider was held, the proxy keeping the call waiting
+// at its permit past Pi's own timeout and retries; an agent that gives no
 // events for `stuck_after`, outside the tools known to be long, is interrupted and its session
 // restarted once with a summary, then set aside; a tool's defect sets the ticket aside with a follow-up
 // filed about the tool; a model that doesn't start gives way to the next of `model_fallbacks`, and once
 // none is left the start failure is counted for the environment hold (§14.1); a ticket over its budget
 // or past `ticket_limit` is interrupted and set aside, as is one whose worker settles twice with no
 // outcome. A set-aside ticket keeps its worktree and session, and nothing stops the run for one worker.
-// A hand-back's worker (§13.7) is watched the same way but for the usage limit: its turn ends there
-// once the run holds for it, so that the merge queue can take its work where git shows it done.
+// A hand-back's worker (§13.7) is watched the same way but for the usage limit and a hold that outlasts
+// its turn: its turn ends there once the run holds for it, so that the merge queue can take its work
+// where git shows it done.
 // The run's end stops every ticket's supervision before its other steps (§13.9): from then on a
 // worker's end is taken as it comes.
 
@@ -62,6 +65,11 @@ export type WorkerFailure = Data.TaggedEnum<{
     readonly account: Option.Option<SecretName>
     readonly reason: string
   }
+  /**
+   * Its turn's last model call failed with `provider` held during the turn and no refusal of its
+   * session's: a hold raised on another caller's refusal outlasted Pi's own retries (§12.9, §14.2, §14.6).
+   */
+  HoldOutlasted: { readonly provider: ProviderName }
   /** No events for `quiet`, outside the tools known to be long; `doing` is what its last event said. */
   AgentStuck: { readonly quiet: Duration.Duration; readonly doing: string }
   /** A tool failed in the engine under it. */
@@ -162,6 +170,8 @@ export interface SupervisionOptions {
    * holds for the usage limit or the machine's load, a worker's quiet not counted meanwhile.
    */
   readonly clock: HandBackClockShape
+  /** The providers the run's holds hold (`heldProviders`): their value now, then each change. */
+  readonly heldProviders: Stream.Stream<ReadonlySet<ProviderName>>
   /** `ticket_limit`: the most time a ticket's worker may take in the run; none, no limit. */
   readonly ticketLimit: Option.Option<Duration.Duration>
   /** `model_fallbacks`, in order (§12.5). */
@@ -186,7 +196,7 @@ export interface Watch<R> {
 export type HandBackEnd = Data.TaggedEnum<{
   /** It ended as the run's other workers end. */
   Ended: { readonly end: WorkerEnd }
-  /** Its turn ended on its provider's usage limit, the run holding for it by then. */
+  /** Its turn ended on its provider's usage limit, the run holding for it by then, or outlasted by a hold. */
   AtLimit: {}
 }>
 export const HandBackEnd = Data.taggedEnum<HandBackEnd>()
@@ -195,8 +205,8 @@ export interface Supervision {
   /** Runs a ticket's worker under its supervision, to the end the run takes from it. */
   readonly watch: <R>(watch: Watch<R>) => Effect.Effect<WorkerEnd, never, R>
   /**
-   * Runs a hand-back's worker under its supervision, as `watch` does, but for the usage limit: its
-   * turn ends there, once the run holds for it.
+   * Runs a hand-back's worker under its supervision, as `watch` does, but for the usage limit, its turn
+   * ending there once the run holds for it, and a hold that outlasts its turn, which ends there too.
    */
   readonly handBack: <R>(
     watch: Watch<R>,
@@ -272,6 +282,8 @@ interface Heard {
   readonly doing: string
   /** The tools it runs now, by call. */
   readonly open: ReadonlyMap<string, string>
+  /** Whether its last model call ended on an error, Pi's retries being its own to tell. */
+  readonly callFailed: boolean
 }
 
 const heardAfter = (heard: Heard, event: PiEvent, at: number): Heard => {
@@ -279,8 +291,26 @@ const heardAfter = (heard: Heard, event: PiEvent, at: number): Heard => {
   if (event.type === 'tool_execution_start')
     open.set(event.toolCallId, event.toolName)
   if (event.type === 'tool_execution_end') open.delete(event.toolCallId)
-  return { at, doing: doingOf(event), open }
+  const callFailed =
+    event.type === 'message_end' && event.message.role === 'assistant'
+      ? event.message.stopReason === 'error'
+      : heard.callFailed
+  return { at, doing: doingOf(event), open, callFailed }
 }
+
+/** A provider `model`'s calls wait on among those held; any of them for Pi's own model, which isn't known. */
+const heldFor = (
+  model: Option.Option<ModelChoice>,
+  held: ReadonlySet<ProviderName>,
+): Option.Option<ProviderName> =>
+  Option.fromUndefinedOr(
+    [...held].find(provider =>
+      Option.match(model, {
+        onNone: () => true,
+        onSome: choice => choice.provider === provider,
+      }),
+    ),
+  )
 
 /** A refusal the model proxy gave the attempt's session, with no call through since. */
 interface Refused {
@@ -444,10 +474,23 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
           at: startedAt,
           doing: 'starting',
           open: new Map(),
+          callFailed: false,
         }),
       }
       yield* Ref.update(live, attempts =>
         new Map(attempts).set(ticket, attempt),
+      )
+      // Whether its provider was held during the turn: a call kept waiting at its permit ends in Pi with
+      // no refusal of this session's.
+      const heldInTurn = yield* Ref.make(Option.none<ProviderName>())
+      yield* options.heldProviders.pipe(
+        Stream.runForEach(held =>
+          Option.match(heldFor(input.model, held), {
+            onNone: () => Effect.void,
+            onSome: provider => Ref.set(heldInTurn, Option.some(provider)),
+          }),
+        ),
+        Effect.forkScoped,
       )
       const monitors = yield* FiberSet.make<void>()
       yield* Option.match(input.limit, {
@@ -500,13 +543,22 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
         if (left.get(ticket) === attempt) left.delete(ticket)
         return left
       })
-      return { came, refused: yield* Ref.get(attempt.refused) }
+      const { callFailed } = yield* Ref.get(attempt.heard)
+      return {
+        came,
+        refused: yield* Ref.get(attempt.refused),
+        outlasted: callFailed ? yield* Ref.get(heldInTurn) : Option.none(),
+      }
     }).pipe(Effect.scoped)
 
-  /** The failure an attempt's end tells, from the end and the refusal its session was left with. */
+  /**
+   * The failure an attempt's end tells, from the end, the refusal its session was left with, and the
+   * held provider that outlasted its turn.
+   */
   const failureOf = (
     end: WorkerEnd,
     refused: Option.Option<Refused>,
+    outlasted: Option.Option<ProviderName>,
   ): Option.Option<WorkerFailure> => {
     if (WorkerEnd.$is('ToolFailed')(end))
       return Option.some(
@@ -519,7 +571,11 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
     if (!WorkerEnd.$is('Unfinished')(end)) return Option.none()
     return Option.some(
       Option.match(refused, {
-        onNone: () => WorkerFailure.Unfinished(),
+        onNone: () =>
+          Option.match(outlasted, {
+            onNone: () => WorkerFailure.Unfinished(),
+            onSome: provider => WorkerFailure.HoldOutlasted({ provider }),
+          }),
         onSome: ({ provider, refusal }) =>
           Refusal.$match(refusal, {
             RateLimited: ({ retryAfter }) =>
@@ -564,9 +620,18 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
       return HandBackEnd.AtLimit()
     })
 
+  /** A hold on `provider` has lifted, or wasn't on. */
+  const liftOf = (provider: ProviderName) =>
+    options.heldProviders.pipe(
+      Stream.filter(held => !held.has(provider)),
+      Stream.runHead,
+      Effect.asVoid,
+    )
+
   /**
    * A ticket's worker under §12.8's policies, its end told as `ended` makes it; `limited`, where given,
-   * ends it on the usage limit rather than waiting the limit out.
+   * ends it on the usage limit rather than waiting the limit out, and `outlasted` on a hold that
+   * outlasted its turn rather than waiting for the lift.
    */
   const supervise = <R, A>(
     input: Watch<R>,
@@ -578,6 +643,7 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
         readonly resetAt: DateTime.Utc
       }) => Effect.Effect<A>
     >,
+    outlasted: Option.Option<A>,
   ): Effect.Effect<A, never, R> =>
     Effect.gen(function* () {
       const { ticket } = input
@@ -640,7 +706,11 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
               note: limitNote(limit.value.most),
             }),
           )
-        const { came, refused } = yield* attemptOnce({
+        const {
+          came,
+          refused,
+          outlasted: heldOut,
+        } = yield* attemptOnce({
           watch: input,
           turn,
           model,
@@ -653,7 +723,7 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
           },
         })
         const failure = Came.$match(came, {
-          Ended: ({ end }) => failureOf(end, refused),
+          Ended: ({ end }) => failureOf(end, refused, heldOut),
           Interrupted: ({ failure: why }) => Option.some(why),
         })
         const end = Came.$match(came, {
@@ -670,6 +740,11 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
           const { provider, resetAt } = failure.value
           return yield* limited.value({ ticket, provider, resetAt })
         }
+        if (
+          WorkerFailure.$is('HoldOutlasted')(failure.value) &&
+          Option.isSome(outlasted)
+        )
+          return outlasted.value
 
         // §12.8's table: what each failure does next.
         const next = yield* WorkerFailure.$match(failure.value, {
@@ -719,6 +794,16 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
                 'a refused credential',
                 carryOn(
                   `Your turn ended as ${provider} refused the engine's credential (${reason}); the credential is usable again.`,
+                ),
+              )
+            }),
+          HoldOutlasted: ({ provider }) =>
+            Effect.gen(function* () {
+              yield* liftOf(provider)
+              return resumed(
+                'a hold',
+                carryOn(
+                  `Your turn ended as a hold kept ${provider}'s model call waiting past its timeout and retries; the hold has lifted.`,
                 ),
               )
             }),
@@ -773,12 +858,13 @@ export const makeSupervision = Effect.fn('Supervision.make')(function* (
     })
 
   return {
-    watch: input => supervise(input, end => end, Option.none()),
+    watch: input => supervise(input, end => end, Option.none(), Option.none()),
     handBack: input =>
       supervise(
         input,
         (end): HandBackEnd => HandBackEnd.Ended({ end }),
         Option.some(atLimit),
+        Option.some(HandBackEnd.AtLimit()),
       ),
     overBudget: ({ ticket, detail }) =>
       Effect.flatMap(Ref.get(live), attempts => {

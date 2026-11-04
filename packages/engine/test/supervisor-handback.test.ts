@@ -11,7 +11,12 @@ import {
 } from 'effect'
 
 import { describe, expect, it } from '@effect/vitest'
-import { RunId, SessionId, TicketId } from '@fabrica/contracts'
+import {
+  type ProviderName,
+  RunId,
+  SessionId,
+  TicketId,
+} from '@fabrica/contracts'
 
 import { OwnCheck } from '../src/control'
 import type { Worktree } from '../src/git'
@@ -81,6 +86,10 @@ const supervised = (
         sleep: duration => Effect.sleep(duration),
         held: SubscriptionRef.changes(held),
       },
+      heldProviders: Stream.concat(
+        Stream.make(new Set<ProviderName>()),
+        Stream.never,
+      ),
       ticketLimit: Option.none(),
       fallbacks: [],
     })

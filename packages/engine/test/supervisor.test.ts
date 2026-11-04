@@ -14,7 +14,12 @@ import {
 import { TestClock } from 'effect/testing'
 
 import { describe, expect, it } from '@effect/vitest'
-import { RunId, SessionId, TicketId } from '@fabrica/contracts'
+import {
+  type ProviderName,
+  RunId,
+  SessionId,
+  TicketId,
+} from '@fabrica/contracts'
 
 import type { ModelChoice, PiEvent } from '../src/agent'
 import type { Worktree } from '../src/git'
@@ -120,6 +125,10 @@ const supervised = (options: {
       proxy: Stream.fromSubscription(subscription),
       holds: options.holds ?? recorded.holds,
       clock,
+      heldProviders: Stream.concat(
+        Stream.make(new Set<ProviderName>()),
+        Stream.never,
+      ),
       ticketLimit: Option.fromUndefinedOr(options.ticketLimit),
       fallbacks: options.fallbacks ?? [],
       ...(options.backoff === undefined ? {} : { backoff: options.backoff }),
