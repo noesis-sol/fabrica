@@ -381,8 +381,10 @@ describe('the run view', () => {
           .pipe(Stream.take(1), Stream.runCollect)
         expect(elsewhere.map(item => item._tag)).toEqual(['snapshot'])
 
+        // Past what is kept takes many patches, not a long view: each is a diff of the whole view, and 260
+        // of a view growing to as many steps took over the test's limit on a loaded machine.
         for (let count = 4; count < keptViewPatches + 8; count++)
-          yield* publish(count)
+          yield* publish(4 + (count % 2))
         const behind = yield* feed
           .watch(Option.some(new Resume({ epoch: snapshot.epoch, after: 1 })))
           .pipe(Stream.take(1), Stream.runCollect)
