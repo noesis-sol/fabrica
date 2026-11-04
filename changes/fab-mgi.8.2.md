@@ -8,3 +8,5 @@
 - A worker that asks a question whose answer has already come now goes back to its ticket in the same run, rather than
   the run ending with the ticket still waiting.
 - An answer the work graph refuses no longer stops the engine: the client is told it was already answered.
+- Insights' `waits` counts a question `--auto-answer` answered before its worker's `asked` was written as a wait of no
+  time, not as a question still waiting.

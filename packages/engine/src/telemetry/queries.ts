@@ -127,6 +127,7 @@ const eventColumns: ReadonlyArray<readonly [string, string]> = [
   ['run', 'VARCHAR'],
   ['kind', 'VARCHAR'],
   ['ticket', 'VARCHAR'],
+  ['question', 'VARCHAR'],
   ['suite', 'VARCHAR'],
   ['command', 'VARCHAR'],
   ['commit', 'VARCHAR'],
@@ -237,12 +238,17 @@ interface Statement {
   readonly parameters?: Readonly<Record<string, Parameter>>
 }
 
-/** Questions asked in the streams, each with when it was answered; NULL while it waits. */
+/**
+ * Questions asked in the streams, each with when it was answered; NULL while it waits. `--auto-answer`
+ * can answer one before its worker's `asked` is written (§15.2), which is no wait at all.
+ */
 const asks = (filter: string) => `asks AS (
     SELECT a.project, a.run, a.ticket, a."at" AS asked,
-      (SELECT min(b."at") FROM events b
-        WHERE b.kind IN ('answered', 'auto_answered') AND b.project = a.project
-          AND b.ticket = a.ticket AND b."at" >= a."at") AS answered
+      (SELECT min(greatest(b."at", a."at")) FROM events b
+        WHERE b.project = a.project AND b.ticket = a.ticket AND (
+          (b.kind IN ('answered', 'auto_answered') AND b."at" >= a."at")
+          OR (b.kind = 'auto_answered' AND b.question = a.question)
+        )) AS answered
     FROM events a WHERE a.kind = 'asked' AND ${filter}
   )`
 
