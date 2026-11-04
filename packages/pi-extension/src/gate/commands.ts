@@ -252,7 +252,6 @@ const namesLong = (text: string, long: string): boolean => {
 
 /** Whether `text`, an option, leaves its value to the next word. */
 const takesNextWord = (text: string, values: ReadonlySet<string>): boolean =>
-  (!text.includes('=') && [...values].some(value => namesLong(text, value))) ||
   values.has(text) ||
   Option.exists(valuedShort(text, values), ({ start }) => start === text.length)
 
@@ -296,7 +295,7 @@ const hasOption = (
       !dynamic &&
       options.some(option =>
         option.startsWith('--')
-          ? namesLong(text, option)
+          ? text === option || text.startsWith(`${option}=`)
           : text === option ||
             (/^-[A-Za-z]+$/u.test(text) && text.includes(option.slice(1))),
       ),
@@ -354,7 +353,8 @@ const optionValues = (
       names.includes(text) ||
       names.some(name => namesLong(text, name)) ||
       Option.exists(short, ({ option }) => names.includes(option))
-    const next = takesNextWord(text, values)
+    const next =
+      takesNextWord(text, values) || names.some(name => namesLong(text, name))
     if (named && next) {
       const value = words[index + 1]
       if (value !== undefined) found.push(value)
@@ -1024,7 +1024,18 @@ class Policy {
         copierValues,
       )
       const lastNames = targets.length === 0 && all.length > 1
-      if (name === 'ln' && hasFlag(args, copierValues, '-s', '--symbolic')) {
+      // GNU's `-r` reads a target from the current folder, and makes it relative to the link itself.
+      if (
+        name === 'ln' &&
+        hasFlag(args, copierValues, '-s', '--symbolic') &&
+        hasFlag(args, copierValues, '-r', '--relative')
+      )
+        for (const made of lastNames ? all.slice(0, -1) : all)
+          this.linked(made, cwd)
+      else if (
+        name === 'ln' &&
+        hasFlag(args, copierValues, '-s', '--symbolic')
+      ) {
         for (const folder of targets)
           for (const made of all)
             this.linked(fromLink(made, syntheticWord(folder, '/_')), cwd)
@@ -1055,7 +1066,7 @@ class Policy {
     }
     if (modeWriters.has(name)) {
       const all = operands(args, new Set(['--reference']))
-      const changed = args.some(({ text }) => text.startsWith('--reference'))
+      const changed = args.some(({ text }) => namesLong(text, '--reference'))
         ? all
         : all.slice(1)
       for (const target of changed) this.written(target, cwd)

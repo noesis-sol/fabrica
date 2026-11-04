@@ -112,6 +112,15 @@ const commands: ReadonlyArray<readonly [Expected, string]> = [
   ['asked', 'ln -s -Sn ../x src/deep/up'],
   ['asked', 'ln --sym ../x src/deep/up'],
   ['allowed', 'ln -tsrc /tmp/x'],
+  // Only the options whose value the gate reads may be shortened: another's next word is still an operand.
+  ['asked', 'cp --o src/a.ts /tmp/x'],
+  ['asked', 'chmod --ref src/a.ts /tmp/x'],
+  ['asked', 'chown --ref src/a.ts /tmp/x'],
+  ['asked', 'chgrp --ref src/a.ts /tmp/x'],
+  ['asked', 'chmod --ref=src/a.ts /tmp/x'],
+  ['asked', 'chmod --refe=src/a.ts /tmp/x'],
+  ['asked', 'chmod --reference=src/a.ts /tmp/x'],
+  ['allowed', 'git switch --force main'],
   ['allowed', 'install -tsrc /tmp/x'],
   ['asked', 'install -t/tmp/x src/a.ts'],
   ['asked', 'ln -t/tmp/x src/a.ts'],
@@ -237,6 +246,16 @@ const commands: ReadonlyArray<readonly [Expected, string]> = [
   ['asked', "bash -c 'rm -rf src'; bash -c 'ln -s ../x src'"],
   ['asked', 'find . -exec rm -rf src \\; -exec ln -s ../x src \\;'],
   ['asked', 'ln -sfF ../x src'],
+  // GNU's `-r` reads a target from the current folder.
+  ['asked', 'ln -sr ../x src'],
+  ['asked', 'ln -s -r ../x src'],
+  ['asked', 'ln --relative -s ../x src'],
+  ['asked', 'ln --rel -s ../x src'],
+  ['asked', 'ln -sr ../x src/deep'],
+  ['asked', 'ln -sr ../x src/new'],
+  ['asked', 'ln -sr -t src ../x'],
+  ['allowed', 'ln -sr a.ts src'],
+  ['allowed', 'ln -sr src/a.ts src/new'],
   ['asked', 'cd "$d"; ln -s ../a.ts src'],
 ]
 
