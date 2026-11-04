@@ -649,6 +649,7 @@ const services = (input: {
     Attention.of({
       permission: () =>
         Effect.succeed(PermissionDecision.cases.allow_run.make({})),
+      autoAnswer: () => Effect.succeedNone,
     }),
   )
   const control = controlLayer.pipe(
