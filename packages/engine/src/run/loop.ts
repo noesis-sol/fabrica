@@ -68,6 +68,7 @@ import {
 } from '../holds'
 import {
   AfterMerge,
+  MachineHold,
   type MergeQueueShape,
   MergeSetup,
   type MergeSetupShape,
@@ -561,6 +562,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     Effect.provideService(HandBackClock, clock),
     Effect.provideService(HandBackWorker, handBacksTo),
     Effect.provideService(AfterMerge, { merged: () => pushes.after_merge }),
+    Effect.provideService(MachineHold, { holds: machine.holds }),
     Scope.provide(mergeScope),
   )
   const mergeUpdates = yield* merges.updates.pipe(Scope.provide(mergeScope))

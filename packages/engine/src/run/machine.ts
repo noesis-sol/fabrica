@@ -47,6 +47,8 @@ export const makeRunMachine = Effect.fn('RunMachine.make')(function* (input: {
   return {
     /** The workers the budget allows beyond those live, for what is weighed before the slots are claimed. */
     left: budget.left,
+    /** Whether the budget is reached, whatever this run would take: the merge train takes no rider while it is (§13.7). */
+    holds: budget.holds,
     /** Claims as many of the `wanted` slots a look would fill as the budget leaves: another run's look may want the last one. */
     claim: seat.claim,
     release: seat.release,

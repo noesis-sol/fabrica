@@ -43,7 +43,7 @@ import type { MergeTurn } from './turn'
 // ticket's next merge, or its next ride, sets it up. One ticket rides at most, never deeper
 // (`merge.train`), and none while the machine budget holds.
 
-/** Whether the machine budget holds (§14.3): no ticket rides while it does. Until it is built, it never holds. */
+/** Whether the machine budget holds (§14.3): no ticket rides while it does. The run gives it from its seat; with none given, it never holds. */
 export const MachineHold = Context.Reference<{
   readonly holds: Effect.Effect<boolean>
 }>('@fabrica/engine/MachineHold', {
