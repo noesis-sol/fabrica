@@ -2093,11 +2093,12 @@ const runStarted = Effect.fn('Run.started')(function* (
       // Whatever woke this look, a merge the run didn't make may have changed the list (§17).
       yield* requirements.baseMoved
       const gate = yield* requirements.gate
+      const room =
+        MayTake.$is('Yes')(may) && RequirementsGate.$is('Clear')(gate)
+          ? project.concurrent - slotsTaken(before, project.concurrent)
+          : 0
       const free = yield* machine.free({
-        room:
-          MayTake.$is('Yes')(may) && RequirementsGate.$is('Clear')(gate)
-            ? project.concurrent - slotsTaken(before, project.concurrent)
-            : 0,
+        room,
         wanted: candidates.length > 0,
       })
       const gated = yield* footprints.gate({
@@ -2134,6 +2135,12 @@ const runStarted = Effect.fn('Run.started')(function* (
       }
       // Dispatched tickets leave the ready set the look keeps: they are the run's now.
       ready = ready.filter(ticket => !dispatched.has(ticket.id))
+      // Those it took may have reached the budget with a slot still free and a ticket left: it holds, so
+      // that a worker's end, in any run, wakes it (§14.3).
+      yield* machine.free({
+        room: room - dispatched.size,
+        wanted: candidates.length > dispatched.size,
+      })
       const after = yield* state.current
       if (inProgress(after).length > 0 || workersEnding.size > 0)
         return Option.none<Ending>()

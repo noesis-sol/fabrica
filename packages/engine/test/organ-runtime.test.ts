@@ -39,6 +39,8 @@ import {
   CommandSetting,
   ControlRpcs,
   ControlTokenVariable,
+  Host,
+  HostFacts,
   type ModelChoice,
   ModelName,
   PermissionDecision,
@@ -49,6 +51,7 @@ import {
   SessionId,
   TicketId,
   controlTokenClient,
+  decodeEngineSettings,
 } from '@fabrica/contracts'
 
 import { layer as agentLayer } from '../src/agent'
@@ -61,6 +64,7 @@ import {
   layer as controlLayer,
 } from '../src/control'
 import { countProxyCalls, makeCostAccount, tokensOf } from '../src/cost'
+import { MachineBudget, makeMachineBudget } from '../src/engine/budget'
 import { type GitConfig, layer as gitLayer } from '../src/git'
 import {
   CREDENTIALS_PROBE,
@@ -1557,6 +1561,48 @@ describe('an organ asking through a short Pi session', () => {
     }),
     cores: 3,
   })
+
+  it.live(
+    'takes its share from the machine budget, counted among the live while it runs',
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { place, context } = yield* setting([])
+          const { log } = yield* memoryLog
+          const runtime = yield* runtimeOf(place, {
+            log: Option.some(log),
+          }).pipe(Effect.provide(context))
+          const budget = yield* makeMachineBudget(
+            yield* decodeEngineSettings({}),
+          ).pipe(
+            Effect.provideService(
+              Host,
+              Host.of({
+                facts: Effect.succeed(
+                  new HostFacts({
+                    cores: 8,
+                    memoryBytes: 1024,
+                    load: 0,
+                    home: '/nonexistent/fabrica-test-home',
+                  }),
+                ),
+              }),
+            ),
+          )
+          yield* budget.join(Effect.succeed(1))
+          const outcome = yield* runtime
+            .session(sessionQuestion('good-please'))
+            .pipe(Effect.provideService(MachineBudget, budget))
+          expect(OrganOutcome.$is('Answered')(outcome)).toBe(true)
+          // A worker and the session itself on 8 cores, not the 3 it was given.
+          expect(stubLog(place)[0]).toMatchObject({
+            cores: '4',
+            goflags: '-p=4',
+          })
+          expect(yield* budget.shareOf(1)).toBe(8)
+        }),
+      ),
+  )
 
   it.live(
     'runs read-only in the checkout on its model, its core share in its environment, and takes the answer',

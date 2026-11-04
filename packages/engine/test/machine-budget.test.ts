@@ -9,13 +9,14 @@ import {
   Stream,
 } from 'effect'
 import { RpcClient, RpcSerialization } from 'effect/rpc'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { mkdtemp, readFile } from 'node:fs/promises'
 import * as NodePath from 'node:path'
 
 import { NodeSocket } from '@effect/platform-node'
 import { beforeAll, describe, expect, it } from '@effect/vitest'
 import {
+  AgentRoleVariable,
   EngineHost,
   FabricaRpcs,
   Host,
@@ -38,6 +39,7 @@ import {
   makeMachineBudget,
   withCommandShare,
 } from '../src/engine/budget'
+import { LoadProcesses, type SampledTree } from '../src/engine/load'
 import { clockHeld, makeHolds, workersHeld } from '../src/holds'
 import { runProject } from '../src/run'
 import { apartFromMachine, makeRunMachine } from '../src/run/machine'
@@ -319,7 +321,81 @@ describe("a look's word on the hold", () => {
   )
 })
 
+/** The agents a run is given, the services' own, their starts and processes noted. */
+const notingAgents = (agents: Array<AgentStart>, pids: Array<number>) =>
+  Layer.effect(
+    PiAgent,
+    Effect.map(PiAgent, real =>
+      PiAgent.of({
+        close: real.close,
+        start: start => {
+          agents.push(start)
+          return Effect.tap(real.start(start), agent =>
+            Effect.sync(() => pids.push(agent.pid)),
+          )
+        },
+      }),
+    ),
+  )
+
 describe("a worker's start", () => {
+  it.effect("runs its own check on its share, not as the engine's own", () => {
+    const folder = mkdtempSync(NodePath.join(places.root, 'o'))
+    const own = NodePath.join(folder, 'own')
+    const fixture = harnessProject({
+      ...harnessSettings,
+      check_own: `echo "$FABRICA_CORES" > ${own}`,
+    })
+    return withRuns(
+      fixture,
+      Effect.gen(function* () {
+        yield* fileTicket('Build one', 'finish')
+        const budget = yield* budgetOn(10)
+        yield* runProject(configOf(fixture, options())).pipe(
+          Effect.provideService(MachineBudget, budget),
+        )
+        // Counted among the live as a command of the engine's, it would have 5.
+        expect(readFileSync(own, 'utf8').trim()).toBe('10')
+      }),
+    )
+  })
+
+  it.effect(
+    "gives the verifier its ticket's share, and measures it too",
+    () => {
+      const fixture = harnessProject({
+        ...harnessSettings,
+        verifier: { enabled: true },
+      })
+      const agents: Array<AgentStart> = []
+      const pids: Array<number> = []
+      const tracked: Array<SampledTree> = []
+      return withRuns(
+        fixture,
+        Effect.gen(function* () {
+          yield* fileTicket('Build one', 'finish')
+          const budget = yield* budgetOn(10)
+          // The harness's stub is no verifier: whatever comes of its round, it started as one.
+          yield* runProject(configOf(fixture, options())).pipe(
+            Effect.provide(notingAgents(agents, pids)),
+            Effect.provideService(MachineBudget, budget),
+            Effect.provideService(LoadProcesses, {
+              track: tree => Effect.sync(() => tracked.push(tree)),
+            }),
+          )
+          const verifier = agents.findIndex(
+            agent => agent.env[AgentRoleVariable] === 'verifier',
+          )
+          expect(verifier).toBeGreaterThan(0)
+          expect(agents[verifier]?.env['FABRICA_CORES']).toBe('10')
+          expect(tracked.map(({ pid }) => pid)).toEqual(
+            expect.arrayContaining([pids[0], pids[verifier]]),
+          )
+        }),
+      )
+    },
+  )
+
   it.effect('carries its share in its environment', () => {
     const fixture = harnessProject(harnessSettings)
     const agents: Array<AgentStart> = []
@@ -496,6 +572,41 @@ describe('a run on the engine', () => {
         yield* client['run.stop']({ project: waiting })
         yield* waitingRun.ended
       }),
+  )
+
+  it.live('holds once what it took reaches the budget, a slot still free', () =>
+    Effect.gen(function* () {
+      const client = yield* newEngine(2)
+      const folder = yield* Effect.promise(() =>
+        mkdtemp(NodePath.join(places.root, 'g')),
+      )
+      const go = NodePath.join(folder, 'go')
+      const ending = yield* addProject(client, 'ending', scriptedSettings)
+      yield* file(client, ending, 'Ends', `wait ${go}`)
+      const wanting = yield* addProject(client, 'wanting', {
+        ...scriptedSettings,
+        concurrent: 2,
+      })
+      yield* file(client, wanting, 'One', 'hang')
+      yield* file(client, wanting, 'Two', 'hang')
+
+      const endingRun = yield* startRun(client, ending)
+      yield* endingRun.until(1, isDispatch)
+      // One of the budget's two is left: it takes it, and waits for the other.
+      const wantingRun = yield* startRun(client, wanting)
+      yield* wantingRun.until(1, isDispatch)
+      yield* wantingRun.until(1, isMachineHold)
+      expect((yield* client['engine.status']()).liveWorkers).toBe(2)
+
+      // Nothing of its own wakes it: the other run's worker ending does.
+      writeFileSync(go, '')
+      yield* endingRun.ended
+      yield* wantingRun.until(1, isMachineLift)
+      yield* wantingRun.until(1, isDispatch)
+
+      yield* client['run.stop']({ project: wanting })
+      yield* wantingRun.ended
+    }),
   )
 
   it.live(

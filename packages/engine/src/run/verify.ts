@@ -448,6 +448,7 @@ const verifyRound = Effect.fn('Verifier.round')(function* (input: {
     projectTrusted: config.projectTrusted,
     nice: config.nice,
   })
+  yield* measured(agent.pid)
   yield* recordTurns({
     log: context.log,
     cost: context.cost,
