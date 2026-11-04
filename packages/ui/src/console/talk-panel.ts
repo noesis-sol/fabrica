@@ -7,6 +7,7 @@ import { modifyFields } from 'foldkit/struct'
 import { defineView } from 'foldkit/submodel'
 
 import {
+  type AnswerTalkOpened,
   OpenedTalk,
   type ProjectSettings,
   TalkContext,
@@ -18,7 +19,11 @@ import {
 
 import * as Draw from '../app/draw'
 import { EngineProject, projectKey, sameProject } from '../app/engine-project'
-import { type EngineServices, requestProject } from '../app/engine-route'
+import {
+  type EngineServices,
+  keepTalkOn,
+  requestProject,
+} from '../app/engine-route'
 import { type EngineAttention, engineRequests } from '../app/streams'
 import * as Conversation from './conversation'
 import * as Sidebar from './sidebar'
@@ -27,7 +32,9 @@ import * as Sidebar from './sidebar'
 // header giving the talk's model and context use, its messages bottom-aligned, its composer sending to
 // it. When questions in scope are open and their project's `questions` setting is `auto` (the
 // default), the answer talk takes the panel by itself, without taking focus; with `key` it opens on the
-// maintainer's action. Once the project has no open question it is closed and the run talk comes back.
+// maintainer's action. The run talk can open it too, on the maintainer's word (`open_answer_talk`): the
+// panel takes up the talk its call's answer names, on any setting, and opens none of its own. Once the
+// project has no open question it is closed and the run talk comes back.
 // Under All projects the composer acts on the project a message names, or asks which.
 
 /** A question open in scope, from the attention requests. */
@@ -100,6 +107,7 @@ export const Message = defineMessageUnion({
   FailedOpenRunTalk: { project: EngineProject, reason: Schema.String },
   OpenedAnswerTalk: { project: EngineProject, opened: OpenedTalk },
   FailedOpenAnswerTalk: { project: EngineProject, reason: Schema.String },
+  CompletedKeepAnswerTalk: {},
   LoadedQuestionsSetting: { project: EngineProject, mode: QuestionsMode },
   CompletedCloseTalk: {},
   TypedDraft: { text: Schema.String },
@@ -150,6 +158,16 @@ export const OpenAnswerTalk = Command.define('OpenAnswerTalk', {
       Effect.catch(reason =>
         Effect.succeed(Message.FailedOpenAnswerTalk({ project, reason })),
       ),
+    ),
+})
+
+/** Keeps the answer talk the project's run talk opened as its engine's, for what is sent to it. */
+export const KeepAnswerTalk = Command.define('KeepAnswerTalk', {
+  args: { project: EngineProject, talk: TalkId },
+  messages: [Message.CompletedKeepAnswerTalk],
+  execute: ({ project, talk }) =>
+    keepTalkOn(project, talk).pipe(
+      Effect.as(Message.CompletedKeepAnswerTalk()),
     ),
 })
 
@@ -301,6 +319,26 @@ const andThen = (first: Return, next: (model: Model) => Return): Return => {
 }
 
 /**
+ * The answer talk `project`'s run talk opened takes the panel, the one held closed in its place: the
+ * maintainer's latest word, and an answer talk isn't kept, so opening another would start a second agent.
+ * One still being opened is closed as it arrives.
+ */
+const takeUpAnswer = (
+  model: Model,
+  project: EngineProject,
+  opened: AnswerTalkOpened,
+): Return =>
+  andThen(dropAnswer(model), dropped => ({
+    model: modifyFields(dropped, {
+      answer: () =>
+        Answer.Open({
+          conversation: Conversation.opened(project, 'answer', opened),
+        }),
+    }),
+    commands: [KeepAnswerTalk({ project, talk: opened.talk })],
+  }))
+
+/**
  * The answer talk kept in step with the open questions (§15.3): kept while its project still has one,
  * closed once it has none; otherwise opened for the first project with questions whose setting is
  * `auto`, each project's setting read the first time it has questions.
@@ -441,7 +479,10 @@ export const requestedAnswerTalk = (
     },
   )
 
-/** The open talk `talk` after `step` of its draws, and its next draw's wait where the step starts one. */
+/**
+ * The open talk `talk` after `step` of its draws, and its next draw's wait where the step starts one; an
+ * answer talk the run talk's calls opened in what it drew is taken up.
+ */
 const drawTalk = (
   model: Model,
   talk: TalkId,
@@ -454,7 +495,7 @@ const drawTalk = (
     )
   const run = drawnOf(runTalk(model))
   const answer = drawnOf(answerTalk(model))
-  return {
+  const drawn: Return = {
     model: modifyFields(model, {
       run: before =>
         Option.match(run, {
@@ -473,6 +514,15 @@ const drawTalk = (
       ? [WaitToDraw({ talk })]
       : [],
   }
+  return Option.match(run, {
+    onNone: () => drawn,
+    onSome: ({ conversation, answerTalks }) =>
+      Array.reduce(answerTalks, drawn, (before, opened) =>
+        andThen(before, held =>
+          takeUpAnswer(held, conversation.project, opened),
+        ),
+      ),
+  })
 }
 
 /** A frame of a talk's transcript, for the talk it is for: drawn now, or held for its draw's wait (§18.5). */
@@ -643,6 +693,7 @@ export const update = (
             })
           : model,
     }),
+    CompletedKeepAnswerTalk: () => ({ model }),
     LoadedQuestionsSetting: ({ project, mode }) =>
       reconcile(
         modifyFields(model, {

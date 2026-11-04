@@ -180,6 +180,13 @@ export const openTalkOn = <A extends { readonly talk: TalkId }, E, R>(
     return opened
   })
 
+/** Keeps `talk`, which the engine holding `project` opened itself, as that engine's, for what is sent to it. */
+export const keepTalkOn = (
+  { engine }: EngineProject,
+  talk: TalkId,
+): Effect.Effect<void, never, EngineSessions> =>
+  Effect.flatMap(EngineSessions, sessions => sessions.openedTalk(talk, engine))
+
 /** A request about the scope, to its project's engine, or this machine's under All projects. */
 export const requestScope = <A, E, R>(
   scope: Option.Option<EngineProject>,

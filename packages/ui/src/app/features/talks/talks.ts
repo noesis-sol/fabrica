@@ -22,7 +22,8 @@ import type { SubscriptionEnvironment } from '../../subscriptions'
 import type { messages } from './message'
 
 // The talks (spec §15.3, §15.4): the console's talk panel, with the scope's run talk opened as the scope
-// changes and the answer talk, and the Talks screen; every talk either holds has its transcript watched.
+// changes and the answer talk, the panel's own or the one the run talk opened, and the Talks screen;
+// every talk either holds has its transcript watched.
 
 const writeTalkPanel = (model: Model, talkPanel: TalkPanel.Model): Model =>
   modifyFields(model, {

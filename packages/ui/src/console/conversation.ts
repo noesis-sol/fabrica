@@ -2,9 +2,11 @@ import { Array, Effect, Match, Option, Schema } from 'effect'
 import type { Html, HtmlBuilder } from 'foldkit/html'
 
 import {
+  type AnswerTalkOpened,
   MessageId,
   MessageRole,
   ModelName,
+  OpenAnswerTalkTool,
   type OpenedTalk,
   type TalkContext,
   TalkId,
@@ -59,7 +61,7 @@ export type Conversation = typeof Conversation.Type
 export const opened = (
   project: EngineProject,
   mode: TalkMode,
-  talk: OpenedTalk,
+  talk: Pick<OpenedTalk, 'talk' | 'model'>,
 ): Conversation => ({
   talk: talk.talk,
   project,
@@ -148,21 +150,55 @@ export const applyTranscript = (
     ),
   )
 
-/** A conversation after a step of its draws, and whether the step started a draw's wait. */
+const decodeAnswerTalkOpened = Schema.decodeUnknownOption(
+  Schema.fromJsonString(OpenAnswerTalkTool.success),
+)
+
+/**
+ * The answer talks the conversation's calls opened in a drawn frame (§15.3), as the calls' answers name
+ * them, among its patches only: a snapshot holds the talk's past, read again whenever its watch begins
+ * again, and an answer talk it names has long gone or is held already.
+ */
+const answerTalksOpened = (
+  conversation: Conversation,
+  items: ReadonlyArray<TranscriptItem>,
+): ReadonlyArray<AnswerTalkOpened> =>
+  items.flatMap(item =>
+    item._tag === 'snapshot'
+      ? []
+      : item.value.flatMap(entry =>
+          entry._tag === 'tool_output' &&
+          conversation.lines.some(
+            line =>
+              line._tag === 'tool' &&
+              line.id === entry.id &&
+              line.tool === OpenAnswerTalkTool.name,
+          )
+            ? Option.toArray(decodeAnswerTalkOpened(entry.chunk))
+            : [],
+        ),
+  )
+
+/** A conversation after a step of its draws, whether the step started a draw's wait, and the answer talks it drew the opening of. */
 export interface Drawn {
   readonly conversation: Conversation
   readonly waits: boolean
+  readonly answerTalks: ReadonlyArray<AnswerTalkOpened>
 }
 
 /** The conversation after `step` of its draws: what it holds, and the frames it draws now. */
 const drawStep = (conversation: Conversation, step: Draw.Step): Drawn => {
   const held: Conversation = { ...conversation, ...step.held }
   return Option.match(step.draw, {
-    onNone: () => ({ conversation: held, waits: false }),
-    onSome: items => ({
-      conversation: applyTranscript(held, items),
-      waits: true,
-    }),
+    onNone: () => ({ conversation: held, waits: false, answerTalks: [] }),
+    onSome: items => {
+      const applied = applyTranscript(held, items)
+      return {
+        conversation: applied,
+        waits: true,
+        answerTalks: answerTalksOpened(applied, items),
+      }
+    },
   })
 }
 

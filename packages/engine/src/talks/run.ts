@@ -183,10 +183,9 @@ interface Action {
 }
 
 /** What a command answers with. */
-const answerOf = ({ text, also, talk }: Action): Acted => ({
+const answerOf = ({ text, also }: Action): Acted => ({
   text,
   ...(also === undefined ? {} : { also }),
-  ...(talk === undefined ? {} : { talk }),
 })
 
 /** A permission request's call in a line, so the maintainer confirms what it does. */
@@ -635,21 +634,29 @@ export const runMode = ({
         }
       }),
     ),
-    command(OpenAnswerTalkTool, ({ questions }, { openTalk }) =>
-      openTalk(
-        TalkContext.cases.answer.make({
-          questions: Option.getOrElse(questions, () => []),
-        }),
-      ).pipe(
-        Effect.catchTag('TalkNotOpened', ({ reason }) =>
-          Effect.fail(refuse(reason)),
-        ),
-        Effect.catchTag('ProjectNotFound', projectGone),
-        Effect.map(({ talk }) => ({
-          text: `Run talk opened the answer talk ${talk}`,
-          talk,
-        })),
-      ),
+    talkTool(
+      OpenAnswerTalkTool,
+      ({ questions }, context: TalkToolContext<'run'>) =>
+        context
+          .openTalk(
+            TalkContext.cases.answer.make({
+              questions: Option.getOrElse(questions, () => []),
+            }),
+          )
+          .pipe(
+            Effect.catchTag('TalkNotOpened', ({ reason }) =>
+              Effect.fail(refuse(reason)),
+            ),
+            Effect.catchTag('ProjectNotFound', projectGone),
+            Effect.map(({ talk, model }) => ({
+              text: `Run talk opened the answer talk ${talk}`,
+              talk,
+              model,
+            })),
+            Effect.tap(({ text, talk }) =>
+              record(context, OpenAnswerTalkTool.name, { text, talk }),
+            ),
+          ),
     ),
   ]
 

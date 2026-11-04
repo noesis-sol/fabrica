@@ -847,6 +847,7 @@ describe('the talk’s ticket commands', () => {
         expect(opened).toStrictEqual({
           text: `Run talk opened the answer talk ${answerTalk}`,
           talk: answerTalk,
+          model: 'anthropic/claude-opus-5-5',
         })
         expect(actions(yield* written(engine))).toMatchObject([
           { tool: 'open_answer_talk', talk: answerTalk },

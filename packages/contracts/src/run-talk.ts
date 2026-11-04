@@ -1,5 +1,6 @@
 import { Schema } from 'effect'
 
+import { ModelName } from './events'
 import { PermissionId, TalkId, TicketId } from './ids'
 import { AttentionRequest, PermissionDecision } from './rpc/attention'
 import { TicketDetail, Why } from './rpc/backlog'
@@ -118,10 +119,16 @@ export const Acted = Schema.Struct({
   text: Text,
   /** What else the maintainer should hear of it. */
   also: Schema.optionalKey(Text),
-  /** The talk it opened. */
-  talk: Schema.optionalKey(TalkId),
 })
 export type Acted = typeof Acted.Type
+
+/** The answer talk a command opened: History's line, and the talk, for a client to take up (§15.3). */
+export const AnswerTalkOpened = Schema.Struct({
+  text: Text,
+  talk: TalkId,
+  model: ModelName,
+})
+export type AnswerTalkOpened = typeof AnswerTalkOpened.Type
 
 export const MessageWorkerTool = {
   name: 'message_worker',
@@ -325,5 +332,5 @@ export const OpenAnswerTalkTool = {
   parameters: Schema.Struct({
     questions: Schema.OptionFromOptionalKey(Schema.Array(TicketId)),
   }),
-  success: Acted,
+  success: AnswerTalkOpened,
 } satisfies AnyTool
