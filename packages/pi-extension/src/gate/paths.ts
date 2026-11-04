@@ -439,6 +439,32 @@ export const locations = (
       }),
   })
 
+/** Whether `path`, absolute and its links already followed, is a folder on the file system. */
+const isFolderAt = (path: string): boolean => {
+  try {
+    return lstatSync(path).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+/** For each place `pattern` lands, whether it's a folder there: a link at its end followed or not, as `last` says. */
+export const folderReadings = (
+  pattern: string,
+  context: PathContext,
+  last: LastLink,
+): ReadonlyArray<boolean> =>
+  Locations.$match(locations(pattern, context, last), {
+    Refused: () => [],
+    Located: ({ places }) =>
+      places.flatMap(place =>
+        Place.$match(place, {
+          At: ({ path }) => [isFolderAt(path)],
+          Unknown: () => [],
+        }),
+      ),
+  })
+
 /** The most a command can be held to among `found`, readings of one path: refused, outside, can't tell, or inside. */
 export const worst = (found: ReadonlyArray<Confinement>): Confinement =>
   found.find(Confinement.$is('Refused')) ??

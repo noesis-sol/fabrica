@@ -8,6 +8,7 @@ import {
   type PathContext,
   Place,
   confine,
+  folderReadings,
   isInside,
   locations,
   realFolder,
@@ -73,6 +74,54 @@ const modeWriters = new Set(['chmod', 'chown', 'chgrp'])
 
 /** Commands copying or linking to their last operand, or to `-t`'s folder. */
 const copiers = new Set(['cp', 'ln', 'install'])
+
+/** The options of `mv`, and of the copiers, that take a value. */
+const moverValues = new Set(['-t', '-S', '--target-directory', '--suffix'])
+const copierValues = new Set([
+  ...moverValues,
+  '-m',
+  '-o',
+  '-g',
+  '--mode',
+  '--owner',
+  '--group',
+])
+
+/** An option of `sed` that edits in place, its suffix attached; the options before it in a group take no value. */
+const sedInPlace = /^-[EalnrsuzZ]*[iI]/u
+
+/** `sed`'s options that take a script. */
+const sedScripts = new Set(['-e', '-f', '--expression', '--file'])
+
+/** `sort`'s options that take a value. */
+const sortValues = new Set([
+  '-k',
+  '-o',
+  '-S',
+  '-t',
+  '-T',
+  '--key',
+  '--output',
+  '--buffer-size',
+  '--field-separator',
+  '--temporary-directory',
+  '--batch-size',
+  '--compress-program',
+  '--files0-from',
+  '--parallel',
+  '--random-source',
+  '--sort',
+])
+
+/** `git init`'s options that take a value. */
+const gitInitValues = new Set([
+  '-b',
+  '--initial-branch',
+  '--object-format',
+  '--ref-format',
+  '--separate-git-dir',
+  '--template',
+])
 
 const network = new Set([
   'curl',
@@ -177,6 +226,33 @@ const syntheticWord = (word: Word, suffix: string): Word => ({
   dynamic: word.dynamic,
 })
 
+/** In a group of short options (`-rt`, `-rtdir`), the first that takes a value in `values`, and where its value starts in `text`. */
+const valuedShort = (
+  text: string,
+  values: ReadonlySet<string>,
+): Option.Option<{ readonly option: string; readonly start: number }> => {
+  if (!text.startsWith('-')) return Option.none()
+  for (let at = 1; at < text.length; at++) {
+    const letter = text[at] ?? ''
+    if (!/[A-Za-z0-9]/u.test(letter)) return Option.none()
+    const option = `-${letter}`
+    if (values.has(option)) return Option.some({ option, start: at + 1 })
+  }
+  return Option.none()
+}
+
+/** Whether `text`, an option, leaves its value to the next word. */
+const takesNextWord = (text: string, values: ReadonlySet<string>): boolean =>
+  values.has(text) ||
+  Option.exists(valuedShort(text, values), ({ start }) => start === text.length)
+
+/** `word` from `start`, where the characters before it are an option's, written the same in its text and its pattern. */
+const attachedValue = (word: Word, start: number): Word => ({
+  text: word.text.slice(start),
+  pattern: word.pattern.slice(start),
+  dynamic: word.dynamic,
+})
+
 /** The operands of `words`: past their options, those taking a value in `values` skipped with it. */
 const operands = (
   words: ReadonlyArray<Word>,
@@ -195,7 +271,7 @@ const operands = (
     )
       found.push(word)
     else if (word.text === '--') ended = true
-    else if (values.has(word.text)) index++
+    else if (takesNextWord(word.text, values)) index++
   }
   return found
 }
@@ -216,25 +292,36 @@ const hasOption = (
       ),
   )
 
-/** The value of option `option` in `words` (`-t dir`, `--target=dir`), when given. */
-const optionValue = (
+/** The values given to the option called `names` in `words` (`-t dir`, `-tdir`, `-rt dir`, `--target=dir`), read up to `--`; `values` are the options that take one. */
+const optionValues = (
   words: ReadonlyArray<Word>,
-  short: string,
-  long: string,
-): Option.Option<Word> => {
+  names: ReadonlyArray<string>,
+  values: ReadonlySet<string>,
+): ReadonlyArray<Word> => {
+  const found: Array<Word> = []
   for (let index = 0; index < words.length; index++) {
     const word = words[index]
-    if (word === undefined) continue
-    if (word.text === short || word.text === long)
-      return Option.fromUndefinedOr(words[index + 1])
-    if (word.text.startsWith(`${long}=`))
-      return Option.some({
-        text: word.text.slice(long.length + 1),
-        pattern: word.pattern.slice(long.length + 1),
-        dynamic: word.dynamic,
-      })
+    if (word === undefined || word.text === '--') break
+    const { text } = word
+    const equals = text.indexOf('=')
+    if (text.startsWith('--') && equals !== -1) {
+      if (names.includes(text.slice(0, equals)))
+        found.push(attachedValue(word, equals + 1))
+      continue
+    }
+    const short = valuedShort(text, values)
+    const named =
+      names.includes(text) ||
+      Option.exists(short, ({ option }) => names.includes(option))
+    const next = takesNextWord(text, values)
+    if (named && next) {
+      const value = words[index + 1]
+      if (value !== undefined) found.push(value)
+    } else if (named && Option.isSome(short))
+      found.push(attachedValue(word, short.value.start))
+    if (next) index++
   }
-  return Option.none()
+  return found
 }
 
 /** git config's options that take a value, the next word when not joined by `=`. */
@@ -298,6 +385,9 @@ const configReads = (words: ReadonlyArray<Word>): boolean => {
 
 /** What `find` does with what it finds, beyond reading it. */
 const findActions = new Set(['-delete', '-exec', '-execdir', '-ok', '-okdir'])
+
+/** `find`'s primaries writing to the file named by the word after them. */
+const findOutputs = new Set(['-fprint', '-fprint0', '-fprintf', '-fls'])
 
 /** `find`'s primaries that `-f` and a root attached (BSD's `-froot`) would read otherwise. */
 const findPrimaries =
@@ -469,6 +559,31 @@ class Policy {
         ),
       Refused: ({ reason }) => this.refuse(reason),
     })
+  }
+
+  /**
+   * `ln -s`'s `made` targets with the link's name last on its line: `ln` makes each link inside it
+   * where it is already a folder, so a target is read from there, or else from the folder it's made in.
+   */
+  linkedTo(
+    made: ReadonlyArray<Word>,
+    link: Word,
+    last: LastLink | 'never a folder',
+    cwd: Folders,
+  ): void {
+    for (const from of cwd) {
+      const readings =
+        link.dynamic || last === 'never a folder'
+          ? []
+          : folderReadings(link.pattern, this.paths(from), last)
+      const inFolder = readings.some(folder => folder)
+      for (const target of made) {
+        if (inFolder)
+          this.linked(fromLink(target, syntheticWord(link, '/_')), [from])
+        if (!inFolder || readings.some(folder => !folder))
+          this.linked(fromLink(target, link), [from])
+      }
+    }
   }
 
   /** The folders `word` names from each of `cwd`: every brace alternative, a glob read as `..` where it can be. */
@@ -678,6 +793,13 @@ class Policy {
         return after(new Set(['-s', '-k', '--signal', '--kill-after']), 1)
       case 'watch':
         return after(new Set(['-n', '-d', '--interval']))
+      case 'busybox':
+      case 'toybox':
+        if (args[0]?.text === '--install') {
+          this.ask(`${name} --install writes its links where it’s told`)
+          return []
+        }
+        return args
       case 'xargs': {
         const command = after(
           new Set([
@@ -744,6 +866,12 @@ class Policy {
     for (let index = 0; index < expression.length; index++) {
       const word = expression[index]
       if (word === undefined || word.text === '-delete') continue
+      if (findOutputs.has(word.text)) {
+        const output = expression[index + 1]
+        if (output !== undefined) this.written(output, cwd)
+        index++
+        continue
+      }
       if (!findActions.has(word.text)) continue
       const end = expression.findIndex(
         // `+` ends the command only straight after `{}`.
@@ -776,57 +904,51 @@ class Policy {
       return
     }
     if (name === 'mv') {
-      const all = operands(args, new Set(['-t', '-S', '--suffix']))
-      const target = optionValue(args, '-t', '--target-directory')
-      const sources = Option.isSome(target) ? all : all.slice(0, -1)
-      for (const source of sources) this.removed(source, cwd)
-      Option.match(
-        Option.orElse(target, () => Option.fromUndefinedOr(all.at(-1))),
-        {
-          onNone: () => undefined,
-          onSome: destination => this.written(destination, cwd),
-        },
+      const all = operands(args, moverValues)
+      const targets = optionValues(
+        args,
+        ['-t', '--target-directory'],
+        moverValues,
       )
+      const sources = targets.length > 0 ? all : all.slice(0, -1)
+      for (const source of sources) this.removed(source, cwd)
+      for (const destination of targets.length > 0 ? targets : all.slice(-1))
+        this.written(destination, cwd)
       return
     }
     if (copiers.has(name)) {
-      const all = operands(
-        args,
-        new Set([
-          '-t',
-          '-S',
-          '-m',
-          '-o',
-          '-g',
-          '--suffix',
-          '--mode',
-          '--owner',
-          '--group',
-        ]),
-      )
+      const all = operands(args, copierValues)
       if (name === 'install' && hasOption(args, '-d', '--directory')) {
         for (const folder of all) this.written(folder, cwd)
         return
       }
-      const target = optionValue(args, '-t', '--target-directory')
-      if (name === 'ln' && hasOption(args, '-s', '--symbolic')) {
-        const named = Option.isNone(target) && all.length > 1
-        const link = Option.match(target, {
-          onNone: () => (named ? all.at(-1) : undefined),
-          onSome: folder => syntheticWord(folder, '/_'),
-        })
-        for (const made of named ? all.slice(0, -1) : all)
-          this.linked(link === undefined ? made : fromLink(made, link), cwd)
-      }
-      Option.match(
-        Option.orElse(target, () =>
-          all.length > 1 ? Option.fromUndefinedOr(all.at(-1)) : Option.none(),
-        ),
-        {
-          onNone: () => undefined,
-          onSome: destination => this.written(destination, cwd),
-        },
+      const targets = optionValues(
+        args,
+        ['-t', '--target-directory'],
+        copierValues,
       )
+      const lastNames = targets.length === 0 && all.length > 1
+      if (name === 'ln' && hasOption(args, '-s', '--symbolic')) {
+        for (const folder of targets)
+          for (const made of all)
+            this.linked(fromLink(made, syntheticWord(folder, '/_')), cwd)
+        const last = all.at(-1)
+        if (targets.length === 0 && !lastNames)
+          for (const made of all) this.linked(made, cwd)
+        else if (lastNames && last !== undefined)
+          this.linkedTo(
+            all.slice(0, -1),
+            last,
+            hasOption(args, '-T', '--no-target-directory')
+              ? 'never a folder'
+              : hasOption(args, '-n', '-h', '--no-dereference')
+                ? 'kept'
+                : 'followed',
+            cwd,
+          )
+      }
+      for (const destination of lastNames ? all.slice(-1) : targets)
+        this.written(destination, cwd)
       return
     }
     const values = writers.get(name)
@@ -855,13 +977,19 @@ class Policy {
           )
       return
     }
-    if (name === 'sed' && hasOption(args, '-i', '--in-place')) {
-      const scripted = hasOption(args, '-e', '-f', '--expression', '--file')
-      const all = operands(
-        args,
-        new Set(['-e', '-f', '--expression', '--file']),
-      )
+    if (name === 'sed') {
+      const rest = args.filter(({ text }) => !sedInPlace.test(text))
+      if (rest.length === args.length && !hasOption(args, '--in-place')) return
+      const scripted =
+        hasOption(rest, '--expression', '--file') ||
+        rest.some(({ text }) => Option.isSome(valuedShort(text, sedScripts)))
+      const all = operands(rest, sedScripts)
       for (const file of scripted ? all : all.slice(1)) this.written(file, cwd)
+      return
+    }
+    if (name === 'sort') {
+      for (const output of optionValues(args, ['-o', '--output'], sortValues))
+        this.written(output, cwd)
       return
     }
     if (network.has(name)) {
@@ -1071,9 +1199,9 @@ class Policy {
         // A write without --worktree lands in the config every worktree shares (or the user's,
         // or the system's), where core.fsmonitor or core.hooksPath runs in the engine's own git.
         if (configReads(subArgs)) return
-        const file = optionValue(subArgs, '-f', '--file')
-        if (Option.isSome(file)) this.written(file.value, folder)
-        else if (!hasOption(subArgs, '--worktree'))
+        const files = optionValues(subArgs, ['-f', '--file'], configValues)
+        for (const file of files) this.written(file, folder)
+        if (files.length === 0 && !hasOption(subArgs, '--worktree'))
           this.ask(
             'git config writes git’s settings outside the worktree, which other worktrees share',
           )
@@ -1087,6 +1215,13 @@ class Policy {
           if (path !== undefined) this.written(path, folder)
         } else if (second !== undefined && second !== 'list')
           this.ask(`${command} ${second} changes other worktrees`)
+        return
+      case 'init':
+        for (const path of [
+          ...operands(subArgs, gitInitValues),
+          ...optionValues(subArgs, ['--separate-git-dir'], gitInitValues),
+        ])
+          this.written(path, folder)
         return
       case 'reflog':
         if (second === 'expire' || second === 'delete')
@@ -1146,7 +1281,6 @@ const knownGit = new Set([
   'grep',
   'hash-object',
   'help',
-  'init',
   'interpret-trailers',
   'log',
   'ls-files',

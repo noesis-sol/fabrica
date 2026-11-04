@@ -38,11 +38,14 @@ export const Ruling = Data.taggedEnum<Ruling>()
 /** The spaces Pi reads as a plain space in a file tool's path. */
 const unicodeSpaces = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/gu
 
+/** A `file://` URL's path, none where it names none on this machine (`file://host/x`, `file:///a%2Fb`). */
+const urlPath = Option.liftThrowable((url: string) => fileURLToPath(url))
+
 /** The path a Pi file tool takes, as Pi reads it: its spaces plain, a leading `@` dropped, a `file://` URL as its path. */
-const toolPath = (path: string): string => {
+const toolPath = (path: string): Option.Option<string> => {
   const spaced = path.replace(unicodeSpaces, ' ')
   const bare = spaced.startsWith('@') ? spaced.slice(1) : spaced
-  return bare.startsWith('file://') ? fileURLToPath(bare) : bare
+  return bare.startsWith('file://') ? urlPath(bare) : Option.some(bare)
 }
 
 const written = (
@@ -54,19 +57,24 @@ const written = (
     return [Finding.Ask({ reason: 'the call names no path the gate can read' })]
   const worktree = realFolder(context.worktree)
   const paths = { ...context, worktree, cwd: Option.some(worktree) }
-  const opened = toolPath(path)
-  // Pi opens the path as plain text; read as a shell pattern too, a pattern is refused or asked.
-  return Confinement.$match(
-    worst([confine(opened, paths), confine(escapedPath(opened), paths)]),
-    {
-      Inside: () => [],
-      Outside: ({ path: outside }) => [
-        Finding.Ask({ reason: `writes outside the worktree: ${outside}` }),
-      ],
-      Unknown: ({ reason }) => [Finding.Ask({ reason })],
-      Refused: ({ reason }) => [Finding.Refused({ reason })],
-    },
-  )
+  return Option.match(toolPath(path), {
+    onNone: () => [
+      Finding.Ask({ reason: `the gate can’t read the file URL ${path}` }),
+    ],
+    onSome: opened =>
+      // Pi opens the path as plain text; read as a shell pattern too, a pattern is refused or asked.
+      Confinement.$match(
+        worst([confine(opened, paths), confine(escapedPath(opened), paths)]),
+        {
+          Inside: () => [],
+          Outside: ({ path: outside }) => [
+            Finding.Ask({ reason: `writes outside the worktree: ${outside}` }),
+          ],
+          Unknown: ({ reason }) => [Finding.Ask({ reason })],
+          Refused: ({ reason }) => [Finding.Refused({ reason })],
+        },
+      ),
+  })
 }
 
 const powerShellPush = /\bgit\b[^\n;|&]*\bpush\b/iu
