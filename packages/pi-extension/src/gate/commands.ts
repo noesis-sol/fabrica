@@ -3,12 +3,14 @@ import { basename } from 'node:path'
 
 import {
   Confinement,
+  type LastLink,
   Locations,
   type PathContext,
   Place,
   confine,
   isInside,
   locations,
+  realFolder,
 } from './paths'
 import { Script, type SimpleCommand, type Word, parseScript } from './shell'
 
@@ -353,12 +355,14 @@ class Policy {
   }
 
   /** Where `word` lands, read from each of `cwd`: outside where it is from any. */
-  place(word: Word, cwd: Folders): Confinement {
+  place(word: Word, cwd: Folders, last: LastLink = 'followed'): Confinement {
     if (word.dynamic)
       return Confinement.Unknown({
         reason: `${word.text} is known only when it runs`,
       })
-    const found = cwd.map(folder => confine(word.pattern, this.paths(folder)))
+    const found = cwd.map(folder =>
+      confine(word.pattern, this.paths(folder), last),
+    )
     return (
       found.find(Confinement.$is('Refused')) ??
       found.find(Confinement.$is('Outside')) ??
@@ -378,13 +382,26 @@ class Policy {
     })
   }
 
-  removed(word: Word, cwd: Folders): void {
-    Confinement.$match(this.place(word, cwd), {
+  removed(word: Word, cwd: Folders, last: LastLink = 'kept'): void {
+    Confinement.$match(this.place(word, cwd, last), {
       Inside: () => undefined,
       Outside: ({ path }) =>
         this.refuse(`removes outside the worktree: ${path}`),
       Unknown: ({ reason }) =>
         this.ask(`removes ${word.text}, which the gate can’t place: ${reason}`),
+      Refused: ({ reason }) => this.refuse(reason),
+    })
+  }
+
+  /** `ln -s`: a link made here isn't on disk yet for the rest of the line to be read through, so one out of the worktree asks. */
+  linked(word: Word, cwd: Folders): void {
+    Confinement.$match(this.place(word, cwd), {
+      Inside: () => undefined,
+      Outside: ({ path }) => this.ask(`links to ${path}, outside the worktree`),
+      Unknown: ({ reason }) =>
+        this.ask(
+          `links to ${word.text}, which the gate can’t place: ${reason}`,
+        ),
       Refused: ({ reason }) => this.refuse(reason),
     })
   }
@@ -643,8 +660,9 @@ class Policy {
     const roots: ReadonlyArray<Word> =
       given.length > 0 ? given : [{ text: '.', pattern: '.', dynamic: false }]
     const expression = start === -1 ? [] : args.slice(start)
+    // `-H` and `-L` go through a root that is a link.
     if (expression.some(({ text }) => text === '-delete'))
-      for (const root of roots) this.removed(root, cwd)
+      for (const root of roots) this.removed(root, cwd, 'followed')
     for (let index = 0; index < expression.length; index++) {
       const word = expression[index]
       if (
@@ -672,7 +690,9 @@ class Policy {
 
   plain(name: string, args: ReadonlyArray<Word>, cwd: Folders): void {
     if (removals.has(name)) {
-      for (const target of operands(args)) this.removed(target, cwd)
+      // `shred` overwrites what a link points at; the others remove the link.
+      const last = name === 'shred' ? 'followed' : 'kept'
+      for (const target of operands(args)) this.removed(target, cwd, last)
       return
     }
     if (name === 'mv') {
@@ -709,6 +729,11 @@ class Policy {
         return
       }
       const target = optionValue(args, '-t', '--target-directory')
+      if (name === 'ln' && hasOption(args, '-s', '--symbolic'))
+        for (const linked of Option.isNone(target) && all.length > 1
+          ? all.slice(0, -1)
+          : all)
+          this.linked(linked, cwd)
       Option.match(
         Option.orElse(target, () =>
           all.length > 1 ? Option.fromUndefinedOr(all.at(-1)) : Option.none(),
@@ -1084,7 +1109,8 @@ export const commandFindings = (
   source: string,
   context: CommandContext,
 ): ReadonlyArray<Finding> => {
-  const policy = new Policy(context)
-  policy.script(source, [Option.some(context.worktree)], 0)
+  const worktree = realFolder(context.worktree)
+  const policy = new Policy({ ...context, worktree })
+  policy.script(source, [Option.some(worktree)], 0)
   return policy.findings
 }

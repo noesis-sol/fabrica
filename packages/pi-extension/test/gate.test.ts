@@ -35,7 +35,8 @@ import type { PiApi } from '../src/pi'
 // brace alternatives, the merge queue's hold on the branch (H59), the permission request carrying the
 // call whole, every decision reported, and a gate that fails blocking. The engine is an in-memory
 // one: it answers the merge queue's standing and the maintainer's decision, and records what it is
-// asked and told. Paths are read as written, so the worktree needn't exist.
+// asked and told. What doesn't exist is read as written, so the worktree needn't exist; a path
+// through a link is `gate-links.test.ts`'s.
 
 type Handler<E, R> = (event: E) => Promise<R | undefined> | R | undefined
 

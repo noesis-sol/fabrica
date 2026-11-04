@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import type { Permissions } from '@fabrica/contracts'
 
 import { type CommandContext, Finding, commandFindings } from './commands'
-import { Confinement, confine } from './paths'
+import { Confinement, confine, realFolder } from './paths'
 
 // The permission policy (spec §12.6): a tool call read for what it does (a read, a write, a command,
 // another tool) and its findings, and the project's level applied to them. `workspace` reads
@@ -48,8 +48,13 @@ const written = (
   const path = input['path']
   if (typeof path !== 'string')
     return [Finding.Ask({ reason: 'the call names no path the gate can read' })]
+  const worktree = realFolder(context.worktree)
   return Confinement.$match(
-    confine(toolPath(path), { ...context, cwd: Option.some(context.worktree) }),
+    confine(toolPath(path), {
+      ...context,
+      worktree,
+      cwd: Option.some(worktree),
+    }),
     {
       Inside: () => [],
       Outside: ({ path: outside }) => [
