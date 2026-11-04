@@ -739,8 +739,8 @@ const runStarted = Effect.fn('Run.started')(function* (
     holds: Option.some({ usage, credentials, held }),
     billing: () => 'api_key',
   })
-  // The predictor's guess at a ticket naming no files (§16): an answer's record wakes the run as any
-  // change of the work graph does, and a guess lost wakes it too.
+  // The predictor's guess at a ticket naming no files (§16): a question's end wakes the run, which reads
+  // the ready tickets again, the guess among them.
   const predictor = yield* makePredictor({
     organs,
     checkout: config.checkout,
@@ -1979,9 +1979,9 @@ const runStarted = Effect.fn('Run.started')(function* (
         if (reasons.some(reason => WakeReason.$is('TicketsChanged')(reason)))
           yield* undeferred
         const reading = readReady(yield* state.current)
-        ready = yield* starting
-          ? view.steps.during('backlog')(reading)
-          : reading
+        ready = yield* predictor.reading(
+          starting ? view.steps.during('backlog')(reading) : reading,
+        )
       }
       if (starting)
         yield* record(log, {

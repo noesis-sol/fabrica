@@ -1,4 +1,4 @@
-import { Deferred, Effect, Option, Schema } from 'effect'
+import { Deferred, Effect, Fiber, Option, Schema } from 'effect'
 import { type ServerResponse, createServer } from 'node:http'
 
 import { beforeAll, describe, expect, it } from '@effect/vitest'
@@ -10,7 +10,7 @@ import {
   makeRepository,
   ticketFootprint,
 } from '../src/footprints'
-import { ticketBranch } from '../src/git'
+import { Git, ticketBranch } from '../src/git'
 import {
   OrganOutcome,
   type OrganQuestion,
@@ -104,6 +104,11 @@ describe("the predictor's rules", () => {
     ['src/latest.ts', false],
     ['docs/contest.md', false],
     ['README.md', false],
+    ['docs/spec/fabrica-spec.md', false],
+    ['src/spec/run.ts', false],
+    ['spec/run_spec.rb', true],
+    ['spec/helper.rb', true],
+    ['test/README.md', false],
   ])('tells %s a test: %s', (path, test) => {
     expect(isTestFile(path)).toBe(test)
   })
@@ -242,6 +247,9 @@ describe('the predictor', () => {
           expect(yield* predictor.asking).toBe(true)
           yield* Deferred.succeed(answer, undefined)
           yield* Deferred.await(woken)
+          // It waits until the run has read the ready tickets since.
+          expect(yield* predictor.asking).toBe(true)
+          yield* predictor.reading(Effect.void)
           expect(yield* predictor.asking).toBe(false)
           const after = yield* reread(ticket.id)
           expect(Option.getOrThrow(after.metadata.predicted_files)).toEqual([
@@ -353,6 +361,109 @@ describe('the predictor', () => {
           const still = yield* predictor.offer({ ready, free: 2 })
           expect(still.has(third.id)).toBe(true)
           expect(asked).toHaveLength(2)
+        }),
+      )
+    },
+  )
+
+  it.effect(
+    "doesn't let a look weigh a ticket as it was before its question ended",
+    () => {
+      const fixture = project()
+      return withRuns(
+        fixture,
+        Effect.gen(function* () {
+          const ticket = yield* file('Make it faster', 'finish')
+          const answer = yield* Deferred.make<void>()
+          const { predictor, woken } = yield* predictorIn(fixture, () =>
+            Effect.andThen(Deferred.await(answer), guess(['src/x.ts'])),
+          )
+          const stale = candidate(ticket)
+          yield* predictor.offer({ ready: [stale], free: 2 })
+          // Its question ends during the read of the ready tickets: that read may not have its guess.
+          yield* predictor.reading(
+            Effect.andThen(
+              Deferred.succeed(answer, undefined),
+              Deferred.await(woken),
+            ),
+          )
+          const during = yield* predictor.offer({ ready: [stale], free: 2 })
+          expect([...during]).toEqual([ticket.id])
+          // A read begun since has it.
+          yield* predictor.reading(Effect.void)
+          expect(yield* predictor.asking).toBe(false)
+          const after = yield* predictor.offer({
+            ready: [candidate(yield* reread(ticket.id))],
+            free: 2,
+          })
+          expect(after.size).toBe(0)
+        }),
+      )
+    },
+  )
+
+  it.effect(
+    'leaves a ticket waiting no more though its question ended during the reads of a later offer',
+    () => {
+      const fixture = project()
+      return withRuns(
+        fixture,
+        Effect.gen(function* () {
+          const first = yield* file('Make it faster', 'finish')
+          const second = yield* file('Make it smaller', 'finish')
+          const real = yield* Git
+          const reached = yield* Deferred.make<void>()
+          const release = yield* Deferred.make<void>()
+          const answer = yield* Deferred.make<void>()
+          const stand = organsAnswering(id =>
+            id === first.id
+              ? Effect.andThen(Deferred.await(answer), guess(['src/x.ts']))
+              : guess(['src/y.ts']),
+          )
+          const firstEnded = yield* Deferred.make<void>()
+          const allEnded = yield* Deferred.make<void>()
+          let wakes = 0
+          const predictor = yield* makePredictor({
+            organs: stand.organs,
+            checkout: fixture.checkout,
+            base: 'main',
+            enabled: true,
+            woken: Effect.suspend(() => {
+              wakes += 1
+              return Deferred.succeed(
+                wakes === 1 ? firstEnded : allEnded,
+                undefined,
+              ).pipe(Effect.asVoid)
+            }),
+          }).pipe(
+            Effect.provideService(
+              Git,
+              Git.of({
+                ...real,
+                commitHash: input =>
+                  input.revision === ticketBranch(second.id)
+                    ? Deferred.succeed(reached, undefined).pipe(
+                        Effect.andThen(Deferred.await(release)),
+                        Effect.andThen(real.commitHash(input)),
+                      )
+                    : real.commitHash(input),
+              }),
+            ),
+          )
+          yield* predictor.offer({ ready: [candidate(first)], free: 3 })
+          const later = yield* Effect.forkChild(
+            predictor.offer({ ready: [candidate(second)], free: 3 }),
+          )
+          yield* Deferred.await(reached)
+          yield* Deferred.succeed(answer, undefined)
+          yield* Deferred.await(firstEnded)
+          yield* predictor.reading(Effect.void)
+          yield* Deferred.succeed(release, undefined)
+          const waits = yield* Fiber.join(later)
+          expect([...waits]).toEqual([second.id])
+          yield* Deferred.await(allEnded)
+          yield* predictor.reading(Effect.void)
+          expect(yield* predictor.asking).toBe(false)
         }),
       )
     },
@@ -516,6 +627,7 @@ describe('the predictor', () => {
           const waits = yield* predictor.offer({ ready, free: 3 })
           expect(waits.size).toBe(3)
           yield* Deferred.await(all)
+          yield* predictor.reading(Effect.void)
           expect(yield* predictor.asking).toBe(false)
           const after = yield* reread(kept.id)
           expect(after.metadata.predicted_files).toEqual(
@@ -674,8 +786,42 @@ describe('the predictor in a run', () => {
     },
   )
 
+  it.effect('guesses at every ticket naming nothing in turn', () => {
+    const fixture = project(
+      {
+        ...settings,
+        organs: { predictor: { model: 'anthropic/claude-sonnet-4-5' } },
+      },
+      { 'src/x.ts': 'one\n' },
+    )
+    return Effect.gen(function* () {
+      const provider = yield* guessingProvider(['src/x.ts'])
+      return yield* Effect.gen(function* () {
+        const made = yield* Effect.all([
+          file('Make it faster', 'finish'),
+          file('Make it smaller', 'finish'),
+          file('Make it quieter', 'finish'),
+        ])
+        const end = yield* runProject(configOf(fixture, options()))
+        const events = yield* eventsOf(fixture)
+        expect(end.kind).toBe('READY_EMPTY')
+        const ids = made.map(({ id }) => id).sort()
+        expect(
+          ofKind(events, 'dispatch')
+            .map(({ ticket }) => ticket)
+            .sort(),
+        ).toEqual(ids)
+        expect(
+          ofKind(events, 'organ')
+            .map(({ ticket }) => ticket)
+            .sort(),
+        ).toEqual(ids)
+      }).pipe(Effect.provide(services(fixture, provider.url)))
+    }).pipe(Effect.scoped)
+  })
+
   it.effect(
-    'guesses at every ticket naming nothing in turn, and holds those sharing a guess apart',
+    'holds two tickets apart on the file both are guessed to change',
     () => {
       const fixture = project(
         {
@@ -685,27 +831,29 @@ describe('the predictor in a run', () => {
         { 'src/x.ts': 'one\n' },
       )
       return Effect.gen(function* () {
-        const provider = yield* guessingProvider(['src/x.ts'])
+        // Each worker does change it, a file no ticket's text can name yet: past its work, a ticket
+        // holds on what its branch changed.
+        const provider = yield* guessingProvider(['new.txt'])
         return yield* Effect.gen(function* () {
-          const made = yield* Effect.all([
-            file('Make it faster', 'finish'),
-            file('Make it smaller', 'finish'),
-            file('Make it quieter', 'finish'),
-          ])
+          yield* file('Make it faster', 'finish new.txt')
+          yield* file('Make it smaller', 'finish new.txt')
           const end = yield* runProject(configOf(fixture, options()))
           const events = yield* eventsOf(fixture)
           expect(end.kind).toBe('READY_EMPTY')
-          const ids = made.map(({ id }) => id).sort()
-          expect(
-            ofKind(events, 'dispatch')
-              .map(({ ticket }) => ticket)
-              .sort(),
-          ).toEqual(ids)
-          expect(
-            ofKind(events, 'organ')
-              .map(({ ticket }) => ticket)
-              .sort(),
-          ).toEqual(ids)
+          const [one, other] = ofKind(events, 'dispatch')
+          if (one === undefined || other === undefined)
+            throw new Error('two dispatches')
+          const closed = events.findIndex(
+            event => event.kind === 'closed' && event.ticket === one.ticket,
+          )
+          expect(closed).toBeGreaterThan(-1)
+          expect(closed).toBeLessThan(events.indexOf(other))
+          expect(ofKind(events, 'info').map(({ text }) => text)).toContain(
+            `  ${one.ticket} footprint: new.txt, (predicted)`,
+          )
+          expect(ofKind(events, 'organ').map(({ outcome }) => outcome)).toEqual(
+            ['answered', 'answered'],
+          )
         }).pipe(Effect.provide(services(fixture, provider.url)))
       }).pipe(Effect.scoped)
     },

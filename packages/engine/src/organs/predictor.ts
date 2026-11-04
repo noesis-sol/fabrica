@@ -10,7 +10,7 @@ import {
   makeRepository,
   ticketText,
 } from '../footprints'
-import { basename, dirname } from '../footprints/names'
+import { basename, dirname, isDocument } from '../footprints/names'
 import { Git, ticketBranch } from '../git'
 import { WorkGraph } from '../workgraph'
 import { OrganOutcome, type OrganRuntime } from './runtime'
@@ -21,7 +21,8 @@ import { OrganOutcome, type OrganRuntime } from './runtime'
 // the ticket as `predicted_files`, which its footprint reads from then on. The ticket waits for the guess
 // in the queue, while the slots go to the others. A ticket with commits on its branch is skipped:
 // its footprint is what its branch changes (tutti-sp8). Each ticket is asked about once in a run: a guess
-// lost is that ticket's alone, logged, and it goes on without one (tutti-mwd).
+// lost is that ticket's alone, logged, and it goes on without one (tutti-mwd). A ticket whose question
+// ended waits until the run has read the ready tickets since, so that no look weighs it as it was before.
 
 const organ: OrganName = 'predictor'
 
@@ -45,18 +46,21 @@ const testFolders = new Set([
   'tests',
   '__tests__',
   '__snapshots__',
-  'spec',
-  'specs',
   'testdata',
   'fixtures',
 ])
 
-/** Whether a path is a test's, by its folders or its name, in the usual runners' ways. */
+/** Folders of tests only at the repository's root: `src/spec/` is a program's own. */
+const rootTestFolders = new Set(['spec', 'specs'])
+
+/** Whether a path is a test's, by its folders or its name, in the usual runners' ways; a document is none. */
 export const isTestFile = (path: string): boolean => {
-  const folders = dirname(path).split('/')
+  if (isDocument(path)) return false
+  const folders = dirname(path).toLowerCase().split('/')
   const base = basename(path)
   return (
-    folders.some(folder => testFolders.has(folder.toLowerCase())) ||
+    folders.some(folder => testFolders.has(folder)) ||
+    rootTestFolders.has(folders[0] ?? '') ||
     /[._-](?:test|tests|spec)\.[^.]+$/iu.test(base) ||
     /^test_/iu.test(base) ||
     /[a-z]Tests?\.[^.]+$/u.test(base)
@@ -163,8 +167,15 @@ export interface Predictor {
     readonly ready: ReadonlyArray<PredictorCandidate>
     readonly free: number
   }) => Effect.Effect<ReadonlySet<TicketId>>
-  /** Whether a guess is on its way: a ticket to come, which keeps the run. */
+  /** Whether a ticket waits for its guess: a ticket to come, which keeps the run. */
   readonly asking: Effect.Effect<boolean>
+  /**
+   * Runs the read of the ready tickets: those whose question ended before it began wait no more, as
+   * it has their guess.
+   */
+  readonly reading: <A, E, R>(
+    read: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>
 }
 
 /** The run's predictor, within its scope: its questions end with it. */
@@ -184,6 +195,8 @@ export const makePredictor = Effect.fn('Predictor.make')(function* (input: {
   // The tickets weighed this run, each once: a guess lost isn't asked for again, ticket after ticket.
   const weighed = new Set<TicketId>()
   const waiting = yield* Ref.make<ReadonlySet<TicketId>>(new Set())
+  // Those of them whose question ended, whose wake is to come.
+  const ended = yield* Ref.make<ReadonlySet<TicketId>>(new Set())
 
   /** Whether the ticket's branch has commits Base hasn't; one git can't tell is taken to. */
   const hasCommits = (ticket: TicketId) =>
@@ -250,12 +263,7 @@ export const makePredictor = Effect.fn('Predictor.make')(function* (input: {
               `ORGAN: the predictor lost ${ticket.id}'s guess: ${Cause.pretty(cause)}`,
             ),
       ),
-      Effect.andThen(
-        Ref.update(
-          waiting,
-          now => new Set([...now].filter(id => id !== ticket.id)),
-        ),
-      ),
+      Effect.andThen(Ref.update(ended, now => new Set([...now, ticket.id]))),
       Effect.andThen(input.woken),
     )
 
@@ -274,7 +282,11 @@ export const makePredictor = Effect.fn('Predictor.make')(function* (input: {
           if (!(yield* hasCommits(ticket.id))) asked.push(ticket)
         }
       }
-      const asking = new Set([...now, ...asked.map(({ id }) => id)])
+      // Added to what waits by now: a question may have ended during the reads above.
+      const asking = yield* Ref.updateAndGet(
+        waiting,
+        current => new Set([...current, ...asked.map(({ id }) => id)]),
+      )
       if (asked.length > 0) {
         // Base's files, read once for those asked now, within a question so that a failure loses its guess alone.
         const repository = yield* Effect.cached(
@@ -282,7 +294,6 @@ export const makePredictor = Effect.fn('Predictor.make')(function* (input: {
             .trackedFiles({ repo: input.checkout, revision: input.base })
             .pipe(Effect.map(makeRepository), Effect.orDie),
         )
-        yield* Ref.set(waiting, asking)
         for (const ticket of asked)
           yield* FiberSet.run(questions, predict(ticket, repository))
       }
@@ -292,5 +303,15 @@ export const makePredictor = Effect.fn('Predictor.make')(function* (input: {
   return {
     offer,
     asking: Effect.map(Ref.get(waiting), now => now.size > 0),
+    reading: read =>
+      Effect.gen(function* () {
+        const before = yield* Ref.get(ended)
+        const result = yield* read
+        const left = (now: ReadonlySet<TicketId>) =>
+          new Set([...now].filter(id => !before.has(id)))
+        yield* Ref.update(waiting, left)
+        yield* Ref.update(ended, left)
+        return result
+      }),
   } satisfies Predictor
 })
