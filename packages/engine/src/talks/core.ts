@@ -59,7 +59,8 @@ import { drawBase36 } from '../workgraph/ids'
 // work graph, for the ticket tools) and answers with the result encoded, or refuses it. A tool that
 // takes the maintainer's word first asks whether it has it (`confirmed`), from what the maintainer has
 // sent the talk since it asked, and whether that opened the turn.
-// The talk's agent is a port (`TalkAgents`), so the talks' rules are tested on a scripted session.
+// The talk's agent is a port (`TalkAgents`), so the talks' rules are tested on a scripted session; the
+// engine's are Pi's, through the model proxy (`agents.ts`).
 
 /** A talk's agent couldn't start, or refused a message. */
 export class TalkAgentFailed extends Data.TaggedError('TalkAgentFailed')<{

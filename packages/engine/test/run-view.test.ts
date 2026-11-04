@@ -30,7 +30,7 @@ import {
   applyRunViewPatch,
 } from '@fabrica/contracts'
 
-import type { Agent } from '../src/agent'
+import { type Agent, AgentOwner } from '../src/agent'
 import { noSpend } from '../src/cost'
 import type { RunSnapshot, RunStateShape } from '../src/run'
 import {
@@ -515,7 +515,7 @@ describe("the maintainer's messages to a worker", () => {
     const prompts = yield* Ref.make<ReadonlyArray<string>>([])
     const steers = yield* Ref.make<ReadonlyArray<string>>([])
     const agent: Agent = {
-      ticket: first,
+      owner: AgentOwner.Ticket({ ticket: first }),
       pid: 1,
       session: { id: SessionId.make('worker-1'), file: Option.none() },
       events: Effect.succeed(Stream.never),

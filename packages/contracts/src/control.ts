@@ -27,7 +27,7 @@ import {
 
 // The worker's control channel (spec §12.2, §12.3, §20.2): what the first-party extension sends the
 // engine over its agent's own Unix socket, in the Schema RPC protocol. The worker's tools, one request
-// each, named and shaped as `tools.ts` has them, and the verifier's `verdict` (§13.6) and an organ session's `answer` (§16); the gate's permission requests, its reading of the
+// each, named and shaped as `tools.ts` has them, and the verifier's `verdict` (§13.6), an organ session's `answer` (§16) and a talk's calls to its mode's tools (§15.4); the gate's permission requests, its reading of the
 // merge queue and its reports of what it decided (§12.6); and the extension's report of a session
 // that settled twice with no outcome. The socket's path and the token arrive in the agent's
 // environment; every request carries the token in a header, which the engine checks before it acts on
@@ -56,13 +56,18 @@ export const PermissionsVariable = 'FABRICA_PERMISSIONS'
 
 /**
  * The variable naming the agent's role (§13.6, §16): `verifier` for the verifier's read-only session,
- * whose one tool is `verdict`; `organ` for an organ's read-only session, whose one tool is `answer`; a
- * worker's, otherwise.
+ * whose one tool is `verdict`; `organ` for an organ's read-only session, whose one tool is `answer`;
+ * `talk` for a talk's read-only session (§15.4), whose tools are its mode's; a worker's, otherwise.
  */
 export const AgentRoleVariable = 'FABRICA_AGENT_ROLE'
 
 /** An agent's role, as `AgentRoleVariable` holds it. */
-export const AgentRole = Schema.Literals(['worker', 'verifier', 'organ'])
+export const AgentRole = Schema.Literals([
+  'worker',
+  'verifier',
+  'organ',
+  'talk',
+])
 export type AgentRole = typeof AgentRole.Type
 
 /**
@@ -79,6 +84,24 @@ export const AnswerToolGiven = Schema.fromJsonString(
   }),
 )
 export type AnswerToolGiven = typeof AnswerToolGiven.Type
+
+/**
+ * The variable holding a talk's tools as JSON (§15.4): each mode's are its own, so the engine gives
+ * each tool's name, description and arguments' JSON Schema at spawn.
+ */
+export const TalkToolsVariable = 'FABRICA_TALK_TOOLS'
+
+/** A talk's tools, as `TalkToolsVariable` holds them. */
+export const TalkToolsGiven = Schema.fromJsonString(
+  Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      description: Schema.String,
+      parameters: Schema.Record(Schema.String, Schema.Unknown),
+    }),
+  ),
+)
+export type TalkToolsGiven = typeof TalkToolsGiven.Type
 
 /** The header every control request carries its token in. */
 export const ControlTokenHeader = 'x-fabrica-control-token'
@@ -197,6 +220,12 @@ export const ControlRpcs = RpcGroup.make(
   Rpc.make('answer', {
     payload: AnswerParameters,
     success: Ended,
+    error: ToolRefusal,
+  }),
+  /** A talk's call to one of its mode's tools, by name: the engine decodes the input and answers with the result encoded (§15.4). */
+  Rpc.make('talk_tool', {
+    payload: { tool: Schema.String, input: Schema.Unknown },
+    success: Schema.Unknown,
     error: ToolRefusal,
   }),
   /** The gate's request, answered once the maintainer decides. */

@@ -13,7 +13,7 @@ import {
 } from 'effect'
 import * as NodePath from 'node:path'
 
-import { type ProjectId, SessionId, type TicketId } from '@fabrica/contracts'
+import { type ProjectId, SessionId } from '@fabrica/contracts'
 
 import { writeFileWhole } from '../files'
 import {
@@ -46,10 +46,12 @@ import {
   workspaceOf,
 } from './container'
 import {
+  AgentOwner,
   AgentSendFailed,
   AgentStartFailed,
   AgentStartFailure,
   SendFailure,
+  ownerName,
 } from './errors'
 import {
   type ProviderEntry,
@@ -74,9 +76,10 @@ import {
 
 // `PiAgent` (spec §12.1, H61, H74, H75): each worker is a Pi process in RPC mode, owned by the engine
 // as a scoped resource. Acquire is spawn and handshake; release is abort, terminate and reap, each
-// within a limit, so no caller waits on an agent that doesn't answer. A ticket has one session at a
-// time (Starting, Open, Closing): a start waits for a closing session's process to exit, and a
-// command sent to a closing session fails. Pi's Promise and RPC surface never leaves this module.
+// within a limit, so no caller waits on an agent that doesn't answer. An agent's owner, a ticket or a
+// talk (§15.4), has one session at a time (Starting, Open, Closing): a start waits for a closing
+// session's process to exit, and a command sent to a closing session fails. Pi's Promise and RPC
+// surface never leaves this module.
 
 /** A ticket's agent in a container (§12.7): what it is made from, and what is mounted beyond the agent's own folders. */
 export interface AgentContainer {
@@ -87,11 +90,11 @@ export interface AgentContainer {
   readonly identity: GitIdentity
 }
 
-/** What starting a ticket's agent takes. */
+/** What starting an agent takes. */
 export interface AgentStart {
-  readonly ticket: TicketId
+  readonly owner: AgentOwner
   readonly project: ProjectId
-  /** The ticket's worktree, Pi's working folder. */
+  /** Pi's working folder: the ticket's worktree, or the project's checkout where it only reads. */
   readonly worktree: string
   /** Each provider pointed at the model proxy (spec §12.9). */
   readonly providers: ReadonlyArray<ProviderEntry>
@@ -102,6 +105,8 @@ export interface AgentStart {
   readonly tools: Option.Option<ReadonlyArray<string>>
   /** A session file to resume with `switch_session`; none starts a new session. */
   readonly resume: Option.Option<string>
+  /** What Pi appends to its system prompt (a talk's mode's instructions, §15.4); nothing where none is given. */
+  readonly instructions?: string
   /** Variables beyond the allowlisted ones: the control socket's path and token, the gate's permissions. */
   readonly env: Readonly<Record<string, string>>
   /** The user trusts the project, so Pi may load its own settings and packages (§12.1, §20.2). */
@@ -125,9 +130,9 @@ export interface Settled {
   readonly aborted: boolean
 }
 
-/** A ticket's started agent. Its scope's end closes it, as `close` does. */
+/** A started agent. Its scope's end closes it, as `close` does. */
 export interface Agent {
-  readonly ticket: TicketId
+  readonly owner: AgentOwner
   readonly pid: number
   readonly session: AgentSession
   /**
@@ -162,14 +167,14 @@ export interface Agent {
 
 export interface PiAgentShape {
   /**
-   * Starts the ticket's agent, or resumes its session: waits for a closing session of the ticket to
+   * Starts the owner's agent, or resumes its session: waits for a closing session of the owner to
    * exit, then spawns Pi and shakes hands. A failed or interrupted start leaves nothing behind.
    */
   readonly start: (
     options: AgentStart,
   ) => Effect.Effect<Agent, AgentStartFailed, Scope.Scope>
-  /** Closes the ticket's session, whatever its state; a starting one is cancelled. */
-  readonly close: (ticket: TicketId) => Effect.Effect<void>
+  /** Closes the owner's session, whatever its state; a starting one is cancelled. */
+  readonly close: (owner: AgentOwner) => Effect.Effect<void>
 }
 
 export class PiAgent extends Context.Service<PiAgent, PiAgentShape>()(
@@ -214,7 +219,7 @@ export const DEFAULT_LIMITS: AgentLimits = {
   reap: Duration.seconds(10),
 }
 
-/** A ticket's session, as its one lifecycle has it (H75). */
+/** An owner's session, as its one lifecycle has it (H75). */
 type Slot = Data.TaggedEnum<{
   Starting: {
     /** Completed when the slot is given up: the start failed, or its agent has closed. */
@@ -230,7 +235,7 @@ type Slot = Data.TaggedEnum<{
 }>
 const Slot = Data.taggedEnum<Slot>()
 
-/** What `reserve` found in a ticket's slot. */
+/** What `reserve` found in an owner's slot. */
 type Reserved = Data.TaggedEnum<{
   Reserved: {
     readonly freed: Deferred.Deferred<void>
@@ -241,13 +246,17 @@ type Reserved = Data.TaggedEnum<{
 }>
 const Reserved = Data.taggedEnum<Reserved>()
 
-/** What `close` found in a ticket's slot. */
+/** What `close` found in an owner's slot. */
 type Closed = Data.TaggedEnum<{
   Close: { readonly freed: Deferred.Deferred<void> }
   Wait: { readonly freed: Deferred.Deferred<void> }
   Gone: {}
 }>
 const Closed = Data.taggedEnum<Closed>()
+
+/** An owner's key in the slots: a talk and a ticket of the same name are two owners. */
+const slotKey = (owner: AgentOwner): string =>
+  `${owner._tag}:${ownerName(owner)}`
 
 /** One agent's process, its reaper and its connection, in the agent's own scope. */
 interface Launched {
@@ -260,7 +269,7 @@ export const make = Effect.fn('PiAgent.make')(function* (
 ) {
   const runner = yield* ProcessRunner
   const deadlines: DeadlinesShape = yield* Deadlines
-  const slots = yield* Ref.make<ReadonlyMap<TicketId, Slot>>(new Map())
+  const slots = yield* Ref.make<ReadonlyMap<string, Slot>>(new Map())
   const logged = new Set<string>()
 
   const skipped: SkipLog = ({ kind, reason }) =>
@@ -271,11 +280,11 @@ export const make = Effect.fn('PiAgent.make')(function* (
       return Effect.logWarning(`Pi record skipped: ${kind} (${reason})`)
     })
 
-  const setSlot = (ticket: TicketId, slot: Option.Option<Slot>) =>
+  const setSlot = (owner: AgentOwner, slot: Option.Option<Slot>) =>
     Ref.update(slots, current => {
       const next = new Map(current)
-      if (Option.isSome(slot)) next.set(ticket, slot.value)
-      else next.delete(ticket)
+      if (Option.isSome(slot)) next.set(slotKey(owner), slot.value)
+      else next.delete(slotKey(owner))
       return next
     })
 
@@ -287,12 +296,12 @@ export const make = Effect.fn('PiAgent.make')(function* (
     )
 
   /**
-   * Reserves the ticket's slot, waiting for a closing session's process to exit (H75; tutti-j3w).
+   * Reserves the owner's slot, waiting for a closing session's process to exit (H75; tutti-j3w).
    * Run uninterruptibly, the wait alone given to `restore`, so an interruption never leaves the slot
    * reserved.
    */
   const reserve = (
-    ticket: TicketId,
+    owner: AgentOwner,
     restore: <A, E>(effect: Effect.Effect<A, E>) => Effect.Effect<A, E>,
   ): Effect.Effect<
     {
@@ -305,14 +314,17 @@ export const make = Effect.fn('PiAgent.make')(function* (
       for (;;) {
         const found = yield* Ref.modify(
           slots,
-          (current): [Reserved, ReadonlyMap<TicketId, Slot>] => {
-            const slot = current.get(ticket)
+          (current): [Reserved, ReadonlyMap<string, Slot>] => {
+            const slot = current.get(slotKey(owner))
             if (slot === undefined) {
               const freed = Deferred.makeUnsafe<void>()
               const cancel = Deferred.makeUnsafe<void>()
               return [
                 Reserved.Reserved({ freed, cancel }),
-                new Map(current).set(ticket, Slot.Starting({ freed, cancel })),
+                new Map(current).set(
+                  slotKey(owner),
+                  Slot.Starting({ freed, cancel }),
+                ),
               ]
             }
             return [
@@ -328,7 +340,7 @@ export const make = Effect.fn('PiAgent.make')(function* (
         if (Reserved.$is('Reserved')(found)) return found
         if (Reserved.$is('Busy')(found))
           return yield* new AgentStartFailed({
-            ticket,
+            owner,
             reason: AgentStartFailure.Busy(),
           })
         yield* restore(Deferred.await(found.freed))
@@ -372,7 +384,10 @@ export const make = Effect.fn('PiAgent.make')(function* (
       )
       const started = yield* startContainer({
         prepared,
-        name: containerName(options),
+        name: containerName({
+          project: options.project,
+          owner: ownerName(options.owner),
+        }),
         worktree: options.worktree,
         mounts: [
           {
@@ -407,6 +422,7 @@ export const make = Effect.fn('PiAgent.make')(function* (
             sessions,
             model: options.model,
             tools: options.tools,
+            instructions: Option.fromUndefinedOr(options.instructions),
           }),
           Object.keys(environment),
           options.nice,
@@ -418,14 +434,14 @@ export const make = Effect.fn('PiAgent.make')(function* (
         ContainerFailed: error =>
           Effect.fail(
             new AgentStartFailed({
-              ticket: options.ticket,
+              owner: options.owner,
               reason: AgentStartFailure.Container({ message: error.message }),
             }),
           ),
         ContainerSetupFailed: error =>
           Effect.fail(
             new AgentStartFailed({
-              ticket: options.ticket,
+              owner: options.owner,
               reason: AgentStartFailure.ContainerSetup({
                 message: error.message,
               }),
@@ -444,11 +460,15 @@ export const make = Effect.fn('PiAgent.make')(function* (
   ) =>
     Effect.gen(function* () {
       const fail = (reason: AgentStartFailure) =>
-        new AgentStartFailed({ ticket: options.ticket, reason })
-      const sessions = sessionFolder({
-        data: config.data,
-        project: options.project,
-        ticket: options.ticket,
+        new AgentStartFailed({ owner: options.owner, reason })
+      const sessions = AgentOwner.$match(options.owner, {
+        Ticket: ({ ticket }) =>
+          sessionFolder({
+            data: config.data,
+            project: options.project,
+            ticket,
+          }),
+        Talk: ({ sessions: folder }) => folder,
       })
       yield* Effect.mapError(makeSessionFolder(sessions), message =>
         fail(AgentStartFailure.Folders({ message })),
@@ -488,6 +508,7 @@ export const make = Effect.fn('PiAgent.make')(function* (
                 sessions,
                 model: options.model,
                 tools: options.tools,
+                instructions: Option.fromUndefinedOr(options.instructions),
               }),
               env: environment,
             }),
@@ -538,7 +559,7 @@ export const make = Effect.fn('PiAgent.make')(function* (
             const status = yield* within(running.exit, config.limits.reap)
             if (Option.isSome(status))
               return yield* new AgentStartFailed({
-                ticket: options.ticket,
+                owner: options.owner,
                 reason: AgentStartFailure.Exited({
                   status: status.value,
                   stderr: connection.stderr(),
@@ -546,7 +567,7 @@ export const make = Effect.fn('PiAgent.make')(function* (
               })
           }
           return yield* new AgentStartFailed({
-            ticket: options.ticket,
+            owner: options.owner,
             reason: AgentStartFailure.Handshake({
               command: commandName(command),
               reason,
@@ -582,7 +603,7 @@ export const make = Effect.fn('PiAgent.make')(function* (
         SessionId.makeEffect(state.sessionId),
         () =>
           new AgentStartFailed({
-            ticket: options.ticket,
+            owner: options.owner,
             reason: AgentStartFailure.Handshake({
               command: commandName(command),
               reason: SendFailure.Unreadable(),
@@ -618,7 +639,7 @@ export const make = Effect.fn('PiAgent.make')(function* (
     readonly scope: Scope.Closeable
     readonly freed: Deferred.Deferred<void>
   }): Agent => {
-    const { ticket } = options
+    const { owner } = options
     const { running, connection } = launched
     const phase = { closing: false }
 
@@ -634,7 +655,7 @@ export const make = Effect.fn('PiAgent.make')(function* (
         Effect.mapError(
           reason =>
             new AgentSendFailed({
-              ticket,
+              owner,
               command: commandName(command),
               reason,
             }),
@@ -651,7 +672,7 @@ export const make = Effect.fn('PiAgent.make')(function* (
             answerData(schema, response),
             reason =>
               new AgentSendFailed({
-                ticket,
+                owner,
                 command: commandName(command),
                 reason,
               }),
@@ -681,7 +702,7 @@ export const make = Effect.fn('PiAgent.make')(function* (
             const next = yield* take
             if (Option.isNone(next))
               return yield* new AgentSendFailed({
-                ticket,
+                owner,
                 command: 'prompt',
                 reason: SendFailure.Exited(),
               })
@@ -700,15 +721,15 @@ export const make = Effect.fn('PiAgent.make')(function* (
       Effect.gen(function* () {
         const found = yield* Ref.modify(
           slots,
-          (current): [Closed, ReadonlyMap<TicketId, Slot>] => {
-            const slot = current.get(ticket)
+          (current): [Closed, ReadonlyMap<string, Slot>] => {
+            const slot = current.get(slotKey(owner))
             if (slot === undefined || slot.freed !== freed)
               return [Closed.Gone(), current]
             if (Slot.$is('Closing')(slot))
               return [Closed.Wait({ freed }), current]
             return [
               Closed.Close({ freed }),
-              new Map(current).set(ticket, Slot.Closing({ freed })),
+              new Map(current).set(slotKey(owner), Slot.Closing({ freed })),
             ]
           },
         )
@@ -717,13 +738,13 @@ export const make = Effect.fn('PiAgent.make')(function* (
         if (Closed.$is('Wait')(found)) return yield* Deferred.await(found.freed)
         yield* abortQuietly
         yield* terminate(running, scope)
-        yield* setSlot(ticket, Option.none())
+        yield* setSlot(owner, Option.none())
         yield* Deferred.done(freed, Exit.void)
       }),
     ).pipe(Effect.withSpan('PiAgent.close'))
 
     return {
-      ticket,
+      owner,
       pid: running.pid,
       session,
       events: connection.events,
@@ -754,7 +775,7 @@ export const make = Effect.fn('PiAgent.make')(function* (
         Deferred.await(cancel),
         Effect.fail(
           new AgentStartFailed({
-            ticket: options.ticket,
+            owner: options.owner,
             reason: AgentStartFailure.Cancelled(),
           }),
         ),
@@ -763,9 +784,9 @@ export const make = Effect.fn('PiAgent.make')(function* (
     // interrupted start leaves nothing reserved (tutti-0k95); only the waits are interruptible.
     return yield* Effect.uninterruptibleMask(restore =>
       Effect.gen(function* () {
-        const { freed, cancel } = yield* reserve(options.ticket, restore)
+        const { freed, cancel } = yield* reserve(options.owner, restore)
         const free = Effect.andThen(
-          setSlot(options.ticket, Option.none()),
+          setSlot(options.owner, Option.none()),
           Deferred.done(freed, Exit.void),
         )
         const scope = yield* Scope.make()
@@ -799,13 +820,13 @@ export const make = Effect.fn('PiAgent.make')(function* (
         const open = Exit.isSuccess(agent)
           ? yield* Ref.modify(
               slots,
-              (current): [boolean, ReadonlyMap<TicketId, Slot>] =>
+              (current): [boolean, ReadonlyMap<string, Slot>] =>
                 Deferred.isDoneUnsafe(cancel)
                   ? [false, current]
                   : [
                       true,
                       new Map(current).set(
-                        options.ticket,
+                        slotKey(options.owner),
                         Slot.Open({ freed, close: agent.value.close }),
                       ),
                     ],
@@ -825,7 +846,7 @@ export const make = Effect.fn('PiAgent.make')(function* (
           return yield* Exit.isFailure(session)
             ? Effect.failCause(session.cause)
             : new AgentStartFailed({
-                ticket: options.ticket,
+                owner: options.owner,
                 reason: AgentStartFailure.Cancelled(),
               })
         }
@@ -835,13 +856,13 @@ export const make = Effect.fn('PiAgent.make')(function* (
     )
   })
 
-  const close = Effect.fn('PiAgent.close')(function* (ticket: TicketId) {
+  const close = Effect.fn('PiAgent.close')(function* (owner: AgentOwner) {
     // Read and acted on in one step: a start is cancelled while it is still starting, or its agent
     // found open.
     const closing = yield* Ref.modify(
       slots,
-      (current): [Effect.Effect<void>, ReadonlyMap<TicketId, Slot>] => {
-        const slot = current.get(ticket)
+      (current): [Effect.Effect<void>, ReadonlyMap<string, Slot>] => {
+        const slot = current.get(slotKey(owner))
         if (slot === undefined) return [Effect.void, current]
         return [
           Slot.$match(slot, {

@@ -14,6 +14,7 @@ import {
   FileTicketTool,
   FinishTool,
   GetTicketTool,
+  type TalkToolsGiven,
   type TicketId,
   type Tool,
   ToolRefusal,
@@ -29,13 +30,14 @@ import { Control } from './control'
 import type { PiTool } from './pi'
 import { type OutcomeTool, type Turn, ended } from './settle'
 
-// The worker's tools (spec §12.2, §12.3), the verifier's `verdict` (§13.6) and an organ's `answer`
-// (§16), registered with Pi:
+// The worker's tools (spec §12.2, §12.3), the verifier's `verdict` (§13.6), an organ's `answer` (§16)
+// and a talk's mode's tools (§15.4), registered with Pi:
 // each one's arguments' JSON Schema from `@fabrica/contracts`, wrapped as a TypeBox schema for Pi to
 // check first; its handler decodes the arguments again with the Effect Schema, which has the last
 // word, and forwards them to the engine over the control channel. An invalid payload, or the engine's
 // refusal, fails the call inside Pi's loop, so the agent reads why and tries again. A call that ends
-// the turn says so to the settle nudge, and asks Pi to stop after it.
+// the turn says so to the settle nudge, and asks Pi to stop after it. A talk's tools are only named by
+// their JSON Schemas here, so the engine alone decodes their arguments and encodes their answers.
 
 /** The names of the agent's own tools, the worker's, the verifier's `verdict` and an organ's `answer`, which the gate always allows. */
 export const WorkerToolNames: ReadonlySet<string> = new Set([
@@ -306,3 +308,34 @@ export const organTools = (
     context,
   ),
 ]
+
+/** A talk's tools, as the engine gave them, each call handed to it by name; none ends a turn (§15.4). */
+export const talkTools = (
+  given: TalkToolsGiven,
+  { run }: { readonly run: RunControl },
+): ReadonlyArray<PiTool> =>
+  given.map(({ name, description, parameters }) => {
+    const call = Effect.fn(`Tool.${name}`)(function* (input: unknown) {
+      const answer = yield* Effect.flatMap(Control, c =>
+        c.talk_tool({ tool: name, input }),
+      ).pipe(
+        Effect.mapError(
+          error => new ToolCallFailed({ tool: name, reason: reasonOf(error) }),
+        ),
+      )
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(answer, null, 2) },
+        ],
+        details: answer,
+      }
+    })
+    return {
+      name,
+      label: name,
+      description,
+      parameters: Type.Unsafe<unknown>(parameters),
+      executionMode: 'sequential',
+      execute: (_toolCallId, params, signal) => run(call(params), signal),
+    }
+  })

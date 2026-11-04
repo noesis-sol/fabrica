@@ -24,6 +24,7 @@ import {
   type RunControl,
   WorkerToolNames,
   organTools,
+  talkTools,
   verifierTools,
   workerTools,
 } from './tools'
@@ -31,8 +32,9 @@ import { projectTrust } from './trust'
 
 // The first-party extension (spec §12.2), loaded into every agent's Pi: the worker's tools over the
 // control channel (the verifier's `verdict` alone for a verifier, §13.6; `answer` alone for an organ's
-// session, §16), the gate's place in `tool_call`, the standing rules in `before_agent_start` (a
-// verifier's and an organ's their own), the
+// session, §16; the mode's tools alone for a talk, §15.4), the gate's place in `tool_call`, the standing
+// rules in `before_agent_start` (a verifier's and an organ's their own; a talk has its mode's
+// instructions instead, which the engine appends to its system prompt), the
 // settle nudge, the project's trust, and Copilot's provider pointed at the model proxy. Its facts
 // come from the environment, read once by the entry that Pi loads (`index.ts`).
 
@@ -64,15 +66,24 @@ export const makeExtension =
             onNone: () => [],
             onSome: given => organTools(given, context),
           })
+        case 'talk':
+          return talkTools(environment.talkTools, context)
         case 'worker':
           return workerTools(context)
       }
     }
-    for (const tool of tools()) pi.registerTool(tool)
+    const registered = tools()
+    for (const tool of registered) pi.registerTool(tool)
+    // The gate always allows the agent's own tools: a talk's are its mode's, named by the engine.
+    const own = new Set([
+      ...WorkerToolNames,
+      ...registered.map(({ name }) => name),
+    ])
 
     pi.on('project_trust', () => projectTrust(environment.projectTrusted))
 
     pi.on('before_agent_start', async event => {
+      if (environment.role === 'talk') return undefined
       const options = event.systemPromptOptions
       options.sections[StandingRulesSection] =
         environment.role === 'verifier'
@@ -89,7 +100,7 @@ export const makeExtension =
       home: environment.home,
     })
     pi.on('tool_call', async event => {
-      if (WorkerToolNames.has(event.toolName)) return undefined
+      if (own.has(event.toolName)) return undefined
       const call = {
         toolCallId: event.toolCallId,
         tool: event.toolName,
@@ -114,6 +125,8 @@ export const makeExtension =
     })
 
     pi.on('agent_before_settle', async event => {
+      const { role } = environment
+      if (role === 'talk') return undefined
       const settling = await Effect.runPromise(
         Ref.modify(turn, current =>
           settle(current, event.outcome === 'completed'),
@@ -128,7 +141,7 @@ export const makeExtension =
               {
                 type: 'custom_message' as const,
                 customType: NudgeType,
-                content: nudgeText(environment.role),
+                content: nudgeText(role),
                 display: false,
               },
             ],

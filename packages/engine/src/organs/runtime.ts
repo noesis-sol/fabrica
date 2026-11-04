@@ -51,7 +51,7 @@ import {
   toolJsonSchema,
 } from '@fabrica/contracts'
 
-import { PiAgent } from '../agent'
+import { AgentOwner, PiAgent, piReaders } from '../agent'
 import { ControlRole, ControlServer, Outcome } from '../control'
 import {
   type Billing,
@@ -189,10 +189,7 @@ export interface OrganRuntime {
 
 /** Pi's built-in tools a session has beside `answer`: those that only read. */
 export const organSessionTools: ReadonlyArray<string> = [
-  'read',
-  'grep',
-  'find',
-  'ls',
+  ...piReaders,
   AnswerToolName,
 ]
 
@@ -748,7 +745,7 @@ export const makeOrganRuntime = Effect.fn('Organs.make')(function* (
           )
           const granted = yield* proxy.grant(asking.caller)
           const agent = yield* agents.start({
-            ticket,
+            owner: AgentOwner.Ticket({ ticket }),
             project: config.project,
             worktree: config.checkout,
             providers: granted.providers,

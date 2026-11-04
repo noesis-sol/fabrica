@@ -11,6 +11,7 @@ export {
   layer,
   make,
 } from './server'
+export { openTalkControl } from './talk'
 export { drawToken, inScope, tokenMatches } from './token'
 export {
   type CheckOwnRun,

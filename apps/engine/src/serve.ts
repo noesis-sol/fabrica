@@ -1,7 +1,7 @@
-import { Effect, Option, Stdio } from 'effect'
+import { Effect, Layer, Option, Stdio } from 'effect'
 import { fileURLToPath } from 'node:url'
 
-import { Daemon, LoginService, Update } from '@fabrica/engine'
+import { Daemon, LoginService, Talks, Update } from '@fabrica/engine'
 
 import { engineHost, hostFacts, hostPaths } from './host'
 import { agentPlaces, onHost, runHosting } from './hosting'
@@ -15,7 +15,7 @@ import { version } from './version'
 // instead, with the code its manager restarts it on, and the manager starts the new release from the
 // link the update switched. `--listen <addr>` has it listen over TLS too (§9.3), with the certificate
 // `--listen-certificate` and `--listen-key` give, or its own; each flag over the engine's setting of the
-// same name, and given again to the release it restarts as, with the engine's environment. Its runs run on the host (`hosting.ts`): Pi beside the engine, through its model proxy.
+// same name, and given again to the release it restarts as, with the engine's environment. Its runs run on the host (`hosting.ts`): Pi beside the engine, through its model proxy; its talks' agents on the same agents and proxy (§15.4).
 // Where no keyring answers, its secret store's passphrase is read from `--passphrase-file`, or else
 // typed at a prompt where it runs on a terminal (`passphrase.ts`, §20.3).
 
@@ -45,6 +45,7 @@ export const serve = (flags: Update.ServeFlags) =>
         places: Update.installPlaces(facts.home),
         host: { platform: host.platform, arch: host.arch },
       }),
+      talks: Layer.merge(Talks.registeredModes, Talks.hostedTalkAgents),
       runs: runHosting(
         onHost({
           paths,

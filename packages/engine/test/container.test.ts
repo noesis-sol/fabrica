@@ -20,6 +20,7 @@ import {
 } from '@fabrica/contracts'
 
 import {
+  AgentOwner,
   AgentStartFailed,
   AgentStartFailure,
   type ContainerHost,
@@ -949,7 +950,7 @@ describe('an agent in a container', () => {
     prepared: Partial<PreparedContainers> = {},
     env: Readonly<Record<string, string>> = {},
   ) => ({
-    ticket,
+    owner: AgentOwner.Ticket({ ticket }),
     project,
     worktree: state.worktree,
     providers: [
@@ -1337,7 +1338,7 @@ describe('the git configuration of a container', () => {
           const agents = yield* PiAgent
           const agent = yield* agents
             .start({
-              ticket,
+              owner: AgentOwner.Ticket({ ticket }),
               project,
               worktree: state.worktree,
               providers: [],

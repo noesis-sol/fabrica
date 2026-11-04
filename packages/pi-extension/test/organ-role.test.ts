@@ -109,6 +109,7 @@ const loadedOrgan = Effect.fn(function* (
     control: Option.some({ endpoint: ControlEndpoint.Unix({ socket }), token }),
     role: 'organ',
     answerTool,
+    talkTools: [],
     projectTrusted: false,
     configFolder: Option.none(),
     permissions: 'workspace',

@@ -5,7 +5,8 @@ import type { AgentRole, OutcomeToolNames } from '@fabrica/contracts'
 // The settle nudge (spec §12.3): a turn about to end with no outcome tool (a verifier's: `verdict`,
 // §13.6; an organ's: `answer`, §16) gets one nudge, inside Pi, an extra model call asking for one; a second settle with none ends
 // the session as unfinished. A turn runs from a prompt (the first, a hand-back, a maintainer's
-// message, a resume) until Pi has settled, and each turn starts with no outcome and no nudge.
+// message, a resume) until Pi has settled, and each turn starts with no outcome and no nudge. A talk's
+// turn has no outcome to give: it settles as it ends, waiting for the maintainer's next message (§15.4).
 
 /** An outcome tool, the call that ended the turn: a worker's, the verifier's `verdict`, or an organ's `answer`. */
 export type OutcomeTool =
@@ -75,7 +76,7 @@ export const OrganNudgeText =
   'gives the organ no answer.'
 
 /** The nudge an agent in `role` reads. */
-export const nudgeText = (role: AgentRole): string => {
+export const nudgeText = (role: Exclude<AgentRole, 'talk'>): string => {
   switch (role) {
     case 'verifier':
       return VerifierNudgeText

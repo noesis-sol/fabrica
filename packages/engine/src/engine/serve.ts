@@ -113,10 +113,11 @@ export interface ServeOptions extends EngineFacts {
   /** `fabrica serve`'s flags for the TLS listener, each over the engine's setting of the same name. */
   readonly listen?: ListenSettings
   /**
-   * Talks' agents and modes (§15.4); where none are given, the modes this release has, on agents that
-   * are refused until the model proxy can give them their credentials.
+   * Talks' agents and modes (§15.4), which may be built on what the engine's runs run on
+   * (`hostedTalkAgents`); where none are given, the modes this release has, on agents that are refused,
+   * as a talk's agent reaches its model only through the model proxy.
    */
-  readonly talks?: Layer.Layer<TalkAgents | TalkModes>
+  readonly talks?: Layer.Layer<TalkAgents | TalkModes, never, RunHosting>
   /**
    * What the engine's runs run on (§12, §13): its agents, the model proxy, the checks; where none is
    * given, the engine refuses every run, saying why. Built before the engine's scopes, so what it holds
@@ -175,11 +176,11 @@ const listenerCertificate = (paths: EnginePaths, settings: ListenSettings) => {
   })
 }
 
-/** The talks' agents where none are given: a talk's agent reaches its model only through the model proxy. */
+/** The talks where none are given: a talk's agent reaches its model only through the model proxy. */
 const talksRefused = Layer.merge(
   registeredModes,
   refusingTalkAgents(
-    "this engine can't start a talk's agent yet: talks reach their model through the model proxy, which it doesn't have",
+    "this engine can't start a talk's agent: talks reach their model through the model proxy, which it wasn't given",
   ),
 )
 
@@ -257,7 +258,9 @@ export const startEngine = Effect.fn('Engine.start')(function* (
     options.update ??
       layerRefusing('this engine was started with nowhere to install updates'),
   )
-  const talks = yield* Layer.build(options.talks ?? talksRefused)
+  const talks = yield* Layer.build(options.talks ?? talksRefused).pipe(
+    Effect.provide(runs),
+  )
   const facts = yield* Layer.build(options.facts ?? layerNodeHost)
   // The budget's and the sampler's are the engine's, across its runs: its handlers and its runs read them.
   const budget = yield* makeMachineBudget(settings).pipe(Effect.provide(facts))

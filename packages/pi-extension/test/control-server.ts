@@ -119,6 +119,8 @@ export const answers = (
     wait_for: ended('wait_for'),
     verdict: ended('verdict'),
     answer: ended('answer'),
+    talk_tool: payload =>
+      Effect.as(record('talk_tool', payload), { echoed: payload.input }),
     ask_and_wait: payload =>
       Effect.as(record('ask_and_wait', payload), {
         _tag: 'unanswered' as const,

@@ -1,11 +1,25 @@
 import { Data, type Duration } from 'effect'
 
-import type { TicketId } from '@fabrica/contracts'
+import type { TalkId, TicketId } from '@fabrica/contracts'
 
 import type { ExitStatus, StartFailure } from '../process'
 
-// What can go wrong driving an agent (spec §12.1, §12.8). Each is a tagged union made by its
-// constructors: a caller matches the reason, never the wording.
+// Whose an agent is, and what can go wrong driving one (spec §12.1, §12.8). Each is a tagged union made
+// by its constructors: a caller matches the reason, never the wording.
+
+/** Whose an agent is: a ticket's, or a talk's (§15.4), whose sessions lie in the folder it gives. */
+export type AgentOwner = Data.TaggedEnum<{
+  Ticket: { readonly ticket: TicketId }
+  Talk: { readonly talk: TalkId; readonly sessions: string }
+}>
+export const AgentOwner = Data.taggedEnum<AgentOwner>()
+
+/** An owner's name: its ticket's or its talk's ID. */
+export const ownerName = (owner: AgentOwner): string =>
+  AgentOwner.$match(owner, {
+    Ticket: ({ ticket }) => ticket,
+    Talk: ({ talk }) => talk,
+  })
 
 /** Why a command sent to an agent didn't get its answer. */
 export type SendFailure = Data.TaggedEnum<{
@@ -22,21 +36,21 @@ export type SendFailure = Data.TaggedEnum<{
 }>
 export const SendFailure = Data.taggedEnum<SendFailure>()
 
-/** A command sent to a ticket's agent failed. */
+/** A command sent to an agent failed. */
 export class AgentSendFailed extends Data.TaggedError('AgentSendFailed')<{
-  readonly ticket: TicketId
+  readonly owner: AgentOwner
   /** The command, as Pi names it (`prompt`, `steer`, …). */
   readonly command: string
   readonly reason: SendFailure
 }> {
   override get message() {
-    return `${this.ticket}: ${this.command} failed (${this.reason._tag})`
+    return `${ownerName(this.owner)}: ${this.command} failed (${this.reason._tag})`
   }
 }
 
 /** Why an agent didn't start. */
 export type AgentStartFailure = Data.TaggedEnum<{
-  /** A session of the ticket is starting or open (H75): one session at a time. */
+  /** A session of its owner is starting or open (H75): one session at a time. */
   Busy: {}
   /** The session was closed while it started. */
   Cancelled: {}
@@ -55,15 +69,15 @@ export type AgentStartFailure = Data.TaggedEnum<{
 }>
 export const AgentStartFailure = Data.taggedEnum<AgentStartFailure>()
 
-/** A ticket's agent couldn't be started (spec §12.8's `StartFailed`); nothing of it is left. */
+/** An agent couldn't be started (spec §12.8's `StartFailed`); nothing of it is left. */
 export class AgentStartFailed extends Data.TaggedError('AgentStartFailed')<{
-  readonly ticket: TicketId
+  readonly owner: AgentOwner
   readonly reason: AgentStartFailure
 }> {
   override get message() {
     return AgentStartFailure.$is('Container')(this.reason) ||
       AgentStartFailure.$is('ContainerSetup')(this.reason)
-      ? `${this.ticket}: the agent didn't start: ${this.reason.message}`
-      : `${this.ticket}: the agent didn't start (${this.reason._tag})`
+      ? `${ownerName(this.owner)}: the agent didn't start: ${this.reason.message}`
+      : `${ownerName(this.owner)}: the agent didn't start (${this.reason._tag})`
   }
 }

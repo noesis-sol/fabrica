@@ -20,7 +20,7 @@ import {
   WorkerNotFound,
 } from '@fabrica/contracts'
 
-import type { Agent } from '../src/agent'
+import { type Agent, AgentOwner } from '../src/agent'
 import type { AttentionRequestsShape } from '../src/attention'
 import type { ProjectsShape } from '../src/projects'
 import type { RunsShape } from '../src/run/registry'
@@ -44,7 +44,7 @@ const unused = Effect.die('not asked of it by these tools')
 const agentOf = Effect.fn(function* (gate: Deferred.Deferred<void>) {
   const prompts = yield* Ref.make<ReadonlyArray<string>>([])
   const agent: Agent = {
-    ticket,
+    owner: AgentOwner.Ticket({ ticket }),
     pid: 1,
     session: { id: SessionId.make('worker-1'), file: Option.none() },
     events: Effect.succeed(Stream.never),

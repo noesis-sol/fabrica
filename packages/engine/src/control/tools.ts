@@ -706,6 +706,12 @@ export const makeTools = (context: ToolContext) => {
       Organ: organ => Effect.as(organ.answer(input.answer), ended),
     }).pipe(Effect.withSpan('Control.answer'))
 
+  /** A talk's call to its mode's tools: its channel is its own (`openTalkControl`), so none comes here. */
+  const talkTool = () =>
+    refuse
+      .invalid("talk_tool is a talk's tool")
+      .pipe(Effect.withSpan('Control.talk_tool'))
+
   /** A worker's tool, refused to the verifier, which only reads its ticket and gives its verdict, and to an organ's session. */
   const forWorker =
     <Input, A>(
@@ -737,6 +743,7 @@ export const makeTools = (context: ToolContext) => {
     waitFor: forWorker('wait_for', waitFor),
     verdict,
     answer,
+    talkTool,
     requestPermission,
     mergeStanding,
     reportGateDecision,

@@ -25,6 +25,7 @@ import {
 
 import {
   type Agent,
+  AgentOwner,
   AgentStartFailure,
   type ModelChoice,
   PiAgent,
@@ -446,7 +447,7 @@ const verifyRound = Effect.fn('Verifier.round')(function* (input: {
     granted,
   })
   const agent = yield* agents.start({
-    ticket,
+    owner: AgentOwner.Ticket({ ticket }),
     project: config.project,
     worktree: worktree.path,
     providers: contained.providers,

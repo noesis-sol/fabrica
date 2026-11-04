@@ -140,16 +140,22 @@ const prepare = (folder: string, socket: string) =>
     catch: failed(socket),
   })
 
-/** The session's Unix socket, only its owner let in, removed with the scope. */
-const openSocket = (session: ControlSession) =>
+/** The Unix socket named for `name` in `folder`, only its owner let in, removed with the scope. */
+export const openSocket = ({
+  folder,
+  name,
+}: {
+  readonly folder: string
+  readonly name: string
+}) =>
   Effect.gen(function* () {
-    const socket = NodePath.join(session.folder, `${session.ticket}.sock`)
+    const socket = NodePath.join(folder, `${name}.sock`)
     if (Buffer.byteLength(socket) > maxSocketPath)
       return yield* new ControlFailed({
         socket,
         reason: `its path is longer than ${maxSocketPath} bytes`,
       })
-    yield* prepare(session.folder, socket)
+    yield* prepare(folder, socket)
     const server = yield* NodeSocketServer.make({ path: socket }).pipe(
       Effect.mapError(failed(socket)),
     )
@@ -186,6 +192,47 @@ const openLoopback = (reachedAt: string) =>
     return { server, socket, variables }
   })
 
+/** What the control group's requests are answered with. */
+export type ControlHandlers = Parameters<typeof ControlRpcs.of>[0]
+
+/** Serves the control group on `server` for as long as the scope is open, checking every request's token before it is read. */
+export const serveControl = ({
+  handlers,
+  token,
+  server,
+}: {
+  readonly handlers: ControlHandlers
+  readonly token: Redacted.Redacted<string>
+  readonly server: SocketServer.SocketServer['Service']
+}) => {
+  const checkToken = Layer.succeed(ControlToken)((effect, { headers }) =>
+    Option.match(Headers.get(headers, ControlTokenHeader), {
+      onNone: () => Effect.fail(new ControlUnauthorized()),
+      onSome: given =>
+        tokenMatches(token, given)
+          ? effect
+          : Effect.fail(new ControlUnauthorized()),
+    }),
+  )
+  return RpcServer.make(ControlRpcs, {
+    concurrency: 'unbounded',
+    disableFatalDefects: true,
+  }).pipe(
+    Effect.provide(
+      ControlRpcs.toLayer(ControlRpcs.of(handlers)).pipe(
+        Layer.provideMerge(checkToken),
+        Layer.provideMerge(
+          RpcServer.layerProtocolSocketServer.pipe(
+            Layer.provide(layerNdjson),
+            Layer.provide(Layer.succeed(SocketServer.SocketServer)(server)),
+          ),
+        ),
+      ),
+    ),
+    Effect.forkScoped,
+  )
+}
+
 export const make = Effect.gen(function* () {
   const graph = yield* WorkGraph
   const git = yield* Git
@@ -212,57 +259,34 @@ export const make = Effect.gen(function* () {
       telemetry,
       outcomes,
     })
-    const handlers = ControlRpcs.toLayer(
-      ControlRpcs.of({
-        get_ticket: tools.getTicket,
-        file_ticket: tools.fileTicket,
-        ask_question: tools.askQuestion,
-        add_note: tools.addNote,
-        check_own: tools.checkOwn,
-        finish: tools.finish,
-        defer: tools.defer,
-        wait_for: tools.waitFor,
-        ask_and_wait: tools.askAndWait,
-        verdict: tools.verdict,
-        answer: tools.answer,
-        request_permission: tools.requestPermission,
-        merge_standing: () => tools.mergeStanding,
-        report_gate_decision: tools.reportGateDecision,
-        report_unfinished: () => tools.reportUnfinished,
-      }),
-    )
-    const checkToken = Layer.succeed(ControlToken)((effect, { headers }) =>
-      Option.match(Headers.get(headers, ControlTokenHeader), {
-        onNone: () => Effect.fail(new ControlUnauthorized()),
-        onSome: given =>
-          tokenMatches(token, given)
-            ? effect
-            : Effect.fail(new ControlUnauthorized()),
-      }),
-    )
+    const handlers: ControlHandlers = {
+      get_ticket: tools.getTicket,
+      file_ticket: tools.fileTicket,
+      ask_question: tools.askQuestion,
+      add_note: tools.addNote,
+      check_own: tools.checkOwn,
+      finish: tools.finish,
+      defer: tools.defer,
+      wait_for: tools.waitFor,
+      ask_and_wait: tools.askAndWait,
+      verdict: tools.verdict,
+      answer: tools.answer,
+      talk_tool: tools.talkTool,
+      request_permission: tools.requestPermission,
+      merge_standing: () => tools.mergeStanding,
+      report_gate_decision: tools.reportGateDecision,
+      report_unfinished: () => tools.reportUnfinished,
+    }
 
+    const socketOf = () =>
+      openSocket({ folder: session.folder, name: session.ticket })
     const { server, socket, variables } = yield* session.transport === undefined
-      ? openSocket(session)
+      ? socketOf()
       : ControlTransport.$match(session.transport, {
-          Unix: () => openSocket(session),
+          Unix: socketOf,
           Tcp: ({ reachedAt }) => openLoopback(reachedAt),
         })
-    yield* RpcServer.make(ControlRpcs, {
-      concurrency: 'unbounded',
-      disableFatalDefects: true,
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(handlers, checkToken).pipe(
-          Layer.provideMerge(
-            RpcServer.layerProtocolSocketServer.pipe(
-              Layer.provide(layerNdjson),
-              Layer.provide(Layer.succeed(SocketServer.SocketServer)(server)),
-            ),
-          ),
-        ),
-      ),
-      Effect.forkScoped,
-    )
+    yield* serveControl({ handlers, token, server })
 
     return {
       socket,

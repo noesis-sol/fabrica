@@ -477,6 +477,7 @@ describe('a gate that fails', () => {
           control: Option.none(),
           role: 'worker',
           answerTool: Option.none(),
+          talkTools: [],
           projectTrusted: false,
           configFolder: Option.none(),
           permissions: 'full',

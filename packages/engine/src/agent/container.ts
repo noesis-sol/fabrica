@@ -2,12 +2,7 @@ import { Data, Duration, Effect, Option, Result, Schema } from 'effect'
 import { createHash } from 'node:crypto'
 import * as NodePath from 'node:path'
 
-import type {
-  Container,
-  ContainerRuntime,
-  ProjectId,
-  TicketId,
-} from '@fabrica/contracts'
+import type { Container, ContainerRuntime, ProjectId } from '@fabrica/contracts'
 import { ContainerSource } from '@fabrica/contracts'
 
 import {
@@ -859,14 +854,15 @@ const valueArguments = (values: Readonly<Record<string, string>>) =>
     `${name}=${value}`,
   ])
 
-/** The name a ticket's container goes by: one at a time, so a crash's leftover is found and removed. */
+/** The name an agent's container goes by: one at a time, so a crash's leftover is found and removed. */
 export const containerName = ({
   project,
-  ticket,
+  owner,
 }: {
   readonly project: ProjectId
-  readonly ticket: TicketId
-}): string => `fabrica-${project}-${ticket}`.replace(/[^a-zA-Z0-9_.-]/gu, '-')
+  /** Its agent's owner's name. */
+  readonly owner: string
+}): string => `fabrica-${project}-${owner}`.replace(/[^a-zA-Z0-9_.-]/gu, '-')
 
 /**
  * The folder a worktree is mounted at: the devcontainer file's `workspaceFolder`, else

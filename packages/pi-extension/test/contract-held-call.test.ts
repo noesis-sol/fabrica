@@ -138,7 +138,7 @@ describe('Pi on a call the proxy holds', () => {
         )
         const agent = yield* Effect.flatMap(Agent.PiAgent, agents =>
           agents.start({
-            ticket: own,
+            owner: Agent.AgentOwner.Ticket({ ticket: own }),
             project: ProjectId.make('p1'),
             worktree,
             providers: [

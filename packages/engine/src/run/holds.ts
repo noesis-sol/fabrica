@@ -8,7 +8,7 @@ import {
   formatDurationMillis,
 } from '@fabrica/contracts'
 
-import { type ModelChoice, PiAgent } from '../agent'
+import { AgentOwner, type ModelChoice, PiAgent } from '../agent'
 import {
   type CredentialsHoldShape,
   ENV_PROBE,
@@ -308,7 +308,7 @@ export const minimalAgent = (input: {
       }),
     })
     const agent = yield* agents.start({
-      ticket,
+      owner: AgentOwner.Ticket({ ticket }),
       project: input.config.project,
       worktree: input.config.checkout,
       providers: granted.providers,

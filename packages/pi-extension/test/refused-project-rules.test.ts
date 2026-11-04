@@ -66,6 +66,7 @@ const sectionFor = (arrange: (rules: string, key: string) => Promise<void>) =>
       control: Option.none(),
       role: 'worker',
       answerTool: Option.none(),
+      talkTools: [],
       projectTrusted: false,
       configFolder: Option.none(),
       permissions: 'workspace',

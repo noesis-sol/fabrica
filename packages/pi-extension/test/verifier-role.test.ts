@@ -98,6 +98,7 @@ const loadedVerifier = Effect.fn(function* () {
     control: Option.some({ endpoint: ControlEndpoint.Unix({ socket }), token }),
     role: 'verifier',
     answerTool: Option.none(),
+    talkTools: [],
     projectTrusted: false,
     configFolder: Option.none(),
     permissions: 'workspace',

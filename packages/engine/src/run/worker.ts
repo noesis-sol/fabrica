@@ -26,7 +26,7 @@ import {
   type TicketId,
 } from '@fabrica/contracts'
 
-import { AgentStartFailure, PiAgent } from '../agent'
+import { AgentOwner, AgentStartFailure, PiAgent } from '../agent'
 import { ControlRole, ControlServer, Outcome, type OwnCheck } from '../control'
 import type { CostAccount } from '../cost'
 import { workerShare } from '../engine/budget'
@@ -564,7 +564,7 @@ export const runWorker = Effect.fn('Run.worker')(function* (
     granted,
   })
   const agent = yield* agents.start({
-    ticket,
+    owner: AgentOwner.Ticket({ ticket }),
     project: config.project,
     worktree: worktree.path,
     providers: contained.providers,

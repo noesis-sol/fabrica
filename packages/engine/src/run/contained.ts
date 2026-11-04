@@ -6,6 +6,7 @@ import type { TicketId } from '@fabrica/contracts'
 
 import {
   type AgentContainer,
+  AgentOwner,
   AgentStartFailed,
   AgentStartFailure,
   type Mount,
@@ -71,7 +72,7 @@ export const containedAgent = Effect.fn('Run.containedAgent')(function* ({
   const prepared = containers.value
   const failed = (doing: string) => (error: { readonly message: string }) =>
     new AgentStartFailed({
-      ticket,
+      owner: AgentOwner.Ticket({ ticket }),
       reason: AgentStartFailure.Container({
         message: `${doing}: ${error.message}`,
       }),

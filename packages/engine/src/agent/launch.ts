@@ -139,13 +139,17 @@ export const configFolder = Effect.fn('PiAgent.configFolder')(function* ({
   return folder
 })
 
-/** Pi's arguments: RPC mode, the first-party extension, the ticket's session folder, its model and tools. */
+/** Pi's built-in tools that only read, which an agent that changes nothing has beside its own (§16, §15.4). */
+export const piReaders: ReadonlyArray<string> = ['read', 'grep', 'find', 'ls']
+
+/** Pi's arguments: RPC mode, the first-party extension, the session folder, its model and tools, what its system prompt is added. */
 export const piArguments = ({
   cli,
   extension,
   sessions,
   model,
   tools,
+  instructions,
 }: {
   readonly cli: string
   readonly extension: string
@@ -153,6 +157,8 @@ export const piArguments = ({
   readonly model: Option.Option<ModelChoice>
   /** The only tools Pi enables (`--tools`); none for every tool. */
   readonly tools: Option.Option<ReadonlyArray<string>>
+  /** What Pi appends to its system prompt (`--append-system-prompt`); none for nothing. */
+  readonly instructions: Option.Option<string>
 }): ReadonlyArray<string> => [
   cli,
   '--mode',
@@ -175,6 +181,10 @@ export const piArguments = ({
   ...Option.match(tools, {
     onNone: () => [],
     onSome: names => ['--tools', names.join(',')],
+  }),
+  ...Option.match(instructions, {
+    onNone: () => [],
+    onSome: text => ['--append-system-prompt', text],
   }),
 ]
 
