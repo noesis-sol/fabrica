@@ -27,10 +27,10 @@ import {
   type TicketId,
   TicketMetadata,
   type TicketStatus,
+  draftedLabel,
 } from '@fabrica/contracts'
 
 import { isConsequential } from '../attention/consequential'
-import { draftedLabel } from '../attention/drafted'
 import {
   EdgeCycle,
   InvalidTicket,

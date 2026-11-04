@@ -9,6 +9,7 @@ import {
   DraftOptionsTool,
   ListQuestionsTool,
   type ProjectId,
+  PutQuestionTool,
   QuestionInTalk,
   QuestionsInTalk,
   type TalkId,
@@ -31,15 +32,16 @@ import {
 // open one in the project, new ones queueing into the talk as they arrive), each given with its options,
 // the tickets it blocks, the ticket it was asked from and their notes. Its tools read and answer
 // questions, and nothing else: it can't release a deferred ticket, which it only mentions. The answers
-// go through the attention requests as any client's do, the first answer winning. A maintainer's message
-// that answers a consequential or maintainer-only question answers it alone (H53): that rule is the
-// engine's, so a model that takes "all the recommended ones" literally is refused, not trusted.
+// go through the attention requests as any client's do, the first answer winning. A consequential or
+// maintainer-only question is answered alone (H53): the talk puts it to the maintainer by itself, and
+// only their next message can answer it, and nothing else with it. That rule is the engine's, so a model
+// that takes "all the recommended ones" literally is refused in whatever order it goes, not trusted.
 
 export const answerInstructions = [
   "You are going through the maintainer's open questions with them, in the project's checkout, which you read but never change.",
   "Take the questions one at a time. Show a question's options first: each label and its trade-off, the recommended one first and marked, and its number as answer_question takes it. Say that options you drafted are drafted. Talk a question through only when the maintainer asks to, reading the code and the tickets it names. Record what the maintainer decides with answer_question, then go on to the next.",
   'A question filed without options: draft 2 to 4 with draft_options, one recommended, then show them as drafted.',
-  "A question marked consequential would close, cancel, defer or freeze work, or change a recorded decision: choose nothing for the maintainer and never take it with others. Ask about it alone and have them pick one deliberately; a general yes is no pick. A question marked maintainer-only asks them to approve something done in their name: the same goes. answer_question refuses an answer to either that isn't their latest message's only answer. An answer you cannot trace to what the maintainer said is not an answer.",
+  'A question marked consequential would close, cancel, defer or freeze work, or change a recorded decision: choose nothing for the maintainer and never take it with others. Put it to them alone with put_question, show its options, end your turn, and have them pick one deliberately; a general yes is no pick. A question marked maintainer-only asks them to approve something done in their name: the same goes. answer_question refuses either unless you put it and their message since answers it and nothing else. An answer you cannot trace to what the maintainer said is not an answer.',
   "Deferred tickets are the maintainer's to release: mention the ones that bear on a question, and never release one; you have no tool for it. Maintainer tasks are not questions, and not for this talk.",
   'The engine tells you when another question arrives: finish the one in hand, then take it up. Call list_questions before you say that none is left. Once none is left, say so in a line and wait.',
 ].join('\n\n')
@@ -162,35 +164,59 @@ const opening = ({ questions, deferred }: QuestionsInTalk): string =>
         ]),
   ].join('\n\n')
 
-/** The answers a maintainer's message has given in a talk. */
-interface Given {
-  readonly message: number
-  /** Whether it gave a consequential or maintainer-only question's. */
-  readonly alone: boolean
+/** What a talk's maintainer has been asked and has answered, as far as answering alone goes. */
+interface Ledger {
+  /** The latest message that answered something, and whether what it answered goes alone. */
+  readonly given: Option.Option<{
+    readonly message: number
+    readonly alone: boolean
+  }>
+  /** The question that goes alone now before the maintainer, and how many messages they had sent by then. */
+  readonly put: Option.Option<{
+    readonly question: TicketId
+    readonly message: number
+  }>
 }
+
+const noLedger: Ledger = { given: Option.none(), put: Option.none() }
+
+/** Whether nothing else may be answered with the question (H53, §15.1). */
+const goesAlone = (question: QuestionRequest): boolean =>
+  question.consequential || question.maintainerOnly
 
 /** Why the message can't answer `question` now; none where it can. */
 const refusal = (options: {
   readonly question: QuestionRequest
   readonly message: number
-  readonly given: Option.Option<Given>
+  readonly ledger: Ledger
 }): Option.Option<string> => {
-  const { question, message, given } = options
+  const { question, message, ledger } = options
   if (message === 0)
     return Option.some(
       'the maintainer has said nothing yet: an answer is theirs, so show them the question and wait',
     )
-  const alone = question.consequential || question.maintainerOnly
-  const same = Option.filter(given, each => each.message === message)
-  if (Option.isSome(same) && alone)
-    return Option.some(
-      `${question.ticket} is ${question.consequential ? 'consequential' : 'maintainer-only'}: it is never answered in a batch, and their last message has answered another. Ask about it alone, and have them pick one`,
+  const same = Option.filter(ledger.given, each => each.message === message)
+  if (goesAlone(question)) {
+    const kind = question.consequential ? 'consequential' : 'maintainer-only'
+    if (
+      !Option.exists(
+        ledger.put,
+        put => put.question === question.ticket && put.message < message,
+      )
     )
-  if (Option.exists(same, each => each.alone))
-    return Option.some(
-      `their last message answered a consequential or maintainer-only question, which goes alone: ask them about ${question.ticket} now`,
-    )
-  return Option.none()
+      return Option.some(
+        `${question.ticket} is ${kind}: it is never answered in a batch. Put it to the maintainer alone with put_question, show its options choosing nothing, and wait: their next message can answer it`,
+      )
+    if (Option.isSome(same))
+      return Option.some(
+        `${question.ticket} is ${kind}: it is never answered in a batch, and their last message has answered another. Ask about it alone, and have them pick one`,
+      )
+  }
+  return Option.exists(same, each => each.alone)
+    ? Option.some(
+        `their last message answered a consequential or maintainer-only question, which goes alone: ask them about ${question.ticket} now`,
+      )
+    : Option.none()
 }
 
 const invalid = (issue: string) =>
@@ -203,9 +229,15 @@ export const makeAnswerMode: Effect.Effect<
   AttentionRequests
 > = Effect.gen(function* () {
   const attention = yield* AttentionRequests
-  const ledger = yield* Ref.make<ReadonlyMap<TalkId, Given>>(new Map())
+  const ledgers = yield* Ref.make<ReadonlyMap<TalkId, Ledger>>(new Map())
   // A turn's calls may come side by side: an answer and the ledger move together.
   const answers = yield* Semaphore.make(1)
+
+  const ledgerOf = (talk: TalkId) =>
+    Effect.map(Ref.get(ledgers), current => current.get(talk) ?? noLedger)
+
+  const setLedger = (talk: TalkId, ledger: Ledger) =>
+    Ref.update(ledgers, current => new Map(current).set(talk, ledger))
 
   /** The open questions the talk's context takes, oldest first. */
   const open = (project: ProjectId, context: TalkContextOf<'answer'>) =>
@@ -253,30 +285,61 @@ export const makeAnswerMode: Effect.Effect<
 
   const draftOptions: TalkTool<'answer'> = talkTool(
     DraftOptionsTool,
-    ({ question, choices }, { project, context, graph, actor }) =>
-      Effect.gen(function* () {
-        const read = yield* graph
-        const ask = (yield* open(project.id, context)).find(
-          ({ ticket }) => ticket === question,
-        )
-        if (ask === undefined)
-          return yield* invalid(
-            `${question} isn't an open question in this talk`,
+    ({ question, choices }, { talk, project, context, graph, actor }) =>
+      answers.withPermit(
+        Effect.gen(function* () {
+          const read = yield* graph
+          const ask = (yield* open(project.id, context)).find(
+            ({ ticket }) => ticket === question,
           )
-        yield* read.draftOptions({ id: question, choices, actor }).pipe(
-          Effect.catchTag(['NotAQuestion', 'TransitionRefused'], () =>
-            invalid(
-              `${question} was filed with options, which stand: answer it with one, or in the maintainer's words`,
+          if (ask === undefined)
+            return yield* invalid(
+              `${question} isn't an open question in this talk`,
+            )
+          yield* read.draftOptions({ id: question, choices, actor }).pipe(
+            Effect.catchTag(['NotAQuestion', 'TransitionRefused'], () =>
+              invalid(
+                `${question} was filed with options, which stand: answer it with one, or in the maintainer's words`,
+              ),
             ),
-          ),
-          Effect.catchTag('InvalidTicket', ({ message }) => invalid(message)),
-          Effect.catchTag(['StoreFailed', 'TicketNotFound'], Effect.die),
-        )
-        const now = (yield* open(project.id, context)).find(
-          ({ ticket }) => ticket === question,
-        )
-        return yield* questionInTalk(read, now ?? ask)
-      }),
+            Effect.catchTag('InvalidTicket', ({ message }) => invalid(message)),
+            Effect.catchTag(['StoreFailed', 'TicketNotFound'], Effect.die),
+          )
+          // New options are new to the maintainer: a question put with the old ones is put again.
+          const ledger = yield* ledgerOf(talk)
+          if (Option.exists(ledger.put, put => put.question === question))
+            yield* setLedger(talk, { ...ledger, put: Option.none() })
+          const now = (yield* open(project.id, context)).find(
+            ({ ticket }) => ticket === question,
+          )
+          return yield* questionInTalk(read, now ?? ask)
+        }),
+      ),
+  )
+
+  const putQuestion: TalkTool<'answer'> = talkTool(
+    PutQuestionTool,
+    ({ question }, { talk, project, context, graph, maintainerMessages }) =>
+      answers.withPermit(
+        Effect.gen(function* () {
+          const ask = (yield* open(project.id, context)).find(
+            ({ ticket }) => ticket === question,
+          )
+          if (ask === undefined)
+            return yield* invalid(
+              `${question} isn't an open question in this talk`,
+            )
+          if (goesAlone(ask))
+            yield* setLedger(talk, {
+              ...(yield* ledgerOf(talk)),
+              put: Option.some({
+                question,
+                message: yield* maintainerMessages,
+              }),
+            })
+          return yield* questionInTalk(yield* graph, ask)
+        }),
+      ),
   )
 
   const answerQuestion: TalkTool<'answer'> = talkTool(
@@ -294,10 +357,8 @@ export const makeAnswerMode: Effect.Effect<
               `${question} isn't an open question in this talk: another answer may have come first`,
             )
           const message = yield* maintainerMessages
-          const given = Option.fromUndefinedOr(
-            (yield* Ref.get(ledger)).get(talk),
-          )
-          const refused = refusal({ question: ask, message, given })
+          const ledger = yield* ledgerOf(talk)
+          const refused = refusal({ question: ask, message, ledger })
           if (Option.isSome(refused)) return yield* invalid(refused.value)
           yield* attention
             .answer({
@@ -326,18 +387,18 @@ export const makeAnswerMode: Effect.Effect<
                 ),
               ),
             )
-          const alone = ask.consequential || ask.maintainerOnly
-          yield* Ref.update(ledger, current =>
-            new Map(current).set(talk, {
+          yield* setLedger(talk, {
+            given: Option.some({
               message,
               alone:
-                alone ||
+                goesAlone(ask) ||
                 Option.exists(
-                  given,
+                  ledger.given,
                   each => each.message === message && each.alone,
                 ),
             }),
-          )
+            put: Option.filter(ledger.put, put => put.question !== question),
+          })
           // Read back in the words the attention requests recorded: an option's label, or the maintainer's.
           const { ticket: recorded } = yield* Effect.orDie(
             Effect.flatMap(graph, read => read.show(question)),
@@ -363,7 +424,7 @@ export const makeAnswerMode: Effect.Effect<
   return {
     keep: false,
     instructions: answerInstructions,
-    tools: [listQuestions, draftOptions, answerQuestion],
+    tools: [listQuestions, draftOptions, putQuestion, answerQuestion],
     opening: ({ context, project, graph }) =>
       Effect.gen(function* () {
         const read = yield* graph

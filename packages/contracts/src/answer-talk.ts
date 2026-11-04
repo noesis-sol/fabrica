@@ -2,13 +2,16 @@ import { Schema } from 'effect'
 
 import { TicketId } from './ids'
 import { QuestionAnswer } from './rpc/attention'
-import { Note, QuestionChoices, Text, TicketStatus } from './ticket'
+import { LabelName, Note, QuestionChoices, Text, TicketStatus } from './ticket'
 import { type AnyTool, noArguments } from './tools'
 
 // The answer talk's question tools (spec §15.3): the open questions in its scope, with their options,
 // the tickets they block and the ticket they were asked from; options drafted for a question filed
 // without, and marked so; and the maintainer's answer, recorded one question at a time. A talk has no
 // tool that closes, defers or releases a ticket: an answer does what an answer does (§15.2).
+
+/** The label of a question whose options a talk drafted: the mark every client shows them with. */
+export const draftedLabel = LabelName.make('options-drafted')
 
 /** A ticket linked to a question, as the talk is given it. */
 export class TicketInTalk extends Schema.Class<TicketInTalk>('TicketInTalk')({
@@ -84,6 +87,21 @@ export const DraftOptionsTool = {
   success: QuestionInTalk,
 } satisfies AnyTool
 
+export const PutQuestionParameters = Schema.Struct({
+  question: TicketId.annotate({ description: 'The question.' }),
+})
+
+export const PutQuestionTool = {
+  name: 'put_question',
+  description:
+    'Says you are putting one consequential or maintainer-only question to the maintainer, alone: show ' +
+    'them its options, choosing nothing, and end your turn. Only their next message can answer it, so ' +
+    'nothing said before you put it, a general yes to all the questions among it, ever does. Putting ' +
+    'another takes the place of this one.',
+  parameters: PutQuestionParameters,
+  success: QuestionInTalk,
+} satisfies AnyTool
+
 export const AnswerQuestionParameters = Schema.Struct({
   question: TicketId.annotate({ description: 'The question.' }),
   answer: QuestionAnswer.annotate({
@@ -97,8 +115,8 @@ export const AnswerQuestionTool = {
   description:
     "Records the maintainer's answer to one question: it closes the question, writes the answer into " +
     'the tickets it blocks and frees them. Only ever what the maintainer said. A consequential or ' +
-    "maintainer-only question is refused unless the maintainer's latest message answers it and nothing " +
-    'else, so it is never answered in a batch: ask them about it alone.',
+    'maintainer-only question is never answered in a batch: it is refused unless you put it with ' +
+    "put_question and the maintainer's message since answers it and nothing else.",
   parameters: AnswerQuestionParameters,
   success: AnswerRecorded,
 } satisfies AnyTool
@@ -107,5 +125,6 @@ export const AnswerQuestionTool = {
 export const AnswerTalkTools = [
   ListQuestionsTool,
   DraftOptionsTool,
+  PutQuestionTool,
   AnswerQuestionTool,
 ] as const

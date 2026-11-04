@@ -24,6 +24,7 @@ import {
   TicketId,
   type TicketRow,
   Why,
+  draftedLabel,
   edgeWords,
 } from '@fabrica/contracts'
 import * as VirtualList from '@foldkit/ui/virtualList'
@@ -87,6 +88,8 @@ export const Facts = Schema.Struct({
   ready: Schema.Array(TicketId),
   waiting: Schema.Array(Waiting),
   edges: Schema.Array(Edge),
+  /** The questions whose options a talk drafted (§15.3). */
+  drafted: Schema.Array(TicketId),
 })
 export type Facts = typeof Facts.Type
 
@@ -142,10 +145,19 @@ export const LoadFacts = Command.define('LoadFacts', {
   execute: ({ ask: { project, open } }) =>
     requestProject(project, client =>
       Effect.gen(function* () {
-        const [ready, edges] = yield* Effect.all(
+        const [ready, edges, drafted] = yield* Effect.all(
           [
             client.rpc['tickets.ready']({ project: project.project }),
             client.rpc['tickets.edges']({ project: project.project }),
+            client.rpc['tickets.list']({
+              project: project.project,
+              filter: {
+                status: Option.none(),
+                type: Option.some(['question']),
+                labels: Option.some([draftedLabel]),
+                parent: Option.none(),
+              },
+            }),
           ],
           { concurrency: 'unbounded' },
         )
@@ -175,6 +187,7 @@ export const LoadFacts = Command.define('LoadFacts', {
           ready: ready.map(ticket => ticket.id),
           waiting: Array.getSomes(waiting),
           edges,
+          drafted: drafted.map(ticket => ticket.id),
         }
       }),
     ).pipe(
@@ -810,6 +823,17 @@ const detailView = (
                         [h.Class('text-xs font-bold text-muted')],
                         ['Options'],
                       ),
+                      Option.exists(facts, loaded =>
+                        loaded.drafted.includes(ticket.id),
+                      )
+                        ? h.p(
+                            [
+                              h.DataAttribute('drafted', ''),
+                              h.Class('text-xs text-c5'),
+                            ],
+                            ['Drafted by the answer talk, not by who asked.'],
+                          )
+                        : h.empty,
                       h.ol(
                         [h.Class('flex flex-col gap-2 text-xs')],
                         options.map((option, index) =>

@@ -338,6 +338,7 @@ describe('the answer talk', () => {
         expect(start.tools.map(({ name }) => name)).toEqual([
           'list_questions',
           'draft_options',
+          'put_question',
           'answer_question',
         ])
       }).pipe(Effect.scoped),
@@ -480,12 +481,14 @@ describe('the answer talk', () => {
       // One message, "all the recommended ones": the ordinary question goes, the consequential one doesn't.
       yield* says('Take all the recommended ones')
       answerOf(yield* call('answer_question', answerWith(ordinary.question, 0)))
-      const refused = refusalOf(
-        yield* call('answer_question', answerWith(heavy.question, 0)),
-      )
-      expect(refused).toContain('never answered in a batch')
+      expect(
+        refusalOf(
+          yield* call('answer_question', answerWith(heavy.question, 0)),
+        ),
+      ).toContain('never answered in a batch')
       expect(yield* statusOf(engine.graph, heavy.question)).toBe('open')
-      // Its own message picks it; that message answers nothing else with it.
+      // Put alone, its own message picks it; that message answers nothing else with it.
+      answerOf(yield* call('put_question', { question: heavy.question }))
       yield* says('For the API: keep it, the second option')
       answerOf(yield* call('answer_question', answerWith(heavy.question, 1)))
       expect(yield* statusOf(engine.graph, heavy.question)).toBe('closed')
@@ -501,6 +504,87 @@ describe('the answer talk', () => {
     }).pipe(Effect.scoped),
   )
 
+  it.effect('refuses a consequential question taken first in a batch', () =>
+    Effect.gen(function* () {
+      const engine = yield* newEngine
+      const heavy = yield* asked(engine.graph, {
+        title: 'Freeze the old API?',
+        consequential: true,
+      })
+      const ordinary = yield* asked(engine.graph, { title: 'Which port?' })
+      const { call, says } = yield* openTalk(engine)
+      yield* says('Take all the recommended ones')
+      expect(
+        refusalOf(
+          yield* call('answer_question', answerWith(heavy.question, 0)),
+        ),
+      ).toContain('never answered in a batch')
+      expect(yield* statusOf(engine.graph, heavy.question)).toBe('open')
+      // Putting it now is no answer: the message that came before it can't answer it.
+      answerOf(yield* call('put_question', { question: heavy.question }))
+      expect(
+        refusalOf(
+          yield* call('answer_question', answerWith(heavy.question, 0)),
+        ),
+      ).toContain('put_question')
+      expect(yield* statusOf(engine.graph, heavy.question)).toBe('open')
+      // The ordinary one can still go on the blanket message.
+      answerOf(yield* call('answer_question', answerWith(ordinary.question, 0)))
+    }).pipe(Effect.scoped),
+  )
+
+  it.effect(
+    'answers only the question put last, and only as its options stood',
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* newEngine
+        const first = yield* asked(engine.graph, {
+          title: 'Freeze the old API?',
+          consequential: true,
+        })
+        const second = yield* asked(engine.graph, {
+          title: 'Close the old ticket?',
+          consequential: true,
+        })
+        const bare = yield* asked(engine.graph, {
+          title: 'What of the old store?',
+          filedWithOptions: false,
+          consequential: true,
+        })
+        const { call, says } = yield* openTalk(engine)
+        // Two put in a row: one message can't answer both.
+        answerOf(yield* call('put_question', { question: first.question }))
+        answerOf(yield* call('put_question', { question: second.question }))
+        yield* says('The first of each')
+        expect(
+          refusalOf(
+            yield* call('answer_question', answerWith(first.question, 0)),
+          ),
+        ).toContain('put_question')
+        answerOf(yield* call('answer_question', answerWith(second.question, 0)))
+        // Drafted again after it was put, it is put again.
+        answerOf(
+          yield* call('draft_options', {
+            question: bare.question,
+            choices: twoOptions,
+          }),
+        )
+        answerOf(yield* call('put_question', { question: bare.question }))
+        answerOf(
+          yield* call('draft_options', {
+            question: bare.question,
+            choices: twoOptions,
+          }),
+        )
+        yield* says('The first')
+        expect(
+          refusalOf(
+            yield* call('answer_question', answerWith(bare.question, 0)),
+          ),
+        ).toContain('put_question')
+      }).pipe(Effect.scoped),
+  )
+
   it.effect('takes a maintainer-only question alone too', () =>
     Effect.gen(function* () {
       const engine = yield* newEngine
@@ -511,12 +595,16 @@ describe('the answer talk', () => {
       })
       const { call, says } = yield* openTalk(engine)
       yield* says('Yes to all')
-      answerOf(yield* call('answer_question', answerWith(ordinary.question, 0)))
       expect(
         refusalOf(
           yield* call('answer_question', answerWith(theirs.question, 0)),
         ),
       ).toContain('maintainer-only')
+      answerOf(yield* call('answer_question', answerWith(ordinary.question, 0)))
+      answerOf(yield* call('put_question', { question: theirs.question }))
+      yield* says('Yes, publish it')
+      answerOf(yield* call('answer_question', answerWith(theirs.question, 0)))
+      expect(yield* statusOf(engine.graph, theirs.question)).toBe('closed')
     }).pipe(Effect.scoped),
   )
 
@@ -524,6 +612,7 @@ describe('the answer talk', () => {
     expect(AnswerTalkTools.map(tool => toolJsonSchema(tool).name)).toEqual([
       'list_questions',
       'draft_options',
+      'put_question',
       'answer_question',
     ])
   })

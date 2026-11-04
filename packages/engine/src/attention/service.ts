@@ -38,6 +38,7 @@ import {
   type TicketEvent,
   type TicketId,
   attentionKey,
+  draftedLabel,
   streamItem,
 } from '@fabrica/contracts'
 
@@ -60,7 +61,6 @@ import {
 import { isConsequential } from './consequential'
 import { withAnswer } from './design'
 import { makeSetAsides } from './set-aside'
-import { draftedLabel } from './drafted'
 
 // The attention requests (spec §15.1, §15.2, §8.5): what waits on the maintainer, across the engine's
 // projects. Questions (from workers, organs, talks or the maintainer) and maintainer tasks are read
