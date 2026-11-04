@@ -10,8 +10,8 @@ import {
 import { dirname, join } from 'node:path'
 
 // A stand-in for the `docker` and `podman` CLIs, at the process boundary (spec §12.7, §24): a shell script
-// that notes each call's arguments, answers `info` from a file, refuses a subcommand where a `fail-<it>`
-// file says to, and runs `exec`'s command on the host, in the CLI's working folder, its paths under the
+// that notes each call's arguments, answers `info` and `version` from a file, refuses a subcommand where a
+// `fail-<it>` file says to, and runs `exec`'s command on the host, in the CLI's working folder, its paths under the
 // mounted distribution mapped to the fixture's. A shell script run once per test's hard link, so only the
 // first run of the file waits on macOS's scan of a new executable.
 
@@ -30,6 +30,9 @@ fi
 case "$1" in
   info)
     cat "$state/info-$self" 2>/dev/null || exit 1
+    ;;
+  version)
+    cat "$state/version-$self" 2>/dev/null || exit 1
     ;;
   image)
     [ -e "$state/held" ] || exit 1
@@ -80,6 +83,8 @@ export interface StubCli {
   readonly bin: string
   /** What `info` answers for `cli`. */
   readonly answerInfo: (cli: string, info: unknown) => void
+  /** What `version` answers for `cli`; it fails until this says. */
+  readonly answerVersion: (cli: string, version: unknown) => void
   /** Each call so far, its CLI's name first. */
   readonly calls: () => ReadonlyArray<ReadonlyArray<string>>
   /** Makes `subcommand` fail. */
@@ -114,6 +119,8 @@ export const installStub = ({
     bin,
     answerInfo: (cli, info) =>
       writeFileSync(at(`info-${cli}`), JSON.stringify(info)),
+    answerVersion: (cli, version) =>
+      writeFileSync(at(`version-${cli}`), JSON.stringify(version)),
     calls: () => {
       const text = (() => {
         try {

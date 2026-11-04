@@ -135,6 +135,48 @@ export const placementOf = ({
     })
   })
 
+/** The Docker Desktop release from which a mounted Unix socket connects, on a Mac (4.40's release notes). */
+const SOCKETS_SINCE = { major: 4, minor: 40 }
+
+/** `docker version --format json`, as far as it is read: its server's platform. */
+const DockerVersion = Schema.fromJsonString(
+  Schema.Struct({
+    Server: Schema.NullOr(
+      Schema.Struct({
+        Platform: Schema.Struct({ Name: Schema.String }),
+      }),
+    ),
+  }),
+)
+
+/**
+ * Why the Docker that wrote `version` can't hold a worker's control socket: only a Docker Desktop that
+ * names a release before 4.40 can't, so another engine on a Mac (Colima, say) passes, as does a name
+ * that says no release.
+ */
+export const dockerDesktopProblem = ({
+  version,
+}: {
+  readonly version: string
+}): Option.Option<string> =>
+  Option.flatMap(
+    Schema.decodeUnknownOption(DockerVersion)(version),
+    ({ Server }) => {
+      const release = /^Docker Desktop ((\d+)\.(\d+)\S*)/u.exec(
+        Server?.Platform.Name ?? '',
+      )
+      if (release === null) return Option.none()
+      const major = Number(release[2])
+      const minor = Number(release[3])
+      return major > SOCKETS_SINCE.major ||
+        (major === SOCKETS_SINCE.major && minor >= SOCKETS_SINCE.minor)
+        ? Option.none()
+        : Option.some(
+            `Docker Desktop ${release[1]} can't connect a Unix socket mounted in a container, which a worker's extension needs: update it to ${SOCKETS_SINCE.major}.${SOCKETS_SINCE.minor} or later`,
+          )
+    },
+  )
+
 /** A runtime chosen, and what is to be said of the choice; or why there is none. */
 export type RuntimeChoice = Data.TaggedEnum<{
   Chosen: {
@@ -147,7 +189,8 @@ export const RuntimeChoice = Data.taggedEnum<RuntimeChoice>()
 
 /**
  * The runtime `wanted` names, or whichever is present, a rootless one before a rootful one (H36); a
- * notice says when only a rootful daemon is found.
+ * notice says when only a rootful daemon is found. A Docker Desktop too old for a mounted socket isn't
+ * present, for this: Podman serves where it answers, and the problem says what to update where it doesn't.
  */
 export const chooseRuntime = Effect.fn('Container.chooseRuntime')(function* ({
   wanted,
@@ -163,30 +206,44 @@ export const chooseRuntime = Effect.fn('Container.chooseRuntime')(function* ({
     onNone: () => RUNTIMES,
     onSome: name => [name],
   })
-  const probes = yield* Effect.forEach(
-    names,
-    runtime =>
-      Effect.map(
-        runner.run({
-          command: runtime,
-          args: ['info', '--format', 'json'],
-          cwd,
-          containerRuntime: true,
-          timeLimit: CHECK_LIMIT,
-        }),
-        (outcome): Result.Result<RuntimePlacement, string> =>
-          Result.match(commandSucceeded(outcome), {
-            onFailure: why => Result.fail(`${runtime}: ${why}`),
-            onSuccess: info =>
-              Option.match(placementOf({ runtime, platform, info }), {
-                onNone: () =>
-                  Result.fail(`${runtime}: its daemon didn't answer`),
-                onSome: placement => Result.succeed(placement),
-              }),
-          }),
-      ),
-    { concurrency: 'unbounded' },
-  )
+  const answer = (runtime: ContainerRuntime, subcommand: string) =>
+    Effect.map(
+      runner.run({
+        command: runtime,
+        args: [subcommand, '--format', 'json'],
+        cwd,
+        containerRuntime: true,
+        timeLimit: CHECK_LIMIT,
+      }),
+      commandSucceeded,
+    )
+  const probe = (
+    runtime: ContainerRuntime,
+  ): Effect.Effect<Result.Result<RuntimePlacement, string>> =>
+    Effect.gen(function* () {
+      const info = yield* answer(runtime, 'info')
+      if (Result.isFailure(info))
+        return Result.fail(`${runtime}: ${info.failure}`)
+      const placement = placementOf({ runtime, platform, info: info.success })
+      if (Option.isNone(placement))
+        return Result.fail(`${runtime}: its daemon didn't answer`)
+      if (!RuntimePlacement.$is('DockerDesktop')(placement.value))
+        return Result.succeed(placement.value)
+      // A version that can't be read says nothing against a daemon that has just answered.
+      const version = yield* answer(runtime, 'version')
+      return Option.match(
+        Option.flatMap(Result.getSuccess(version), text =>
+          dockerDesktopProblem({ version: text }),
+        ),
+        {
+          onNone: () => Result.succeed(placement.value),
+          onSome: problem => Result.fail(`${runtime}: ${problem}`),
+        },
+      )
+    })
+  const probes = yield* Effect.forEach(names, probe, {
+    concurrency: 'unbounded',
+  })
   const placed = probes.flatMap(probe =>
     Result.isSuccess(probe) ? [probe.success] : [],
   )
@@ -207,7 +264,7 @@ export const chooseRuntime = Effect.fn('Container.chooseRuntime')(function* ({
     Result.isFailure(probe) ? [probe.failure] : [],
   )
   return RuntimeChoice.Refused({
-    problem: `the project's container needs ${names.join(' or ')}, and none answered: ${why.join('; ')}`,
+    problem: `the project's container needs ${names.join(' or ')}, and none is usable: ${why.join('; ')}`,
   })
 })
 
