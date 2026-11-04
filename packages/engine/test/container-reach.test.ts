@@ -340,6 +340,7 @@ describe('what an agent is given for its container', () => {
       events: Effect.die('unused'),
       windows: Effect.succeed([]),
       probe: () => Effect.die('unused'),
+      forgetRun: () => Effect.void,
       refresh: () => Effect.die('unused'),
     })
     return containedAgent({

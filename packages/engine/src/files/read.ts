@@ -22,20 +22,28 @@ const readRegular = Effect.fn('SafeFiles.readRegular')(function* (
 ) {
   const { full, folders } = yield* resolveLocation(location)
   yield* checkFolders(folders, false)
-  const { handle, stats } = yield* openRegular(full, constants.O_RDONLY)
-  return yield* Effect.gen(function* () {
-    const maxBytes = options?.maxBytes
-    if (maxBytes !== undefined && stats.size > maxBytes)
-      return yield* new FileTooLarge({ path: full, size: stats.size, maxBytes })
-    const bytes = yield* attempt(full, 'read', () => handle.readFile())
-    if (maxBytes !== undefined && bytes.length > maxBytes)
-      return yield* new FileTooLarge({
-        path: full,
-        size: bytes.length,
-        maxBytes,
-      })
-    return { bytes: new Uint8Array(bytes), stats }
-  }).pipe(Effect.ensuring(closeQuietly(handle)))
+  return yield* Effect.acquireUseRelease(
+    openRegular(full, constants.O_RDONLY),
+    ({ handle, stats }) =>
+      Effect.gen(function* () {
+        const maxBytes = options?.maxBytes
+        if (maxBytes !== undefined && stats.size > maxBytes)
+          return yield* new FileTooLarge({
+            path: full,
+            size: stats.size,
+            maxBytes,
+          })
+        const bytes = yield* attempt(full, 'read', () => handle.readFile())
+        if (maxBytes !== undefined && bytes.length > maxBytes)
+          return yield* new FileTooLarge({
+            path: full,
+            size: bytes.length,
+            maxBytes,
+          })
+        return { bytes: new Uint8Array(bytes), stats }
+      }),
+    ({ handle }) => closeQuietly(handle),
+  )
 })
 
 /** The bytes of the regular file at `location`; past `maxBytes`, a failure rather than a part of it. */

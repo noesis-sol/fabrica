@@ -162,27 +162,31 @@ const seal = (
 export const readPassphraseFile = Effect.fn('Secrets.readPassphraseFile')(
   function* (path: string) {
     const refused = (reason: string) => new PassphraseRefused({ path, reason })
-    const { handle, stats } = yield* openRegular(path, constants.O_RDONLY).pipe(
-      Effect.mapError(error => refused(error.message)),
+    return yield* Effect.acquireUseRelease(
+      openRegular(path, constants.O_RDONLY).pipe(
+        Effect.mapError(error => refused(error.message)),
+      ),
+      ({ handle, stats }) =>
+        Effect.gen(function* () {
+          if (stats.uid !== process.getuid?.())
+            return yield* refused('the passphrase file belongs to another user')
+          if ((stats.mode & 0o077) !== 0)
+            return yield* refused(
+              'others than its user can read or write the passphrase file: make it mode 0600',
+            )
+          if (stats.size > MAX_PASSPHRASE_BYTES)
+            return yield* refused('the passphrase file is too large to be one')
+          const bytes = yield* Effect.tryPromise({
+            try: () => handle.readFile(),
+            catch: error => refused(String(error)),
+          })
+          const passphrase = bytes.toString('utf8').replace(/\r?\n$/u, '')
+          if (passphrase === '')
+            return yield* refused('the passphrase file is empty')
+          return Redacted.make(passphrase)
+        }),
+      ({ handle }) => closeQuietly(handle),
     )
-    return yield* Effect.gen(function* () {
-      if (stats.uid !== process.getuid?.())
-        return yield* refused('the passphrase file belongs to another user')
-      if ((stats.mode & 0o077) !== 0)
-        return yield* refused(
-          'others than its user can read or write the passphrase file: make it mode 0600',
-        )
-      if (stats.size > MAX_PASSPHRASE_BYTES)
-        return yield* refused('the passphrase file is too large to be one')
-      const bytes = yield* Effect.tryPromise({
-        try: () => handle.readFile(),
-        catch: error => refused(String(error)),
-      })
-      const passphrase = bytes.toString('utf8').replace(/\r?\n$/u, '')
-      if (passphrase === '')
-        return yield* refused('the passphrase file is empty')
-      return Redacted.make(passphrase)
-    }).pipe(Effect.ensuring(closeQuietly(handle)))
   },
 )
 

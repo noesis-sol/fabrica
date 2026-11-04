@@ -68,8 +68,11 @@ export const findEventStream = Effect.fn('Insights.findEventStream')(function* (
       path: eventsPath,
     })
     yield* checkFolders(folders, false)
-    const { handle } = yield* openRegular(full, constants.O_RDONLY)
-    yield* closeQuietly(handle)
+    yield* Effect.acquireUseRelease(
+      openRegular(full, constants.O_RDONLY),
+      () => Effect.void,
+      ({ handle }) => closeQuietly(handle),
+    )
     return full
   }).pipe(Effect.option)
   return found
