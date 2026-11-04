@@ -890,7 +890,9 @@ describe('a hand-back at the usage limit', () => {
         )
         expect(all[all.length - 1]?._tag).toBe('Merged')
         expect(heard.prompts).toHaveLength(1)
-        expect(heard.told[0]).toContain('its turn ended on the usage limit')
+        expect(heard.told[0]).toContain(
+          'its turn ended on a hold on its provider',
+        )
         expect(heard.told[0]).toContain('Your branch is taken as it is')
       }).pipe(Effect.scoped, Effect.provide(services())),
   )

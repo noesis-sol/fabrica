@@ -895,7 +895,11 @@ export const follow = Effect.fnUntraced(function* ({
         const { head, committed } = answer.value
         yield* worker.tell({
           ticket,
-          message: takenMessage(job, head, 'its turn ended on the usage limit'),
+          message: takenMessage(
+            job,
+            head,
+            'its turn ended on a hold on its provider',
+          ),
         })
         return requeue(head, committed)
       }
