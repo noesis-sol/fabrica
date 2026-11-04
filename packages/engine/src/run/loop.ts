@@ -342,8 +342,21 @@ export const runProject = Effect.fn('Run.project')(function* (
   return yield* runViewed(config, given, view)
 })
 
-/** `runProject`, its view's sources given. */
+/** `runProject`, its view's sources given: what the engine's model proxy kept of the run goes with it (H77). */
 const runViewed = Effect.fn('Run.viewed')(function* (
+  config: RunConfig,
+  given: RunControl | undefined,
+  view: RunViewSources,
+) {
+  const { run } = yield* RunLog
+  const proxy = yield* ModelProxy
+  return yield* runChecked(config, given, view).pipe(
+    Effect.ensuring(proxy.forgetRun(run)),
+  )
+})
+
+/** The run from its start checks to its end. */
+const runChecked = Effect.fn('Run.checked')(function* (
   config: RunConfig,
   given: RunControl | undefined,
   view: RunViewSources,
@@ -493,8 +506,13 @@ const runStarted = Effect.fn('Run.started')(function* (
         ...handBackFields(counts),
       }),
     )
-  // A ticket's part in the run ended, its worker's transcript stops being watched.
-  const state = yield* makeRunState(log, spentBy, view.workers.leave)
+  // A ticket's part in the run ended, its worker's transcript stops being watched; done, it goes.
+  const state = yield* makeRunState(
+    log,
+    spentBy,
+    view.workers.leave,
+    view.workers.forget,
+  )
   // The holds, one state (§14, H58): the merge queue's hand-backs and the workers' quiet are counted
   // on its clock, in time awake (§7.7), stopped while they hold.
   const holds = yield* makeHolds({

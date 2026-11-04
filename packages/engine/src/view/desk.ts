@@ -112,6 +112,8 @@ export interface WorkerDesk {
   }) => Effect.Effect<void, AgentSendFailed, Scope.Scope>
   /** The worker's part in the run has ended: its transcript's watches end until it is entered again. */
   readonly leave: (ticket: TicketId) => Effect.Effect<void>
+  /** Its ticket is done, so no later dispatch takes its worker up again: its transcript goes now (H77). */
+  readonly forget: (ticket: TicketId) => Effect.Effect<void>
   /** The workers, in the order dispatched. */
   readonly current: Effect.Effect<ReadonlyArray<WorkerLive>>
   /** Messages the worker; `merging` (its ticket in the merge queue) holds it. None: no such worker. */
@@ -407,6 +409,16 @@ export const makeWorkerDesk = Effect.fn('WorkerDesk.make')(function* (options: {
       }),
     )
 
+  const forget = (ticket: TicketId) =>
+    Effect.andThen(
+      leave(ticket),
+      Ref.update(slots, all => {
+        const next = new Map(all)
+        next.delete(ticket)
+        return next
+      }),
+    )
+
   // The run's end ends every transcript's watches.
   yield* Scope.addFinalizer(
     options.scope,
@@ -425,6 +437,7 @@ export const makeWorkerDesk = Effect.fn('WorkerDesk.make')(function* (options: {
     enter,
     converse,
     leave,
+    forget,
     current,
     message,
     interrupt,

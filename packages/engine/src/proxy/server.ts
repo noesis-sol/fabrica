@@ -144,6 +144,8 @@ export interface ModelProxyShape {
     readonly model: ModelName
     readonly run: RunId
   }) => Effect.Effect<ProbeOutcome>
+  /** Forgets what `run`'s calls left here, as it ends: the proxy outlives its runs (H77). */
+  readonly forgetRun: (run: RunId) => Effect.Effect<void>
   /**
    * Refreshes `provider`'s subscription token where it expires within `validFor`. A provider on a key,
    * or whose credential can't be read, has nothing to refresh: its probe says how it stands.
@@ -901,6 +903,7 @@ export const make = Effect.fn('ModelProxy.make')(function* (
     events: Effect.map(PubSub.subscribe(published), Stream.fromSubscription),
     windows: Effect.sync(() => [...figures.values()]),
     probe,
+    forgetRun: run => Effect.sync(() => wentThrough.delete(run)),
     refresh,
   })
 })

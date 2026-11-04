@@ -160,12 +160,13 @@ export interface RunStateShape {
 
 /**
  * A run's state, empty, its records written through `log`, what a ticket spent read from `spent`, each
- * ticket whose part ends told to `left`.
+ * ticket whose part ends told to `left`, and each that is done, for what is held for it to go (H77), to `done`.
  */
 export const makeRunState = Effect.fn('RunState.make')(function* (
   log: RunLog['Service'],
   spent: (ticket: TicketId) => Effect.Effect<SpentFields>,
   left: (ticket: TicketId) => Effect.Effect<void> = () => Effect.void,
+  done: (ticket: TicketId) => Effect.Effect<void> = () => Effect.void,
 ) {
   const state = yield* SynchronizedRef.make<RunSnapshot>({
     tickets: new Map(),
@@ -298,6 +299,9 @@ export const makeRunState = Effect.fn('RunState.make')(function* (
         !inProgressIn(input.to)
           ? left(input.ticket)
           : Effect.void,
+      ),
+      Effect.tap(() =>
+        factsOf(input.to).counts === 'done' ? done(input.ticket) : Effect.void,
       ),
     )
 

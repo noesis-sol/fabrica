@@ -199,6 +199,9 @@ interface Pending {
 /** The most closures kept for the patches a feed keeps: four times a feed's 256. */
 const keptClosures = 1024
 
+/** The most answers kept, for a later answer told who came first: the engine lives for weeks (H77). */
+const keptAnswers = 1024
+
 /** The answer's text: the option's label, or the maintainer's words. */
 const answerText = (
   ticket: Ticket,
@@ -319,6 +322,14 @@ export const make = (
     const closures = new Map<string, AttentionClosed>()
     /** Who answered each request answered through the service, and when. */
     const answers = new Map<string, Answered>()
+    const keepAnswer = (key: string, answered: Answered) => {
+      answers.set(key, answered)
+      for (const old of [...answers.keys()].slice(
+        0,
+        Math.max(0, answers.size - keptAnswers),
+      ))
+        answers.delete(old)
+    }
     const pending = yield* Ref.make<ReadonlyMap<string, Pending>>(new Map())
     const all = yield* feedOf([])
     const byProject = yield* Ref.make<
@@ -691,7 +702,7 @@ export const make = (
           by: input.by,
           at: yield* DateTime.now,
         })
-        answers.set(key, answered)
+        keepAnswer(key, answered)
         yield* graph
           .answer({
             id: question.id,
@@ -833,7 +844,7 @@ export const make = (
           matching,
           ([key, waiting]) =>
             Effect.andThen(
-              Effect.sync(() => answers.set(key, answered)),
+              Effect.sync(() => keepAnswer(key, answered)),
               settle(key, waiting, PermissionDecision.cases.allow_run.make({})),
             ),
           { discard: true },
@@ -877,7 +888,7 @@ export const make = (
           : Effect.fail(new AttentionNotFound({ ref }))
       }
       const answered = new Answered({ by, at: yield* DateTime.now })
-      answers.set(key, answered)
+      keepAnswer(key, answered)
       if (input.decision._tag === 'allow_run')
         yield* Ref.update(waiting.rules, rules => [...rules, waiting.rule])
       yield* settle(key, waiting, input.decision)
@@ -1050,7 +1061,7 @@ export const make = (
       }
       yield* writeDesigns(graph, question, links.blocks, text, byMaintainer)
       const answered = new Answered({ by: input.by, at: yield* DateTime.now })
-      answers.set(attentionKey(ref), answered)
+      keepAnswer(attentionKey(ref), answered)
       yield* Effect.orDie(graph.reopen({ id: question.id, actor: maintainer }))
       yield* Effect.orDie(
         graph.answer({ id: question.id, answer: text, actor: maintainer }),
