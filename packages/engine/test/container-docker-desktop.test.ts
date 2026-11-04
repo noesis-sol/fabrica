@@ -243,6 +243,7 @@ describe("a run's start with an older Docker Desktop", () => {
           platform: 'darwin',
           uid: 501,
           gid: 20,
+          enginePriority: 0,
           memory: 2 * 1024 ** 3,
           environment: {},
           distribution: Effect.succeed(state.distribution),

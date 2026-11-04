@@ -306,6 +306,7 @@ const preparedOn = (placement: RuntimePlacement): PreparedContainers => ({
   distribution: { root: '/d', node: 'n', cli: 'c', extension: 'e' },
   uid: 1,
   gid: 1,
+  enginePriority: 0,
   environment: {},
   notices: [],
 })

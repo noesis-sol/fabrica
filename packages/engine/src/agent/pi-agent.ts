@@ -409,6 +409,7 @@ export const make = Effect.fn('PiAgent.make')(function* (
             tools: options.tools,
           }),
           Object.keys(environment),
+          options.nice,
         ),
         env: { ...started.variables, ...environment },
       })

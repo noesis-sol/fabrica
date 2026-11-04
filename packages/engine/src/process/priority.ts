@@ -49,6 +49,37 @@ export const effectiveNice = ({
 }): Option.Option<number> => Option.filter(nice, value => value > engine)
 
 /**
+ * The nice value a process in a container is set to: `nice`, or the engine's own where that is lower in
+ * priority. A container's processes descend from its runtime's daemon, so they inherit nothing of the
+ * engine's, and what `effectiveNice` leaves to inheritance has to be asked for.
+ */
+export const containedNice = ({
+  nice,
+  engine,
+}: {
+  readonly nice: Option.Option<number>
+  readonly engine: number
+}): Option.Option<number> => Option.map(nice, value => Math.max(value, engine))
+
+/**
+ * Node's arguments that set the process they start to `nice` before its script runs, as far as that
+ * lowers it: the one way into a container, whose image needn't have `nice`, and no process more, its
+ * script's arguments and exit status its own. Linux keeps a nice value per thread, so this is its main
+ * thread's, as `setPriority` from outside is, and the commands it spawns inherit it. A refusal leaves
+ * the daemon's priority, which is no reason to stop an agent.
+ */
+export const niceArguments = (nice: number): ReadonlyArray<string> => [
+  '--import',
+  `data:text/javascript,${encodeURIComponent(
+    `import { getPriority, setPriority } from 'node:os'
+try {
+  if (getPriority() < ${nice}) setPriority(${nice})
+} catch {}
+`,
+  )}`,
+]
+
+/**
  * Sets the process `pid` to `nice`, reads it back at once and again 100 ms later (in a fiber of the
  * caller's scope), and sets it again wherever it reads higher in priority; `warned` says whether the
  * log has said so yet.

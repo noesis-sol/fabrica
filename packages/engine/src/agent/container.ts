@@ -10,7 +10,12 @@ import type {
 } from '@fabrica/contracts'
 import { ContainerSource } from '@fabrica/contracts'
 
-import { ProcessRunner, commandSucceeded } from '../process'
+import {
+  ProcessRunner,
+  commandSucceeded,
+  containedNice,
+  niceArguments,
+} from '../process'
 
 // A worker's container (spec §12.7, H16, H36; the spike fab-mgi.2.8 and its answers fab-mgi.60, .61,
 // .62): Docker or Podman through the Docker-compatible CLI, the one module that knows its arguments.
@@ -21,7 +26,8 @@ import { ProcessRunner, commandSucceeded } from '../process'
 // the engine and the agent tell each other (a session file, a check's log, the worktree's git folder)
 // need no translating. The engine's variables reach a container by name (`--env NAME`), from the CLI's
 // own environment, so a token is never on a process list; a devcontainer file's, which it commits and
-// which may name `PATH` or `HOME`, by value, so they never change the CLI's own.
+// which may name `PATH` or `HOME`, by value, so they never change the CLI's own. A nice value set on the
+// CLI stays on the host, so Pi is set to `worker_nice` as it starts inside (§7.3).
 
 /** Where the Linux engine distribution is mounted in a container. */
 export const DISTRIBUTION_TARGET = '/opt/fabrica'
@@ -593,6 +599,8 @@ export interface ContainerHost {
   readonly platform: string
   readonly uid: number
   readonly gid: number
+  /** The engine's own nice value: a container's agent is never set higher in priority than it. */
+  readonly enginePriority: number
   /** A worker's share of the machine's memory, in bytes (§7.3). */
   readonly memory: number
   /** The engine's allowlisted environment (§20.2), which `${localEnv:…}` reads. */
@@ -615,6 +623,7 @@ export interface PreparedContainers {
   readonly distribution: LinuxDistribution
   readonly uid: number
   readonly gid: number
+  readonly enginePriority: number
   readonly environment: Readonly<Record<string, string | undefined>>
   /** What the start says of them. */
   readonly notices: ReadonlyArray<string>
@@ -812,6 +821,7 @@ export const prepareContainers = Effect.fn('Container.prepare')(function* ({
     distribution,
     uid: host.uid,
     gid: host.gid,
+    enginePriority: host.enginePriority,
     environment: host.environment,
     notices: [...choice.notices, ...read.success.notices, ...fetched.notices],
   }
@@ -1174,10 +1184,11 @@ export interface StartedContainer {
   readonly runtime: ContainerRuntime
   /** Its lifecycle commands, which run before anything else in it (fab-mgi.2.8). */
   readonly setUp: Effect.Effect<void, ContainerSetupFailed>
-  /** The CLI's arguments for the agent's Pi, given Pi's own arguments and its variables' names. */
+  /** The CLI's arguments for the agent's Pi, given Pi's own arguments, its variables' names and its nice value. */
   readonly agentArguments: (
     pi: ReadonlyArray<string>,
     environment: ReadonlyArray<string>,
+    nice: Option.Option<number>,
   ) => ReadonlyArray<string>
   /** The variables its commands get by name, which the CLI is given. */
   readonly variables: Readonly<Record<string, string>>
@@ -1344,7 +1355,7 @@ export const startContainer = Effect.fn('Container.start')(function* ({
     setUp,
     workspace,
     variables,
-    agentArguments: (pi, names) =>
+    agentArguments: (pi, names, nice) =>
       execArguments({
         name,
         workspace,
@@ -1352,7 +1363,14 @@ export const startContainer = Effect.fn('Container.start')(function* ({
         values: remoteEnv,
         environment: [...new Set([...environment, ...names])],
         interactive: true,
-        command: [insideParts(prepared.distribution).node, ...pi],
+        command: [
+          insideParts(prepared.distribution).node,
+          ...Option.match(
+            containedNice({ nice, engine: prepared.enginePriority }),
+            { onNone: () => [], onSome: niceArguments },
+          ),
+          ...pi,
+        ],
       }),
   }
   return started

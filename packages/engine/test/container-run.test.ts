@@ -61,6 +61,7 @@ const hostOf = (overrides: Partial<ContainerHost> = {}): ContainerHost => ({
   platform: 'linux',
   uid: 1000,
   gid: 1000,
+  enginePriority: 0,
   memory: 1024 ** 3,
   environment: {},
   distribution: Effect.succeed(distribution),

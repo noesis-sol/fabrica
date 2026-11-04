@@ -8,6 +8,7 @@ import {
   Result,
 } from 'effect'
 import { access, constants, readFile } from 'node:fs/promises'
+import { getPriority } from 'node:os'
 import * as NodePath from 'node:path'
 
 import {
@@ -239,6 +240,7 @@ export const onHost = ({
     platform: process.platform,
     uid: process.getuid?.() ?? 0,
     gid: process.getgid?.() ?? 0,
+    enginePriority: getPriority(),
     totalMemory: options.totalMemory,
     environment: Process.commandEnvironment({ host: process.env, extra: {} }),
     distribution: linuxDistribution({
