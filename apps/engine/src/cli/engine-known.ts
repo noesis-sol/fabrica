@@ -142,6 +142,11 @@ const tlsReach = (address: string, given: Option.Option<Fingerprint>) =>
         'no pairing token was given: make one with `fabrica token create <name>` on the host',
       )
     }
+    if (/\s/u.test(token)) {
+      return yield* refused(
+        'a pairing token is one word: give the token alone, as `fabrica token create` printed it',
+      )
+    }
     return EngineReach.cases.Tls.make({
       ...endpoint,
       fingerprint,

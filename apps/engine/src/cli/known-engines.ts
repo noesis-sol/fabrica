@@ -1,9 +1,10 @@
-import { Context, Data, Effect, Option, Schema } from 'effect'
+import { Context, Data, Duration, Effect, Option, Schema } from 'effect'
 import { mkdir } from 'node:fs/promises'
+import * as NodePath from 'node:path'
 
 import { SshDestination, TlsEndpoint, WslDistro } from '@fabrica/client'
 import { CertificateFingerprint, type Host } from '@fabrica/contracts'
-import type { Daemon } from '@fabrica/engine'
+import { Daemon } from '@fabrica/engine'
 import { readFileText, writeFileWhole } from '@fabrica/engine/files'
 
 import { hostConfigFolder, hostFacts } from '../host'
@@ -11,7 +12,8 @@ import { hostConfigFolder, hostFacts } from '../host'
 // The engines the CLI knows by name (spec §19, §9.1): its own, kept with `fabrica engine add|list|remove`
 // so a host with no app knows some too; their names may differ from the app's, which keeps its own. They
 // are one file in the user's config folder, `engines.json`, written whole through the engine's writer,
-// so a crash leaves the old list or the new one. It holds the pairing tokens of those reached over TLS,
+// so a crash leaves the old list or the new one, and each change holds `engines.lock` from its read to
+// its write, so commands run side by side lose none of each other's. It holds the pairing tokens of those reached over TLS,
 // so it is mode 0600, like a key under `~/.ssh`: there is no app's safeStorage here, and a host with no
 // keyring has to work too.
 
@@ -64,6 +66,12 @@ const encodeEngines = Schema.encodeEffect(EnginesJson)
 
 /** The file's name in the user's config folder. */
 const enginesFileName = 'engines.json'
+
+/** The file changes hold, in the same folder. */
+const enginesLockName = 'engines.lock'
+
+/** How long a change waits for another `fabrica`'s to end. */
+const enginesLockWait = Duration.seconds(10)
 
 /** The most the file may hold. */
 const enginesFileMaxBytes = 1024 * 1024
@@ -135,29 +143,46 @@ const readEngines = (folder: string) =>
     Effect.withSpan('KnownEngines.read'),
   )
 
-/** Writes `engines` as the file in `folder`, which is made, for its user alone, where it isn't there. */
+/** Writes `engines` as the file in `folder`. */
 const writeEngines = (folder: string, engines: ReadonlyArray<KnownEngine>) =>
-  Effect.tryPromise(() => mkdir(folder, { recursive: true, mode: 0o700 })).pipe(
-    Effect.andThen(
-      encodeEngines({ version: 1, engines }).pipe(
-        Effect.mapError(() => ({ message: notReadable })),
-      ),
-    ),
+  encodeEngines({ version: 1, engines }).pipe(
+    Effect.mapError(() => ({ message: notReadable })),
     Effect.flatMap(text =>
       writeFileWhole({ root: folder, path: enginesFileName }, text, {
         mode: 0o600,
       }),
     ),
-    Effect.mapError(
-      failure =>
-        new KnownEnginesFailed({
-          operation: 'write',
-          folder,
-          reason: failure.message,
-        }),
-    ),
     Effect.withSpan('KnownEngines.write'),
   )
+
+/**
+ * Changes the list in the file with `change`, one `fabrica` at a time, so one run beside this loses
+ * nothing of its change or of this one. The folder is made, for its user alone, where it isn't there.
+ */
+const changeEngines = <E>(
+  change: (
+    engines: ReadonlyArray<KnownEngine>,
+  ) => Effect.Effect<ReadonlyArray<KnownEngine>, E>,
+) =>
+  Effect.gen(function* () {
+    const { folder: found } = yield* KnownEnginesFolder
+    const folder = yield* found
+    const failed = (failure: { readonly message: string }) =>
+      new KnownEnginesFailed({
+        operation: 'write',
+        folder,
+        reason: failure.message,
+      })
+    yield* Effect.tryPromise(() =>
+      mkdir(folder, { recursive: true, mode: 0o700 }),
+    ).pipe(Effect.mapError(failed))
+    yield* Daemon.acquireFileLock({
+      file: NodePath.join(folder, enginesLockName),
+      wait: enginesLockWait,
+    }).pipe(Effect.mapError(failed))
+    const changed = yield* change(yield* readEngines(folder))
+    yield* writeEngines(folder, changed).pipe(Effect.mapError(failed))
+  }).pipe(Effect.scoped)
 
 /** The known engines, in the order they were added. */
 export const knownEngines = Effect.gen(function* () {
@@ -175,31 +200,20 @@ export const findKnownEngine = (name: string) =>
 export const addKnownEngine = Effect.fn('KnownEngines.add')(function* (
   engine: KnownEngine,
 ) {
-  const folder = yield* Effect.flatMap(
-    KnownEnginesFolder,
-    ({ folder }) => folder,
+  yield* changeEngines(engines =>
+    engines.some(known => known.name === engine.name)
+      ? Effect.fail(new KnownEngineExists({ name: engine.name }))
+      : Effect.succeed([...engines, engine]),
   )
-  const engines = yield* readEngines(folder)
-  if (engines.some(known => known.name === engine.name)) {
-    return yield* new KnownEngineExists({ name: engine.name })
-  }
-  yield* writeEngines(folder, [...engines, engine])
 })
 
 /** Forgets the known engine named `name`, and its token. */
 export const removeKnownEngine = Effect.fn('KnownEngines.remove')(function* (
   name: KnownEngineName,
 ) {
-  const folder = yield* Effect.flatMap(
-    KnownEnginesFolder,
-    ({ folder }) => folder,
-  )
-  const engines = yield* readEngines(folder)
-  if (!engines.some(known => known.name === name)) {
-    return yield* new KnownEngineMissing({ name })
-  }
-  yield* writeEngines(
-    folder,
-    engines.filter(known => known.name !== name),
+  yield* changeEngines(engines =>
+    engines.some(known => known.name === name)
+      ? Effect.succeed(engines.filter(known => known.name !== name))
+      : Effect.fail(new KnownEngineMissing({ name })),
   )
 })

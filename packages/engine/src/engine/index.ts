@@ -39,7 +39,13 @@ export {
   parseDarwinKernel,
   parseLinuxKernel,
 } from './load'
-export { EngineAlreadyRunning, LockFailed, acquireEngineLock } from './lock'
+export {
+  EngineAlreadyRunning,
+  FileLockFailed,
+  LockFailed,
+  acquireEngineLock,
+  acquireFileLock,
+} from './lock'
 export {
   DataFolderFailed,
   EngineFiles,

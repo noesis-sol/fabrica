@@ -642,6 +642,50 @@ describe('fabrica engine add|list|remove and --engine <name>', () => {
       }).pipe(Effect.scoped),
     )
 
+    it.effect('loses nothing to commands run side by side', () =>
+      Effect.gen(function* () {
+        const { fabrica } = yield* setUp()
+        const names = Array.from({ length: 6 }, (_, index) => `box-${index}`)
+        yield* fabrica('engine', 'add', 'gone', '--ssh', 'host')
+        const runs = yield* Effect.all(
+          [
+            fabrica('engine', 'remove', 'gone'),
+            ...names.map(name =>
+              fabrica('engine', 'add', name, '--ssh', 'host'),
+            ),
+          ],
+          { concurrency: 'unbounded' },
+        )
+        expect(runs.map(({ exit }) => exit)).toStrictEqual(
+          runs.map(() => Exit.void),
+        )
+        const after = yield* fabrica('engine', 'list')
+        expect(after.out.join('\n').split('\n').sort()).toStrictEqual(
+          names.map(name => `${name}  ssh host`),
+        )
+      }).pipe(Effect.scoped),
+    )
+
+    it.effect('refuses stdin of more than a token', () =>
+      Effect.gen(function* () {
+        const engine = yield* setUp()
+        const { exit, err } = yield* engine.fabricaGiven(
+          'one-token\nand-another\n',
+          'engine',
+          'add',
+          'tls',
+          '--tls',
+          engine.address,
+          '--fingerprint',
+          engine.fingerprint,
+        )
+        expect(Exit.isFailure(exit)).toBe(true)
+        expect(err).toStrictEqual([
+          'fabrica: a pairing token is one word: give the token alone, as `fabrica token create` printed it',
+        ])
+      }).pipe(Effect.scoped),
+    )
+
     it.effect('says a name it can’t remove isn’t known', () =>
       Effect.gen(function* () {
         const { fabrica } = yield* setUp()

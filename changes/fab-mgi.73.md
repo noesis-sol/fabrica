@@ -8,3 +8,5 @@
   the terminal and takes the token typed unseen or from stdin; a script gives `--fingerprint`, as nobody can
   accept it off a terminal. `local` and `ssh://[user@]host[:port]` still work as `--engine` values, and can't be
   a known engine's name.
+- Each change to `engines.json` holds `engines.lock` beside it from its read to its write, so `fabrica engine add`
+  and `remove` run side by side lose nothing; a stdin of more than one word isn't taken for a pairing token.
