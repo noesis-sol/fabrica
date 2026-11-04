@@ -32,6 +32,7 @@ import {
   type RunId,
   type RunView,
   SessionId,
+  TalkId,
   TicketId,
   type ToolRefusal,
   applyRunViewPatch,
@@ -952,6 +953,7 @@ describe('answers through the talk', () => {
     /** Calls `tool`, the maintainer having answered or not. */
     const call = (tool: string, input: unknown, confirmed: boolean) => {
       const context: TalkToolContext<'run'> = {
+        talk: TalkId.make('talk-1'),
         project: {
           id: project,
           name: 'Work',
@@ -964,6 +966,7 @@ describe('answers through the talk', () => {
         context: { _tag: 'run' },
         graph,
         actor: talkActor,
+        maintainerMessages: Effect.succeed(0),
         confirmed: () => Effect.succeed(confirmed),
         openTalk: () => unused,
       }

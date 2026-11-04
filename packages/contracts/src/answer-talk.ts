@@ -95,14 +95,14 @@ export const PutQuestionTool = {
   name: 'put_question',
   description:
     'Says you are putting one consequential or maintainer-only question to the maintainer, alone: show ' +
-    'them its options, choosing nothing, and end your turn. Only their next message can answer it, so ' +
+    'them its options, choosing nothing, and end your turn. Only their very next message can answer it, so ' +
     'nothing said before you put it, a general yes to all the questions among it, ever does. Putting ' +
     'another takes the place of this one.',
   parameters: PutQuestionParameters,
   success: QuestionInTalk,
 } satisfies AnyTool
 
-export const AnswerQuestionParameters = Schema.Struct({
+export const AnswerTalkQuestionParameters = Schema.Struct({
   question: TicketId.annotate({ description: 'The question.' }),
   answer: QuestionAnswer.annotate({
     description:
@@ -110,14 +110,14 @@ export const AnswerQuestionParameters = Schema.Struct({
   }),
 })
 
-export const AnswerQuestionTool = {
+export const AnswerTalkQuestionTool = {
   name: 'answer_question',
   description:
     "Records the maintainer's answer to one question: it closes the question, writes the answer into " +
     'the tickets it blocks and frees them. Only ever what the maintainer said. A consequential or ' +
     'maintainer-only question is never answered in a batch: it is refused unless you put it with ' +
     "put_question and the maintainer's message since answers it and nothing else.",
-  parameters: AnswerQuestionParameters,
+  parameters: AnswerTalkQuestionParameters,
   success: AnswerRecorded,
 } satisfies AnyTool
 
@@ -126,5 +126,5 @@ export const AnswerTalkTools = [
   ListQuestionsTool,
   DraftOptionsTool,
   PutQuestionTool,
-  AnswerQuestionTool,
+  AnswerTalkQuestionTool,
 ] as const

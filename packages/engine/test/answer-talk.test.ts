@@ -533,6 +533,32 @@ describe('the answer talk', () => {
     }).pipe(Effect.scoped),
   )
 
+  it.effect('takes only the very next message as its answer', () =>
+    Effect.gen(function* () {
+      const engine = yield* newEngine
+      const heavy = yield* asked(engine.graph, {
+        title: 'Freeze the old API?',
+        consequential: true,
+      })
+      yield* asked(engine.graph, { title: 'Which port?' })
+      const { call, says } = yield* openTalk(engine)
+      answerOf(yield* call('put_question', { question: heavy.question }))
+      // Something else first: a later blanket message doesn't answer what was put before it.
+      yield* says('Hold on, what is the port question about?')
+      yield* says('OK. Take all the recommended ones')
+      expect(
+        refusalOf(
+          yield* call('answer_question', answerWith(heavy.question, 0)),
+        ),
+      ).toContain('put it again')
+      expect(yield* statusOf(engine.graph, heavy.question)).toBe('open')
+      answerOf(yield* call('put_question', { question: heavy.question }))
+      yield* says('Keep it open: the first option')
+      answerOf(yield* call('answer_question', answerWith(heavy.question, 0)))
+      expect(yield* statusOf(engine.graph, heavy.question)).toBe('closed')
+    }).pipe(Effect.scoped),
+  )
+
   it.effect(
     'answers only the question put last, and only as its options stood',
     () =>

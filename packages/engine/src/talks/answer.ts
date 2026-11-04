@@ -1,8 +1,8 @@
 import { Effect, Match, Option, Ref, Semaphore, Stream } from 'effect'
 
 import {
-  AnswerQuestionTool,
   AnswerRecorded,
+  AnswerTalkQuestionTool,
   AttentionAnswer,
   type AttentionRequest,
   DeferredInTalk,
@@ -34,8 +34,10 @@ import {
 // questions, and nothing else: it can't release a deferred ticket, which it only mentions. The answers
 // go through the attention requests as any client's do, the first answer winning. A consequential or
 // maintainer-only question is answered alone (H53): the talk puts it to the maintainer by itself, and
-// only their next message can answer it, and nothing else with it. That rule is the engine's, so a model
-// that takes "all the recommended ones" literally is refused in whatever order it goes, not trusted.
+// only their very next message can answer it, and nothing else with it. That rule is the engine's, so
+// nothing said before the question was put, a general "all the recommended ones" among it, ever answers
+// it, whatever order the talk takes them in. What the engine can't read is the words of that next
+// message: that a general yes is no pick is the talk's instructions' to hold.
 
 export const answerInstructions = [
   "You are going through the maintainer's open questions with them, in the project's checkout, which you read but never change.",
@@ -201,11 +203,11 @@ const refusal = (options: {
     if (
       !Option.exists(
         ledger.put,
-        put => put.question === question.ticket && put.message < message,
+        put => put.question === question.ticket && put.message + 1 === message,
       )
     )
       return Option.some(
-        `${question.ticket} is ${kind}: it is never answered in a batch. Put it to the maintainer alone with put_question, show its options choosing nothing, and wait: their next message can answer it`,
+        `${question.ticket} is ${kind}: it is never answered in a batch. Put it to the maintainer alone with put_question, show its options choosing nothing, and wait: only their very next message can answer it, so put it again if they said something else since`,
       )
     if (Option.isSome(same))
       return Option.some(
@@ -343,7 +345,7 @@ export const makeAnswerMode: Effect.Effect<
   )
 
   const answerQuestion: TalkTool<'answer'> = talkTool(
-    AnswerQuestionTool,
+    AnswerTalkQuestionTool,
     (
       { question, answer },
       { talk, project, context, graph, maintainerMessages },
