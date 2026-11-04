@@ -47,6 +47,7 @@ export {
   type HostPlaces,
   UnsupportedPlatform,
   enginePaths,
+  userConfigFolder,
   pathsIn,
   prepareFolders,
 } from './paths'

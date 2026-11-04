@@ -63,12 +63,12 @@ const stdinLines = Effect.gen(function* () {
   return lines
 })
 
-/** The key `set` keeps: typed unseen on a terminal; else all of stdin. */
-const keyFromUser = (name: string) =>
+/** A secret from the user, trimmed: typed unseen at a prompt saying `message` on a terminal; else all of stdin. */
+export const secretFromUser = (message: string) =>
   Effect.gen(function* () {
     const stdio = yield* Stdio.Stdio
-    const key = (yield* stdio.stdinIsTerminal)
-      ? yield* Prompt.Hidden({ message: `The key for ${name}` }).pipe(
+    const secret = (yield* stdio.stdinIsTerminal)
+      ? yield* Prompt.Hidden({ message }).pipe(
           Effect.map(Redacted.value),
           Effect.catchTag('QuitError', () => Effect.succeed('')),
         )
@@ -77,10 +77,16 @@ const keyFromUser = (name: string) =>
           Stream.decodeText(),
           Stream.mkString,
         )
-    const trimmed = key.trim()
-    return trimmed === ''
+    return secret.trim()
+  })
+
+/** The key `set` keeps: refused where none was given. */
+const keyFromUser = (name: string) =>
+  Effect.gen(function* () {
+    const key = yield* secretFromUser(`The key for ${name}`)
+    return key === ''
       ? yield* refused(`no key was given for ${sanitiseLine(name)}`)
-      : Redacted.make(trimmed)
+      : Redacted.make(key)
   })
 
 const SetAnswer = Schema.Struct({ set: CredentialName })

@@ -1,10 +1,13 @@
 import {
   Data,
+  Duration,
   Effect,
   Layer,
   Option,
   Predicate,
   Redacted,
+  Schedule,
+  Schema,
   type Scope,
 } from 'effect'
 import type { RpcClientError } from 'effect/rpc'
@@ -13,7 +16,15 @@ import { isIPv6 } from 'node:net'
 import { type TLSSocket, connect } from 'node:tls'
 
 import { NodeSocket } from '@effect/platform-node'
-import { bearerAuthorization, pairingPath } from '@fabrica/contracts'
+import {
+  CertificateFingerprint,
+  bearerAuthorization,
+  pairingPath,
+} from '@fabrica/contracts'
+
+import { type TlsEndpoint, tlsEndpointText } from '../known-engine'
+import { FingerprintAnswer } from '../pairing'
+import { reconnectBackOff } from '../port'
 
 // The TLS transport (spec §8.2, §9.3): the protocol as a WebSocket over TLS to an engine's listener,
 // for an engine not reached through SSH. The engine's certificate is its own, self-signed, or the
@@ -69,6 +80,12 @@ export const tlsRefused = (
     : Option.none()
 }
 
+/** The client's reconnect schedule over TLS: `base` (Effect's back-off unless given), until the engine refuses. */
+export const tlsReconnect = (
+  base: Schedule.Schedule<unknown, Socket.SocketError> = reconnectBackOff,
+): Schedule.Schedule<unknown, Socket.SocketError> =>
+  Schedule.while(base, ({ input }) => Option.isNone(tlsRefused(input)))
+
 const openFailed = (cause: unknown) =>
   new Socket.SocketError({
     reason: new Socket.SocketOpenError({ kind: 'Unknown', cause }),
@@ -109,6 +126,69 @@ export const presentedFingerprint = (
     // A connection that hangs is given up by interrupting it, which destroys its socket.
     { interruptible: true },
   ).pipe(Effect.map(fingerprintOf), Effect.scoped)
+
+/** How long a first pairing's read waits for the engine's TLS handshake. */
+export const fingerprintTimeout = Duration.seconds(15)
+
+const decodeFingerprint = Schema.decodeUnknownEffect(CertificateFingerprint)
+
+const fingerprintFailed = (reason: string): FingerprintAnswer =>
+  FingerprintAnswer.cases.Failed.make({ reason })
+
+/** What a socket's failure says: its cause's message where it has one. */
+const causeWords = (error: { readonly reason: unknown }): string => {
+  const { reason } = error
+  const cause: unknown =
+    typeof reason === 'object' && reason !== null
+      ? Reflect.get(reason, 'cause')
+      : undefined
+  return cause instanceof Error && cause.message !== ''
+    ? cause.message
+    : String(reason)
+}
+
+/**
+ * The fingerprint the engine at `endpoint` presents, or why it couldn't be read, in words. An engine
+ * that doesn't answer in time is said so, rather than waited on for as long as the system's TCP
+ * connect waits.
+ */
+export const readFingerprint = Effect.fn('TlsTransport.readFingerprint')(
+  function* (
+    endpoint: TlsEndpoint,
+    timeout: Duration.Duration = fingerprintTimeout,
+  ) {
+    const at = tlsEndpointText(endpoint)
+    return yield* presentedFingerprint(endpoint).pipe(
+      Effect.flatMap(decodeFingerprint),
+      Effect.map(fingerprint =>
+        FingerprintAnswer.cases.Presented.make({ fingerprint }),
+      ),
+      Effect.timeoutOrElse({
+        duration: timeout,
+        orElse: () =>
+          Effect.succeed(
+            fingerprintFailed(
+              `no engine answered at ${at} within ${Duration.format(timeout)}`,
+            ),
+          ),
+      }),
+      Effect.catchTags({
+        SocketError: error =>
+          Effect.succeed(
+            fingerprintFailed(
+              `couldn't reach an engine over TLS at ${at}: ${causeWords(error)}`,
+            ),
+          ),
+        SchemaError: () =>
+          Effect.succeed(
+            fingerprintFailed(
+              `the engine at ${at} presented no SHA-256 fingerprint`,
+            ),
+          ),
+      }),
+    )
+  },
+)
 
 /** A host as a URL writes it. */
 const urlHost = (host: string): string => (isIPv6(host) ? `[${host}]` : host)

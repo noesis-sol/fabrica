@@ -1,4 +1,4 @@
-import { Context, Data, Effect, Layer, Option, Result, Schema } from 'effect'
+import { Context, Data, Effect, Layer, Option, Schema } from 'effect'
 import { RpcClientError } from 'effect/rpc'
 import type { Socket } from 'effect/socket'
 
@@ -6,27 +6,40 @@ import {
   type ClientOptions,
   type EngineClientShape,
   SshDestination,
+  type WslDistro,
   isDefect,
   make,
+  tlsEndpointText,
 } from '@fabrica/client'
 import {
   SshPrompting,
+  type TlsEngine,
   layerSsh,
+  layerTls,
   layerUnixSocket,
+  layerWsl,
   sshFailed,
   sshReconnect,
+  tlsReconnect,
+  tlsRefused,
+  wslFailed,
+  wslReconnect,
 } from '@fabrica/client/node'
 import type { VersionMismatch } from '@fabrica/contracts'
 import type { Daemon } from '@fabrica/engine'
 
 import { version } from '../version'
 import { EngineName } from './flags'
+import { EngineReach, findKnownEngine, localEngineName } from './known-engines'
 
 // How a command reaches its engine (spec §19, §8.2): the engine `--engine <name>` names, or the local
 // one. The local engine is known by the name `local`, and its socket reaches it; an engine on another
 // host is named by its SSH destination, `ssh://[user@]host[:port]`, and reached through the SSH bridge
-// as the app reaches it, ssh asking on the terminal for what it needs, as it always does. A command
-// talks to its engine through one client, said hello as the CLI, closed as the command ends.
+// as the app reaches it, ssh asking on the terminal for what it needs, as it always does. Any other
+// name is looked up among the engines `fabrica engine add` keeps (`known-engines.ts`), each reached as
+// the app reaches it: through the SSH bridge, the WSL2 bridge, or TLS with its pinned certificate and
+// token. A command talks to its engine through one client, said hello as the CLI, closed as the
+// command ends.
 
 /** The local engine's socket, found from the host as a command needs it. */
 export class LocalEngine extends Context.Service<
@@ -34,13 +47,10 @@ export class LocalEngine extends Context.Service<
   { readonly socket: Effect.Effect<string, Daemon.UnsupportedPlatform> }
 >()('@fabrica/engine-app/LocalEngine') {}
 
-/** The name `--engine` gives the local engine. */
-export const localEngineName = 'local'
-
 /** How `--engine` names an engine reached through the SSH bridge: by its destination, as a URI. */
 export const sshEnginePrefix = 'ssh://'
 
-/** What ssh runs with: the user's environment, for their agent and config; a test gives its own. */
+/** What ssh and wsl.exe run with: the user's environment, for their agent and config; a test gives its own. */
 export const SshEnvironment = Context.Reference<{
   readonly env: Readonly<Record<string, string>>
 }>('@fabrica/engine-app/SshEnvironment', {
@@ -59,6 +69,10 @@ export type EngineTarget = Data.TaggedEnum<{
   Local: {}
   /** An engine through the SSH bridge to `destination`. */
   Ssh: { readonly destination: SshDestination }
+  /** An engine through the bridge in the WSL2 distribution `distro`. */
+  Wsl: { readonly distro: WslDistro }
+  /** An engine paired over TLS. */
+  Tls: { readonly engine: TlsEngine }
 }>
 export const EngineTarget = Data.taggedEnum<EngineTarget>()
 
@@ -69,7 +83,7 @@ export class UnknownEngine extends Data.TaggedError('UnknownEngine')<{
   readonly name: string
 }> {
   override get message() {
-    return `no engine named ${this.name} is known: name the local engine (${localEngineName}), or one on another host by its SSH destination (${sshEnginePrefix}[user@]host[:port])`
+    return `no engine named ${this.name} is known: name the local engine (${localEngineName}), one \`fabrica engine add\` keeps, or one on another host by its SSH destination (${sshEnginePrefix}[user@]host[:port])`
   }
 }
 
@@ -93,9 +107,31 @@ export class EngineUnreachableOverSsh extends Data.TaggedError(
   }
 }
 
+/** No engine answered through wsl.exe, which ended no other way. */
+export class EngineUnreachableOverWsl extends Data.TaggedError(
+  'EngineUnreachableOverWsl',
+)<{
+  readonly distro: string
+}> {
+  override get message() {
+    return `no engine answered through wsl.exe in the WSL distribution ${this.distro}`
+  }
+}
+
+/** No engine answered over TLS, and none refused the certificate or the token. */
+export class EngineUnreachableOverTls extends Data.TaggedError(
+  'EngineUnreachableOverTls',
+)<{
+  readonly address: string
+}> {
+  override get message() {
+    return `no engine answered over TLS at ${this.address}`
+  }
+}
+
 /** The connection to the engine was lost before it answered. */
 export class EngineLost extends Data.TaggedError('EngineLost')<{
-  /** Where the engine was: its socket, or its SSH destination. */
+  /** Where the engine was: its socket, its SSH destination, its WSL2 distribution or its TLS address. */
   readonly at: string
 }> {
   override get message() {
@@ -105,7 +141,7 @@ export class EngineLost extends Data.TaggedError('EngineLost')<{
 
 /** The engine answered with a defect: a request it doesn't serve yet, or one it failed serving. */
 export class EngineFailed extends Data.TaggedError('EngineFailed')<{
-  /** Where the engine was: its socket, or its SSH destination. */
+  /** Where the engine was: its socket, its SSH destination, its WSL2 distribution or its TLS address. */
   readonly at: string
   /** The defect, in words. */
   readonly reason: string
@@ -127,24 +163,36 @@ export class EngineRefused extends Data.TaggedError('EngineRefused')<{
   }
 }
 
+/** How a known engine is reached, as a target. */
+const targetOf = (reach: EngineReach): EngineTarget =>
+  EngineReach.match<EngineTarget>(reach, {
+    Ssh: ({ destination }) => EngineTarget.Ssh({ destination }),
+    Wsl: ({ distro }) => EngineTarget.Wsl({ distro }),
+    Tls: engine => EngineTarget.Tls({ engine }),
+  })
+
 /** The engine `--engine` names: the local one where it isn't given. */
-export const resolveEngine = (
-  name: Option.Option<string>,
-): Result.Result<EngineTarget, UnknownEngine> =>
+export const resolveEngine = (name: Option.Option<string>) =>
   Option.match(name, {
-    onNone: () => Result.succeed(EngineTarget.Local()),
+    onNone: () => Effect.succeed(EngineTarget.Local()),
     onSome: given => {
       if (given === localEngineName) {
-        return Result.succeed(EngineTarget.Local())
+        return Effect.succeed(EngineTarget.Local())
       }
-      const destination = given.startsWith(sshEnginePrefix)
-        ? decodeDestination(given)
-        : Option.none()
-      return Option.match(destination, {
-        onNone: () => Result.fail(new UnknownEngine({ name: given })),
-        onSome: valid =>
-          Result.succeed(EngineTarget.Ssh({ destination: valid })),
-      })
+      if (given.startsWith(sshEnginePrefix)) {
+        return Option.match(decodeDestination(given), {
+          onNone: () => Effect.fail(new UnknownEngine({ name: given })),
+          onSome: destination =>
+            Effect.succeed(EngineTarget.Ssh({ destination })),
+        })
+      }
+      return Effect.flatMap(
+        findKnownEngine(given),
+        Option.match({
+          onNone: () => Effect.fail(new UnknownEngine({ name: given })),
+          onSome: ({ reach }) => Effect.succeed(targetOf(reach)),
+        }),
+      )
     },
   })
 
@@ -183,6 +231,36 @@ const sshClient = (destination: SshDestination) =>
     return { client, at: destination }
   })
 
+/** A client of the engine in the WSL2 distribution `distro`, through its bridge, and where it is. */
+const wslClient = (distro: WslDistro) =>
+  Effect.gen(function* () {
+    const { env } = yield* SshEnvironment
+    const client = yield* clientOver(layerWsl({ distro, env }), {
+      unreachable: error =>
+        Option.getOrElse(
+          wslFailed(error),
+          () => new EngineUnreachableOverWsl({ distro }),
+        ),
+      reconnect: wslReconnect(),
+    })
+    return { client, at: `WSL ${distro}` }
+  })
+
+/** A client of the engine paired over TLS, its certificate checked against the pin, and where it is. */
+const tlsClient = (engine: TlsEngine) =>
+  Effect.gen(function* () {
+    const at = tlsEndpointText(engine)
+    const client = yield* clientOver(layerTls(engine), {
+      unreachable: error =>
+        Option.getOrElse(
+          tlsRefused(error),
+          () => new EngineUnreachableOverTls({ address: at }),
+        ),
+      reconnect: tlsReconnect(),
+    })
+    return { client, at }
+  })
+
 /** A client over `transport`, said hello: failing with `unreachable`'s error where no engine answers. */
 const clientOver = <E>(
   transport: Layer.Layer<Socket.Socket>,
@@ -211,10 +289,12 @@ export const withEngine = <A, E, R>(
   ) => Effect.Effect<A, E | RpcClientError.RpcClientError, R>,
 ) =>
   Effect.gen(function* () {
-    const target = yield* Effect.fromResult(resolveEngine(yield* EngineName))
+    const target = yield* resolveEngine(yield* EngineName)
     const { client, at } = yield* EngineTarget.$match(target, {
       Local: () => localClient,
       Ssh: ({ destination }) => sshClient(destination),
+      Wsl: ({ distro }) => wslClient(distro),
+      Tls: ({ engine }) => tlsClient(engine),
     })
     return yield* use(client).pipe(
       Effect.catchTag('RpcClientError', error =>

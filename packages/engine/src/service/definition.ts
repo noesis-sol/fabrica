@@ -1,7 +1,7 @@
 import { Option, Result, Schema } from 'effect'
 import * as NodePath from 'node:path'
 
-import { UnsupportedPlatform, absoluteVariable } from '../engine/paths'
+import { UnsupportedPlatform, xdgConfigHome } from '../engine/paths'
 import { ServiceManager } from './outcome'
 
 // The login service (spec §7.1, §12.1, §19): what it runs and the file its manager reads it from, a
@@ -126,10 +126,7 @@ export const serviceFile = (
       return Result.succeed({
         manager: 'systemd',
         file: NodePath.join(
-          Option.getOrElse(
-            absoluteVariable(host.environment, 'XDG_CONFIG_HOME'),
-            () => NodePath.join(host.home, '.config'),
-          ),
+          xdgConfigHome(host),
           'systemd',
           'user',
           SYSTEMD_UNIT,

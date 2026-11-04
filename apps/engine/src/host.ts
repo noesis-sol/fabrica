@@ -26,6 +26,18 @@ export const hostPaths = (facts: HostFacts) =>
     ),
   )
 
+/** The folder of what the user keeps for the `fabrica` command on this host. */
+export const hostConfigFolder = (facts: HostFacts) =>
+  Effect.suspend(() =>
+    Effect.fromResult(
+      Daemon.userConfigFolder({
+        platform: process.platform,
+        home: facts.home,
+        environment: process.env,
+      }),
+    ),
+  )
+
 /** The machine the engine runs on. */
 export const engineHost = (facts: HostFacts) =>
   Effect.suspend(() =>

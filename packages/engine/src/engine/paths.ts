@@ -71,6 +71,33 @@ export const absoluteVariable = (
     value => value !== '' && NodePath.isAbsolute(value),
   )
 
+/** The user's config folders' root on Linux: `$XDG_CONFIG_HOME`, or `~/.config` where it isn't set. */
+export const xdgConfigHome = (
+  host: Pick<HostPlaces, 'home' | 'environment'>,
+): string =>
+  Option.getOrElse(absoluteVariable(host.environment, 'XDG_CONFIG_HOME'), () =>
+    NodePath.join(host.home, '.config'),
+  )
+
+/**
+ * The folder of what the user keeps for the `fabrica` command itself, whichever engine it talks to
+ * (§19): `~/Library/Application Support/fabrica/` on macOS, `<xdgConfigHome>/fabrica/` on Linux.
+ */
+export const userConfigFolder = (
+  host: HostPlaces,
+): Result.Result<string, UnsupportedPlatform> => {
+  switch (host.platform) {
+    case 'darwin':
+      return Result.succeed(
+        NodePath.join(host.home, 'Library', 'Application Support', 'fabrica'),
+      )
+    case 'linux':
+      return Result.succeed(NodePath.join(xdgConfigHome(host), 'fabrica'))
+    default:
+      return Result.fail(new UnsupportedPlatform({ platform: host.platform }))
+  }
+}
+
 /** The engine's files with its data folder at `data` and its socket in `socketFolder`. */
 export const pathsIn = (options: {
   readonly data: string

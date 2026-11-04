@@ -8,6 +8,7 @@ import { Daemon } from '@fabrica/engine'
 import { layerHost, tempFolder } from '@fabrica/testkit'
 
 import { LocalEngine } from '../src/cli/connect'
+import { KnownEnginesFolder } from '../src/cli/known-engines'
 import { runCli } from '../src/cli/main'
 import { sanitise, sanitiseLine } from '../src/cli/sanitise'
 import { version, versionLine } from '../src/version'
@@ -255,10 +256,14 @@ describe('fabrica engine', () => {
         'version',
         '--engine',
         'server\u001b[2J-1',
+      ).pipe(
+        Effect.provideService(KnownEnginesFolder, {
+          folder: Effect.succeed(paths.data),
+        }),
       )
       expect(Exit.isFailure(exit)).toBe(true)
       expect(err).toStrictEqual([
-        'fabrica: no engine named server\\u001b[2J-1 is known: name the local engine (local), or one on another host by its SSH destination (ssh://[user@]host[:port])',
+        'fabrica: no engine named server\\u001b[2J-1 is known: name the local engine (local), one `fabrica engine add` keeps, or one on another host by its SSH destination (ssh://[user@]host[:port])',
       ])
     }).pipe(Effect.scoped),
   )

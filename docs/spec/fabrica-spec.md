@@ -381,6 +381,7 @@ In the app, the connection process (a `utilityProcess`) owns every transport (it
 
 - `fabrica serve --listen <addr>` (or the engine setting) adds a WebSocket listener over TLS, with a certificate the user provides or one the engine creates and pins (the app trusts it on first pairing, showing its fingerprint).
 - `fabrica token create` prints a pairing token once; the engine stores only its hash. Tokens are listed and revoked by name. A token grants everything (H8: one person per engine).
+- `fabrica engine add <name> --tls <host:port>` pairs the CLI as the app pairs: it shows the fingerprint the engine presents for the user to accept on the terminal, then takes the token, typed unseen or from stdin. Off a terminal nobody can accept it, so `--fingerprint` gives the one `fabrica engine status` prints on the host, and it is pinned without connecting.
 
 ## 10. Projects
 
@@ -978,7 +979,7 @@ Each screen's keys are one list of commands, from which its bindings, its hints,
 
 ## 19. The CLI
 
-\[DECISION\] The engine distribution's `fabrica` command. It talks to the local engine, or to `--engine <name>` (a known engine, reached as the app reaches it).
+\[DECISION\] The engine distribution's `fabrica` command. It talks to the local engine, or to `--engine <name>` (a known engine, reached as the app reaches it). The CLI's known engines are its own (the maintainer's choice, fab-mgi.74), so a host with no app knows some too, and their names may differ from the app's: `fabrica engine add` keeps each in `engines.json` in the user's config folder (`~/Library/Application Support/fabrica/` on macOS, `$XDG_CONFIG_HOME/fabrica/` on Linux, `~/.config` where that isn't set), mode 0600, since it holds the pairing tokens of those reached over TLS, which no CLI command prints. `--engine` also takes `local`, and an SSH destination as `ssh://[user@]host[:port]`; neither can be a known engine's name.
 
 | Command | Does |
 |---|---|
@@ -986,6 +987,7 @@ Each screen's keys are one list of commands, from which its bindings, its hints,
 | `fabrica bridge` | Connects stdin and stdout to the local engine's socket, starting the engine when it isn't running; what SSH and WSL2 clients run (§8.2) |
 | `fabrica service install\|uninstall\|status` | The login service |
 | `fabrica engine status\|stop\|update\|version` | The engine |
+| `fabrica engine add <name> --ssh <destination>\|--wsl <distro>\|--tls <host:port> [--fingerprint <SHA-256>]`, `fabrica engine list\|remove` | The engines `--engine` knows by name (§9.3 for pairing over TLS) |
 | `fabrica token create\|list\|revoke` | Pairing tokens |
 | `fabrica credentials set\|list\|remove\|login` | Model credentials in the engine's secret store |
 | `fabrica project add <path\|url>\|list\|remove\|trust\|untrust` | Projects; `trust` lets a project's own Pi settings and packages load in its agents (§12.1) |

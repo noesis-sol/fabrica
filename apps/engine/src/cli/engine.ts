@@ -16,6 +16,7 @@ import { Daemon, Update } from '@fabrica/engine'
 import { engineHost, hostFacts } from '../host'
 import { version } from '../version'
 import { withEngine } from './connect'
+import { addEngine, listEngines, removeEngine } from './engine-known'
 import { printAnswer } from './output'
 import { sanitiseLine } from './sanitise'
 
@@ -24,6 +25,7 @@ import { sanitiseLine } from './sanitise'
 // the release named, or the latest, and restart into it once its runs are wound down; where no local
 // engine answers on its socket, the CLI installs the release itself, as the engine would, and restarts
 // nothing: the next `fabrica serve` runs it. Values the engine sends are printed one to a line.
+// `add|list|remove` keep the engines `--engine` knows by name (`engine-known.ts`).
 
 /** The engine refused the update, or couldn't have or verify it. */
 export class UpdateRefused extends Data.TaggedError('UpdateRefused')<{
@@ -200,6 +202,14 @@ const update = Command.make(
 )
 
 export const engine = Command.make('engine').pipe(
-  Command.withDescription('The engine'),
-  Command.withSubcommands([status, stop, update, engineVersion]),
+  Command.withDescription('The engine, and the engines this fabrica knows'),
+  Command.withSubcommands([
+    status,
+    stop,
+    update,
+    engineVersion,
+    addEngine,
+    listEngines,
+    removeEngine,
+  ]),
 )
