@@ -1,6 +1,6 @@
 import { Schema } from 'effect'
 
-import { PermissionId, TicketId } from './ids'
+import { PermissionId, TalkId, TicketId } from './ids'
 import { AttentionRequest, PermissionDecision } from './rpc/attention'
 import { TicketDetail, Why } from './rpc/backlog'
 import { Ordinal } from './rpc/common'
@@ -14,7 +14,7 @@ import { type AnyTool, Files, Title, opensWith } from './tools'
 // engine's commands it acts through. It has these and nothing else: no code edits, no git, no shell.
 // A command answers with the line History shows for it; one that stops a run, closes or cancels a
 // ticket or allows a permission request is refused with `confirm_first` until the maintainer has been
-// asked, and has answered.
+// asked, and has answered in a message of its own.
 
 /** No arguments: an empty struct alone takes any value but null, so the check refuses every key. */
 const NoArguments = Schema.Struct({}).check(
@@ -118,6 +118,8 @@ export const Acted = Schema.Struct({
   text: Text,
   /** What else the maintainer should hear of it. */
   also: Schema.optionalKey(Text),
+  /** The talk it opened. */
+  talk: Schema.optionalKey(TalkId),
 })
 export type Acted = typeof Acted.Type
 
@@ -319,7 +321,7 @@ export const AnswerPermissionTool = {
 export const OpenAnswerTalkTool = {
   name: 'open_answer_talk',
   description:
-    'Opens the answer talk, on these questions or every open one, for the maintainer to answer there.',
+    'Opens the answer talk, on these questions or every open one, for the maintainer to answer there. Its answer names the talk.',
   parameters: Schema.Struct({
     questions: Schema.OptionFromOptionalKey(Schema.Array(TicketId)),
   }),

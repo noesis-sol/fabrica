@@ -4407,6 +4407,10 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
                 "pattern": "^\\S+$",
                 "type": "string",
               },
+              "talk": {
+                "pattern": "^\\S+$",
+                "type": "string",
+              },
               "text": {
                 "type": "string",
               },

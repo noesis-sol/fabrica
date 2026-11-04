@@ -21,6 +21,7 @@ import {
   OpenAnswerTalkTool,
   OpenRequestsTool,
   PermissionDecision,
+  PermissionShown,
   type ProjectNotFound,
   QuestionAnswer,
   RunEventsTool,
@@ -33,6 +34,7 @@ import {
   StopRunTool,
   TalkContext,
   TalkFileTicketTool,
+  type TalkId,
   TicketDetail,
   type TicketId,
   TicketMetadata,
@@ -64,11 +66,12 @@ import {
 // Pi session kept across the app's restarts. It reads the run and its tickets and acts through the
 // engine's commands, on the maintainer's instructions; it has no tool but these, not even Pi's readers,
 // so it edits no code and runs no git or shell command. Every command it carries out is a record of the
-// event stream (`talk_action`, actor `run_talk`), which History shows, on the run going or, with none,
-// under the project's last run. Stopping a run, closing or cancelling a ticket and allowing a permission
-// request take the maintainer's word first: the first call is refused with the line to ask, and only a
-// call after the maintainer's next message goes through (`confirmed`), so a stop can't come by the
-// model's word alone. Its work graph changes are the talk's session's.
+// event stream (`talk_action`, actor `run_talk`): on the run going's, which History follows, or with
+// none on the project's stream under its last run. Stopping a run, closing or cancelling a ticket and
+// allowing a permission request take the maintainer's word first: the first call is refused with the
+// line to ask, naming exactly what it would do, and only the same call in the turn the maintainer's next
+// message opens goes through (`confirmed`), so none comes by the model's word alone; that the message
+// says yes is for the model to read. Its work graph changes are the talk's session's.
 
 /** What the talk's tools act on, beside the talk's own context. */
 export interface RunTalkServices {
@@ -84,7 +87,7 @@ export const runInstructions = [
   "You are the console's conversation with this project's run: the maintainer talks to you to see what the run is doing and to steer it.",
   'Read before you answer: run_view, run_events, the ticket tools, worker_transcript, run_log and open_requests tell you where things stand. Answer shortly, from what they say.',
   "Act only on the maintainer's instructions, through your commands: message a worker; start, drain or undrain a run; hold a ticket until another merges; file, update, defer or label tickets; answer a question in the maintainer's words; open the answer talk. Say what you did, in a line.",
-  'Before you stop a run, close or cancel a ticket, or allow a permission request, confirm in one line. The call is refused with confirm_first and the line to ask: ask the maintainer that, end your turn, and call it again only if they say yes.',
+  'Before you stop a run, close or cancel a ticket, or allow a permission request, confirm in one line. The call is refused with confirm_first and the line to ask: ask the maintainer that, end your turn, and call it again, the same call, only when their next message says yes; if it says anything else, drop it.',
   'You have no other tools: you edit no code and run no git or shell command. What needs code goes to a worker, as a message or a ticket.',
 ].join('\n\n')
 
@@ -176,12 +179,22 @@ interface Action {
   readonly text: string
   readonly ticket?: TicketId
   readonly also?: string
+  readonly talk?: TalkId
 }
 
 /** What a command answers with. */
-const answerOf = ({ text, also }: Action): Acted => ({
+const answerOf = ({ text, also, talk }: Action): Acted => ({
   text,
   ...(also === undefined ? {} : { also }),
+  ...(talk === undefined ? {} : { talk }),
+})
+
+/** A permission request's call in a line, so the maintainer confirms what it does. */
+const callLine = PermissionShown.match({
+  command: ({ lines }) => lines.join('; '),
+  edit: ({ path }) => `edit ${path}`,
+  write: ({ path }) => `write ${path}`,
+  call: ({ input }) => JSON.stringify(input),
 })
 
 /** The latest `last` of `items`. */
@@ -196,13 +209,14 @@ export const runMode = ({
   const record = (
     context: TalkToolContext<'run'>,
     tool: string,
-    { text, ticket }: Action,
+    { text, ticket, talk }: Action,
   ) =>
     runs.record(context.project.id, {
       kind: 'talk_action',
       actor: 'run_talk',
       tool,
       ...(ticket === undefined ? {} : { ticket }),
+      ...(talk === undefined ? {} : { talk }),
       text,
     })
 
@@ -597,7 +611,7 @@ export const runMode = ({
         })
         if (Option.isSome(words))
           yield* confirming(
-            `allow ${request.tool} for ${request.ticket} ${words.value}`,
+            `allow ${request.tool} for ${request.ticket} ${words.value}, request ${id}: ${callLine(request.shown)}`,
             context,
           )
         yield* attention
@@ -631,7 +645,10 @@ export const runMode = ({
           Effect.fail(refuse(reason)),
         ),
         Effect.catchTag('ProjectNotFound', projectGone),
-        Effect.as({ text: 'Run talk opened the answer talk' }),
+        Effect.map(({ talk }) => ({
+          text: `Run talk opened the answer talk ${talk}`,
+          talk,
+        })),
       ),
     ),
   ]

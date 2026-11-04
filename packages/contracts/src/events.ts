@@ -1,6 +1,6 @@
 import { Data, DateTime, Effect, Schema } from 'effect'
 
-import { CommitHash, EngineId, RunId, SessionId, TicketId } from './ids'
+import { CommitHash, EngineId, RunId, SessionId, TalkId, TicketId } from './ids'
 import {
   HoldBack,
   PhaseSeconds,
@@ -483,6 +483,8 @@ export const TalkActionEvent = record('talk_action', {
   actor: Schema.Literal('run_talk'),
   tool: Text,
   ticket: optional(TicketId),
+  /** The talk it opened. */
+  talk: optional(TalkId),
   text: Text,
 })
 

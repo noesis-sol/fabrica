@@ -14,7 +14,7 @@ import {
   exitCodeOf,
   formatLocalTime,
 } from './events'
-import { CommitHash, EngineId, RunId, SessionId, TicketId } from './ids'
+import { CommitHash, EngineId, RunId, SessionId, TalkId, TicketId } from './ids'
 import {
   type CountsAs,
   Phase,
@@ -187,9 +187,10 @@ const samples: { readonly [K in EventKind]: Extract<RunEvent, { kind: K }> } = {
   talk_action: RunEvent.cases.talk_action.make({
     ...at,
     actor: 'run_talk',
-    tool: 'drain_run',
+    tool: 'open_answer_talk',
     ticket,
-    text: 'Run talk drained the run',
+    talk: TalkId.make('talk-1'),
+    text: 'Run talk opened the answer talk talk-1',
   }),
   end: RunEvent.cases.end.make({
     ...at,

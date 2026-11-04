@@ -2,6 +2,7 @@ import {
   Cause,
   Context,
   DateTime,
+  Deferred,
   Effect,
   Exit,
   Layer,
@@ -87,7 +88,12 @@ const host = new EngineHost({
   cores: 4,
 })
 
-type Call = { readonly tool: string; readonly input: unknown }
+type Call = {
+  readonly tool: string
+  readonly input: unknown
+  /** Holds the turn here until it is done, so that the maintainer can send something into it. */
+  readonly after?: Deferred.Deferred<void>
+}
 
 /** What the scripted sessions were started with, the calls the next message plays, and their answers. */
 interface Script {
@@ -104,14 +110,19 @@ const scriptedAgents = (script: Script) =>
         yield* Ref.update(script.started, all => [...all, options])
         const events = yield* PubSub.unbounded<PiEvent>()
         yield* Effect.addFinalizer(() => PubSub.shutdown(events))
+        const scope = yield* Effect.scope
         const play = () =>
           Effect.gen(function* () {
             const calls = yield* Queue.clear(script.calls)
             yield* Effect.forEach(
               calls,
-              call =>
+              ({ after, ...call }) =>
                 Effect.flatMap(Effect.exit(options.call(call)), answer =>
                   Queue.offer(script.answers, answer),
+                ).pipe(
+                  Effect.andThen(
+                    after === undefined ? Effect.void : Deferred.await(after),
+                  ),
                 ),
               { discard: true },
             )
@@ -127,7 +138,8 @@ const scriptedAgents = (script: Script) =>
           },
           events: Effect.map(PubSub.subscribe(events), Stream.fromSubscription),
           prompt: play,
-          steer: play,
+          // Into the running turn, which goes on; a message that finds the last turn settling plays too.
+          steer: () => Effect.asVoid(Effect.forkIn(play(), scope)),
         }
       }),
   })
@@ -207,7 +219,23 @@ const newEngine = Effect.gen(function* () {
     const [answer] = yield* say(text, [{ tool, input }])
     return answer ?? expect.fail('no answer')
   })
-  return { client, project, checkout, script, talk, say, callOn }
+  /**
+   * The maintainer says yes to `tool` asked: a yes that finds the last turn still settling is steered
+   * into it, so it answers nothing and the call asks again, for the next yes to answer.
+   */
+  const yesTo = Effect.fn(function* (tool: string, input: unknown = {}) {
+    for (let left = 20; left > 0; left -= 1) {
+      const answer = yield* callOn('yes', tool, input)
+      if (
+        !Exit.isFailure(answer) ||
+        Option.getOrUndefined(Cause.findErrorOption(answer.cause))?._tag !==
+          'confirm_first'
+      )
+        return answer
+    }
+    return expect.fail('no yes opened a turn')
+  })
+  return { client, project, checkout, script, talk, say, callOn, yesTo }
 })
 
 type Engine = Effect.Success<typeof newEngine>
@@ -470,7 +498,7 @@ describe('a stop', () => {
     () =>
       Effect.gen(function* () {
         const engine = yield* newEngine
-        const { client, project, say, callOn } = engine
+        const { client, project, say, callOn, yesTo } = engine
         yield* file(engine, 'Never done')
         answerOf(yield* callOn('go', 'start_run'))
         yield* dispatched(engine)
@@ -494,7 +522,7 @@ describe('a stop', () => {
         ])
 
         const run = yield* goingRun(engine)
-        expect(answerOf(yield* callOn('yes, stop', 'stop_run'))).toStrictEqual({
+        expect(answerOf(yield* yesTo('stop_run'))).toStrictEqual({
           text: 'Run talk stopped the run',
         })
         yield* ended(engine, run)
@@ -683,11 +711,47 @@ describe('the talk’s ticket commands', () => {
   )
 
   it.live(
+    'take no message steered into the turn as the maintainer’s word',
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* newEngine
+        const { client, project, talk, script, yesTo } = engine
+        const id = yield* file(engine, 'Keep me', 'finish')
+        const input = { id, reason: 'Done by hand.' }
+        const asked = yield* Deferred.make<void>()
+        const close = { tool: 'close_ticket', input }
+        yield* Queue.offerAll(script.calls, [{ ...close, after: asked }, close])
+        yield* client['talk.send']({ talk, text: 'close it' })
+        expect(refusalOf(yield* Queue.take(script.answers))).toMatchObject({
+          _tag: 'confirm_first',
+        })
+
+        // Into the same turn, which goes on to call it again as though answered.
+        yield* client['talk.send']({ talk, text: 'how many are left?' })
+        yield* Deferred.succeed(asked, undefined)
+        expect(refusalOf(yield* Queue.take(script.answers))).toMatchObject({
+          _tag: 'confirm_first',
+        })
+        expect(
+          (yield* client['tickets.show']({ project, ticket: id })).ticket
+            .status,
+        ).toBe('open')
+
+        // The same call in the turn the maintainer's next message opens goes through.
+        answerOf(yield* yesTo('close_ticket', input))
+        expect(
+          (yield* client['tickets.show']({ project, ticket: id })).ticket
+            .status,
+        ).toBe('closed')
+      }).pipe(Effect.scoped),
+  )
+
+  it.live(
     'close and cancel a ticket on the maintainer’s word in one line',
     () =>
       Effect.gen(function* () {
         const engine = yield* newEngine
-        const { client, project, callOn } = engine
+        const { client, project, callOn, yesTo } = engine
         const one = yield* file(engine, 'Done by hand', 'finish')
         const two = yield* file(engine, 'Not wanted', 'finish')
         const close = { id: one, reason: 'Done by hand.' }
@@ -706,9 +770,7 @@ describe('the talk’s ticket commands', () => {
           (yield* client['tickets.show']({ project, ticket: one })).ticket
             .status,
         ).toBe('open')
-        expect(
-          answerOf(yield* callOn('yes', 'close_ticket', close)),
-        ).toStrictEqual({
+        expect(answerOf(yield* yesTo('close_ticket', close))).toStrictEqual({
           text: `Run talk closed ${one}: Done by hand`,
           also: `Still open behind it: ${two}`,
         })
@@ -725,7 +787,7 @@ describe('the talk’s ticket commands', () => {
           _tag: 'confirm_first',
           action: `cancel ${two} "Not wanted"`,
         })
-        answerOf(yield* callOn('yes', 'cancel_ticket', cancel))
+        answerOf(yield* yesTo('cancel_ticket', cancel))
         expect(
           (yield* client['tickets.show']({ project, ticket: two })).ticket,
         ).toMatchObject({ resolution: Option.some('cancelled') })
@@ -777,15 +839,18 @@ describe('the talk’s ticket commands', () => {
           ),
         ).toMatchObject({ _tag: 'invalid' })
 
-        expect(
-          answerOf(yield* callOn('open it', 'open_answer_talk')),
-        ).toStrictEqual({ text: 'Run talk opened the answer talk' })
-        expect(
-          (yield* Ref.get(script.started)).map(({ mode }) => mode),
-        ).toStrictEqual(['run', 'answer'])
-        expect(
-          actions(yield* written(engine)).map(({ tool }) => tool),
-        ).toStrictEqual(['open_answer_talk'])
+        const opened = answerOf(yield* callOn('open it', 'open_answer_talk'))
+        const started = yield* Ref.get(script.started)
+        expect(started.map(({ mode }) => mode)).toStrictEqual(['run', 'answer'])
+        // Named, so that a client reaches it, by its answer or its record.
+        const answerTalk = started[1]?.talk
+        expect(opened).toStrictEqual({
+          text: `Run talk opened the answer talk ${answerTalk}`,
+          talk: answerTalk,
+        })
+        expect(actions(yield* written(engine))).toMatchObject([
+          { tool: 'open_answer_talk', talk: answerTalk },
+        ])
       }).pipe(Effect.scoped),
   )
 })
@@ -807,6 +872,14 @@ describe('answers through the talk', () => {
     why: 'it runs a command',
     openedAt: DateTime.makeUnsafe(0),
   })
+  /** Another of the same tool on the same ticket. */
+  const otherId = PermissionId.make('p-3')
+  const other = AttentionRequest.cases.permission.make({
+    ...request,
+    id: otherId,
+    input: { command: 'rm -rf ~' },
+    shown: { _tag: 'command', lines: ['rm -rf ~'] },
+  })
 
   const unused = Effect.die('not asked of it by these tools')
   const talkActor = Actor.cases.talk.make({
@@ -822,7 +895,7 @@ describe('answers through the talk', () => {
     >([])
     const records = yield* Ref.make<ReadonlyArray<EventDraft>>([])
     const attention: AttentionRequestsShape = {
-      list: () => Effect.succeed([request]),
+      list: () => Effect.succeed([request, other]),
       watch: () => Stream.die('not asked of it by these tools'),
       answer: input =>
         Effect.as(
@@ -899,7 +972,7 @@ describe('answers through the talk', () => {
         refusalOf(yield* call('answer_permission', allow, false)),
       ).toStrictEqual({
         _tag: 'confirm_first',
-        action: `allow bash for ${ticket} once`,
+        action: `allow bash for ${ticket} once, request ${permissionId}: ls`,
       })
       expect(yield* Ref.get(answers)).toStrictEqual([])
       expect(yield* Ref.get(records)).toStrictEqual([])
@@ -927,6 +1000,26 @@ describe('answers through the talk', () => {
         },
       ])
     }),
+  )
+
+  it.effect(
+    'asks about each permission request by itself, naming its call',
+    () =>
+      Effect.gen(function* () {
+        const { call } = yield* standIn()
+        expect(
+          refusalOf(
+            yield* call(
+              'answer_permission',
+              { id: otherId, decision: { _tag: 'allow_once' } },
+              false,
+            ),
+          ),
+        ).toStrictEqual({
+          _tag: 'confirm_first',
+          action: `allow bash for ${ticket} once, request ${otherId}: rm -rf ~`,
+        })
+      }),
   )
 
   it.effect('refuses a permission request without asking', () =>

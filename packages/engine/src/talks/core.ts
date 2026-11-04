@@ -58,7 +58,7 @@ import { drawBase36 } from '../workgraph/ids'
 // tool's name, and the engine decodes its arguments, acts as the talk's session (on the project's
 // work graph, for the ticket tools) and answers with the result encoded, or refuses it. A tool that
 // takes the maintainer's word first asks whether it has it (`confirmed`), from what the maintainer has
-// sent the talk since it asked.
+// sent the talk since it asked, and whether that opened the turn.
 // The talk's agent is a port (`TalkAgents`), so the talks' rules are tested on a scripted session.
 
 /** A talk's agent couldn't start, or refused a message. */
@@ -140,9 +140,10 @@ export interface TalkToolContext<M extends TalkMode> {
   readonly graph: Effect.Effect<WorkGraphShape>
   readonly actor: Actor
   /**
-   * Whether the maintainer has just been asked `action` and answered: true where it was asked once,
-   * and they have sent one message since, the agent having read it; false asks it from now on, and
-   * another message afterwards lapses it, so what the agent acts on is the answer to its question.
+   * Whether the maintainer has just been asked `action` and answered: true where it was asked, and
+   * their one message since opened the turn this call is in, so the agent has read it. False asks it
+   * from now on: a second message lapses it, and one steered into a running turn, which the agent may
+   * not have read, answers nothing.
    */
   readonly confirmed: (action: string) => Effect.Effect<boolean>
   /** Opens another talk of the project, on the project's model. */
@@ -283,6 +284,8 @@ interface OpenTalk {
   readonly turning: Ref.Ref<boolean>
   /** How many messages the maintainer has sent it. */
   readonly heard: Ref.Ref<number>
+  /** Which of those last opened a turn, so the agent has read it. */
+  readonly opener: Ref.Ref<number>
   readonly lock: Semaphore.Semaphore
 }
 
@@ -408,6 +411,7 @@ export const make = Effect.fn('Talks.make')(function* (config: TalksConfig) {
           return
         }
         yield* Ref.set(talk.turning, true)
+        yield* Ref.set(talk.opener, yield* Ref.get(talk.heard))
         yield* Effect.forkIn(
           talk.agent.prompt(text).pipe(
             Effect.catch(error =>
@@ -463,17 +467,20 @@ export const make = Effect.fn('Talks.make')(function* (config: TalksConfig) {
     // The talk's session is its tools' actor, known once its agent has started.
     const session = yield* Deferred.make<SessionId>()
     const heard = yield* Ref.make(0)
+    const opener = yield* Ref.make(0)
     // What it has asked the maintainer, each with how many messages it had heard by then.
     const asked = yield* Ref.make<ReadonlyMap<string, number>>(new Map())
     const confirmed = (action: string) =>
-      Effect.flatMap(Ref.get(heard), now =>
-        Ref.modify(asked, current => {
-          const next = new Map(current)
-          const answered = current.get(action) === now - 1
-          if (answered) next.delete(action)
-          else next.set(action, now)
-          return [answered, next]
-        }),
+      Effect.flatMap(
+        Effect.all([Ref.get(heard), Ref.get(opener)]),
+        ([now, read]) =>
+          Ref.modify(asked, current => {
+            const next = new Map(current)
+            const answered = current.get(action) === now - 1 && read === now
+            if (answered) next.delete(action)
+            else next.set(action, now)
+            return [answered, next]
+          }),
       )
     const call = ({
       tool,
@@ -575,6 +582,7 @@ export const make = Effect.fn('Talks.make')(function* (config: TalksConfig) {
       scope,
       turning: yield* Ref.make(false),
       heard,
+      opener,
       lock: yield* Semaphore.make(1),
     }
     const reader = yield* makeTranscriptReader()

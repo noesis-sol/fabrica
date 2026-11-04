@@ -5,6 +5,7 @@
   another merges; file, update, defer, label, close or cancel tickets; answer a question in the maintainer's
   words; answer a permission request; open the answer talk. It has no other tool, not even Pi's readers.
 - A stop, a close, a cancel or an allowed permission takes the maintainer's word: the first call is refused
-  with the one line to ask (`confirm_first`), and a call goes through only after the maintainer's next message.
-- Every action is a record of the event stream, `talk_action` with actor `run_talk`, shown in History; with no
-  run going it goes on the project's stream under its last run.
+  with the one line to ask (`confirm_first`), naming exactly what it would do, a permission request by its ID
+  and its call; the same call goes through only in the turn the maintainer's next message opens.
+- Every action is a record of the event stream, `talk_action` with actor `run_talk` and the talk it opened,
+  shown in History while a run goes; with no run going it goes on the project's stream under its last run.
