@@ -15,7 +15,6 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
-  watch,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -324,33 +323,34 @@ const entries = (log: string): ReadonlyArray<Entry> =>
     : []
 
 /**
- * Waits, on the log file's change events, for it to hold an entry `found` matches. The file is
- * watched, not its folder: macOS starts a folder's watch a while after it is asked for, and a line
- * written meanwhile, with nothing written after it, would never be seen.
+ * Completes with what `look` finds, looking every 20 ms. Not on `fs.watch`, which can miss the change
+ * waited for, with nothing written after it to tell of it: macOS arms a file's watch again only after its
+ * event, so a line written in between goes unseen (1 run of 100 here, waiting out the limit on what came
+ * of the line; fab-i1w), and starts a folder's watch a while after it is asked for.
  */
+const looking = <A>(look: () => Option.Option<A>): Effect.Effect<A> =>
+  Effect.callback<A>(resume => {
+    const tryIt = () => {
+      const found = look()
+      if (Option.isNone(found)) return
+      clearInterval(timer)
+      resume(Effect.succeed(found.value))
+    }
+    const timer = setInterval(tryIt, 20)
+    tryIt()
+    return Effect.sync(() => clearInterval(timer))
+  })
+
+/** Waits for the log file to hold an entry `found` matches. */
 const logged = (
   log: string,
   found: (entry: Entry) => boolean,
 ): Effect.Effect<Entry> =>
-  Effect.callback<Entry>(resume => {
-    const look = () => {
-      const entry = entries(log).find(found)
-      if (entry !== undefined) resume(Effect.succeed(entry))
-    }
-    const watcher = watch(log, look)
-    look()
-    return Effect.sync(() => watcher.close())
-  })
+  looking(() => Option.fromUndefinedOr(entries(log).find(found)))
 
-/** Completes once `file` exists, on the folder's change events. */
+/** Completes once `file` exists. */
 const appears = (file: string): Effect.Effect<void> =>
-  Effect.callback<void>(resume => {
-    const watcher = watch(dirname(file), () => {
-      if (existsSync(file)) resume(Effect.void)
-    })
-    if (existsSync(file)) resume(Effect.void)
-    return Effect.sync(() => watcher.close())
-  })
+  looking(() => (existsSync(file) ? Option.some(undefined) : Option.none()))
 
 /** Whether `pid` is a live process: listed, and not a zombie. */
 const alive = (pid: number) =>
@@ -823,8 +823,12 @@ describe('PiAgent', () => {
   it.live(
     'leaves nothing reserved or running when a start is interrupted',
     () => {
-      // Pi stays silent, so the abort the interruption sends waits out its limit.
-      const config = agentConfig('interrupted', { abort: Duration.millis(300) })
+      // Pi stays silent, so the abort the interruption sends waits out its limit. The handshake's limit
+      // is out of reach, so it is the interruption that ends the start.
+      const config = agentConfig('interrupted', {
+        abort: Duration.millis(300),
+        handshake: Duration.minutes(5),
+      })
       return Effect.gen(function* () {
         const { start } = yield* PiAgent
         const starting = yield* Effect.forkChild(
@@ -835,6 +839,7 @@ describe('PiAgent', () => {
           e => e.event === 'command' && e.type === 'get_state',
         )
         yield* Fiber.interrupt(starting)
+        expect(Exit.hasInterrupts(yield* Fiber.await(starting))).toBe(true)
         expect(yield* alive(pid)).toBe(false)
         const agent = yield* Effect.scoped(
           start(startOptions(config.log, 'normal')),
