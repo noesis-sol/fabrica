@@ -122,7 +122,6 @@ export interface WorkerDesk {
   }) => Effect.Effect<Option.Option<Delivered>>
   /** Aborts the worker's running turn and steers it; false: no such worker. */
   readonly interrupt: (ticket: TicketId) => Effect.Effect<boolean>
-  /** Hands the worker back to the engine; false: no such worker. */
   /** Hands a steered worker back to the engine. None: no such worker. */
   readonly release: (ticket: TicketId) => Effect.Effect<Option.Option<Release>>
   /** The worker's transcript, as a snapshot or the patches after `resume`; none: no such worker. */
