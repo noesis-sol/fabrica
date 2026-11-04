@@ -1170,6 +1170,75 @@ describe('a store whose ref is gone', () => {
   )
 
   it.effect(
+    'an unpushed edit older than the other engine’s doesn’t outrank it',
+    () =>
+      Effect.gen(function* () {
+        const { remote, a, b } = yield* twoEngines
+        const id = yield* a.create('Shared')
+        yield* converge(a, b)
+        yield* a.graph.update({
+          id,
+          changes: { title: 'A, the earlier' },
+          actor: maintainer,
+        })
+        yield* a.sync.commit
+        yield* TestClock.adjust('1 minute')
+        yield* b.graph.update({
+          id,
+          changes: { title: 'B, the later' },
+          actor: maintainer,
+        })
+        yield* b.sync.sync('origin')
+        yield* TestClock.adjust('1 minute')
+        renameSync(a.checkout, `${a.checkout}.old`)
+        git(root, 'clone', '--quiet', '--no-local', remote, a.checkout)
+        yield* converge(a, b)
+        yield* expectConverged(a, b)
+        expect((yield* a.graph.show(id)).ticket.title).toBe('B, the later')
+      }).pipe(Effect.scoped),
+  )
+
+  for (const when of ['before', 'after'] as const) {
+    it.effect(
+      `a merge kept for a commit the clone lost is dropped: a failure ${when} moving the ref`,
+      () =>
+        Effect.gen(function* () {
+          const { remote, a, b } = yield* twoEngines
+          const id = yield* a.create('Shared')
+          yield* converge(a, b)
+          yield* a.graph.update({
+            id,
+            changes: { title: 'A' },
+            actor: maintainer,
+          })
+          yield* a.sync.commit
+          yield* TestClock.adjust('1 second')
+          yield* b.graph.update({
+            id,
+            changes: { title: 'B' },
+            actor: maintainer,
+          })
+          yield* b.sync.sync('origin')
+          yield* TestClock.adjust('1 second')
+          // The merge's conflict is kept, and its commit goes with the old clone.
+          yield* a.inject({ command: 'update-ref', when })
+          const stopped = yield* Effect.exit(a.sync.pull('origin'))
+          expect(stopped._tag).toBe('Failure')
+          const kept = yield* a.sql`SELECT * FROM tickets_sync_pending`
+          expect(kept.length).toBeGreaterThan(0)
+          renameSync(a.checkout, `${a.checkout}.old`)
+          git(root, 'clone', '--quiet', '--no-local', remote, a.checkout)
+
+          yield* converge(a, b)
+          yield* expectConverged(a, b)
+          expect((yield* a.graph.show(id)).ticket.title).toBe('B')
+          expect(yield* a.sql`SELECT * FROM tickets_sync_pending`).toEqual([])
+          expect((yield* a.sync.rebuild).tickets).toBe(1)
+        }).pipe(Effect.scoped),
+    )
+  }
+
+  it.effect(
     'a remote that doesn’t answer: nothing is exported until it does',
     () =>
       Effect.gen(function* () {

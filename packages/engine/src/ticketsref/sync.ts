@@ -415,9 +415,9 @@ export const makeTicketsSync = Effect.fn('TicketsSync.make')(function* ({
 
   /**
    * A commit of the store's changes on `base`, what the store last agreed with; none where nothing
-   * differs. With `rescan`, the base is older than that, so every ticket is compared with it. With no
-   * base every ticket is exported: one with no change since it was last synced at the clocks it had then,
-   * so that it doesn't outrank what another engine has changed since.
+   * differs. With `rescan`, the base is older than that, so every ticket is compared with it; with no
+   * base every ticket is exported. Either way one with no change since it was last synced keeps the
+   * clocks it had then, so that it doesn't outrank what another engine has changed since.
    */
   const exportLocal = ({
     state,
@@ -499,7 +499,7 @@ export const makeTicketsSync = Effect.fn('TicketsSync.make')(function* ({
           unknownTargets,
         })
         const file =
-          first && !changedIds.has(id) && Option.isSome(item.clocks)
+          whole && !changedIds.has(id) && Option.isSome(item.clocks)
             ? new TicketFile({ ...made, clocks: item.clocks.value })
             : made
         const text = yield* encodeTicketFile(file).pipe(
@@ -1007,8 +1007,11 @@ export const makeTicketsSync = Effect.fn('TicketsSync.make')(function* ({
         }
       }
       const pending = yield* local.pendingCommits
+      // A kept merge whose commit the repository no longer has (a new clone) never reached the ref here.
       const merges = yield* Effect.filter(pending, commit =>
-        store.isAncestor(commit, to),
+        Effect.flatMap(store.hasCommit(commit), has =>
+          has ? store.isAncestor(commit, to) : Effect.succeed(false),
+        ),
       )
       const applied = yield* local.applyImport({
         to,
@@ -1360,7 +1363,7 @@ export const commitChanges = Effect.fn('TicketsSync.commitChanges')(function* ({
   const timer = yield* Ref.make(Option.none<Fiber.Fiber<void>>())
   const commitLogged = commit.pipe(
     Effect.catch(error =>
-      Effect.logWarning(`the tickets ref wasn't committed: ${error.message}`),
+      Effect.logWarning("the tickets ref wasn't committed", error),
     ),
     Effect.asVoid,
   )
