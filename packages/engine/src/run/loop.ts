@@ -1521,6 +1521,14 @@ const runStarted = Effect.fn('Run.started')(function* (
               wakes.wake(WakeReason.Settled({ ticket })),
             ),
           )
+        if (Verified.$is('SetupFailed')(verified))
+          return yield* Effect.uninterruptible(
+            workerEnded(
+              ticket,
+              session,
+              WorkerEnd.SetupFailed({ detail: verified.detail }),
+            ),
+          )
         if (Verified.$is('NotRun')(verified))
           return yield* Effect.uninterruptible(
             Effect.andThen(

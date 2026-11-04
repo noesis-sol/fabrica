@@ -378,6 +378,11 @@ describe('what an agent is given for its container', () => {
         expect(given.container.container?.relay).toEqual(
           Option.some({ port: '4242', socket }),
         )
+        // Who commits, as the host's git says: its name set in the fixture, its email nowhere.
+        expect(given.container.container?.identity).toEqual({
+          name: Option.some('Ada'),
+          email: Option.none(),
+        })
         const targets = given.container.container?.mounts.map(
           mount => mount.target,
         )

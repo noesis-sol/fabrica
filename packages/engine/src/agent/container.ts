@@ -19,8 +19,9 @@ import { ProcessRunner, commandSucceeded } from '../process'
 // own (`startContainer`), kept alive by the mounted Node, Pi started in it with `exec`, and removed
 // with the agent's scope. Mounts keep their host paths wherever nothing asks otherwise, so the paths
 // the engine and the agent tell each other (a session file, a check's log, the worktree's git folder)
-// need no translating. Values reach a container by name (`-e NAME`), from the CLI's own environment,
-// so a token is never on a process list.
+// need no translating. The engine's variables reach a container by name (`--env NAME`), from the CLI's
+// own environment, so a token is never on a process list; a devcontainer file's, which it commits and
+// which may name `PATH` or `HOME`, by value, so they never change the CLI's own.
 
 /** Where the Linux engine distribution is mounted in a container. */
 export const DISTRIBUTION_TARGET = '/opt/fabrica'
@@ -784,6 +785,13 @@ const mountArguments = ({ source, target, readOnly }: Mount) => [
 const environmentArguments = (names: ReadonlyArray<string>) =>
   names.flatMap(name => ['--env', name])
 
+/** Each variable with its value, on the CLI's arguments. */
+const valueArguments = (values: Readonly<Record<string, string>>) =>
+  Object.entries(values).flatMap(([name, value]) => [
+    '--env',
+    `${name}=${value}`,
+  ])
+
 /** The name a ticket's container goes by: one at a time, so a crash's leftover is found and removed. */
 export const containerName = ({
   project,
@@ -904,12 +912,15 @@ export const runArguments = ({
   workspace,
   mounts,
   relay,
+  containerEnv,
 }: {
   readonly prepared: PreparedContainers
   readonly name: string
   readonly workspace: string
   readonly mounts: ReadonlyArray<Mount>
   readonly relay: Option.Option<ProxyRelay>
+  /** The devcontainer file's `containerEnv`, its variables stood in. */
+  readonly containerEnv: Readonly<Record<string, string>>
 }): ReadonlyArray<string> => [
   'run',
   '--detach',
@@ -940,7 +951,7 @@ export const runArguments = ({
   ...[...new Map(mounts.map(mount => [mount.target, mount])).values()].flatMap(
     mountArguments,
   ),
-  ...environmentArguments(Object.keys(prepared.setup.containerEnv)),
+  ...valueArguments(containerEnv),
   '--workdir',
   workspace,
   '--entrypoint',
@@ -954,11 +965,12 @@ export const runArguments = ({
   }),
 ]
 
-/** `docker exec`'s arguments for a command in the container, its variables by name. */
+/** `docker exec`'s arguments for a command in the container: the file's variables by value, the engine's by name over them. */
 export const execArguments = ({
   name,
   workspace,
   remoteUser,
+  values,
   environment,
   interactive,
   command,
@@ -966,6 +978,7 @@ export const execArguments = ({
   readonly name: string
   readonly workspace: string
   readonly remoteUser: Option.Option<string>
+  readonly values: Readonly<Record<string, string>>
   readonly environment: ReadonlyArray<string>
   readonly interactive: boolean
   readonly command: ReadonlyArray<string>
@@ -978,10 +991,43 @@ export const execArguments = ({
     onNone: () => [],
     onSome: user => ['--user', user],
   }),
+  ...valueArguments(values),
   ...environmentArguments(environment),
   name,
   ...command,
 ]
+
+/** `docker inspect`'s arguments for the container's environment, the image's included. */
+export const inspectArguments = (name: string): ReadonlyArray<string> => [
+  'inspect',
+  '--format',
+  '{{json .Config.Env}}',
+  name,
+]
+
+const InspectedEnvironment = Schema.fromJsonString(
+  Schema.NullOr(Schema.Array(Schema.String)),
+)
+
+/** What `inspectArguments` printed, by variable; nothing where it can't be read. */
+export const environmentOf = (text: string): Readonly<Record<string, string>> =>
+  Object.fromEntries(
+    Option.getOrElse(
+      Schema.decodeUnknownOption(InspectedEnvironment)(text.trim()),
+      () => null,
+    )?.flatMap(entry => {
+      const equals = entry.indexOf('=')
+      return equals === -1
+        ? []
+        : [[entry.slice(0, equals), entry.slice(equals + 1)] as const]
+    }) ?? [],
+  )
+
+/** Whether a file's variables or commands read the running container's environment. */
+const readsContainerEnv = (setup: ContainerSetup): boolean =>
+  [...Object.values(setup.remoteEnv), ...setup.lifecycle.flat(2)].some(text =>
+    text.includes('${containerEnv:'),
+  )
 
 /** `docker rm`'s arguments. */
 export const removeArguments = (name: string): ReadonlyArray<string> => [
@@ -1076,8 +1122,8 @@ export interface StartedContainer {
     pi: ReadonlyArray<string>,
     environment: ReadonlyArray<string>,
   ) => ReadonlyArray<string>
-  /** The variables the CLI gets for it: the devcontainer file's `remoteEnv`, substituted. */
-  readonly remoteEnv: Readonly<Record<string, string>>
+  /** The variables its commands get by name, which the CLI is given. */
+  readonly variables: Readonly<Record<string, string>>
   readonly workspace: string
 }
 
@@ -1099,7 +1145,7 @@ export const startContainer = Effect.fn('Container.start')(function* ({
   readonly worktree: string
   readonly mounts: ReadonlyArray<Mount>
   readonly relay: Option.Option<ProxyRelay>
-  /** Variables every command in it gets, over the devcontainer file's. */
+  /** Variables every command in it gets by name, over the devcontainer file's. */
   readonly variables: Readonly<Record<string, string>>
   /** The host's Node, which runs the reaper. */
   readonly node: string
@@ -1110,14 +1156,14 @@ export const startContainer = Effect.fn('Container.start')(function* ({
   const workspace = workspaceOf({ worktree, prepared })
   const withVariables = (
     text: string,
-    containerEnv: Readonly<Record<string, string>>,
+    inContainer: Readonly<Record<string, string>>,
   ) =>
     substituted(text, {
       local: worktree,
       container: workspace,
       id: setup.id,
       environment: prepared.environment,
-      containerEnv,
+      containerEnv: inContainer,
     })
   const containerEnv = Object.fromEntries(
     Object.entries(setup.containerEnv).map(([variable, value]) => [
@@ -1125,15 +1171,6 @@ export const startContainer = Effect.fn('Container.start')(function* ({
       withVariables(value, {}),
     ]),
   )
-  const remoteEnv = {
-    ...Object.fromEntries(
-      Object.entries(setup.remoteEnv).map(([variable, value]) => [
-        variable,
-        withVariables(value, containerEnv),
-      ]),
-    ),
-    ...variables,
-  }
   const failed = (doing: string, why: string) =>
     new ContainerFailed({ reason: `${doing}: ${why}` })
   const remove = runner.run({
@@ -1154,9 +1191,9 @@ export const startContainer = Effect.fn('Container.start')(function* ({
           workspace,
           mounts,
           relay,
+          containerEnv,
         }),
         cwd: worktree,
-        env: containerEnv,
         containerRuntime: true,
         timeLimit: RUN_LIMIT,
       })
@@ -1185,7 +1222,33 @@ export const startContainer = Effect.fn('Container.start')(function* ({
         ),
       ),
     )
-  const environment = Object.keys(remoteEnv)
+  // `${containerEnv:…}` is the running container's: the image's variables among them, as only it can say.
+  const inContainer = yield* readsContainerEnv(setup)
+    ? Effect.flatMap(
+        runner.run({
+          command: runtime,
+          args: inspectArguments(name),
+          cwd: worktree,
+          containerRuntime: true,
+          timeLimit: CHECK_LIMIT,
+        }),
+        outcome =>
+          Result.match(commandSucceeded(outcome), {
+            onFailure: why =>
+              Effect.fail(
+                failed(`the container ${name} couldn't be inspected`, why),
+              ),
+            onSuccess: text => Effect.succeed(environmentOf(text)),
+          }),
+      )
+    : Effect.succeed<Readonly<Record<string, string>>>({})
+  const remoteEnv = Object.fromEntries(
+    Object.entries(setup.remoteEnv).map(([variable, value]) => [
+      variable,
+      withVariables(value, inContainer),
+    ]),
+  )
+  const environment = Object.keys(variables)
   const setUp = Effect.forEach(
     setup.lifecycle,
     step =>
@@ -1199,12 +1262,13 @@ export const startContainer = Effect.fn('Container.start')(function* ({
                 name,
                 workspace,
                 remoteUser: setup.remoteUser,
+                values: remoteEnv,
                 environment,
                 interactive: false,
-                command: command.map(word => withVariables(word, containerEnv)),
+                command: command.map(word => withVariables(word, inContainer)),
               }),
               cwd: worktree,
-              env: remoteEnv,
+              env: variables,
               containerRuntime: true,
               timeLimit: LIFECYCLE_LIMIT,
             })
@@ -1222,12 +1286,13 @@ export const startContainer = Effect.fn('Container.start')(function* ({
     runtime,
     setUp,
     workspace,
-    remoteEnv,
+    variables,
     agentArguments: (pi, names) =>
       execArguments({
         name,
         workspace,
         remoteUser: setup.remoteUser,
+        values: remoteEnv,
         environment: [...new Set([...environment, ...names])],
         interactive: true,
         command: [insideParts(prepared.distribution).node, ...pi],

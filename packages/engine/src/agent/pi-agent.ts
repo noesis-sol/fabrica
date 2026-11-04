@@ -410,7 +410,7 @@ export const make = Effect.fn('PiAgent.make')(function* (
           }),
           Object.keys(environment),
         ),
-        env: { ...started.remoteEnv, ...environment },
+        env: { ...started.variables, ...environment },
       })
     }).pipe(
       Effect.catchTags({

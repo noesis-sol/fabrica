@@ -34,6 +34,7 @@ import {
   controlAddressOf,
   delegationFile,
   delegationProblem,
+  environmentOf,
   gitConfigText,
   hostAddressOf,
   placementOf,
@@ -602,6 +603,17 @@ describe('the variables of a devcontainer file', () => {
   })
 })
 
+describe('what inspecting a container says', () => {
+  it('reads its environment by variable, a value keeping its equals signs', () => {
+    expect(environmentOf('["A=1","B=x=y","NOPE"]\n')).toEqual({
+      A: '1',
+      B: 'x=y',
+    })
+    expect(environmentOf('null')).toEqual({})
+    expect(environmentOf('not json')).toEqual({})
+  })
+})
+
 describe('a devcontainer file', () => {
   const read = (body: object | string) =>
     readDevcontainer({
@@ -750,6 +762,7 @@ describe('the run arguments', () => {
         { source: '/dist', target: '/opt/fabrica', readOnly: true },
       ],
       relay,
+      containerEnv: {},
     })
   const after = (words: ReadonlyArray<string>, flag: string) =>
     words.flatMap((word, at) => (word === flag ? [words[at + 1]] : []))
@@ -774,6 +787,7 @@ describe('the run arguments', () => {
       workspace: '/wt',
       mounts: [{ source: '/wt', target: '/wt' }, samePath('/wt')],
       relay: Option.none(),
+      containerEnv: {},
     })
     expect(after(words, '--volume')).toEqual(['/wt:/wt'])
   })
@@ -850,12 +864,16 @@ describe('the run arguments', () => {
     ).toEqual([])
   })
 
-  it('gives its variables by name, never their values', () => {
-    const words = args({
-      setup: { ...preparedOf().setup, containerEnv: { A: 'a-secret' } },
+  it('gives the file variables by value, the host CLI environment untouched', () => {
+    const words = runArguments({
+      prepared: preparedOf(),
+      name: 'n',
+      workspace: '/w',
+      mounts: [],
+      relay: Option.none(),
+      containerEnv: { PATH: '/image/bin' },
     })
-    expect(after(words, '--env')).toEqual(['A'])
-    expect(words.join(' ')).not.toContain('a-secret')
+    expect(after(words, '--env')).toEqual(['PATH=/image/bin'])
   })
 
   it('serves the mounted proxy socket at its own loopback, on the proxy port', () =>
@@ -1087,9 +1105,81 @@ describe('an agent in a container', () => {
         expect(execs).toHaveLength(3)
         for (const exec of execs) {
           expect(exec[exec.indexOf('--user') + 1]).toBe('vscode')
-          expect(exec).toContain('WHERE')
+          expect(exec).toContain('WHERE=/workspaces/worktree')
         }
       }),
+  )
+
+  it.live(
+    "reads ${containerEnv:…} from the running container, and a file's PATH never moves where the CLI is found",
+    () =>
+      Effect.gen(function* () {
+        const state = fixture(['docker'])
+        state.cli.answerInspect(['PATH=/usr/bin:/bin', 'FROM_IMAGE=yes'])
+        const note = join(state.base, 'said')
+        yield* withAgents(
+          state,
+          Effect.gen(function* () {
+            const agents = yield* PiAgent
+            const agent = yield* agents
+              .start(
+                startOf(state, {
+                  setup: {
+                    ...preparedOf().setup,
+                    remoteEnv: {
+                      PATH: '${containerEnv:PATH}:/some/other/path',
+                      SEEN: '${containerEnv:FROM_IMAGE}',
+                    },
+                    lifecycle: [
+                      [['/bin/sh', '-c', `echo "$PATH $SEEN" > ${note}`]],
+                    ],
+                  },
+                }),
+              )
+              .pipe(Effect.scoped)
+            yield* agent.close
+          }),
+        )
+        const calls = state.cli.calls()
+        expect(calls.map(([, subcommand]) => subcommand)).toEqual([
+          'rm',
+          'run',
+          'inspect',
+          'exec',
+          'exec',
+          'rm',
+        ])
+        expect(calls[2]).toEqual([
+          'docker',
+          'inspect',
+          '--format',
+          '{{json .Config.Env}}',
+          'fabrica-p1-fa-1',
+        ])
+        expect(readFileSync(note, 'utf8')).toBe(
+          '/usr/bin:/bin:/some/other/path yes\n',
+        )
+        const pi = calls[4] ?? []
+        expect(pi).toContain('PATH=/usr/bin:/bin:/some/other/path')
+        expect(pi).toContain('SEEN=yes')
+      }),
+  )
+
+  it.live('asks the container nothing where no variable reads it', () =>
+    Effect.gen(function* () {
+      const state = fixture(['docker'])
+      yield* withAgents(
+        state,
+        Effect.gen(function* () {
+          const agents = yield* PiAgent
+          const agent = yield* agents.start(startOf(state)).pipe(Effect.scoped)
+          yield* agent.close
+        }),
+      )
+      expect(
+        state.cli.calls().some(([, subcommand]) => subcommand === 'inspect'),
+      ).toBe(false)
+    }),
   )
 
   it.live('a setup that fails starts no Pi, and removes the container', () =>

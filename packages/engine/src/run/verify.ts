@@ -23,7 +23,12 @@ import {
   VerdictTool,
 } from '@fabrica/contracts'
 
-import { type Agent, type ModelChoice, PiAgent } from '../agent'
+import {
+  type Agent,
+  AgentStartFailure,
+  type ModelChoice,
+  PiAgent,
+} from '../agent'
 import { CheckOwnPassedAtVariable } from '../checks'
 import {
   CheckOwnPasses,
@@ -78,6 +83,8 @@ export type Verified = Data.TaggedEnum<{
   }
   /** The verifier settled twice without a verdict. */
   Unanswered: {}
+  /** A setup command of its container failed: the change's setup, as a worker's would be (§13.8). */
+  SetupFailed: { readonly detail: string }
   /** The verifier couldn't be started or run: its session, its control channel, git, the work graph. */
   NotRun: { readonly reason: string }
 }>
@@ -513,6 +520,13 @@ export const verifyFinished = (input: {
 }) =>
   verifyRound(input).pipe(
     Effect.scoped,
+    Effect.catchTag('AgentStartFailed', error =>
+      Effect.succeed(
+        AgentStartFailure.$is('ContainerSetup')(error.reason)
+          ? Verified.SetupFailed({ detail: error.reason.message })
+          : Verified.NotRun({ reason: error.message }),
+      ),
+    ),
     Effect.catch(error =>
       Effect.succeed(Verified.NotRun({ reason: error.message })),
     ),

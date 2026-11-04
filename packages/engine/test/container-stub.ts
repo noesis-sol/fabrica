@@ -34,17 +34,26 @@ case "$1" in
   image)
     [ -e "$state/held" ] || exit 1
     ;;
+  inspect)
+    cat "$state/inspected" 2>/dev/null || echo '[]'
+    ;;
   exec)
     shift
+    root=$(cat "$state/distribution-root")
     while [ $# -gt 0 ]; do
       case "$1" in
-        --workdir|--user|--env) shift 2 ;;
+        --env)
+          case "$2" in
+            *=*) export "$2" ;;
+          esac
+          shift 2
+          ;;
+        --workdir|--user) shift 2 ;;
         --interactive) shift ;;
         *) break ;;
       esac
     done
     shift
-    root=$(cat "$state/distribution-root")
     count=$#
     while [ "$count" -gt 0 ]; do
       word=$1
@@ -77,6 +86,8 @@ export interface StubCli {
   readonly refuse: (subcommand: string) => void
   /** Says the host holds the images `image inspect` is asked about. */
   readonly holdImages: () => void
+  /** What `inspect` says the container's environment is. */
+  readonly answerInspect: (entries: ReadonlyArray<string>) => void
   /** Forgets the calls so far, and what was refused. */
   readonly reset: () => void
 }
@@ -123,6 +134,8 @@ export const installStub = ({
       writeFileSync(at(`fail-${subcommand}`), '')
     },
     holdImages: () => writeFileSync(at('held'), ''),
+    answerInspect: entries =>
+      writeFileSync(at('inspected'), JSON.stringify(entries)),
     reset: () => {
       writeFileSync(at('calls'), '')
       for (const subcommand of refused)
