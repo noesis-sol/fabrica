@@ -54,6 +54,7 @@ import {
   resumePrompt,
 } from './carryover'
 import type { RunConfig } from './config'
+import { containedAgent, controlTransportOf } from './contained'
 import {
   type CitedSpec,
   type Dependency,
@@ -519,6 +520,7 @@ export const runWorker = Effect.fn('Run.worker')(function* (
     role: ControlRole.Worker(),
     worktree: worktree.path,
     folder: config.sockets,
+    transport: controlTransportOf(started),
     questionWait: project.question_wait,
     checkOwn: {
       command: project.check_own,
@@ -551,11 +553,20 @@ export const runWorker = Effect.fn('Run.worker')(function* (
     Effect.forkScoped,
   )
 
+  const contained = yield* containedAgent({
+    ticket,
+    checkout: config.checkout,
+    worktree: worktree.path,
+    sockets: config.sockets,
+    containers: started.containers,
+    channel,
+    granted,
+  })
   const agent = yield* agents.start({
     ticket,
     project: config.project,
     worktree: worktree.path,
-    providers: granted.providers,
+    providers: contained.providers,
     token: Redacted.value(granted.token),
     model,
     tools: Option.none(),
@@ -567,6 +578,7 @@ export const runWorker = Effect.fn('Run.worker')(function* (
     },
     projectTrusted: config.projectTrusted,
     nice: config.nice,
+    ...contained.container,
   })
   yield* measured(agent.pid)
   yield* watcher.started(agent.session.file)

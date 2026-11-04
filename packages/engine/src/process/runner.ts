@@ -62,6 +62,8 @@ interface Invocation {
    * host's desktop session and its password managers' sessions.
    */
   readonly secrets?: boolean
+  /** Whether it drives a container runtime: it also gets how the runtime's CLI finds its daemon. */
+  readonly containerRuntime?: boolean
   /** The nice value a worker's command runs at (`worker_nice`); without one, the engine's own. */
   readonly nice?: number
 }
@@ -332,6 +334,7 @@ export const make = Effect.fn('ProcessRunner.make')(function* (
       extra: invocation.env ?? {},
       network: invocation.network === true,
       secrets: invocation.secrets === true,
+      containerRuntime: invocation.containerRuntime === true,
     })
     const path = environment['PATH'] ?? ''
     const file = yield* findOnPath({

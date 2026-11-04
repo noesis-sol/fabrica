@@ -7,10 +7,14 @@ import {
   Option,
   Result,
 } from 'effect'
-import { access, constants } from 'node:fs/promises'
+import { access, constants, readFile } from 'node:fs/promises'
 import * as NodePath from 'node:path'
 
-import { coresShare } from '@fabrica/contracts'
+import {
+  ReleaseVersion,
+  coresShare,
+  machineWorkersOf,
+} from '@fabrica/contracts'
 import {
   Agent,
   type Battery,
@@ -23,6 +27,7 @@ import {
   Run,
   Secrets,
   type SleepCauses,
+  Update,
   batteryFor,
   hostKeepAwake,
   layerWake,
@@ -94,6 +99,50 @@ export const agentPlaces = ({
   }
 }
 
+/**
+ * The Linux distribution a project's containers mount (spec §12.7): the engine's own on Linux, or one
+ * a macOS engine fetches once under its data folder. An engine run from a checkout has neither.
+ */
+export const linuxDistribution = ({
+  self,
+  data,
+  release,
+  platform,
+  arch,
+}: {
+  /** The engine's own bundle. */
+  readonly self: string
+  readonly data: string
+  readonly release: string
+  readonly platform: string
+  readonly arch: string
+}): Effect.Effect<Agent.LinuxDistribution, string> =>
+  Effect.gen(function* () {
+    const root = NodePath.resolve(NodePath.dirname(self), '..', '..')
+    if (NodePath.join(root, DISTRIBUTION_LAYOUT.bundle) !== self)
+      return yield* Effect.fail(
+        'this engine runs from a checkout, not a distribution',
+      )
+    const parts = {
+      node: DISTRIBUTION_LAYOUT.node,
+      cli: DISTRIBUTION_LAYOUT.piCli,
+      extension: DISTRIBUTION_LAYOUT.extension,
+    }
+    if (platform === 'linux') return { root, ...parts }
+    const target = Update.targetOf({ platform: 'linux', arch })
+    const version = ReleaseVersion.makeOption(release)
+    if (Option.isNone(target) || Option.isNone(version))
+      return yield* Effect.fail(
+        `there is no Linux distribution of ${release} for ${arch}`,
+      )
+    const fetched = yield* Update.fetchDistributionHost({
+      target: target.value,
+      version: version.value,
+      folder: NodePath.join(data, 'distributions'),
+    }).pipe(Effect.mapError(Update.describeFailure))
+    return { root: fetched, ...parts }
+  })
+
 /** The first of the agents' parts that isn't there, said as why the engine can't run a project. */
 const missingPart = (
   places: AgentPlaces,
@@ -148,6 +197,10 @@ export interface HostingConfig {
   readonly signIns?: Run.EngineCredentials['providers']
   /** The zone the runs' records are dated in. */
   readonly zone: Layer.Layer<DateTime.CurrentTimeZone>
+  /** The host's facts for a project's containers, with the machine's memory for a worker's share of it. */
+  readonly containers?: Omit<Agent.ContainerHost, 'memory'> & {
+    readonly totalMemory: number
+  }
 }
 
 /**
@@ -163,8 +216,14 @@ export const onHost = ({
   readonly agents: AgentPlaces
   /** The encrypted file's passphrase, where no keyring answers: none has a host with no keyring refuse its runs. */
   readonly passphrase: Option.Option<Secrets.PassphraseSource>
+  /** The engine's own bundle and release, and the machine's memory, for a project's containers (§12.7). */
+  readonly self: string
+  readonly release: string
+  readonly totalMemory: number
 }): HostingConfig => ({
-  ...options,
+  paths: options.paths,
+  cores: options.cores,
+  agents: options.agents,
   runner: Process.layerHost,
   sleepCauses: sleepCausesFor(process.platform),
   battery: batteryFor(process.platform),
@@ -176,6 +235,22 @@ export const onHost = ({
   }),
   routes: Proxy.knownRoutes,
   zone: DateTime.layerCurrentZoneLocal,
+  containers: {
+    platform: process.platform,
+    uid: process.getuid?.() ?? 0,
+    gid: process.getgid?.() ?? 0,
+    totalMemory: options.totalMemory,
+    environment: Process.commandEnvironment({ host: process.env, extra: {} }),
+    distribution: linuxDistribution({
+      self: options.self,
+      data: options.paths.data,
+      release: options.release,
+      platform: process.platform,
+      arch: process.arch,
+    }),
+    readFile: path =>
+      Effect.tryPromise(() => readFile(path, 'utf8')).pipe(Effect.option),
+  },
 })
 
 /** How often a worker's reaper lists its tree, and how long a terminated tree has before it is killed. */
@@ -259,6 +334,17 @@ export const runHosting = (
             nice: Option.some(settings.worker_nice),
             keepAwakeHost: config.keepAwakeHost,
             ...(credentials === undefined ? {} : { credentials }),
+            ...(config.containers === undefined
+              ? {}
+              : {
+                  containers: {
+                    ...config.containers,
+                    memory: Math.floor(
+                      config.containers.totalMemory /
+                        machineWorkersOf(settings, config.cores),
+                    ),
+                  },
+                }),
           }),
         ),
         Effect.catch(error =>

@@ -1,10 +1,11 @@
-import { Option, Schema } from 'effect'
+import { Data, Option, Schema } from 'effect'
 
 import {
   AgentRole,
   AgentRoleVariable,
   AnswerToolGiven,
   AnswerToolVariable,
+  ControlAddressVariable,
   ControlSocketVariable,
   ControlTokenVariable,
   Permissions,
@@ -20,10 +21,17 @@ import {
 /** Pi's variable naming its configuration folder, where the engine writes `models.json` (§12.9). */
 export const PiConfigFolderVariable = 'PI_CODING_AGENT_DIR'
 
+/** Where the engine's control channel is: a mounted socket, or a TCP address where one can't be connected (§12.7). */
+export type ControlEndpoint = Data.TaggedEnum<{
+  Unix: { readonly socket: string }
+  Tcp: { readonly host: string; readonly port: number }
+}>
+export const ControlEndpoint = Data.taggedEnum<ControlEndpoint>()
+
 export interface ExtensionEnvironment {
-  /** The control socket's path and the session's token, when the engine gave both. */
+  /** The control channel and the session's token, when the engine gave both. */
   readonly control: Option.Option<{
-    readonly socket: string
+    readonly endpoint: ControlEndpoint
     readonly token: string
   }>
   /**
@@ -48,15 +56,30 @@ export interface ExtensionEnvironment {
 const given = (value: string | undefined): Option.Option<string> =>
   Option.filter(Option.fromUndefinedOr(value), text => text.length > 0)
 
+/** The endpoint of an address, `<host>:<port>`; none where it isn't one. */
+const tcpEndpoint = (address: string): Option.Option<ControlEndpoint> => {
+  const colon = address.lastIndexOf(':')
+  const port = Number(address.slice(colon + 1))
+  return colon > 0 && Number.isInteger(port) && port > 0
+    ? Option.some(ControlEndpoint.Tcp({ host: address.slice(0, colon), port }))
+    : Option.none()
+}
+
 /** The extension's facts, from an environment's variables and the folder Pi runs in. */
 export const readEnvironment = (
   variables: Readonly<Record<string, string | undefined>>,
   cwd: string,
 ): ExtensionEnvironment => ({
   control: Option.zipWith(
-    given(variables[ControlSocketVariable]),
+    Option.orElse(
+      Option.flatMap(given(variables[ControlAddressVariable]), tcpEndpoint),
+      () =>
+        Option.map(given(variables[ControlSocketVariable]), socket =>
+          ControlEndpoint.Unix({ socket }),
+        ),
+    ),
     given(variables[ControlTokenVariable]),
-    (socket, token) => ({ socket, token }),
+    (endpoint, token) => ({ endpoint, token }),
   ),
   role: Option.getOrElse(
     Schema.decodeUnknownOption(AgentRole)(variables[AgentRoleVariable]),

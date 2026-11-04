@@ -8,6 +8,7 @@ import { ProcessRunner, layerHost as runnerLayerHost } from '../process/runner'
 import { UpdateFailure } from './failure'
 import { RELEASE_KEYS } from './keys'
 import {
+  type EngineTarget,
   type InstallPlaces,
   RELEASES,
   type ReleaseChoice,
@@ -15,6 +16,7 @@ import {
 } from './release'
 import {
   type ReleaseSource,
+  fetchDistribution,
   fetchRelease,
   makeStage,
   placeRelease,
@@ -91,6 +93,24 @@ export const make = Effect.fn('Updater.make')(function* (
   })
   return Updater.of({ install })
 })
+
+/** A distribution for another machine's target, fetched once on the engine's own host (spec §12.7). */
+export const fetchDistributionHost = (options: {
+  readonly target: EngineTarget
+  readonly version: ReleaseVersion
+  readonly folder: string
+}): Effect.Effect<string, UpdateFailure> =>
+  fetchDistribution({
+    ...options,
+    source: { releases: RELEASES, keys: RELEASE_KEYS },
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        FetchHttpClient.layer,
+        Layer.provide(runnerLayerHost, layerClock),
+      ),
+    ),
+  )
 
 /** The Updater over the HTTP client and the process runner given. */
 export const layer = (

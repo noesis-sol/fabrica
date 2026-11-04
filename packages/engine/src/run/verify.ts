@@ -39,6 +39,7 @@ import { coreShareVariables } from '../process'
 import { ModelProxy } from '../proxy'
 import { type VerifierRound, WorkGraph } from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
+import { containedAgent, controlTransportOf } from './contained'
 import {
   callFailedAfter,
   liftOf,
@@ -379,6 +380,7 @@ const verifyRound = Effect.fn('Verifier.round')(function* (input: {
     role: ControlRole.Verifier({ round: input.round }),
     worktree: worktree.path,
     folder: config.sockets,
+    transport: controlTransportOf(started),
     questionWait: project.question_wait,
     checkOwn: {
       command: project.check_own,
@@ -426,11 +428,20 @@ const verifyRound = Effect.fn('Verifier.round')(function* (input: {
     Effect.forkScoped,
   )
 
+  const contained = yield* containedAgent({
+    ticket,
+    checkout: config.checkout,
+    worktree: worktree.path,
+    sockets: config.sockets,
+    containers: started.containers,
+    channel,
+    granted,
+  })
   const agent = yield* agents.start({
     ticket,
     project: config.project,
     worktree: worktree.path,
-    providers: granted.providers,
+    providers: contained.providers,
     token: Redacted.value(granted.token),
     model,
     tools: Option.some(verifierTools),
@@ -447,6 +458,7 @@ const verifyRound = Effect.fn('Verifier.round')(function* (input: {
     },
     projectTrusted: config.projectTrusted,
     nice: config.nice,
+    ...contained.container,
   })
   yield* measured(agent.pid)
   yield* recordTurns({

@@ -36,6 +36,12 @@ import {
 /** The variable holding the path of the agent's control socket. */
 export const ControlSocketVariable = 'FABRICA_CONTROL_SOCKET'
 
+/**
+ * The variable holding the address of the agent's control channel, `<host>:<port>`, where a mounted
+ * socket can't be connected from its container: Podman Machine's (§12.7, fab-mgi.61).
+ */
+export const ControlAddressVariable = 'FABRICA_CONTROL_ADDRESS'
+
 /** The variable holding the agent's control token. */
 export const ControlTokenVariable = 'FABRICA_CONTROL_TOKEN'
 

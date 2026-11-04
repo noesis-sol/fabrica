@@ -11,11 +11,12 @@ import {
   layerNdjson,
 } from '@fabrica/contracts'
 
-import type { ExtensionEnvironment } from './environment'
+import { ControlEndpoint, type ExtensionEnvironment } from './environment'
 
 // The extension's side of the control channel (spec §12.2, §12.3): a client of the control group on
-// the agent's own Unix socket, in the Schema RPC protocol (newline-delimited JSON), every request
-// carrying the session's token. The socket is opened on the first call.
+// the agent's own Unix socket, or the TCP address given where its container can't connect a mounted
+// socket (§12.7), in the Schema RPC protocol (newline-delimited JSON), every request carrying the
+// session's token. The channel is opened on the first call.
 
 export class Control extends Context.Service<
   Control,
@@ -32,19 +33,26 @@ export class ControlMissing extends Data.TaggedError('ControlMissing')<{}> {
   }
 }
 
-/** The control client on `socket`, its requests carrying `token`. */
+/** The control client on `endpoint`, its requests carrying `token`. */
 export const layerSocket = ({
-  socket,
+  endpoint,
   token,
 }: {
-  readonly socket: string
+  readonly endpoint: ControlEndpoint
   readonly token: string
 }): Layer.Layer<Control, Socket.SocketError> =>
   Layer.effect(Control, RpcClient.make(ControlRpcs)).pipe(
     Layer.provide(
       Layer.mergeAll(
         RpcClient.layerProtocolSocket().pipe(
-          Layer.provide(NodeSocket.layerNet({ path: socket })),
+          Layer.provide(
+            NodeSocket.layerNet(
+              ControlEndpoint.$match(endpoint, {
+                Unix: ({ socket }) => ({ path: socket }),
+                Tcp: ({ host, port }) => ({ host, port }),
+              }),
+            ),
+          ),
           Layer.provide(layerNdjson),
         ),
         controlTokenClient(token),

@@ -2466,6 +2466,9 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
             "memory": {
               "type": "string",
             },
+            "network": {
+              "type": "string",
+            },
             "runtime": {
               "enum": [
                 "docker",

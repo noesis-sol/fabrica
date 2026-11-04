@@ -14,6 +14,7 @@ import {
   Stream,
 } from 'effect'
 import { createHash } from 'node:crypto'
+import { chmod, rm } from 'node:fs/promises'
 import {
   type IncomingHttpHeaders,
   type IncomingMessage,
@@ -24,6 +25,7 @@ import {
   request as httpRequest,
 } from 'node:http'
 import { request as httpsRequest } from 'node:https'
+import { createServer as createNetServer } from 'node:net'
 import type { Readable, Transform } from 'node:stream'
 import {
   createBrotliDecompress,
@@ -72,7 +74,9 @@ import { type UsageWindowFigure, windowChanged, windowsOf } from './windows'
 // change, for the run's `usage_window` records (§13.12) and the console (§18.3). A credential kept as a
 // subscription's sign-in has its token refreshed before it expires (oauth.ts), and is sent as a bearer,
 // to the account's own base URL where it has one; an agent is granted the placeholder Pi needs to build
-// that subscription's request, chosen from what is kept as its session starts.
+// that subscription's request, chosen from what is kept as its session starts. A container that can't
+// reach the loopback listener (rootless Linux, §12.7, fab-mgi.60) has it also listen on a Unix socket of
+// its agent's, mounted into the container; the same tokens are the only way in there.
 
 /** What the proxy saw of a model call, for telemetry (§14.4, §21) and the holds (§14.2, §14.6). */
 export type ProxyEvent = Data.TaggedEnum<{
@@ -126,6 +130,10 @@ export interface ModelProxyShape {
   readonly grant: (
     caller: Caller,
   ) => Effect.Effect<AgentProxy, never, Scope.Scope>
+  /** Also listens on the Unix socket at `socket`, only its owner let in, for as long as the scope is open. */
+  readonly listenOn: (
+    socket: string,
+  ) => Effect.Effect<void, ProxyFailed, Scope.Scope>
   /** What the proxy sees from now on, for as long as the scope is open. */
   readonly events: Effect.Effect<Stream.Stream<ProxyEvent>, never, Scope.Scope>
   /** Each account's usage windows, their latest figures, by provider, account and window. */
@@ -725,6 +733,37 @@ export const make = Effect.fn('ModelProxy.make')(function* (
   )
   const address = `http://127.0.0.1:${port}`
 
+  const listenOn = Effect.fn('ModelProxy.listenOn')(function* (socket: string) {
+    const failed = (error: unknown) =>
+      new ProxyFailed({
+        reason: `on ${socket}: ${error instanceof Error ? error.message : String(error)}`,
+      })
+    const listener = createNetServer(connection =>
+      server.emit('connection', connection),
+    )
+    yield* Effect.acquireRelease(
+      Effect.tryPromise({
+        try: async () => {
+          await rm(socket, { force: true })
+          await new Promise<void>((resolve, reject) => {
+            listener.once('error', reject)
+            listener.listen(socket, () => {
+              listener.off('error', reject)
+              resolve()
+            })
+          })
+          await chmod(socket, 0o600)
+        },
+        catch: failed,
+      }),
+      () =>
+        Effect.promise(async () => {
+          listener.close()
+          await rm(socket, { force: true })
+        }).pipe(Effect.ignore),
+    )
+  })
+
   /** Whether a route's calls are made on a subscription now; a store that can't say leaves the call to say so. */
   const onSubscription = (route: ProviderRoute) =>
     Option.match(accountOf(route.authentication), {
@@ -858,6 +897,7 @@ export const make = Effect.fn('ModelProxy.make')(function* (
   return ModelProxy.of({
     address,
     grant,
+    listenOn,
     events: Effect.map(PubSub.subscribe(published), Stream.fromSubscription),
     windows: Effect.sync(() => [...figures.values()]),
     probe,

@@ -26,7 +26,11 @@ import {
 } from '@fabrica/contracts'
 import { tempFolder } from '@fabrica/testkit'
 
-import { type ExtensionEnvironment, readEnvironment } from '../src/environment'
+import {
+  ControlEndpoint,
+  type ExtensionEnvironment,
+  readEnvironment,
+} from '../src/environment'
 import { makeExtension } from '../src/extension'
 import type { PiApi, PiTool } from '../src/pi'
 import {
@@ -116,7 +120,10 @@ const loaded = Effect.fn(function* (
     answers(calls, { dirty: options.dirty ?? false }),
   )
   const environment: ExtensionEnvironment = {
-    control: Option.some({ socket, token: options.token ?? token }),
+    control: Option.some({
+      endpoint: ControlEndpoint.Unix({ socket }),
+      token: options.token ?? token,
+    }),
     role: 'worker',
     answerTool: Option.none(),
     projectTrusted: options.projectTrusted ?? false,
@@ -523,7 +530,10 @@ describe('the first-party extension', () => {
         '/work/fa-1',
       ),
     ).toEqual({
-      control: Option.some({ socket: '/run/a.sock', token: 'secret' }),
+      control: Option.some({
+        endpoint: ControlEndpoint.Unix({ socket: '/run/a.sock' }),
+        token: 'secret',
+      }),
       role: 'worker',
       answerTool: Option.none(),
       projectTrusted: true,

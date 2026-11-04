@@ -264,6 +264,9 @@ const shared = {
 /** The folder of the test file's commands, on the PATH its runs run with. */
 export const binFolder = () => shared.bin
 
+/** The stub of Pi's CLI the test file's runs start. */
+export const piStub = () => shared.stub
+
 const fixtureEnv = () => ({
   PATH: `${shared.gitFolder}:/usr/bin:/bin`,
   HOME: shared.home,

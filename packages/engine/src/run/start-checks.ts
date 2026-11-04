@@ -7,6 +7,11 @@ import type {
   RunId,
 } from '@fabrica/contracts'
 
+import {
+  type PreparedContainers,
+  prepareContainers,
+  runtimeOf,
+} from '../agent/container'
 import { Git, GitVersion } from '../git'
 import { refusedWhy } from '../holds'
 import { BaseSynced, syncBase, syncedNote } from '../projects/base-sync'
@@ -38,6 +43,8 @@ import { type RequirementsInput, checkInRun } from './requirements-step'
 // missing requirements are all it found. Each check's end is streamed as an
 // `info` record as it comes, so a client shows what the start is doing; a defect inside a check is a
 // problem line of its own (`Internal error in <check>: …`), never an end with nothing said (tutti-kq5).
+// A project with a `container` has its runtime chosen and its image pulled or built here, before the
+// first dispatch (§12.7).
 
 /** What the start found, for the run to go on with. */
 export interface Started {
@@ -48,6 +55,8 @@ export interface Started {
   readonly settings: ResolvedSettings
   /** The requires list on Base's commit as the run started, found met (§17). */
   readonly requirements: ReadonlyArray<Requirement>
+  /** What each worker's container is made from, where the project sets `container` (§12.7). */
+  readonly containers: Option.Option<PreparedContainers>
 }
 
 export type StartChecked = Data.TaggedEnum<{
@@ -218,6 +227,56 @@ const requirementsCheck = (
     )
   })
 
+/**
+ * A project's containers made ready (§12.7): its runtime, its limits, its image. A stop cuts it short,
+ * its command's tree ended: the run ends `INTERRUPTED` at its first look, before any ticket (§13.10).
+ */
+const containersCheck = (
+  settings: ResolvedSettings,
+  config: RunConfig,
+  log: RunLog['Service'],
+  stopped: Effect.Effect<void>,
+) =>
+  Effect.gen(function* () {
+    type Containers = Option.Option<PreparedContainers>
+    const { container } = settings.project
+    if (Option.isNone(container))
+      return found<Containers>(Option.none(), 'none set')
+    if (config.containers === undefined)
+      return problems<Containers>(
+        "the project sets a container, and this engine can't run one",
+      )
+    const prepared = yield* Effect.raceFirst(
+      Effect.map(
+        Effect.result(
+          prepareContainers({
+            container: container.value,
+            host: config.containers,
+            project: config.project,
+            checkout: config.checkout,
+            cores: config.cores,
+          }),
+        ),
+        Option.some,
+      ),
+      Effect.as(stopped, Option.none()),
+    )
+    if (Option.isNone(prepared))
+      return found<Containers>(Option.none(), 'cut short by a stop')
+    if (Result.isFailure(prepared.value))
+      return problems<Containers>(...prepared.value.failure.problems)
+    const ready = prepared.value.success
+    yield* Effect.forEach(
+      ready.notices,
+      notice => record(log, { kind: 'info', text: `start: ${notice}` }),
+      { discard: true },
+    )
+    return found<Containers>(
+      Option.some(ready),
+      `${runtimeOf(ready.placement)}, ${ready.image}`,
+    )
+  })
+
 /** A model as the settings write it: `anthropic/claude-opus-5-5`. */
 export const modelName = (choice: ModelChoice): string =>
   `${choice.provider}/${choice.model}`
@@ -358,7 +417,7 @@ export const runStartChecks = Effect.fn('Run.startChecks')(function* (input: {
     'the settings check',
     settingsCheck(config),
   )
-  const [credentials, requirements] = yield* Effect.all(
+  const [credentials, requirements, containers] = yield* Effect.all(
     [
       guarded(
         log,
@@ -395,6 +454,23 @@ export const runStartChecks = Effect.fn('Run.startChecks')(function* (input: {
               ),
             ),
       ),
+      guarded(
+        log,
+        'the container check',
+        Result.isSuccess(settings)
+          ? containersCheck(
+              settings.success.value,
+              config,
+              log,
+              input.stopped ?? Effect.never,
+            )
+          : Effect.succeed(
+              found(
+                Option.none<PreparedContainers>(),
+                'not checked: the settings have problems',
+              ),
+            ),
+      ),
     ],
     { concurrency: 'unbounded' },
   )
@@ -404,6 +480,7 @@ export const runStartChecks = Effect.fn('Run.startChecks')(function* (input: {
     Result.isFailure(settings) ? settings.failure : [],
     Result.isFailure(requirements) ? requirements.failure : [],
     Result.isFailure(credentials) ? credentials.failure : [],
+    Result.isFailure(containers) ? containers.failure : [],
   ].flat()
   const missing = Result.isSuccess(requirements)
     ? requirements.success.value.missing
@@ -417,7 +494,8 @@ export const runStartChecks = Effect.fn('Run.startChecks')(function* (input: {
     others.length > 0 ||
     Result.isFailure(checkout) ||
     Result.isFailure(settings) ||
-    Result.isFailure(requirements)
+    Result.isFailure(requirements) ||
+    Result.isFailure(containers)
   )
     return StartChecked.Problems({
       kind: 'SETUP',
@@ -432,6 +510,7 @@ export const runStartChecks = Effect.fn('Run.startChecks')(function* (input: {
       baseCommit: checkout.success.value.commit,
       settings: settings.success.value,
       requirements: requirements.success.value.list,
+      containers: containers.success.value,
     },
   })
 })

@@ -7,6 +7,7 @@ import type {
   TicketId,
 } from '@fabrica/contracts'
 
+import type { ContainerHost } from '../agent/container'
 import type { WorktreeHome } from '../git'
 import type { KeepAwakeHost } from '../time'
 
@@ -71,4 +72,6 @@ export interface RunConfig {
   readonly keepAwakeHost: KeepAwakeHost
   /** The user trusts the project, so its agents' Pi may load its own settings and packages (§12.1). */
   readonly projectTrusted: boolean
+  /** The host's facts for a project's containers (§12.7); where none are given, a `container` is refused. */
+  readonly containers?: ContainerHost
 }

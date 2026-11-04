@@ -191,6 +191,7 @@ const fakeProxy = (figures: ReadonlyArray<UsageWindowFigure>) =>
     const proxy: ModelProxyShape = {
       address: 'http://127.0.0.1:1',
       grant: () => Effect.die('no agents here'),
+      listenOn: () => Effect.die('no agents here'),
       events: Effect.map(
         PubSub.subscribe(published),
         Stream.fromSubscription,

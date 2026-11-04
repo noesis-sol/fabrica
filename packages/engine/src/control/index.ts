@@ -6,6 +6,7 @@ export {
   ControlFailed,
   ControlServer,
   type ControlServerShape,
+  ControlTransport,
   type ControlSession,
   layer,
   make,

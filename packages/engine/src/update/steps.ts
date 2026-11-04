@@ -16,7 +16,7 @@ import * as NodePath from 'node:path'
 import type { ReleaseVersion } from '@fabrica/contracts'
 
 import { closeQuietly, writeAll } from '../files/open'
-import { CommandOutcome, ExitStatus, ProcessRunner } from '../process'
+import { ProcessRunner, commandSucceeded } from '../process'
 import { UpdateFailure } from './failure'
 import {
   CHECKSUMS,
@@ -231,28 +231,25 @@ export interface Fetched {
   readonly archive: string
 }
 
-/** Downloads a release's archive for `target` into `stage`, once its checksums.txt verifies. */
-export const fetchRelease = Effect.fn('Update.fetchRelease')(function* ({
+/**
+ * Downloads a release's archive for `target` into `stage`, once its checksums.txt verifies and
+ * `acceptable` takes the version it names.
+ */
+const fetchVerified = Effect.fn('Update.fetchVerified')(function* ({
   source,
   target,
   release,
-  current,
   stage,
+  acceptable,
 }: {
   readonly source: ReleaseSource
   readonly target: EngineTarget
   readonly release: ReleaseChoice
-  readonly current: ReleaseVersion
   readonly stage: string
+  readonly acceptable: (
+    version: ReleaseVersion,
+  ) => Result.Result<void, UpdateFailure>
 }) {
-  if (source.keys.length === 0)
-    return yield* Effect.fail(UpdateFailure.NoReleaseKey())
-  yield* Effect.fromResult(
-    Option.match(release, {
-      onNone: () => Result.void,
-      onSome: version => checkMove({ current, version, release }),
-    }),
-  )
   const url = (name: string) =>
     assetUrl({ releases: source.releases, release, name })
   const checksumsFile = NodePath.join(stage, CHECKSUMS)
@@ -289,9 +286,7 @@ export const fetchRelease = Effect.fn('Update.fetchRelease')(function* ({
       release,
     }),
   )
-  yield* Effect.fromResult(
-    checkMove({ current, version: chosen.version, release }),
-  )
+  yield* Effect.fromResult(acceptable(chosen.version))
   // From the version's own release, so a latest that moves on meanwhile can't change what is had.
   const archiveUrl = assetUrl({
     releases: source.releases,
@@ -320,25 +315,36 @@ export const fetchRelease = Effect.fn('Update.fetchRelease')(function* ({
   } satisfies Fetched
 })
 
-/** What a command's outcome says, where it didn't exit 0. */
-const outcomeText = CommandOutcome.$match({
-  Exited: ({ status, stderr }) =>
-    ExitStatus.$match(status, {
-      Code: ({ code }) => `it exited ${code}`,
-      Signal: ({ signal }) => `it was ended by ${signal}`,
-    }) + (stderr.trim() === '' ? '' : `: ${stderr.trim()}`),
-  TimedOut: () => 'it ran out of time',
-  Cut: ({ stream, limit }) => `its ${stream} passed ${limit} bytes`,
-  FailedToStart: ({ reason }) => `it didn't start (${reason._tag})`,
+/** Downloads a release's archive for `target` into `stage`, once its checksums.txt verifies. */
+export const fetchRelease = Effect.fn('Update.fetchRelease')(function* ({
+  source,
+  target,
+  release,
+  current,
+  stage,
+}: {
+  readonly source: ReleaseSource
+  readonly target: EngineTarget
+  readonly release: ReleaseChoice
+  readonly current: ReleaseVersion
+  readonly stage: string
+}) {
+  if (source.keys.length === 0)
+    return yield* Effect.fail(UpdateFailure.NoReleaseKey())
+  yield* Effect.fromResult(
+    Option.match(release, {
+      onNone: () => Result.void,
+      onSome: version => checkMove({ current, version, release }),
+    }),
+  )
+  return yield* fetchVerified({
+    source,
+    target,
+    release,
+    stage,
+    acceptable: version => checkMove({ current, version, release }),
+  })
 })
-
-/** Whether a command exited 0, and its stdout where it did. */
-const succeeded = (outcome: CommandOutcome): Result.Result<string, string> =>
-  CommandOutcome.$is('Exited')(outcome) &&
-  ExitStatus.$is('Code')(outcome.status) &&
-  outcome.status.code === 0
-    ? Result.succeed(outcome.stdout)
-    : Result.fail(outcomeText(outcome))
 
 /**
  * Checks the launcher of the unpacked distribution in `folder`: a regular executable file whose
@@ -375,7 +381,7 @@ export const checkLauncher = Effect.fn('Update.checkLauncher')(function* ({
     outputLimit: 64 * 1024,
   })
   const said = yield* Effect.fromResult(
-    Result.mapError(succeeded(ran), why =>
+    Result.mapError(commandSucceeded(ran), why =>
       UpdateFailure.WontRun({ message: why }),
     ),
   )
@@ -386,8 +392,8 @@ export const checkLauncher = Effect.fn('Update.checkLauncher')(function* ({
     )
 })
 
-/** Unpacks the fetched archive inside `stage` and checks its launcher. Returns the unpacked folder. */
-export const unpackRelease = Effect.fn('Update.unpackRelease')(function* ({
+/** Unpacks the fetched archive inside `stage`. Returns the unpacked folder. */
+const unpackArchive = Effect.fn('Update.unpackArchive')(function* ({
   fetched,
   stage,
 }: {
@@ -404,14 +410,25 @@ export const unpackRelease = Effect.fn('Update.unpackRelease')(function* ({
     timeLimit: UNPACK_TIME,
   })
   yield* Effect.fromResult(
-    Result.mapError(succeeded(unpacked), why =>
+    Result.mapError(commandSucceeded(unpacked), why =>
       UpdateFailure.UnpackFailed({
         archive: NodePath.basename(fetched.archive),
         message: why,
       }),
     ),
   )
-  const folder = NodePath.join(into, fetched.name)
+  return NodePath.join(into, fetched.name)
+})
+
+/** Unpacks the fetched archive inside `stage` and checks its launcher. Returns the unpacked folder. */
+export const unpackRelease = Effect.fn('Update.unpackRelease')(function* ({
+  fetched,
+  stage,
+}: {
+  readonly fetched: Fetched
+  readonly stage: string
+}) {
+  const folder = yield* unpackArchive({ fetched, stage })
   yield* checkLauncher({
     folder,
     shown: fetched.name,
@@ -419,6 +436,50 @@ export const unpackRelease = Effect.fn('Update.unpackRelease')(function* ({
   })
   return folder
 })
+
+/**
+ * The distribution of `version` for another machine's `target` (a macOS engine's Linux one, spec §12.7),
+ * fetched once into `folder`: verified as an update's is, its launcher unrun since it can't run here.
+ * Returns the distribution's folder.
+ */
+export const fetchDistribution = Effect.fn('Update.fetchDistribution')(
+  function* ({
+    source,
+    target,
+    version,
+    folder,
+  }: {
+    readonly source: ReleaseSource
+    readonly target: EngineTarget
+    readonly version: ReleaseVersion
+    readonly folder: string
+  }) {
+    const place = NodePath.join(folder, distributionName({ version, target }))
+    const held = Effect.tryPromise(() => lstat(place)).pipe(Effect.option)
+    if (Option.isSome(yield* held)) return place
+    const stage = yield* makeStage({ engines: folder, link: '' })
+    if (source.keys.length === 0)
+      return yield* Effect.fail(UpdateFailure.NoReleaseKey())
+    const fetched = yield* fetchVerified({
+      source,
+      target,
+      release: Option.some(version),
+      stage,
+      acceptable: () => Result.void,
+    })
+    const unpacked = yield* unpackArchive({ fetched, stage })
+    yield* placing(place, () => rename(unpacked, place)).pipe(
+      // Another run's fetch got there first.
+      Effect.catch(failure =>
+        Effect.flatMap(held, there =>
+          Option.isSome(there) ? Effect.void : Effect.fail(failure),
+        ),
+      ),
+    )
+    return place
+  },
+  Effect.scoped,
+)
 
 /**
  * Renames the unpacked `folder` into its version's place, moving a version installed there already

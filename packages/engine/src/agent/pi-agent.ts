@@ -29,6 +29,17 @@ import {
   connect,
 } from './connection'
 import {
+  DISTRIBUTION_TARGET,
+  type Mount,
+  type PreparedContainers,
+  type ProxyRelay,
+  containerName,
+  insideParts,
+  samePath,
+  startContainer,
+  workspaceOf,
+} from './container'
+import {
   AgentSendFailed,
   AgentStartFailed,
   AgentStartFailure,
@@ -61,6 +72,13 @@ import {
 // time (Starting, Open, Closing): a start waits for a closing session's process to exit, and a
 // command sent to a closing session fails. Pi's Promise and RPC surface never leaves this module.
 
+/** A ticket's agent in a container (§12.7): what it is made from, and what is mounted beyond the agent's own folders. */
+export interface AgentContainer {
+  readonly prepared: PreparedContainers
+  readonly mounts: ReadonlyArray<Mount>
+  readonly relay: Option.Option<ProxyRelay>
+}
+
 /** What starting a ticket's agent takes. */
 export interface AgentStart {
   readonly ticket: TicketId
@@ -82,6 +100,8 @@ export interface AgentStart {
   readonly projectTrusted: boolean
   /** The nice value the agent runs at (`worker_nice`). */
   readonly nice: Option.Option<number>
+  /** Runs it in a container of its own, removed with it; on the host where none is given. */
+  readonly container?: AgentContainer
 }
 
 /** The session an agent opened, saved for the carry-over only once it has started. */
@@ -307,8 +327,91 @@ export const make = Effect.fn('PiAgent.make')(function* (
       }
     })
 
-  /** Spawns Pi and its reaper in `scope`, and connects to Pi. */
-  const launch = (options: AgentStart, scope: Scope.Scope) =>
+  /**
+   * Starts the agent's container in `scope`, where it has one, its setup given to `waited`, which an
+   * interruption or a close can cut short. Says how Pi is started in it.
+   */
+  const contain = ({
+    options,
+    sessions,
+    folder,
+    environment,
+    scope,
+    waited,
+  }: {
+    readonly options: AgentStart
+    readonly sessions: string
+    readonly folder: string
+    readonly environment: Readonly<Record<string, string>>
+    readonly scope: Scope.Scope
+    readonly waited: <A, E>(
+      effect: Effect.Effect<A, E>,
+    ) => Effect.Effect<A, E | AgentStartFailed>
+  }) =>
+    Effect.gen(function* () {
+      if (options.container === undefined) return Option.none()
+      const { prepared, mounts, relay } = options.container
+      const { distribution, setup } = prepared
+      const started = yield* startContainer({
+        prepared,
+        name: containerName(options),
+        worktree: options.worktree,
+        mounts: [
+          {
+            source: options.worktree,
+            target: workspaceOf({ worktree: options.worktree, setup }),
+          },
+          samePath(options.worktree),
+          {
+            source: distribution.root,
+            target: DISTRIBUTION_TARGET,
+            readOnly: true,
+          },
+          samePath(sessions),
+          samePath(folder),
+          ...mounts,
+        ],
+        relay,
+        node: config.node,
+      }).pipe(
+        Effect.provideService(ProcessRunner, runner),
+        Scope.provide(scope),
+      )
+      yield* waited(started.setUp)
+      const inside = insideParts(distribution)
+      return Option.some({
+        command: started.runtime,
+        args: started.agentArguments(
+          piArguments({
+            cli: inside.cli,
+            extension: inside.extension,
+            sessions,
+            model: options.model,
+            tools: options.tools,
+          }),
+          Object.keys(environment),
+        ),
+        env: { ...started.remoteEnv, ...environment },
+      })
+    }).pipe(
+      Effect.catchTag('ContainerFailed', error =>
+        Effect.fail(
+          new AgentStartFailed({
+            ticket: options.ticket,
+            reason: AgentStartFailure.Container({ message: error.message }),
+          }),
+        ),
+      ),
+    )
+
+  /** Spawns Pi and its reaper in `scope`, in the agent's container where it has one, and connects to Pi. */
+  const launch = (
+    options: AgentStart,
+    scope: Scope.Scope,
+    waited: <A, E>(
+      effect: Effect.Effect<A, E>,
+    ) => Effect.Effect<A, E | AgentStartFailed>,
+  ) =>
     Effect.gen(function* () {
       const fail = (reason: AgentStartFailure) =>
         new AgentStartFailed({ ticket: options.ticket, reason })
@@ -330,22 +433,36 @@ export const make = Effect.fn('PiAgent.make')(function* (
         ),
         Scope.provide(scope),
       )
+      const environment = piEnvironment({
+        config: folder,
+        projectTrusted: options.projectTrusted,
+        extra: options.env,
+      })
+      const contained = yield* contain({
+        options,
+        sessions,
+        folder,
+        environment,
+        scope,
+        waited,
+      })
       const running = yield* runner
         .start({
-          command: config.node,
-          args: piArguments({
-            cli: config.cli,
-            extension: config.extension,
-            sessions,
-            model: options.model,
-            tools: options.tools,
+          ...Option.match(contained, {
+            onNone: () => ({
+              command: config.node,
+              args: piArguments({
+                cli: config.cli,
+                extension: config.extension,
+                sessions,
+                model: options.model,
+                tools: options.tools,
+              }),
+              env: environment,
+            }),
+            onSome: spawn => ({ ...spawn, containerRuntime: true }),
           }),
           cwd: options.worktree,
-          env: piEnvironment({
-            config: folder,
-            projectTrusted: options.projectTrusted,
-            extra: options.env,
-          }),
           stdin: 'pipe',
           ...Option.match(options.nice, {
             onNone: () => ({}),
@@ -621,7 +738,9 @@ export const make = Effect.fn('PiAgent.make')(function* (
           Deferred.done(freed, Exit.void),
         )
         const scope = yield* Scope.make()
-        const launched = yield* Effect.exit(launch(options, scope))
+        const waited = <A, E>(effect: Effect.Effect<A, E>) =>
+          restore(Effect.raceFirst(effect, cancelled(cancel)))
+        const launched = yield* Effect.exit(launch(options, scope, waited))
         if (Exit.isFailure(launched)) {
           yield* Scope.close(scope, Exit.void)
           yield* free

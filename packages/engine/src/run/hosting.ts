@@ -9,6 +9,7 @@ import {
 
 import type { Provider } from '@earendil-works/pi-ai/models'
 
+import type { ContainerHost } from '../agent/container'
 import type {
   Attention,
   CheckOwnPasses,
@@ -59,6 +60,8 @@ export type RunHostingShape = Data.TaggedEnum<{
     readonly nice: Option.Option<number>
     /** The engine's host, which its runs keep from idle sleep. */
     readonly keepAwakeHost: KeepAwakeHost
+    /** The host's facts for a project's containers (§12.7). */
+    readonly containers?: ContainerHost
     /** Its credentials; where none are given, the Secrets group says the engine has none. */
     readonly credentials?: EngineCredentials
   }

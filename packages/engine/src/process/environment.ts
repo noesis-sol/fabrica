@@ -82,6 +82,22 @@ const SECRET_STORES: ReadonlySet<string> = new Set([
   'GNUPGHOME',
 ])
 
+/**
+ * What a command driving a container runtime also gets, where the engine has it (spec §12.7): how the
+ * `docker` or `podman` CLI finds its daemon or machine, which a rootless host's shell profile often
+ * names. Only these commands get them, never an agent's, a check's or git's.
+ */
+const CONTAINER_RUNTIME: ReadonlySet<string> = new Set([
+  'DOCKER_HOST',
+  'DOCKER_CONTEXT',
+  'DOCKER_CONFIG',
+  'DOCKER_CERT_PATH',
+  'DOCKER_TLS_VERIFY',
+  'CONTAINER_HOST',
+  'CONTAINER_CONNECTION',
+  'CONTAINER_SSHKEY',
+])
+
 /** 1Password's signed-in sessions, one per account: `OP_SESSION_<account>`. */
 const OP_SESSION = /^OP_SESSION_\w+$/
 
@@ -117,7 +133,12 @@ const allowed = (
   {
     network,
     secrets,
-  }: { readonly network: boolean; readonly secrets: boolean },
+    containerRuntime,
+  }: {
+    readonly network: boolean
+    readonly secrets: boolean
+    readonly containerRuntime: boolean
+  },
   host: Readonly<Record<string, string | undefined>>,
 ): boolean =>
   ALLOWED.has(name) ||
@@ -125,18 +146,20 @@ const allowed = (
   (network &&
     (NETWORK.has(name) ||
       (name === SSH_VARIANT && host['GIT_SSH_COMMAND'] !== undefined))) ||
-  (secrets && (SECRET_STORES.has(name) || OP_SESSION.test(name)))
+  (secrets && (SECRET_STORES.has(name) || OP_SESSION.test(name))) ||
+  (containerRuntime && CONTAINER_RUNTIME.has(name))
 
 /**
  * A command's environment: the allowlisted variables of `host` (the engine's environment, read once
- * where the engine starts), with those a `network` command and a `secrets` command get, then the
- * caller's `extra` over them, less git's local variables.
+ * where the engine starts), with those a `network` command, a `secrets` command and a
+ * `containerRuntime` command get, then the caller's `extra` over them, less git's local variables.
  */
 export const commandEnvironment = ({
   host,
   extra,
   network = false,
   secrets = false,
+  containerRuntime = false,
 }: {
   readonly host: Readonly<Record<string, string | undefined>>
   readonly extra: Readonly<Record<string, string>>
@@ -144,10 +167,15 @@ export const commandEnvironment = ({
   readonly network?: boolean
   /** Whether the command reaches the host's secret stores: a keyring CLI, a key's command. */
   readonly secrets?: boolean
+  /** Whether the command drives a container runtime: its `docker` or `podman` CLI. */
+  readonly containerRuntime?: boolean
 }): Readonly<Record<string, string>> => {
   const environment: Record<string, string> = {}
   for (const [name, value] of Object.entries(host)) {
-    if (value !== undefined && allowed(name, { network, secrets }, host))
+    if (
+      value !== undefined &&
+      allowed(name, { network, secrets, containerRuntime }, host)
+    )
       environment[name] = value
   }
   for (const [name, value] of Object.entries(extra)) environment[name] = value

@@ -440,6 +440,7 @@ const ContainerType = Schema.Struct({
   runtime: Schema.Option(ContainerRuntime),
   memory: Schema.Option(Schema.Int),
   cpus: Schema.Option(Schema.Number),
+  network: Schema.Option(Text),
 })
 
 const ContainerFields = Schema.Struct({
@@ -448,19 +449,20 @@ const ContainerFields = Schema.Struct({
   runtime: Schema.optionalKey(ContainerRuntime),
   memory: Schema.optionalKey(ContainerMemory),
   cpus: Schema.optionalKey(Schema.Number.check(Schema.isGreaterThan(0))),
+  network: Schema.optionalKey(Text),
 })
 type ContainerFields = typeof ContainerFields.Type
 
 /**
  * A worker's container (spec §12.7): an `image` or a `devcontainer` file, and the `runtime`,
- * `memory` and `cpus` where the settings choose them; otherwise whichever runtime is present, and
- * the worker's share of the machine.
+ * `memory`, `cpus` and `network` where the settings choose them; otherwise whichever runtime is
+ * present, the worker's share of the machine, and the runtime's own default network.
  */
 export const Container = ContainerFields.pipe(
   Schema.decodeTo(
     ContainerType,
     SchemaTransformation.transformEffect({
-      decode: ({ image, devcontainer, runtime, memory, cpus }) => {
+      decode: ({ image, devcontainer, runtime, memory, cpus, network }) => {
         const source: Option.Option<ContainerSource> =
           image !== undefined && devcontainer === undefined
             ? Option.some(ContainerSource.cases.Image.make({ image }))
@@ -484,10 +486,11 @@ export const Container = ContainerFields.pipe(
               runtime: Option.fromUndefinedOr(runtime),
               memory: Option.fromUndefinedOr(memory),
               cpus: Option.fromUndefinedOr(cpus),
+              network: Option.fromUndefinedOr(network),
             }),
         })
       },
-      encode: ({ source, runtime, memory, cpus }) => {
+      encode: ({ source, runtime, memory, cpus, network }) => {
         const written: ContainerFields = {
           ...ContainerSource.match(source, {
             Image: ({ image }): ContainerFields => ({ image }),
@@ -506,6 +509,10 @@ export const Container = ContainerFields.pipe(
           ...Option.match(cpus, {
             onNone: () => ({}),
             onSome: cpus => ({ cpus }),
+          }),
+          ...Option.match(network, {
+            onNone: () => ({}),
+            onSome: network => ({ network }),
           }),
         }
         return Effect.succeed(written)

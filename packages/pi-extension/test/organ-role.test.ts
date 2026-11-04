@@ -20,7 +20,11 @@ import {
 } from '@fabrica/contracts'
 import { tempFolder } from '@fabrica/testkit'
 
-import { type ExtensionEnvironment, readEnvironment } from '../src/environment'
+import {
+  ControlEndpoint,
+  type ExtensionEnvironment,
+  readEnvironment,
+} from '../src/environment'
 import { makeExtension } from '../src/extension'
 import type { PiApi, PiTool } from '../src/pi'
 import { StandingRulesSection, organRules } from '../src/rules'
@@ -102,7 +106,7 @@ const loadedOrgan = Effect.fn(function* (
   const calls: Array<Call> = []
   const socket = yield* serve(folder, answers(calls, { dirty: false }))
   const environment: ExtensionEnvironment = {
-    control: Option.some({ socket, token }),
+    control: Option.some({ endpoint: ControlEndpoint.Unix({ socket }), token }),
     role: 'organ',
     answerTool,
     projectTrusted: false,

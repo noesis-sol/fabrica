@@ -475,6 +475,9 @@ export const make = Effect.gen(function* () {
           nice: hosting.nice,
           keepAwakeHost: hosting.keepAwakeHost,
           projectTrusted: record.trusted,
+          ...(hosting.containers === undefined
+            ? {}
+            : { containers: hosting.containers }),
         }
 
         /** The run's log, each record kept for its events stream as it is written. */

@@ -18,6 +18,7 @@ import * as NodePath from 'node:path'
 
 import * as NodeSocketServer from '@effect/platform-node-shared/NodeSocketServer'
 import {
+  ControlAddressVariable,
   ControlRpcs,
   ControlSocketVariable,
   ControlToken,
@@ -44,9 +45,21 @@ import { type CheckOwnRun, type ControlRole, makeTools } from './tools'
 // own, mode 0600 in a folder only the engine's user can enter, serving the control group in the
 // Schema RPC protocol (newline-delimited JSON). Every request's token is checked before it is read;
 // the session's outcomes reach the run loop as one stream. Closing the session's scope closes the
-// socket, interrupts the calls in flight and removes the socket's file.
+// socket, interrupts the calls in flight and removes the socket's file. A session whose container
+// can't connect a mounted socket gets a loopback TCP listener in its place (`ControlTransport`).
 
 /** One agent's session, as its control channel serves it. */
+/**
+ * How a session's agent reaches its channel: the Unix socket, or, where its container can't connect a
+ * mounted socket (Podman Machine, spec §12.7, fab-mgi.61), a loopback TCP listener of the session's
+ * own, reached at `reachedAt` and scoped by its token as the socket is.
+ */
+export type ControlTransport = Data.TaggedEnum<{
+  Unix: {}
+  Tcp: { readonly reachedAt: string }
+}>
+export const ControlTransport = Data.taggedEnum<ControlTransport>()
+
 export interface ControlSession {
   readonly project: ProjectId
   readonly ticket: TicketId
@@ -56,6 +69,8 @@ export interface ControlSession {
   readonly worktree: string
   /** The folder the socket is made in, created with mode 0700 where it isn't there. */
   readonly folder: string
+  /** How its agent reaches it; the socket where none is given. */
+  readonly transport?: ControlTransport
   /** How long `ask_and_wait` holds the agent for an answer (`question_wait`), in time awake. */
   readonly questionWait: Duration.Input
   /** How `check_own` runs for it. */
@@ -66,9 +81,10 @@ export interface ControlSession {
 
 /** An agent's control channel, open. */
 export interface AgentControl {
+  /** The socket's path, or the TCP listener's `host:port`. */
   readonly socket: string
   readonly token: Redacted.Redacted<string>
-  /** The variables the agent's environment gets for it: the socket's path and the token. */
+  /** The variables the agent's environment gets for it: the socket's path or the address, and the token. */
   readonly environment: Readonly<Record<string, string>>
   /** The session's outcomes, in the order its tools published them; read by one reader. */
   readonly outcomes: Stream.Stream<Outcome>
@@ -120,6 +136,52 @@ const prepare = (folder: string, socket: string) =>
     catch: failed(socket),
   })
 
+/** The session's Unix socket, only its owner let in, removed with the scope. */
+const openSocket = (session: ControlSession) =>
+  Effect.gen(function* () {
+    const socket = NodePath.join(session.folder, `${session.ticket}.sock`)
+    if (Buffer.byteLength(socket) > maxSocketPath)
+      return yield* new ControlFailed({
+        socket,
+        reason: `its path is longer than ${maxSocketPath} bytes`,
+      })
+    yield* prepare(session.folder, socket)
+    const server = yield* NodeSocketServer.make({ path: socket }).pipe(
+      Effect.mapError(failed(socket)),
+    )
+    yield* Effect.addFinalizer(() =>
+      Effect.promise(() => rm(socket, { force: true })).pipe(Effect.ignore),
+    )
+    yield* Effect.tryPromise({
+      try: () => chmod(socket, 0o600),
+      catch: failed(socket),
+    })
+    const variables: Readonly<Record<string, string>> = {
+      [ControlSocketVariable]: socket,
+    }
+    return { server, socket, variables }
+  })
+
+/** A loopback TCP listener on a port of its own, closed with the scope, reached at `reachedAt`. */
+const openLoopback = (reachedAt: string) =>
+  Effect.gen(function* () {
+    const shown = `127.0.0.1 for ${reachedAt}`
+    const server = yield* NodeSocketServer.make({
+      host: '127.0.0.1',
+      port: 0,
+    }).pipe(Effect.mapError(failed(shown)))
+    if (server.address._tag === 'UnixPathAddress')
+      return yield* new ControlFailed({
+        socket: shown,
+        reason: 'it listens on no port',
+      })
+    const socket = `127.0.0.1:${server.address.port}`
+    const variables: Readonly<Record<string, string>> = {
+      [ControlAddressVariable]: `${reachedAt}:${server.address.port}`,
+    }
+    return { server, socket, variables }
+  })
+
 export const make = Effect.gen(function* () {
   const graph = yield* WorkGraph
   const git = yield* Git
@@ -131,13 +193,6 @@ export const make = Effect.gen(function* () {
   const open = Effect.fn('ControlServer.open')(function* (
     session: ControlSession,
   ) {
-    const socket = NodePath.join(session.folder, `${session.ticket}.sock`)
-    if (Buffer.byteLength(socket) > maxSocketPath)
-      return yield* new ControlFailed({
-        socket,
-        reason: `its path is longer than ${maxSocketPath} bytes`,
-      })
-    yield* prepare(session.folder, socket)
     const token = yield* drawToken
     const outcomes = yield* Queue.unbounded<Outcome>()
 
@@ -180,16 +235,12 @@ export const make = Effect.gen(function* () {
       }),
     )
 
-    const server = yield* NodeSocketServer.make({ path: socket }).pipe(
-      Effect.mapError(failed(socket)),
-    )
-    yield* Effect.addFinalizer(() =>
-      Effect.promise(() => rm(socket, { force: true })).pipe(Effect.ignore),
-    )
-    yield* Effect.tryPromise({
-      try: () => chmod(socket, 0o600),
-      catch: failed(socket),
-    })
+    const { server, socket, variables } = yield* session.transport === undefined
+      ? openSocket(session)
+      : ControlTransport.$match(session.transport, {
+          Unix: () => openSocket(session),
+          Tcp: ({ reachedAt }) => openLoopback(reachedAt),
+        })
     yield* RpcServer.make(ControlRpcs, {
       concurrency: 'unbounded',
       disableFatalDefects: true,
@@ -211,7 +262,7 @@ export const make = Effect.gen(function* () {
       socket,
       token,
       environment: {
-        [ControlSocketVariable]: socket,
+        ...variables,
         [ControlTokenVariable]: Redacted.value(token),
       },
       outcomes: Stream.fromQueue(outcomes),

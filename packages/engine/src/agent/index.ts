@@ -1,5 +1,6 @@
 // The agent layer (spec §12.1): each worker a Pi process in RPC mode behind the `PiAgent` service.
 export * from './commands'
+export * from './container'
 export * from './errors'
 export { splitRecords } from './framing'
 export * from './launch'

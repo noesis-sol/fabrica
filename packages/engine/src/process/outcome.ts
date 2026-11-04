@@ -1,4 +1,4 @@
-import { Data } from 'effect'
+import { Data, Result } from 'effect'
 
 // What starting an external command came to (spec §12.1, §20.2). Each is a tagged union made by its
 // constructors and matched exhaustively: a caller never tells two apart by their fields.
@@ -48,3 +48,25 @@ export class StartFailed extends Data.TaggedError('StartFailed')<{
 export class StdinClosed extends Data.TaggedError('StdinClosed')<{
   readonly pid: number
 }> {}
+
+/** What a command's outcome says, where it didn't exit 0. */
+const outcomeText = CommandOutcome.$match({
+  Exited: ({ status, stderr }) =>
+    ExitStatus.$match(status, {
+      Code: ({ code }) => `it exited ${code}`,
+      Signal: ({ signal }) => `it was ended by ${signal}`,
+    }) + (stderr.trim() === '' ? '' : `: ${stderr.trim()}`),
+  TimedOut: () => 'it ran out of time',
+  Cut: ({ stream, limit }) => `its ${stream} passed ${limit} bytes`,
+  FailedToStart: ({ reason }) => `it didn't start (${reason._tag})`,
+})
+
+/** Whether a command exited 0, and its stdout where it did; what its outcome says where it didn't. */
+export const commandSucceeded = (
+  outcome: CommandOutcome,
+): Result.Result<string, string> =>
+  CommandOutcome.$is('Exited')(outcome) &&
+  ExitStatus.$is('Code')(outcome.status) &&
+  outcome.status.code === 0
+    ? Result.succeed(outcome.stdout)
+    : Result.fail(outcomeText(outcome))
