@@ -291,12 +291,14 @@ jobs:
           rpm2cpio "$1" | (cd "$RUNNER_TEMP/rpm" && cpio -idm --quiet)
           smoke rpm "$RUNNER_TEMP/rpm/opt/Fabrica/fabrica-app"
 
-      # WSL2 for the app's engine (§7.6, §22.3): windows-2025 has it, though not officially, and its
-      # provisioning freezes on 1-2% of jobs (runner-images#14938), so this has a limit of its own, and the
-      # smoke test then leaves the engine out, with a warning. Ubuntu run once as root is set up with no
-      # user to ask for, which WSL asks for in its window on a first interactive start.
+      # WSL2 for the app's engine (§7.6, §22.3), on a signed release's call alone: the app installs the engine
+      # it embeds only where it is signed, and otherwise downloads its own version's release, which isn't
+      # published yet. windows-2025 has WSL2, though not officially, and its provisioning freezes on 1-2% of
+      # jobs (runner-images#14938), so this has a limit of its own, and the smoke test then leaves the engine
+      # out, with a warning. Ubuntu run once as root is set up with no user to ask for, which WSL asks for in
+      # its window on a first interactive start.
       - name: Install Ubuntu in WSL2
-        if: matrix.os == 'windows'
+        if: matrix.os == 'windows' && hashFiles('apps/engine/out/checksums.txt.sig') != ''
         continue-on-error: true
         timeout-minutes: 15
         shell: pwsh
@@ -312,7 +314,7 @@ jobs:
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
-          if (-not $env:FABRICA_SMOKE_WSL) { Write-Output "::warning::WSL2 isn't ready on this runner: the smoke test leaves out the app's engine" }
+          if (-not $env:FABRICA_SMOKE_WSL -and (Test-Path apps/engine/out/checksums.txt.sig)) { Write-Output "::warning::WSL2 isn't ready on this runner: the smoke test leaves out the app's engine" }
           $installer = Get-ChildItem apps/desktop/dist/Fabrica-*-win-x64.exe | Select-Object -First 1
           $folder = Join-Path $env:RUNNER_TEMP 'Fabrica'
           $install = Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$folder" -Wait -PassThru

@@ -1076,7 +1076,7 @@ The handoff has no mark (§18.2), so the app's icon is drawn from its blocks: th
 - Engine: build and test on macOS x64, macOS arm64, Linux x64, Linux arm64.
 - App: build and package on the five targets; smoke-test every artifact: launch; start or reach an engine; open a fixture repository; run one ticket with a stub model to its merge; close cleanly with no orphan processes.
 - Remote: an end-to-end test with an engine in a container reached through the SSH bridge.
-- Windows: the app installing and reaching an engine in WSL2, where a CI runner offers WSL2 \[VERIFY; otherwise on a dedicated Windows machine before each release\].
+- Windows: the app installing and reaching an engine in WSL2, where a CI runner offers WSL2 \[VERIFY; otherwise on a dedicated Windows machine before each release\], on a signed release's call, as the app installs only a signed engine (§20.4).
 - A runner with 2 cores among the engine's test runners (H55): a test that read the machine's cores passed on tutti's 10-core Mac and failed on CI's 2-core runners.
 
 ### 22.4 Native inventory

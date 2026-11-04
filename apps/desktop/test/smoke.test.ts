@@ -34,7 +34,8 @@ import { committed, stubModel } from './stub-model'
 //   engine's model proxy. The ticket is filed with the bundled CLI, as the console files none but a
 //   worker's.
 // - The Windows app adds its engine in WSL2 through the console (§7.6), installing the Linux distribution it
-//   embeds, and reaches it, where the runner's WSL2 has a distribution (FABRICA_SMOKE_WSL, §22.3): the
+//   embeds, and reaches it, where it is told to (FABRICA_SMOKE_WSL, §22.3): on a signed release's call with
+//   WSL2 ready, as the app installs only a signed engine, and otherwise downloads its version's release. The
 //   project and the run are the engine's, which macOS and Linux test as it ships.
 // - It closes cleanly: once the app has quit and the engine it started is stopped, none of their
 //   processes is left.
@@ -46,7 +47,7 @@ declare module 'vitest' {
   export interface ProvidedContext {
     /** The packaged app's executable. */
     smokeApp: string
-    /** Whether WSL2 has a distribution for the Windows app's engine. */
+    /** Whether the Windows app is to add its engine in WSL2: it has a signed engine, and WSL2 a distribution. */
     smokeWsl: boolean
   }
 }
@@ -361,27 +362,27 @@ describe('the packaged app', () => {
                       ),
                     )
                     yield* Effect.addFinalizer(() => stop)
-                    const clients = yield* eventually(
-                      Effect.promise(() =>
-                        fabricaInWsl(
-                          distro,
-                          env,
-                          'engine',
-                          'status',
-                          '--json',
-                        ).then(
-                          ({ stdout }) =>
-                            Option.map(
-                              decodeClients(stdout),
-                              ({ clients }) => clients,
-                            ),
-                          () => Option.none<number>(),
-                        ),
-                      ),
-                      clients => Option.getOrElse(clients, () => 0) >= 2,
-                      longStepTimeout,
+                    // The console's own word for the app's connection: no other engine answers it here, and the
+                    // keep-alive's asking (§7.6) makes the engine's count of clients say nothing of the app.
+                    yield* Effect.promise(() =>
+                      page
+                        .locator('[data-engine-state="Up"]')
+                        .first()
+                        .waitFor({ timeout: longStepTimeout }),
                     )
-                    expect(clients).toEqual(Option.some(2))
+                    const answered = yield* Effect.promise(() =>
+                      fabricaInWsl(
+                        distro,
+                        env,
+                        'engine',
+                        'status',
+                        '--json',
+                      ).then(
+                        ({ stdout }) => Option.isSome(decodeClients(stdout)),
+                        () => false,
+                      ),
+                    )
+                    expect(answered).toBe(true)
                     return stop
                   }),
                 )
