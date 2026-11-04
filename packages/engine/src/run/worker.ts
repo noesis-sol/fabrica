@@ -40,6 +40,7 @@ import type { RunLog } from '../runlog'
 import type { WorkerDesk } from '../view'
 import { WorkGraph } from '../workgraph'
 import {
+  type Began,
   type CarrySessionsShape,
   type ResumeWhy,
   type SavedSession,
@@ -364,14 +365,20 @@ const firstWorktree = Effect.fn('Run.firstWorktree')(function* (
     : Result.succeed({ worktree: prepared.worktree, base })
 })
 
-/** How a turn's worker starts, its worktree ready: its prompt, the session it resumes, its saved session's base. */
+/** How a turn's worker starts, its worktree ready: its prompt, the session it resumes, what its saved session records. */
 interface Begun {
   readonly worktree: Worktree
   /** None: the first prompt alone; some: this text, after the first prompt where nothing is resumed. */
   readonly prompt: Option.Option<string>
   readonly resume: Option.Option<string>
-  /** The Base commit its worktree was prepared from, its session beginning now; none keeps the saved one's. */
-  readonly base: Option.Option<CommitHash>
+  /**
+   * Its session beginning now: the Base commit its worktree was prepared from, and what it begins with,
+   * read once, so a resume is recorded with what its message was told against. None keeps the saved one's.
+   */
+  readonly beginning: Option.Option<{
+    readonly base: CommitHash
+    readonly began: Began
+  }>
 }
 
 /**
@@ -385,34 +392,42 @@ const begin = Effect.fn('Run.begin')(function* (
   session: SessionId,
   turn: WorkerTurn,
 ) {
+  const readBegan = beganNow({
+    checkout: context.config.checkout,
+    started: context.started,
+    requirements: context.requirements,
+  })
   const afresh = Effect.gen(function* () {
     const first = yield* firstWorktree(context, ticket)
+    const began = yield* readBegan
     return Result.map(first, ({ worktree, base }): Begun => ({
       worktree,
       prompt: Option.none(),
       resume: Option.none(),
-      base: Option.some(base),
+      beginning: Option.some({ base, began }),
     }))
   })
   return yield* WorkerTurn.$match(turn, {
     First: () => Effect.andThen(claimFor(context, ticket, session), afresh),
     // A new session in the worktree as it is, its saved session's Base commit kept.
     Again: ({ worktree }) =>
-      Effect.map(context.sessions.saved(ticket), saved =>
-        Result.succeed<Begun>({
+      Effect.gen(function* () {
+        const saved = yield* context.sessions.saved(ticket)
+        const began = yield* readBegan
+        return Result.succeed<Begun>({
           worktree,
           prompt: Option.none(),
           resume: Option.none(),
-          base: Option.map(saved, ({ base }) => base),
-        }),
-      ),
+          beginning: Option.map(saved, ({ base }) => ({ base, began })),
+        })
+      }),
     HandBack: ({ worktree, session: kept, prompt }) =>
       Effect.succeed(
         Result.succeed<Begun>({
           worktree,
           prompt: Option.some(prompt),
           resume: kept,
-          base: Option.none(),
+          beginning: Option.none(),
         }),
       ),
     Resume: ({ saved, why }) =>
@@ -426,14 +441,8 @@ const begin = Effect.fn('Run.begin')(function* (
           yield* context.sessions.drop(ticket)
           return yield* afresh
         }
-        const changes = changesSince(
-          saved.began,
-          yield* beganNow({
-            checkout: context.config.checkout,
-            started: context.started,
-            requirements: context.requirements,
-          }),
-        )
+        const began = yield* readBegan
+        const changes = changesSince(saved.began, began)
         return Result.succeed<Begun>({
           worktree: {
             ticket: kept.ticket,
@@ -442,7 +451,7 @@ const begin = Effect.fn('Run.begin')(function* (
           },
           prompt: Option.some(resumePrompt({ ticket, why, changes })),
           resume: Option.some(saved.session),
-          base: Option.some(saved.base),
+          beginning: Option.some({ base: saved.base, began }),
         })
       }),
   })
@@ -554,7 +563,7 @@ export const runWorker = Effect.fn('Run.worker')(function* (
   yield* Option.match(agent.session.file, {
     onNone: () => Effect.void,
     onSome: file =>
-      Option.match(ready.success.base, {
+      Option.match(ready.success.beginning, {
         onNone: () =>
           Effect.flatMap(context.sessions.saved(ticket), saved =>
             Option.match(saved, {
@@ -562,22 +571,14 @@ export const runWorker = Effect.fn('Run.worker')(function* (
               onSome: kept => context.sessions.save({ ...kept, session: file }),
             }),
           ),
-        onSome: base =>
-          Effect.flatMap(
-            beganNow({
-              checkout: config.checkout,
-              started,
-              requirements: context.requirements,
-            }),
-            began =>
-              context.sessions.save({
-                ticket,
-                session: file,
-                base,
-                left: SessionLeft.cases.working.make({}),
-                began,
-              }),
-          ),
+        onSome: ({ base, began }) =>
+          context.sessions.save({
+            ticket,
+            session: file,
+            base,
+            left: SessionLeft.cases.working.make({}),
+            began,
+          }),
       }),
   })
   // The engine's prompt, the maintainer's turns before it and after it while they steer the worker.
