@@ -24,4 +24,4 @@ export {
   storeLayer,
   type WorkGraphOptions,
 } from './sqlite'
-export { TreeRefused, fileTree, treeProblems } from './tree'
+export { TreeRefused, descendants, fileTree, treeProblems } from './tree'

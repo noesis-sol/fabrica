@@ -2,6 +2,7 @@ import { Schema } from 'effect'
 import { Headers } from 'effect/http'
 import { Rpc, RpcGroup, RpcMiddleware } from 'effect/rpc'
 
+import { FileRootParameters, FiledRoot } from './breakdown'
 import { ToolCallId } from './ids'
 import { PermissionDecision, PermissionShown } from './rpc/attention'
 import { Text } from './ticket'
@@ -102,6 +103,12 @@ export const TalkToolsGiven = Schema.fromJsonString(
   ),
 )
 export type TalkToolsGiven = typeof TalkToolsGiven.Type
+
+/**
+ * The variable saying an organ's session may file tickets itself (`1`, §15.5): the spec breakdown's
+ * `file_root`, beside its `answer`.
+ */
+export const OrganFilesRootVariable = 'FABRICA_ORGAN_FILES_ROOT'
 
 /** The header every control request carries its token in. */
 export const ControlTokenHeader = 'x-fabrica-control-token'
@@ -226,6 +233,12 @@ export const ControlRpcs = RpcGroup.make(
   Rpc.make('talk_tool', {
     payload: { tool: Schema.String, input: Schema.Unknown },
     success: Schema.Unknown,
+    error: ToolRefusal,
+  }),
+  /** The spec breakdown's root epic and environment ticket, filed before its answer (§15.5). */
+  Rpc.make('file_root', {
+    payload: FileRootParameters,
+    success: FiledRoot,
     error: ToolRefusal,
   }),
   /** The gate's request, answered once the maintainer decides. */

@@ -31,10 +31,18 @@ import {
   loadSettings,
   sourceOf,
 } from '../settings'
+import { SpecProblem } from '../spec'
 import type { Steps } from '../view/steps'
-import type { RunConfig } from './config'
+import type { WorkGraphShape } from '../workgraph'
+import { type RunConfig, RunMode } from './config'
 import { record, recordBaseNote } from './records'
 import { type RequirementsInput, checkInRun } from './requirements-step'
+import {
+  type SpecFound,
+  type SpecStarted,
+  findSpec,
+  startSpec,
+} from './spec-mode'
 
 // The run's start checks (spec §13.1, H80): git 2.38 or later, the project's checkout clean and on a
 // branch (Base then fetched and fast-forwarded from its upstream, §10.3), the settings valid, Base's
@@ -57,6 +65,8 @@ export interface Started {
   readonly requirements: ReadonlyArray<Requirement>
   /** What each worker's container is made from, where the project sets `container` (§12.7). */
   readonly containers: Option.Option<PreparedContainers>
+  /** A spec run's spec, committed on Base (§15.5); none for another mode. */
+  readonly spec: Option.Option<SpecStarted>
 }
 
 export type StartChecked = Data.TaggedEnum<{
@@ -386,6 +396,24 @@ const syncedCheckout = Effect.fnUntraced(function* (
     : Result.succeed(found)
 })
 
+/** A spec run's spec, read and its state found, or the problem with it (§15.5, H83). */
+const specCheck = (
+  checkout: string,
+  given: string,
+  graph: WorkGraphShape | undefined,
+) =>
+  Effect.gen(function* () {
+    if (graph === undefined)
+      return yield* Effect.die("a spec run's start needs its work graph")
+    const spec = yield* findSpec({ checkout, given, graph })
+    return found(spec, `${spec.read.path}, ${spec.state._tag}`)
+  }).pipe(
+    Effect.catchIf(
+      (error): error is SpecProblem => error instanceof SpecProblem,
+      ({ problem }) => Effect.succeed(problems<SpecFound>(problem)),
+    ),
+  )
+
 /** Where a start isn't shown in a run view. */
 const noSteps: Pick<Steps, 'during'> = { during: () => effect => effect }
 
@@ -398,6 +426,8 @@ export const runStartChecks = Effect.fn('Run.startChecks')(function* (input: {
   readonly steps?: Pick<Steps, 'during'>
   /** Waits for the run to be asked to stop; none, it never is. */
   readonly stopped?: Effect.Effect<void>
+  /** The project's work graph, where a spec run looks for its root epic (§15.5). */
+  readonly graph?: WorkGraphShape
 }) {
   const { config, run, log } = input
   const [git, checked] = yield* Effect.all(
@@ -417,7 +447,12 @@ export const runStartChecks = Effect.fn('Run.startChecks')(function* (input: {
     'the settings check',
     settingsCheck(config),
   )
-  const [credentials, requirements, containers] = yield* Effect.all(
+  const specOf = RunMode.$match(config.options.mode, {
+    Tickets: () => Option.none<string>(),
+    Ticket: () => Option.none<string>(),
+    Spec: ({ source }) => Option.some(source),
+  })
+  const [credentials, requirements, containers, specFound] = yield* Effect.all(
     [
       guarded(
         log,
@@ -471,6 +506,22 @@ export const runStartChecks = Effect.fn('Run.startChecks')(function* (input: {
               ),
             ),
       ),
+      Option.match(specOf, {
+        onNone: () =>
+          Effect.succeed(found(Option.none<SpecFound>(), 'not a spec run')),
+        onSome: given =>
+          guarded(
+            log,
+            'the spec check',
+            Effect.map(
+              specCheck(config.checkout, given, input.graph),
+              Result.map(({ value, said }) => ({
+                value: Option.some(value),
+                said,
+              })),
+            ),
+          ),
+      }),
     ],
     { concurrency: 'unbounded' },
   )
@@ -481,6 +532,7 @@ export const runStartChecks = Effect.fn('Run.startChecks')(function* (input: {
     Result.isFailure(requirements) ? requirements.failure : [],
     Result.isFailure(credentials) ? credentials.failure : [],
     Result.isFailure(containers) ? containers.failure : [],
+    Result.isFailure(specFound) ? specFound.failure : [],
   ].flat()
   const missing = Result.isSuccess(requirements)
     ? requirements.success.value.missing
@@ -495,7 +547,8 @@ export const runStartChecks = Effect.fn('Run.startChecks')(function* (input: {
     Result.isFailure(checkout) ||
     Result.isFailure(settings) ||
     Result.isFailure(requirements) ||
-    Result.isFailure(containers)
+    Result.isFailure(containers) ||
+    Result.isFailure(specFound)
   )
     return StartChecked.Problems({
       kind: 'SETUP',
@@ -504,13 +557,34 @@ export const runStartChecks = Effect.fn('Run.startChecks')(function* (input: {
         ...missing.map(item => `a requirement is missing: ${item}`),
       ],
     })
+  // Every check passed: the spec is committed, the one thing a start changes (§15.5).
+  const committed = yield* guarded(
+    log,
+    "the spec's commit",
+    Option.match(specFound.success.value, {
+      onNone: () =>
+        Effect.succeed(found(Option.none<SpecStarted>(), 'not a spec run')),
+      onSome: spec =>
+        Effect.map(
+          startSpec({ checkout: config.checkout, found: spec }),
+          started => found(Option.some(started), started.spec.commit),
+        ),
+    }),
+  )
+  if (Result.isFailure(committed))
+    return StartChecked.Problems({ kind: 'SETUP', problems: committed.failure })
+  const spec = committed.success.value
   return StartChecked.Ready({
     started: {
       base: checkout.success.value.base,
-      baseCommit: checkout.success.value.commit,
+      baseCommit: Option.match(spec, {
+        onNone: () => checkout.success.value.commit,
+        onSome: ({ spec: { commit } }) => commit,
+      }),
       settings: settings.success.value,
       requirements: requirements.success.value.list,
       containers: containers.success.value,
+      spec,
     },
   })
 })

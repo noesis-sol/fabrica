@@ -207,6 +207,8 @@ export interface WorkGraphShape {
     readonly tickets: ReadonlyArray<KeyedTicket>
     readonly waits: ReadonlyArray<KeyedWait>
     readonly actor: Actor
+    /** Tickets filed already, by the keys the others name them by; not filed again, nor returned. */
+    readonly filed?: ReadonlyArray<FiledItem>
   }) => Changed<ReadonlyArray<FiledItem>, EdgeCycle>
   readonly update: (options: {
     readonly id: TicketId

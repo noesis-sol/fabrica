@@ -19,8 +19,10 @@ import {
   CommandSetting,
   Edge,
   type Ended,
+  type FileRootParameters,
   Filed,
   type FiledLink,
+  type FiledRoot,
   type Files,
   type FinishCheckOwn,
   type GateDecided,
@@ -82,6 +84,10 @@ export type ControlRole = Data.TaggedEnum<{
   Verifier: { readonly round: number }
   Organ: {
     readonly answer: (answer: unknown) => Effect.Effect<void, ToolRefusal>
+    /** The spec breakdown's `file_root` (§15.5); none for an organ that only answers. */
+    readonly fileRoot: Option.Option<
+      (input: FileRootParameters) => Effect.Effect<FiledRoot, ToolRefusal>
+    >
   }
 }>
 export const ControlRole = Data.taggedEnum<ControlRole>()
@@ -712,6 +718,27 @@ export const makeTools = (context: ToolContext) => {
       .invalid("talk_tool is a talk's tool")
       .pipe(Effect.withSpan('Control.talk_tool'))
 
+  /** The spec breakdown's root epic and environment ticket, filed for it by the organ's own rule (§15.5). */
+  const fileRoot = (input: FileRootParameters) =>
+    ControlRole.$match(context.role, {
+      Worker: () =>
+        refuse.invalid(
+          "file_root is the spec breakdown's tool: use file_ticket",
+        ),
+      Verifier: () =>
+        refuse.invalid(
+          "file_root is the spec breakdown's tool: give your verdict",
+        ),
+      Organ: organ =>
+        Option.match(organ.fileRoot, {
+          onNone: () =>
+            refuse.invalid(
+              "file_root is the spec breakdown's tool: answer through answer",
+            ),
+          onSome: file => file(input),
+        }),
+    }).pipe(Effect.withSpan('Control.file_root'))
+
   /** A worker's tool, refused to the verifier, which only reads its ticket and gives its verdict, and to an organ's session. */
   const forWorker =
     <Input, A>(
@@ -744,6 +771,7 @@ export const makeTools = (context: ToolContext) => {
     verdict,
     answer,
     talkTool,
+    fileRoot,
     requestPermission,
     mergeStanding,
     reportGateDecision,

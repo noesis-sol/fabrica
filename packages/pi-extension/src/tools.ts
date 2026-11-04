@@ -11,6 +11,7 @@ import {
   CheckOwnTool,
   ControlUnauthorized,
   DeferTool,
+  FileRootTool,
   FileTicketTool,
   FinishTool,
   GetTicketTool,
@@ -44,6 +45,7 @@ export const WorkerToolNames: ReadonlySet<string> = new Set([
   ...WorkerTools.map(tool => tool.name),
   VerdictTool.name,
   AnswerToolName,
+  FileRootTool.name,
 ])
 
 /** A worker tool's call failed: its arguments didn't decode, the engine refused it, or it couldn't reach the engine. */
@@ -287,14 +289,31 @@ export const verifierTools = (context: {
   ),
 ]
 
-/** An organ's one tool, `answer`, as the engine gave it, which ends its turn (§16). */
+/**
+ * An organ's `answer`, as the engine gave it, which ends its turn (§16); the spec breakdown has
+ * `file_root` too, which doesn't (§15.5).
+ */
 export const organTools = (
   given: AnswerToolGiven,
   context: {
     readonly run: RunControl
     readonly turn: Ref.Ref<Turn>
   },
+  filesRoot = false,
 ): ReadonlyArray<PiTool> => [
+  ...(filesRoot
+    ? [
+        piTool(
+          {
+            tool: FileRootTool,
+            forward: params =>
+              Effect.flatMap(Control, c => c.file_root(params)),
+            ends: () => never,
+          },
+          context,
+        ),
+      ]
+    : []),
   piTool(
     {
       tool: answerTool({

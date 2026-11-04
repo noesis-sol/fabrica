@@ -348,7 +348,7 @@ describe('runs over RPC', () => {
               project,
               mode: RunMode.cases.spec.make({
                 source: 'docs/spec.md',
-                refine: false,
+                refine: true,
               }),
               flags: noFlags,
             }),
@@ -356,7 +356,7 @@ describe('runs over RPC', () => {
         )
         expect(spec).toBeInstanceOf(RunRefused)
         expect(spec instanceof RunRefused ? spec.problems[0] : '').toContain(
-          "a spec run isn't in this engine yet",
+          "a refined spec run isn't in this engine yet",
         )
 
         expect(

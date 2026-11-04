@@ -12,6 +12,7 @@ import {
   ControlTokenHeader,
   ControlUnauthorized,
   Filed,
+  FiledRoot,
   NoteId,
   Noted,
   PermissionDecision,
@@ -121,6 +122,14 @@ export const answers = (
     answer: ended('answer'),
     talk_tool: payload =>
       Effect.as(record('talk_tool', payload), { echoed: payload.input }),
+    file_root: payload =>
+      Effect.as(
+        record('file_root', payload),
+        new FiledRoot({
+          root: TicketId.make('fab-root'),
+          environment: Option.none(),
+        }),
+      ),
     ask_and_wait: payload =>
       Effect.as(record('ask_and_wait', payload), {
         _tag: 'unanswered' as const,

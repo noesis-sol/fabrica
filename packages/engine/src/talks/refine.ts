@@ -3,6 +3,7 @@ import { Effect, Match, Option } from 'effect'
 import { TalkNotOpened } from '@fabrica/contracts'
 
 import { readFileBytes } from '../files'
+import { specMaxBytes } from '../spec/source'
 import type { TalkModeOf } from './core'
 import { fileTreeTool } from './file-tree'
 
@@ -11,9 +12,6 @@ import { fileTreeTool } from './file-tree'
 // files the tree itself (`--refine` runs it in place of the breakdown organ), each ticket carrying
 // the spec and the decisions made in the talk. It opens on the spec, which must be a file in the
 // project's checkout.
-
-/** The largest spec the talk opens on, as a spec fetched from a URL is held to (§15.5). */
-const specMaxBytes = 5 * 1024 * 1024
 
 export const refineInstructions = [
   "You are refining a spec with the maintainer before it is broken down into tickets. The spec is a file in the project's checkout, which you read but never change.",

@@ -868,11 +868,13 @@ export const makeWorkGraph = Effect.fn('WorkGraph.make')(function* (
 
   const fileTickets: WorkGraphShape['fileTickets'] = Effect.fn(
     'WorkGraph.fileTickets',
-  )(function* ({ tickets, waits, actor }) {
+  )(function* ({ tickets, waits, actor, filed: known = [] }) {
     return yield* mutate(
       'fileTickets',
       Effect.gen(function* () {
-        const ids = new Map<string, TicketId>()
+        const ids = new Map<string, TicketId>(
+          known.map(({ key, id }) => [key, id]),
+        )
         /** The ticket filed for the key so far; the whole refused, `why` the reason, when there is none. */
         const filedAs = (key: string, why: string) =>
           Option.match(Option.fromUndefinedOr(ids.get(key)), {

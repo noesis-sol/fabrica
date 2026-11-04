@@ -272,6 +272,7 @@ export const make = Effect.gen(function* () {
       verdict: tools.verdict,
       answer: tools.answer,
       talk_tool: tools.talkTool,
+      file_root: tools.fileRoot,
       request_permission: tools.requestPermission,
       merge_standing: () => tools.mergeStanding,
       report_gate_decision: tools.reportGateDecision,

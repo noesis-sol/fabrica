@@ -64,7 +64,8 @@ export const makeExtension =
         case 'organ':
           return Option.match(environment.answerTool, {
             onNone: () => [],
-            onSome: given => organTools(given, context),
+            onSome: given =>
+              organTools(given, context, environment.organFilesRoot ?? false),
           })
         case 'talk':
           return talkTools(environment.talkTools, context)

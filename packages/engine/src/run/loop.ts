@@ -112,6 +112,7 @@ import {
   TicketNotFound,
   TransitionRefused,
   WorkGraph,
+  descendants,
 } from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
 import {
@@ -154,6 +155,7 @@ import {
   setupWaiting,
   setupWaitsLines,
 } from './setup'
+import { makeSpecMode, specStartFields } from './spec-mode'
 import { StartChecked, type Started, runStartChecks } from './start-checks'
 import {
   type RunSnapshot,
@@ -239,32 +241,6 @@ const endedShort = (
 const drawSession = Effect.map(drawBase36(16), random =>
   SessionId.make(`worker-${random}`),
 )
-
-/** The ticket and every ticket below it by `parent` edges (§13.1, `--ticket`). */
-const descendants = (
-  root: TicketId,
-  edges: ReadonlyArray<{
-    readonly from: TicketId
-    readonly to: TicketId
-    readonly kind: string
-  }>,
-): ReadonlySet<TicketId> => {
-  const found = new Set<TicketId>([root])
-  let added = true
-  while (added) {
-    added = false
-    for (const edge of edges)
-      if (
-        edge.kind === 'parent' &&
-        found.has(edge.from) &&
-        !found.has(edge.to)
-      ) {
-        found.add(edge.to)
-        added = true
-      }
-  }
-  return found
-}
 
 /**
  * The phases a ticket can be dispatched from: back in the queue, but not until a merge or a probe where
@@ -371,6 +347,7 @@ const runChecked = Effect.fn('Run.checked')(function* (
       log,
       steps: view.steps,
       stopped: control.stopped,
+      graph: yield* WorkGraph,
     }),
   )
   yield* Deferred.succeed(control.checked, checked)
@@ -596,6 +573,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     ...RunMode.$match(config.options.mode, {
       Tickets: () => ({}),
       Ticket: ({ ticket }) => ({ scope: ticket }),
+      Spec: () => specStartFields(started.spec),
     }),
     concurrency: project.concurrent,
     ...Option.match(limit, {
@@ -852,6 +830,18 @@ const runStarted = Effect.fn('Run.started')(function* (
     guarded: Effect.catchCause(
       onPanic(detail => stop('PANIC', `--auto-answer: ${detail}`)),
     ),
+  })
+
+  // A spec run's spec (§15.5): its root epic, and the breakdown that keeps the run from ending.
+  const spec = yield* makeSpecMode({
+    config,
+    started,
+    graph,
+    log,
+    steps: view.steps,
+    holds: { usage, credentials, held },
+    stop: detail => stop('SETUP', detail),
+    woken: wakes.wake(WakeReason.TicketsChanged()),
   })
 
   /** A fiber that wakes the run, forked with it: where it dies the run stops, not waiting on it for good. */
@@ -1798,6 +1788,14 @@ const runStarted = Effect.fn('Run.started')(function* (
             const scope = descendants(ticket, edges)
             return ready.filter(candidate => scope.has(candidate.id))
           }),
+        // The tickets under its root epic, none until the breakdown files it (§15.5).
+        Spec: () =>
+          Effect.gen(function* () {
+            const root = yield* spec.root
+            if (Option.isNone(root)) return []
+            const scope = descendants(root.value, yield* graph.edges())
+            return ready.filter(candidate => scope.has(candidate.id))
+          }),
       })
     })
 
@@ -2259,6 +2257,8 @@ const runStarted = Effect.fn('Run.started')(function* (
       if ((yield* autoAnswers.awaited) && !draining) return yield* goesOn
       // So does a guess on its way: the ticket waiting for it is to come (§16).
       if ((yield* predictor.asking) && !draining) return yield* goesOn
+      // A breakdown under way keeps it too, unless it drains: the rest of its tree is to come (§15.5).
+      if ((yield* spec.going) && !draining) return yield* goesOn
       // A budget spent is a limit reached (§13.11, §14.4): whatever is still ready waits for another run.
       const limitReached =
         Option.exists(limit, most => after.dispatched >= most) ||
@@ -2333,6 +2333,12 @@ const runStarted = Effect.fn('Run.started')(function* (
     watched("the holds' changes"),
   )
   yield* machine.watch.pipe(watched("the machine budget's changes"))
+  yield* spec.run.pipe(
+    Effect.catch(error =>
+      stop('TRACKER_FAILED', `the breakdown: ${String(error)}`),
+    ),
+    watched('the breakdown'),
+  )
   yield* wakes.wake(WakeReason.Started())
 
   let ending = Option.none<Ending>()

@@ -165,6 +165,29 @@ export interface GitShape {
   readonly isRebasing: (input: {
     readonly worktree: string
   }) => Effect.Effect<boolean, CantTell>
+  /** Whether git ignores `path`, from the repository's root. */
+  readonly isIgnored: (input: {
+    readonly repo: string
+    readonly path: string
+  }) => Effect.Effect<boolean, CantTell>
+  /** The last commit that changed `path` on HEAD, with its message; none where it never was. */
+  readonly lastCommitOf: (input: {
+    readonly repo: string
+    readonly path: string
+  }) => Effect.Effect<
+    Option.Option<{ readonly commit: CommitHash; readonly message: string }>,
+    CantTell
+  >
+  /**
+   * Commits the file `path` alone, as it is in the worktree, on the branch checked out, whatever else
+   * is staged: the engine's own commit (a spec, §15.5), run past the project's hooks and unsigned.
+   * Returns the commit.
+   */
+  readonly commitFile: (input: {
+    readonly repo: string
+    readonly path: string
+    readonly message: string
+  }) => Effect.Effect<CommitHash, GitFailed | CantTell>
   /** Puts the worktree's branch, index and files back at the commit `to`, dropping what moved them since. */
   readonly resetTo: (input: {
     readonly worktree: string
@@ -1021,6 +1044,97 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     })
   })
 
+  const isIgnored = Effect.fn('Git.isIgnored')(function* ({
+    repo,
+    path,
+  }: {
+    readonly repo: string
+    readonly path: string
+  }) {
+    return yield* readExit(
+      'isIgnored',
+      {
+        cwd: repo,
+        args: ['check-ignore', '--quiet', '--no-index', '--', path],
+      },
+      exit =>
+        exit.code === 0
+          ? Option.some(true)
+          : exit.code === 1
+            ? Option.some(false)
+            : Option.none(),
+    )
+  })
+
+  const lastCommitOf = Effect.fn('Git.lastCommitOf')(function* ({
+    repo,
+    path,
+  }: {
+    readonly repo: string
+    readonly path: string
+  }) {
+    return yield* readExit(
+      'lastCommitOf',
+      {
+        cwd: repo,
+        args: [
+          'log',
+          '-1',
+          '--format=%H%n%B',
+          '--end-of-options',
+          'HEAD',
+          '--',
+          path,
+        ],
+      },
+      exit => {
+        if (exit.code !== 0) return Option.none()
+        const at = exit.stdout.indexOf('\n')
+        const hash = parseHash(exit.stdout.slice(0, Math.max(at, 0)))
+        return exit.stdout.trim() === ''
+          ? Option.some(Option.none())
+          : Option.map(hash, commit =>
+              Option.some({
+                commit,
+                message: exit.stdout.slice(at + 1).trim(),
+              }),
+            )
+      },
+    )
+  })
+
+  const commitFile = Effect.fn('Git.commitFile')(function* ({
+    repo,
+    path,
+    message,
+  }: {
+    readonly repo: string
+    readonly path: string
+    readonly message: string
+  }) {
+    yield* writeOnly({ cwd: repo, args: ['add', '--force', '--', path] })
+    yield* writeOnly({
+      cwd: repo,
+      args: [
+        '-c',
+        'commit.gpgsign=false',
+        'commit',
+        '--quiet',
+        '--no-verify',
+        '--message',
+        message,
+        '--only',
+        '--',
+        path,
+      ],
+    })
+    return yield* readExit(
+      'commitFile',
+      { cwd: repo, args: ['rev-parse', '--verify', 'HEAD^{commit}'] },
+      exit => (exit.code === 0 ? parseHash(exit.stdout) : Option.none()),
+    )
+  })
+
   const keepCommit = Effect.fn('Git.keepCommit')(function* ({
     repo,
     ref,
@@ -1353,6 +1467,9 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     isRebasing,
     resetTo,
     keepCommit,
+    isIgnored,
+    lastCommitOf,
+    commitFile,
     removeUntracked,
     restoreTracked,
     fastForward,

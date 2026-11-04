@@ -8,6 +8,7 @@ import {
   ControlAddressVariable,
   ControlSocketVariable,
   ControlTokenVariable,
+  OrganFilesRootVariable,
   Permissions,
   PermissionsVariable,
   ProjectTrustedVariable,
@@ -45,6 +46,8 @@ export interface ExtensionEnvironment {
   readonly answerTool: Option.Option<AnswerToolGiven>
   /** A talk's tools, none where the engine gave none it reads. */
   readonly talkTools: TalkToolsGiven
+  /** Whether an organ's session has `file_root` beside its `answer`: the spec breakdown's (§15.5). */
+  readonly organFilesRoot?: boolean
   /** Whether the user trusts the project, so Pi may load its own settings and packages. */
   readonly projectTrusted: boolean
   /** The agent's own Pi configuration folder. */
@@ -100,6 +103,7 @@ export const readEnvironment = (
     Schema.decodeUnknownOption(TalkToolsGiven)(variables[TalkToolsVariable]),
     () => [],
   ),
+  organFilesRoot: variables[OrganFilesRootVariable] === '1',
   projectTrusted: variables[ProjectTrustedVariable] === '1',
   configFolder: given(variables[PiConfigFolderVariable]),
   permissions: Option.getOrElse(

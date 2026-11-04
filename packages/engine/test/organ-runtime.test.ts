@@ -1830,6 +1830,7 @@ describe('the answer tool on the control channel', () => {
         const taken: Array<unknown> = []
         const organ = yield* callAs(
           ControlRole.Organ({
+            fileRoot: Option.none(),
             answer: given =>
               Effect.sync(() => {
                 taken.push(given)

@@ -34,8 +34,12 @@ import {
   AnswerToolName,
   AnswerToolVariable,
   CommandSetting,
+  type FileRootParameters,
+  FileRootTool,
+  type FiledRoot,
   type ModelChoice,
   type ModelName,
+  OrganFilesRootVariable,
   type OrganName,
   type ProjectId,
   type ProjectSettings,
@@ -129,6 +133,14 @@ export interface OrganQuestion<A> {
 export interface OrganSessionQuestion<A> extends OrganQuestion<A> {
   /** The session's share of the machine's cores (§7.3, H56). */
   readonly cores: number
+  /** Takes the decoded answer, or refuses it, with why, for the session to give it again; none, it stands. */
+  readonly accept?: (answer: A) => Effect.Effect<void, ToolRefusal>
+  /** How many answers may be refused before the answer is lost; once, unless given. */
+  readonly refusals?: number
+  /** The spec breakdown's `file_root` (§15.5), and the tool's name among the session's; none for the rest. */
+  readonly fileRoot?: (
+    input: FileRootParameters,
+  ) => Effect.Effect<FiledRoot, ToolRefusal>
 }
 
 /** The holds of the run an organ's calls are counted to (§14.2, §14.6). */
@@ -699,7 +711,10 @@ export const makeOrganRuntime = Effect.fn('Organs.make')(function* (
             decode(given).pipe(
               Effect.matchEffect({
                 onSuccess: answer =>
-                  Effect.asVoid(Deferred.succeed(answered, answer)),
+                  Effect.andThen(
+                    question.accept?.(answer) ?? Effect.void,
+                    Effect.asVoid(Deferred.succeed(answered, answer)),
+                  ),
                 onFailure: issue =>
                   Effect.fail(
                     ToolRefusal.cases.invalid.make({ issue: issue.message }),
@@ -710,7 +725,10 @@ export const makeOrganRuntime = Effect.fn('Organs.make')(function* (
             project: config.project,
             ticket,
             session: asking.session,
-            role: ControlRole.Organ({ answer: take }),
+            role: ControlRole.Organ({
+              answer: take,
+              fileRoot: Option.fromUndefinedOr(question.fileRoot),
+            }),
             worktree: config.checkout,
             folder: config.sockets,
             questionWait: Duration.zero,
@@ -751,13 +769,20 @@ export const makeOrganRuntime = Effect.fn('Organs.make')(function* (
             providers: granted.providers,
             token: Redacted.value(granted.token),
             model: Option.some({ provider, modelId }),
-            tools: Option.some(organSessionTools),
+            tools: Option.some(
+              question.fileRoot === undefined
+                ? organSessionTools
+                : [...organSessionTools, FileRootTool.name],
+            ),
             resume: Option.none(),
             env: {
               ...channel.environment,
               ...coreShareVariables(cores),
               [AgentRoleVariable]: 'organ',
               [AnswerToolVariable]: JSON.stringify(toolJsonSchema(tool)),
+              ...(question.fileRoot === undefined
+                ? {}
+                : { [OrganFilesRootVariable]: '1' }),
             },
             projectTrusted: config.projectTrusted,
             // The engine's own priority: an organ isn't a worker (H73).
@@ -772,11 +797,16 @@ export const makeOrganRuntime = Effect.fn('Organs.make')(function* (
                 event.toolName === AnswerToolName &&
                 event.isError,
             ),
-            Stream.drop(1),
+            Stream.drop(question.refusals ?? 1),
             Stream.runForEach(() =>
               Deferred.fail(
                 answered,
-                new AnswerLost({ reason: 'its answer was refused twice' }),
+                new AnswerLost({
+                  reason:
+                    question.refusals === undefined
+                      ? 'its answer was refused twice'
+                      : `its answer was refused more than ${question.refusals} times`,
+                }),
               ),
             ),
             Effect.forkScoped,

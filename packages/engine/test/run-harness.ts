@@ -99,6 +99,9 @@ vi.setConfig({ testTimeout: 60_000 })
  * they are stopped. A
  * session resumed with `switch_session` (a carry-over, an answer, an undefer) finishes instead of
  * hanging, deferring or asking. It keeps what it was prompted with and every call in its session folder.
+ * An organ's session plays the spec breakdown from the checkout's `breakdown.json` (spec §15.5):
+ * `file_root`, waiting for the environment ticket's file where `waitForEnvironment` says so, then each of
+ * its `answers` until one is taken.
  */
 const STUB = `import { execFileSync } from 'node:child_process'
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
@@ -161,7 +164,24 @@ const spend = async model => {
   out({ type: 'turn_end' })
   out({ type: 'message_end', message: { role: 'assistant', provider, model: id } })
 }
+const breakdown = async () => {
+  const script = JSON.parse(readFileSync('breakdown.json', 'utf8'))
+  const filed = script.root === undefined ? undefined : await call('file_root', script.root)
+  if (script.waitForEnvironment)
+    await new Promise(resolve => {
+      const poll = setInterval(() => {
+        if (!existsSync(filed.environment + '.txt')) return
+        clearInterval(poll)
+        resolve()
+      }, 50)
+    })
+  for (const answer of script.answers) {
+    const taken = await call('answer', { answer }).then(() => true, () => false)
+    if (taken) return
+  }
+}
 const work = async () => {
+  if (process.env.FABRICA_AGENT_ROLE === 'organ') return breakdown()
   const view = await call('get_ticket', {})
   const ticket = view.ticket
   const [action, target] = ((ticket.description ?? '').match(/stub: (.*)/)?.[1] ?? 'finish').split(' ')

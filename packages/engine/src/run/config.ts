@@ -14,12 +14,14 @@ import type { KeepAwakeHost } from '../time'
 // What a run is asked to do and what it runs with (spec §13.1): its mode, its caps, and the project's
 // places and the engine's facts, given once where the run starts.
 
-/** Which tickets the run takes (§13.1); spec, feature and overnight runs come later. */
+/** Which tickets the run takes (§13.1); feature and overnight runs come later. */
 export type RunMode = Data.TaggedEnum<{
   /** The current tickets (`--tickets`, the default). */
   Tickets: {}
   /** One ticket and its descendants (`--ticket <id>`). */
   Ticket: { readonly ticket: TicketId }
+  /** A spec's tree (`--spec <file|url>`): a file's path from the checkout, or an https URL (§15.5). */
+  Spec: { readonly source: string }
 }>
 export const RunMode = Data.taggedEnum<RunMode>()
 
@@ -27,6 +29,7 @@ export const RunMode = Data.taggedEnum<RunMode>()
 export const overnightMode: (mode: RunMode) => boolean = RunMode.$match({
   Tickets: () => false,
   Ticket: () => false,
+  Spec: () => false,
 })
 
 /** A run's flags. */

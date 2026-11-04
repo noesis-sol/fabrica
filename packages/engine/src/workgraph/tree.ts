@@ -2,7 +2,9 @@ import { Data, Effect, Option, Schema } from 'effect'
 
 import {
   type Actor,
+  type FiledItem,
   FiledTree,
+  type TicketId,
   TicketMetadata,
   type TreeItem,
 } from '@fabrica/contracts'
@@ -25,6 +27,32 @@ export class TreeRefused extends Data.TaggedError('TreeRefused')<{
   override get message() {
     return `the tree was refused: ${this.problems.join('; ')}`
   }
+}
+
+/** The ticket and every ticket below it by `parent` edges (§13.1, `--ticket`; §15.5, a spec's tree). */
+export const descendants = (
+  root: TicketId,
+  edges: ReadonlyArray<{
+    readonly from: TicketId
+    readonly to: TicketId
+    readonly kind: string
+  }>,
+): ReadonlySet<TicketId> => {
+  const found = new Set<TicketId>([root])
+  let added = true
+  while (added) {
+    added = false
+    for (const edge of edges)
+      if (
+        edge.kind === 'parent' &&
+        found.has(edge.from) &&
+        !found.has(edge.to)
+      ) {
+        found.add(edge.to)
+        added = true
+      }
+  }
+  return found
 }
 
 /** The items each waits on, by key: an epic on the items under it, an item on those it names. */
@@ -160,14 +188,22 @@ export const fileTree = Effect.fn('WorkGraph.fileTree')(function* (options: {
   /** The spec the tree is part of, in every ticket's metadata. */
   readonly spec: Option.Option<string>
   readonly actor: Actor
+  /** The items of `items` filed already, checked with the rest and not filed again (§15.5). */
+  readonly filed?: ReadonlyArray<FiledItem>
+  /** Metadata an item's ticket has beyond its files and spec. */
+  readonly metadata?: (key: string) => Readonly<Record<string, unknown>>
 }) {
-  const { graph, items, actor } = options
+  const { graph, items, actor, filed: known = [] } = options
   const problems = treeProblems(items)
   if (problems.length > 0) return yield* new TreeRefused({ problems })
 
-  const tickets = yield* Effect.forEach(parentsFirst(items), item =>
+  const ordered = parentsFirst(items)
+  const knownKeys = new Set(known.map(({ key }) => key))
+  const fresh = ordered.filter(item => !knownKeys.has(item.key))
+  const tickets = yield* Effect.forEach(fresh, item =>
     Effect.map(
       Schema.decodeUnknownEffect(TicketMetadata)({
+        ...options.metadata?.(item.key),
         ...Option.match(item.files, {
           onNone: () => ({}),
           onSome: files => (files === 'unknown' ? {} : { files }),
@@ -207,7 +243,7 @@ export const fileTree = Effect.fn('WorkGraph.fileTree')(function* (options: {
       }),
     ),
   )
-  const waits = items.flatMap(item =>
+  const waits = fresh.flatMap(item =>
     Option.getOrElse(item.waitsOn, () => []).map((waited): KeyedWait => ({
       waited,
       waiting: item.key,
@@ -215,9 +251,14 @@ export const fileTree = Effect.fn('WorkGraph.fileTree')(function* (options: {
   )
   // Filed in one transaction, so a running run's `ready` never sees part of the tree, nor its
   // tickets before their waits, and a failure midway files nothing.
-  const filed = yield* graph.fileTickets({ tickets, waits, actor })
+  const filed = yield* graph.fileTickets({
+    tickets,
+    waits,
+    actor,
+    filed: known,
+  })
 
-  const [root] = filed
+  const root = [...known, ...filed].find(({ key }) => key === ordered[0]?.key)
   if (root === undefined)
     return yield* new TreeRefused({ problems: ['the tree has no items'] })
   return new FiledTree({ root: root.id, items: filed })

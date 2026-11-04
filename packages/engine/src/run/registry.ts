@@ -209,7 +209,8 @@ const modeOf: (mode: RunModeWire) => Option.Option<RunMode> = RunModeWire.match(
   {
     tickets: () => Option.some(RunMode.Tickets()),
     ticket: ({ ticket }) => Option.some(RunMode.Ticket({ ticket })),
-    spec: () => Option.none(),
+    spec: ({ source, refine }) =>
+      refine ? Option.none() : Option.some(RunMode.Spec({ source })),
     feature: () => Option.none(),
     overnight: () => Option.none(),
   },
@@ -350,7 +351,7 @@ export const make = Effect.gen(function* () {
         const mode = modeOf(input.mode)
         if (Option.isNone(mode))
           return yield* refusedWith(
-            `a ${input.mode._tag} run isn't in this engine yet: run the current tickets, or one ticket and its descendants`,
+            `a ${input.mode._tag === 'spec' ? 'refined spec' : input.mode._tag} run isn't in this engine yet: run the current tickets, one ticket and its descendants, or a spec without --refine`,
           )
         const graph = yield* projects
           .workGraph(project)
