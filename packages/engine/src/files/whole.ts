@@ -38,16 +38,19 @@ export const replaceWhole = Effect.fn('SafeFiles.replaceWhole')(function* (
     folder,
     `.${NodePath.basename(full)}.${randomBytes(6).toString('hex')}.tmp`,
   )
-  const { handle } = yield* openRegular(
-    temporary,
-    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
-    mode,
-  )
-  yield* Effect.gen(function* () {
-    yield* writeAll(temporary, handle, toBytes(content))
-    yield* attempt(temporary, 'fsync', () => handle.sync())
-  }).pipe(
-    Effect.ensuring(closeQuietly(handle)),
+  yield* Effect.acquireUseRelease(
+    openRegular(
+      temporary,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+      mode,
+    ),
+    ({ handle }) =>
+      Effect.gen(function* () {
+        yield* writeAll(temporary, handle, toBytes(content))
+        yield* attempt(temporary, 'fsync', () => handle.sync())
+      }),
+    ({ handle }) => closeQuietly(handle),
+  ).pipe(
     Effect.andThen(attempt(full, 'rename', () => rename(temporary, full))),
     Effect.tapError(() =>
       Effect.tryPromise(() => unlink(temporary)).pipe(Effect.ignore),
@@ -60,11 +63,12 @@ export const replaceWhole = Effect.fn('SafeFiles.replaceWhole')(function* (
 const syncFolder = Effect.fn('SafeFiles.syncFolder')(function* (
   folder: string,
 ) {
-  const handle = yield* attempt(folder, 'open', () =>
-    open(folder, constants.O_RDONLY | constants.O_DIRECTORY),
-  )
-  yield* attempt(folder, 'fsync', () => handle.sync()).pipe(
-    Effect.ensuring(closeQuietly(handle)),
+  yield* Effect.acquireUseRelease(
+    attempt(folder, 'open', () =>
+      open(folder, constants.O_RDONLY | constants.O_DIRECTORY),
+    ),
+    handle => attempt(folder, 'fsync', () => handle.sync()),
+    closeQuietly,
   )
 })
 

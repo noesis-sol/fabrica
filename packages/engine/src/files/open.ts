@@ -129,7 +129,9 @@ export interface OpenedFile {
 
 /**
  * Opens `full` with `flags`, never following a link at its name and never waiting on a named pipe,
- * and keeps it only when it is a regular file. The folders on the way are checked by the caller.
+ * and keeps it only when it is a regular file. The folders on the way are checked by the caller. It
+ * isn't interrupted, which it never waits long enough to need: a handle dropped while it opens is closed
+ * only by the garbage collector, which Node takes for an error.
  */
 export const openRegular = Effect.fn('SafeFiles.openRegular')(function* (
   full: string,
@@ -151,7 +153,7 @@ export const openRegular = Effect.fn('SafeFiles.openRegular')(function* (
     })
   }
   return { handle, stats } satisfies OpenedFile
-})
+}, Effect.uninterruptible)
 
 /** Why an open failed: what stands at the path when it isn't a regular file (a link, a pipe with no reader), or the system's error. */
 const refusalOrFailure = (

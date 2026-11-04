@@ -42,7 +42,7 @@ import {
   type ProcessMemoryRow,
   parseProcessMemoryTable,
 } from '../src/process/tree'
-import { Telemetry, type TelemetryRow } from '../src/telemetry'
+import { Telemetry, type TelemetryRow, nothingMeasured } from '../src/telemetry'
 
 // The host's load (spec §7.4, §18.3): sampled every few seconds, from the kernel's own figures on macOS
 // and Linux and one process listing: each worker's process tree and the merge check's memory, served on
@@ -322,6 +322,7 @@ describe('the sampler', () => {
             Telemetry.of({
               record: row => Ref.update(input.recorded, all => [...all, row]),
               flush: Effect.void,
+              projectSpent: () => Effect.succeed(nothingMeasured),
             }),
           ),
         ),
