@@ -13,7 +13,8 @@ import {
 // The scout (spec §16, H57): at `init`, a short read-only session on the repository answers the project's
 // check suites, setup, stack and requirements, and `proposalsOf` makes them `init`'s proposals. No test
 // runs twice: a full-tier suite that already runs everything the fast tier does is `check_full` alone,
-// without the fast tier first, and a project's own full runner is kept as it is. Build and packaging
+// without the fast tier first, one that runs some of it goes with only the rest, and a project's own full
+// runner is kept as it is. Build and packaging
 // steps found only in CI are offered unticked, with what they cost. A command the settings wouldn't take
 // is left out, saying why, and whatever is shown has its control characters written out, so that nothing
 // reads as one line while running as two (tutti-spz). `scoutCost` says what the scout cost (tutti-ktn).
@@ -28,8 +29,8 @@ const FastSuite = Schema.Struct({
 const FullSuite = Schema.Struct({
   name: Schema.String,
   command: Schema.String,
-  /** Whether it already runs everything the fast tier does: a slow mode of the same runner. */
-  runs_fast_tier: Schema.Boolean,
+  /** The names of the fast suites whose tests it already runs, as a slow mode of the same runner does. */
+  runs_fast_suites: Schema.Array(Schema.String),
   /** Whether it is the project's own runner of every suite: a script or a target of its own. */
   own_runner: Schema.Boolean,
 })
@@ -68,7 +69,7 @@ export type ScoutAnswer = typeof ScoutAnswer.Type
 const instructions = `You are the scout of a project being set up. With read-only tools you read its repository: manifests, task runners, scripts, test configuration, CI workflows, the README. You run nothing and change nothing. You propose how its work is checked and set up, for its maintainer to tick, and end by calling answer. Propose only what the repository shows.
 
 - fast: the suites that check a change quickly enough to run on every merge (type checks, lint, unit tests), each its own entry, none repeated.
-- full: the suites that run only once at the end of a run. Set runs_fast_tier where one already runs everything the fast suites do, as a slow mode of the same runner does. Set own_runner where it is the project's own runner of every suite, a script or a target of its own. Never write a command that runs a fast suite and then a full one: no test runs twice.
+- full: the suites that run only once at the end of a run. In runs_fast_suites name each fast suite whose tests it already runs, some or all of them, as a slow mode of the same runner runs the quick tests but no linter; else leave it empty. Set own_runner where it is the project's own runner of every suite, a script or a target of its own. Never write a command that runs a fast suite and then a full one: no test runs twice.
 - own: the project's command for checking one change alone, where it has one; else null.
 - setup: the command that makes a fresh checkout ready to work in, as a lockfile's exact install; else null.
 - stack: the languages, runners and frameworks it uses, a short name each.
@@ -204,30 +205,44 @@ export const proposalsOf = (answer: ScoutAnswer): ScoutProposals => {
   const full = kept(answer.full, 'full suite')
   const fastCommands = fast.map(suite => suite.command)
 
-  // No test runs twice: the first own runner stands for the tier, or the first suite that covers the fast
-  // tier goes without it, with what covers nothing beside; a tier with neither runs every suite once.
+  // No test runs twice: the first own runner stands for the tier; otherwise a full suite goes without the
+  // fast suites it names, and with none that an earlier full suite already runs. Each suite runs once.
   const runner = full.find(suite => suite.own_runner)
-  const [covering, ...otherCovering] = full.filter(
-    suite => suite.runs_fast_tier,
-  )
-  const beside = full.filter(suite => !suite.runs_fast_tier)
-  for (const suite of runner === undefined
-    ? otherCovering
-    : full.filter(other => other !== runner))
-    leave(
-      `the full suite ${suite.name}`,
-      runner === undefined
-        ? `${covering?.name} already runs the fast tier, and no test runs twice`
-        : `the project's own full runner, ${runner.name}, stands for the full tier`,
-    )
+  const runBy = new Map<string, string>()
+  const tier =
+    runner === undefined
+      ? full.filter(suite => {
+          const names = suite.runs_fast_suites.map(writtenOut)
+          const earlier = names.flatMap(name => {
+            const by = runBy.get(name)
+            return by === undefined ? [] : [{ name, by }]
+          })[0]
+          if (earlier !== undefined) {
+            leave(
+              `the full suite ${suite.name}`,
+              `${earlier.by} already runs the fast suite ${earlier.name}, and no test runs twice`,
+            )
+            return false
+          }
+          for (const name of names) runBy.set(name, suite.name)
+          return true
+        })
+      : [runner]
+  if (runner !== undefined)
+    for (const suite of full.filter(other => other !== runner))
+      leave(
+        `the full suite ${suite.name}`,
+        `the project's own full runner, ${runner.name}, stands for the full tier`,
+      )
   const fullCommands =
-    runner !== undefined
-      ? [runner.command]
-      : full.length === 0
-        ? []
-        : covering !== undefined
-          ? [covering, ...beside].map(suite => suite.command)
-          : [...fastCommands, ...beside.map(suite => suite.command)]
+    runner !== undefined || tier.length === 0
+      ? tier.map(suite => suite.command)
+      : [
+          ...fast
+            .filter(suite => !runBy.has(suite.name))
+            .map(suite => suite.command),
+          ...tier.map(suite => suite.command),
+        ]
 
   const checkOwn = single(answer.own, 'the own check')
   const setup = single(answer.setup, 'the setup')

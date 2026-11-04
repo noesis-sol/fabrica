@@ -58,10 +58,10 @@ const fullSuite = (
   name: string,
   command: string,
   {
-    runs_fast_tier = false,
+    runs_fast_suites = [],
     own_runner = false,
-  }: { runs_fast_tier?: boolean; own_runner?: boolean } = {},
-) => ({ name, command, runs_fast_tier, own_runner })
+  }: { runs_fast_suites?: ReadonlyArray<string>; own_runner?: boolean } = {},
+) => ({ name, command, runs_fast_suites, own_runner })
 
 const ciStep = (name: string, command: string, cost: string) => ({
   name,
@@ -101,7 +101,7 @@ describe("the scout's question", () => {
     const { answer, description } = scoutQuestion(1)
     const { parameters } = toolJsonSchema(answerTool({ answer, description }))
     expect(JSON.stringify(parameters)).not.toContain('"pattern"')
-    expect(JSON.stringify(parameters)).toContain('runs_fast_tier')
+    expect(JSON.stringify(parameters)).toContain('runs_fast_suites')
   })
 
   it('refuses an answer ticking anything itself', () => {
@@ -119,7 +119,11 @@ describe('the check suites proposed', () => {
   it('makes a full tier that runs the fast one check_full alone', () => {
     const proposals = proposalsFrom({
       fast: [fastSuite('quick tests', 'pytest -m "not slow"')],
-      full: [fullSuite('every test', 'pytest', { runs_fast_tier: true })],
+      full: [
+        fullSuite('every test', 'pytest', {
+          runs_fast_suites: ['quick tests'],
+        }),
+      ],
     })
     expect(proposals.checkFast).toEqual(Option.some('pytest -m "not slow"'))
     expect(proposals.checkFull).toEqual(Option.some('pytest'))
@@ -142,25 +146,68 @@ describe('the check suites proposed', () => {
       fast: [fastSuite('quick', 'pytest -m quick')],
       full: [
         fullSuite('e2e', 'pnpm e2e'),
-        fullSuite('all', 'pytest', { runs_fast_tier: true }),
+        fullSuite('all', 'pytest', { runs_fast_suites: ['quick'] }),
       ],
     })
-    expect(proposals.checkFull).toEqual(Option.some('pytest && pnpm e2e'))
+    expect(proposals.checkFull).toEqual(Option.some('pnpm e2e && pytest'))
+  })
+
+  it('runs only the fast suites a full suite leaves out, where it runs some of them', () => {
+    const proposals = proposalsFrom({
+      fast: [
+        fastSuite('lint', 'ruff check .'),
+        fastSuite('quick', 'pytest -m "not slow"'),
+      ],
+      full: [fullSuite('all', 'pytest', { runs_fast_suites: ['quick'] })],
+    })
+    expect(proposals.checkFast).toEqual(
+      Option.some('ruff check . && pytest -m "not slow"'),
+    )
+    expect(proposals.checkFull).toEqual(Option.some('ruff check . && pytest'))
+    expect(proposals.leftOut).toEqual([])
+  })
+
+  it('counts what two full suites run between them, each fast suite left out once', () => {
+    const proposals = proposalsFrom({
+      fast: [
+        fastSuite('lint', 'ruff check .'),
+        fastSuite('unit', 'pytest tests/unit'),
+        fastSuite('types', 'mypy .'),
+      ],
+      full: [
+        fullSuite('py', 'pytest', { runs_fast_suites: ['unit'] }),
+        fullSuite('static', 'make static', { runs_fast_suites: ['types'] }),
+      ],
+    })
+    expect(proposals.checkFull).toEqual(
+      Option.some('ruff check . && pytest && make static'),
+    )
+  })
+
+  it('goes by the name a refused fast suite had, which no check runs either way', () => {
+    const proposals = proposalsFrom({
+      fast: [fastSuite('quick', hidden), fastSuite('lint', 'ruff check .')],
+      full: [fullSuite('all', 'pytest', { runs_fast_suites: ['quick'] })],
+    })
+    expect(proposals.checkFast).toEqual(Option.some('ruff check .'))
+    expect(proposals.checkFull).toEqual(Option.some('ruff check . && pytest'))
   })
 
   it('never runs the fast tier twice through two suites that each cover it', () => {
     const proposals = proposalsFrom({
       fast: [fastSuite('quick', 'pytest -m quick')],
       full: [
-        fullSuite('all', 'pytest', { runs_fast_tier: true }),
-        fullSuite('all, slower', 'pytest --slow', { runs_fast_tier: true }),
+        fullSuite('all', 'pytest', { runs_fast_suites: ['quick'] }),
+        fullSuite('all, slower', 'pytest --slow', {
+          runs_fast_suites: ['quick'],
+        }),
       ],
     })
     expect(proposals.checkFull).toEqual(Option.some('pytest'))
     expect(proposals.leftOut).toEqual([
       {
         what: 'the full suite all, slower',
-        reason: 'all already runs the fast tier, and no test runs twice',
+        reason: 'all already runs the fast suite quick, and no test runs twice',
       },
     ])
   })
@@ -178,7 +225,7 @@ describe('the check suites proposed', () => {
       fast: [fastSuite('lint', 'make lint')],
       full: [
         fullSuite('e2e', 'make e2e'),
-        fullSuite('all', 'pytest', { runs_fast_tier: true }),
+        fullSuite('all', 'pytest', { runs_fast_suites: ['lint'] }),
         fullSuite('ci', 'scripts/ci.sh', { own_runner: true }),
       ],
     })
@@ -206,7 +253,7 @@ describe('the check suites proposed', () => {
 
   it('proposes no merge check it did not find', () => {
     const proposals = proposalsFrom({
-      full: [fullSuite('all', 'pytest', { runs_fast_tier: true })],
+      full: [fullSuite('all', 'pytest')],
     })
     expect(proposals.checkFast).toEqual(Option.none())
     expect(proposals.checkFull).toEqual(Option.some('pytest'))
@@ -334,7 +381,7 @@ describe('a refused command', () => {
       fast: [fastSuite('tests', 'pnpm test')],
       full: [
         fullSuite('ci', hidden, { own_runner: true }),
-        fullSuite('all', `pytest\n`, { runs_fast_tier: true }),
+        fullSuite('all', `pytest\n`, { runs_fast_suites: ['tests'] }),
         fullSuite('e2e', 'pnpm e2e'),
       ],
     })
