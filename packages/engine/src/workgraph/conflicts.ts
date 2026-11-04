@@ -18,6 +18,7 @@ import {
   fieldTexts,
   fieldsWith,
 } from '../ticketsref/codec'
+import { StatusChange, statusChangeOf } from './status-change'
 
 // A sync's open merge conflicts (spec §11.4, §11.7), from the work graph's events: each field a merge
 // resolved, until it is superseded. A later event that changes the field supersedes its conflict, as
@@ -41,13 +42,33 @@ const fieldsChangedBy = (change: TicketChange): ReadonlyArray<string> =>
     labelled: () => [],
     unlabelled: () => [],
     noted: () => [],
-    answered: () => ['question'],
+    answered: () => ['question', 'status', 'resolution'],
     deleted: () => [],
     merge_conflict: ({ field }) => [field],
   })
 
-/** What `tickets.update` takes to set `field` to its value in `fields`; none where it can't set it. */
+/** `changes` to a status or a time to defer until, where `tickets.update` would make them of `ticket`. */
+const ifItMoves = (
+  ticket: Ticket,
+  changes: Pick<TicketChanges, 'status' | 'deferUntil'>,
+): Option.Option<TicketChanges> =>
+  StatusChange.$match(
+    statusChangeOf({ id: ticket.id, current: ticket.status, ...changes }),
+    {
+      None: () => Option.none(),
+      Refused: () => Option.none(),
+      Reopen: () => Option.some(changes),
+      Undefer: () => Option.some(changes),
+      Defer: () => Option.some(changes),
+    },
+  )
+
+/**
+ * What `tickets.update` takes to set `field` of `ticket` to its value in `fields`; none where it can't
+ * set it, a status or a time it would refuse or leave as it is among them.
+ */
 const changesFor = (
+  ticket: Ticket,
   field: ClockedField,
   fields: TicketFields,
 ): Option.Option<TicketChanges> => {
@@ -66,10 +87,10 @@ const changesFor = (
       return Option.some({ priority: fields.priority })
     case 'status':
       return fields.status === 'open' || fields.status === 'deferred'
-        ? Option.some({ status: fields.status })
+        ? ifItMoves(ticket, { status: fields.status })
         : Option.none()
     case 'deferUntil':
-      return Option.some({ deferUntil: fields.deferUntil })
+      return ifItMoves(ticket, { deferUntil: fields.deferUntil })
     case 'model':
       return Option.some({ model: fields.model })
     case 'metadata':
@@ -119,7 +140,7 @@ const conflictOf = (
             kept,
             other,
             useOther: Option.flatMap(fieldsWith(ticket, field, other), fields =>
-              changesFor(field, fields),
+              changesFor(ticket, field, fields),
             ),
           }),
       )

@@ -16,6 +16,7 @@ export {
   WaitReason,
 } from './ready'
 export * from './service'
+export { StatusChange, statusChangeOf } from './status-change'
 export {
   layer as sqliteLayer,
   makeWorkGraph,

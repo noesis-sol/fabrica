@@ -18,15 +18,19 @@ import { SqliteClient } from '@effect/sql-sqlite-node'
 import { beforeAll, describe, expect, it } from '@effect/vitest'
 import {
   type Actor,
+  Assignee,
   BacklogItem,
   BacklogRpcs,
+  EngineId,
   ProjectSource,
   Resume,
+  SessionId,
   type Ticket,
   TicketChange,
   TicketEvent,
   type TicketId,
   TicketMetadata,
+  type TicketStatus,
 } from '@fabrica/contracts'
 
 import { engineDatabaseLayer } from '../src/engine'
@@ -254,6 +258,115 @@ describe('the open conflicts', () => {
         ])
       }).pipe(Effect.provide(graphLayer)),
   )
+
+  describe('a status or a time, by the status the ticket holds', () => {
+    const until = '2026-10-30T09:00:00.000Z'
+    const untilMillis = Date.parse(until)
+    const assignee = new Assignee({
+      engine: EngineId.make('e-1'),
+      session: SessionId.make('s-1'),
+    })
+
+    /** A task brought to `status`, holding the time to defer until where `withTime`. */
+    const taskHolding = (status: TicketStatus, withTime: boolean) =>
+      Effect.gen(function* () {
+        const graph = yield* WorkGraph
+        const sql = yield* SqliteClient.SqliteClient
+        const { id } = yield* fileTask
+        switch (status) {
+          case 'open':
+            break
+          case 'in_progress':
+            yield* graph.claim({ id, assignee, actor: maintainer })
+            break
+          case 'deferred':
+            yield* graph.defer({
+              id,
+              until: Option.none(),
+              actor: maintainer,
+            })
+            break
+          case 'closed':
+            yield* graph.close({ id, resolution: 'done', actor: maintainer })
+            break
+        }
+        // A merge decides the time and the status apart, so it can leave a time on any status.
+        if (withTime) {
+          yield* sql`UPDATE tickets SET defer_until = ${untilMillis} WHERE id = ${id}`
+        }
+        return id
+      })
+
+    /** What the conflict on `field` offers, from `kept` to `other`, on a task holding `status`. */
+    const offered = (
+      status: TicketStatus,
+      field: 'status' | 'deferUntil',
+      kept: Schema.Json,
+      other: Schema.Json,
+    ) =>
+      Effect.gen(function* () {
+        const graph = yield* WorkGraph
+        const sql = yield* SqliteClient.SqliteClient
+        const ticket = yield* taskHolding(status, kept === until)
+        yield* recordConflict(sql, { ticket, field, ours: kept, theirs: other })
+        const [conflict] = yield* graph.conflicts()
+        if (conflict === undefined) return expect.unreachable()
+        expect(conflict.kept).toEqual(kept)
+        return conflict.useOther
+      }).pipe(Effect.provide(graphLayer))
+
+    it.effect('a status tickets.update refuses isn’t offered', () =>
+      Effect.gen(function* () {
+        expect(
+          yield* offered('in_progress', 'status', 'in_progress', 'open'),
+        ).toEqual(Option.none())
+        expect(
+          yield* offered('closed', 'status', 'closed', 'deferred'),
+        ).toEqual(Option.none())
+      }),
+    )
+
+    it.effect('a status it can make is offered', () =>
+      Effect.gen(function* () {
+        expect(yield* offered('closed', 'status', 'closed', 'open')).toEqual(
+          Option.some({ status: 'open' }),
+        )
+        expect(
+          yield* offered('deferred', 'status', 'deferred', 'open'),
+        ).toEqual(Option.some({ status: 'open' }))
+        expect(
+          yield* offered('in_progress', 'status', 'in_progress', 'deferred'),
+        ).toEqual(Option.some({ status: 'deferred' }))
+      }),
+    )
+
+    it.effect(
+      'clearing the time is offered only on a deferred ticket: elsewhere tickets.update would leave it',
+      () =>
+        Effect.gen(function* () {
+          expect(yield* offered('open', 'deferUntil', until, null)).toEqual(
+            Option.none(),
+          )
+          expect(
+            yield* offered('in_progress', 'deferUntil', until, null),
+          ).toEqual(Option.none())
+          expect(yield* offered('closed', 'deferUntil', until, null)).toEqual(
+            Option.none(),
+          )
+          expect(yield* offered('deferred', 'deferUntil', until, null)).toEqual(
+            Option.some({ deferUntil: Option.none() }),
+          )
+        }),
+    )
+
+    it.effect('a time on a closed ticket isn’t offered, as it is refused', () =>
+      Effect.gen(function* () {
+        expect(yield* offered('closed', 'deferUntil', null, until)).toEqual(
+          Option.none(),
+        )
+      }),
+    )
+  })
 
   it.effect(
     'a later change of the field supersedes its conflict; a change of another leaves it',
@@ -569,6 +682,65 @@ describe('tickets.conflicts over RPC', () => {
           ticket,
         })
         expect(shown.title).toBe('Lost title')
+        expect(yield* client['tickets.conflicts']({ project })).toEqual([])
+      }).pipe(Effect.scoped, Effect.provide(engine())),
+  )
+
+  it.live(
+    'on a deferred ticket, the time cleared by the use it gives ends the conflict',
+    () =>
+      Effect.gen(function* () {
+        const projects = yield* Projects
+        const client = yield* RpcTest.makeClient(BacklogRpcs)
+        const added = yield* projects.add({
+          source: ProjectSource.cases.path.make({ path: yield* newCheckout }),
+          name: Option.some('work'),
+        })
+        const project = added.id
+        const { id: ticket } = yield* client['tickets.create']({
+          project,
+          ticket: {
+            type: 'task',
+            title: 'A task',
+            description: Option.none(),
+            design: Option.none(),
+            acceptance: Option.none(),
+            priority: Option.none(),
+            labels: Option.none(),
+            parent: Option.none(),
+            metadata: Option.none(),
+            model: Option.none(),
+          },
+        })
+        const until = DateTime.makeUnsafe('2026-10-30T09:00:00.000Z')
+        yield* client['tickets.update']({
+          project,
+          ticket,
+          changes: { deferUntil: Option.some(until) },
+        })
+        const sql = yield* SqliteClient.make({
+          filename: NodePath.join(added.path, workGraphPath),
+        }).pipe(Effect.provide(Reactivity.layer))
+        yield* recordConflict(sql, {
+          ticket,
+          field: 'deferUntil',
+          ours: DateTime.formatIso(until),
+          theirs: null,
+        })
+
+        const [conflict] = yield* client['tickets.conflicts']({ project })
+        if (conflict === undefined) return expect.unreachable()
+        yield* client['tickets.update']({
+          project,
+          ticket,
+          changes: Option.getOrThrow(conflict.useOther),
+        })
+
+        const { ticket: shown } = yield* client['tickets.show']({
+          project,
+          ticket,
+        })
+        expect(shown.deferUntil).toEqual(Option.none())
         expect(yield* client['tickets.conflicts']({ project })).toEqual([])
       }).pipe(Effect.scoped, Effect.provide(engine())),
   )

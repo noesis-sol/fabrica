@@ -26,10 +26,12 @@ import { type KeyedFeed, makeKeyedFeed } from '../keyed-feed'
 import { Projects } from '../projects/service'
 import * as WorkGraph from '../workgraph'
 import {
+  StatusChange,
   type TicketUpdate,
   WaitReason,
   type WorkGraphShape,
   describeWait,
+  statusChangeOf,
 } from '../workgraph'
 
 // The Backlog group's handlers (spec §8.1, §11.1) on each project's work graph, opened by the Projects
@@ -303,45 +305,25 @@ export const makeBacklogHandlers = Effect.gen(function* () {
     const graph = yield* graphOf(project)
     const { ticket: current } = yield* graph.show(ticket).pipe(found(project))
     // The status change, decided and refused before any field is written, so a refused update changes
-    // nothing. A time to defer until defers the ticket; clearing it clears a deferred ticket's time.
-    const transition = yield* (() => {
-      if (status === 'open') {
-        switch (current.status) {
-          case 'closed':
-            return Effect.succeed(
-              graph.reopen({ id: ticket, actor: maintainer }),
-            )
-          case 'deferred':
-            return Effect.succeed(
-              graph.undefer({ id: ticket, actor: maintainer }),
-            )
-          case 'in_progress':
-            return Effect.fail(
-              new Refused({
-                reason: `can't reopen ${ticket}: it is in progress`,
-              }),
-            )
-          case 'open':
-            return Effect.succeed(undefined)
-        }
-      }
-      const defers =
-        status === 'deferred' ||
-        (deferUntil !== undefined &&
-          (Option.isSome(deferUntil) || current.status === 'deferred'))
-      if (!defers) return Effect.succeed(undefined)
-      if (current.status === 'closed')
-        return Effect.fail(
-          new Refused({ reason: `can't defer ${ticket}: it is closed` }),
-        )
-      return Effect.succeed(
-        graph.defer({
-          id: ticket,
-          until: deferUntil ?? Option.none(),
-          actor: maintainer,
-        }),
-      )
-    })()
+    // nothing.
+    const transition = yield* StatusChange.$match(
+      statusChangeOf({
+        id: ticket,
+        current: current.status,
+        status,
+        deferUntil,
+      }),
+      {
+        None: () => Effect.succeed(undefined),
+        Refused: ({ reason }) => Effect.fail(new Refused({ reason })),
+        Reopen: () =>
+          Effect.succeed(graph.reopen({ id: ticket, actor: maintainer })),
+        Undefer: () =>
+          Effect.succeed(graph.undefer({ id: ticket, actor: maintainer })),
+        Defer: ({ until }) =>
+          Effect.succeed(graph.defer({ id: ticket, until, actor: maintainer })),
+      },
+    )
     const plain: TicketUpdate = fields
     if (Object.values(plain).some(value => value !== undefined))
       yield* graph
