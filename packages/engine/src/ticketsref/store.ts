@@ -218,6 +218,18 @@ export const makeTicketsStore = Effect.fn('TicketsStore.make')(function* ({
     return exit.code === 0
   })
 
+  /** The repository's remotes, by name. */
+  const remotes = read(
+    'tickets.remotes',
+    Effect.gen(function* () {
+      const args = ['remote']
+      const exit = yield* query(yield* quiet(args))
+      return exit.code === 0
+        ? exit.stdout.split('\n').filter(line => line !== '')
+        : yield* unexpected(args, exit)
+    }),
+  ).pipe(Effect.withSpan('TicketsStore.remotes'))
+
   /** Every file of a commit. */
   const list = Effect.fn('TicketsStore.list')(function* (commit: CommitHash) {
     const args = [
@@ -483,6 +495,7 @@ export const makeTicketsStore = Effect.fn('TicketsStore.make')(function* ({
     head,
     resolve,
     hasCommit,
+    remotes,
     list,
     changedBetween,
     mergeBase,

@@ -27,8 +27,10 @@ import { join } from 'node:path'
 import { beforeAll, describe, expect, it, vi } from '@effect/vitest'
 import {
   type Actor,
+  Assignee,
   Edge,
   EngineId,
+  SessionId,
   TicketEvent,
   TicketId,
 } from '@fabrica/contracts'
@@ -944,71 +946,286 @@ describe('imports', () => {
 })
 
 describe('a store whose ref is gone', () => {
+  /** Two engines holding one backlog of every kind of thing another engine goes on to change. */
+  const backlog = Effect.gen(function* () {
+    const { remote, checkouts } = repositories(2)
+    const checkout = checkouts[0] ?? ''
+    const a = yield* makeEngine({
+      id: 'fe-a',
+      checkout,
+      filename: join(freshFolder('db'), 'work.db'),
+    })
+    const b = yield* makeEngine({ id: 'fe-b', checkout: checkouts[1] ?? '' })
+    const edited = yield* a.create('Edited')
+    const gone = yield* a.create('Gone')
+    const goneHere = yield* a.create('Gone here')
+    const labelled = yield* a.create('Labelled')
+    const linked = yield* a.create('Linked')
+    const claimed = yield* a.create('Claimed')
+    const deferred = yield* a.create('Deferred')
+    yield* a.graph.label({ id: labelled, label: 'x', actor: maintainer })
+    yield* a.graph.addDependency({
+      edge: new Edge({ from: linked, to: labelled, kind: 'related' }),
+      actor: maintainer,
+    })
+    yield* a.graph.claim({
+      id: claimed,
+      assignee: new Assignee({
+        engine: a.engine,
+        session: SessionId.make('s-1'),
+      }),
+      actor: maintainer,
+    })
+    yield* a.graph.defer({
+      id: deferred,
+      until: Option.none(),
+      actor: maintainer,
+    })
+    yield* a.graph.delete({ id: goneHere, actor: maintainer })
+    yield* converge(a, b)
+
+    yield* TestClock.adjust('1 second')
+    yield* b.graph.update({
+      id: edited,
+      changes: { title: 'Edited by b', description: Option.some('From b') },
+      actor: maintainer,
+    })
+    yield* b.graph.delete({ id: gone, actor: maintainer })
+    yield* b.graph.unlabel({ id: labelled, label: 'x', actor: maintainer })
+    yield* b.graph.removeDependency({
+      edge: new Edge({ from: linked, to: labelled, kind: 'related' }),
+      actor: maintainer,
+    })
+    yield* b.graph.release({ id: claimed, actor: maintainer })
+    yield* b.graph.undefer({ id: deferred, actor: maintainer })
+    yield* b.sync.sync('origin')
+    yield* TestClock.adjust('1 second')
+    return {
+      remote,
+      checkout,
+      a,
+      b,
+      edited,
+      gone,
+      goneHere,
+      labelled,
+      linked,
+      claimed,
+      deferred,
+    }
+  })
+
+  type Backlog = Effect.Success<typeof backlog>
+
+  /** The checkout cloned again in its place, the database kept: the old commits are gone. */
+  const cloneAgain = ({ remote, checkout, a }: Backlog) =>
+    Effect.gen(function* () {
+      renameSync(checkout, `${checkout}.old`)
+      git(root, 'clone', '--quiet', '--no-local', remote, checkout)
+      const imported = Option.getOrThrow((yield* a.sync.state).lastImported)
+      expect(() =>
+        git(checkout, 'cat-file', '-e', `${imported}^{commit}`),
+      ).toThrow()
+    })
+
+  /** Every change of the other engine's stands, on both, and no conflict was made up. */
+  const expectKept = (backlogged: Backlog) =>
+    Effect.gen(function* () {
+      const {
+        a,
+        b,
+        edited,
+        gone,
+        goneHere,
+        labelled,
+        linked,
+        claimed,
+        deferred,
+      } = backlogged
+      yield* expectConverged(a, b)
+      const { ticket } = yield* a.graph.show(edited)
+      expect(ticket.title).toBe('Edited by b')
+      expect(ticket.description).toEqual(Option.some('From b'))
+      expect((yield* Effect.exit(a.graph.show(gone)))._tag).toBe('Failure')
+      expect((yield* Effect.exit(a.graph.show(goneHere)))._tag).toBe('Failure')
+      expect(a.files()).toContain(`tombstones/${gone}.json`)
+      expect(a.files()).toContain(`tombstones/${goneHere}.json`)
+      expect((yield* a.graph.show(labelled)).labels).toEqual([])
+      expect((yield* a.graph.show(linked)).edges).toEqual([])
+      const released = (yield* a.graph.show(claimed)).ticket
+      expect(released.status).toBe('open')
+      expect(Option.isNone(released.assignee)).toBe(true)
+      expect((yield* a.graph.show(deferred)).ticket.status).toBe('open')
+      expect(yield* a.events('merge_conflict')).toEqual([])
+      expect(yield* b.events('merge_conflict')).toEqual([])
+    })
+
   it.effect(
-    "a new clone under the same database converges, the remote's changes kept",
+    'a new clone under the same database keeps the remote’s every change, and its own',
     () =>
       Effect.gen(function* () {
-        const { remote, checkouts } = repositories(2)
-        const checkout = checkouts[0] ?? ''
-        const filename = join(freshFolder('db'), 'work.db')
-        const a = yield* makeEngine({ id: 'fe-a', checkout, filename })
-        const b = yield* makeEngine({
-          id: 'fe-b',
-          checkout: checkouts[1] ?? '',
-        })
-        const shared = yield* a.create('Shared')
-        const quiet = yield* a.create('Quiet')
-        yield* converge(a, b)
-
-        // The other engine changes both while this checkout is cloned again: the old commits are gone.
-        yield* TestClock.adjust('1 second')
-        yield* b.graph.update({
-          id: shared,
-          changes: { title: 'From b' },
-          actor: maintainer,
-        })
-        yield* b.graph.update({
-          id: quiet,
-          changes: { title: 'Quiet from b' },
-          actor: maintainer,
-        })
-        yield* b.sync.sync('origin')
-        const moved = `${checkout}.old`
-        renameSync(checkout, moved)
-        git(root, 'clone', '--quiet', '--no-local', remote, checkout)
-        const imported = Option.getOrThrow((yield* a.sync.state).lastImported)
-        expect(() =>
-          git(checkout, 'cat-file', '-e', `${imported}^{commit}`),
-        ).toThrow()
-
-        // A change made here since is kept; what it didn't change takes the remote's.
-        yield* TestClock.adjust('1 second')
+        const backlogged = yield* backlog
+        const { a, b, edited } = backlogged
+        yield* cloneAgain(backlogged)
         yield* a.graph.update({
-          id: shared,
+          id: edited,
           changes: { priority: 0 },
           actor: maintainer,
         })
         yield* a.sync.sync('origin')
         yield* converge(a, b)
-        yield* expectConverged(a, b)
-        expect((yield* a.graph.show(quiet)).ticket.title).toBe('Quiet from b')
-        expect((yield* a.graph.show(shared)).ticket.priority).toBe(0)
+        yield* expectKept(backlogged)
+        expect((yield* b.graph.show(edited)).ticket.priority).toBe(0)
       }).pipe(Effect.scoped),
   )
 
-  it.effect('a ref deleted and pruned with no remote is written again', () =>
+  it.effect(
+    'a commit comes first, as the batch makes it: it fetches its base too',
+    () =>
+      Effect.gen(function* () {
+        const backlogged = yield* backlog
+        const { a, b, edited } = backlogged
+        yield* cloneAgain(backlogged)
+        yield* a.graph.update({
+          id: edited,
+          changes: { priority: 0 },
+          actor: maintainer,
+        })
+        const settled = yield* a.sync.commit
+        expect(settled.committed).toBe(true)
+        yield* converge(a, b)
+        yield* expectKept(backlogged)
+        expect((yield* b.graph.show(edited)).ticket.priority).toBe(0)
+      }).pipe(Effect.scoped),
+  )
+
+  it.effect(
+    'a last import never pushed: the last push is the base, what came after it kept',
+    () =>
+      Effect.gen(function* () {
+        const backlogged = yield* backlog
+        const { a, b, edited, linked } = backlogged
+        yield* a.graph.note({ id: linked, body: 'Unpushed', actor: maintainer })
+        yield* a.graph.update({
+          id: edited,
+          changes: { priority: 1 },
+          actor: maintainer,
+        })
+        yield* a.sync.commit
+        const unpushed = yield* a.create('Never pushed')
+        yield* a.sync.commit
+        expect(
+          Option.getOrThrow((yield* a.sync.state).lastImported),
+        ).not.toEqual(Option.getOrThrow((yield* a.sync.state).lastPushed))
+        yield* cloneAgain(backlogged)
+        yield* converge(a, b)
+        yield* expectKept(backlogged)
+        expect((yield* b.graph.show(edited)).ticket.priority).toBe(1)
+        expect((yield* b.graph.show(unpushed)).ticket.title).toBe(
+          'Never pushed',
+        )
+        expect(
+          (yield* b.graph.show(linked)).notes.map(note => note.body),
+        ).toEqual(['Unpushed'])
+      }).pipe(Effect.scoped),
+  )
+
+  it.effect(
+    'an engine that only ever fetched: what it fetched last is the base',
+    () =>
+      Effect.gen(function* () {
+        const { remote, checkouts } = repositories(2)
+        const checkout = checkouts[1] ?? ''
+        const a = yield* makeEngine({
+          id: 'fe-a',
+          checkout: checkouts[0] ?? '',
+        })
+        const b = yield* makeEngine({ id: 'fe-b', checkout })
+        const id = yield* a.create('Shared')
+        const gone = yield* a.create('Gone')
+        yield* a.sync.sync('origin')
+        yield* b.sync.pull('origin')
+        yield* b.graph.note({ id, body: 'From b', actor: maintainer })
+        yield* b.sync.commit
+        yield* TestClock.adjust('1 second')
+        yield* a.graph.update({
+          id,
+          changes: { title: 'From a' },
+          actor: maintainer,
+        })
+        yield* a.graph.delete({ id: gone, actor: maintainer })
+        yield* a.sync.sync('origin')
+        yield* TestClock.adjust('1 second')
+        renameSync(checkout, `${checkout}.old`)
+        git(root, 'clone', '--quiet', '--no-local', remote, checkout)
+        yield* converge(b, a)
+        yield* expectConverged(a, b)
+        const { ticket, notes } = yield* a.graph.show(id)
+        expect(ticket.title).toBe('From a')
+        expect(notes.map(note => note.body)).toEqual(['From b'])
+        expect((yield* Effect.exit(b.graph.show(gone)))._tag).toBe('Failure')
+        expect(yield* a.events('merge_conflict')).toEqual([])
+        expect(yield* b.events('merge_conflict')).toEqual([])
+      }).pipe(Effect.scoped),
+  )
+
+  it.effect(
+    'a remote that doesn’t answer: nothing is exported until it does',
+    () =>
+      Effect.gen(function* () {
+        const backlogged = yield* backlog
+        const { remote, a, b, edited } = backlogged
+        yield* cloneAgain(backlogged)
+        yield* a.graph.update({
+          id: edited,
+          changes: { priority: 0 },
+          actor: maintainer,
+        })
+        const away = `${remote}.away`
+        renameSync(remote, away)
+        const state = yield* a.sync.state
+        const stopped = yield* Effect.flip(a.sync.commit)
+        expect(stopped._tag).toBe('BaseUnreachable')
+        expect(a.head()).toBe('')
+        expect(yield* a.sync.state).toEqual(state)
+        renameSync(away, remote)
+        yield* converge(a, b)
+        yield* expectKept(backlogged)
+        expect((yield* b.graph.show(edited)).ticket.priority).toBe(0)
+      }).pipe(Effect.scoped),
+  )
+
+  it.effect(
+    'a ref deleted and pruned, with nothing pushed, is written again',
+    () =>
+      Effect.gen(function* () {
+        const { a } = yield* twoEngines
+        const id = yield* a.create('One')
+        yield* a.sync.commit
+        const before = a.file(`tickets/${id}.json`)
+        git(a.checkout, 'update-ref', '-d', ticketsRef)
+        git(a.checkout, 'gc', '--quiet', '--prune=now')
+        const settled = yield* a.sync.commit
+        expect(settled.committed).toBe(true)
+        expect(a.file(`tickets/${id}.json`)).toBe(before)
+        expect((yield* a.sync.rebuild).tickets).toBe(1)
+      }).pipe(Effect.scoped),
+  )
+
+  it.effect('with no remote at all it is written again, and stops asking', () =>
     Effect.gen(function* () {
       const { a } = yield* twoEngines
       const id = yield* a.create('One')
       yield* a.sync.commit
-      const before = a.file(`tickets/${id}.json`)
+      git(a.checkout, 'remote', 'remove', 'origin')
       git(a.checkout, 'update-ref', '-d', ticketsRef)
       git(a.checkout, 'gc', '--quiet', '--prune=now')
       const settled = yield* a.sync.commit
       expect(settled.committed).toBe(true)
-      expect(a.file(`tickets/${id}.json`)).toBe(before)
-      const rebuilt = yield* a.sync.rebuild
-      expect(rebuilt.tickets).toBe(1)
+      expect(a.files()).toContain(`tickets/${id}.json`)
+      const held = yield* a.sync.state
+      expect(Option.isSome(held.lastImported)).toBe(true)
+      expect(Option.getOrThrow(held.lastImported)).toBe(a.head())
     }).pipe(Effect.scoped),
   )
 })

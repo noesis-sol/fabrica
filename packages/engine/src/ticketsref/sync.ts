@@ -109,6 +109,18 @@ export class SyncBusy extends Data.TaggedError('SyncBusy')<{}> {
   }
 }
 
+/**
+ * The commit the store last agreed with is gone from the repository, and a remote that may have it can't
+ * be reached: nothing is exported until it can, as an export on no base would outrank the remote's changes.
+ */
+export class BaseUnreachable extends Data.TaggedError('BaseUnreachable')<{
+  readonly reason: string
+}> {
+  override get message() {
+    return `the tickets ref's last commit is gone here, and the remote can't say: ${this.reason}`
+  }
+}
+
 /** There is no ref to rebuild from. */
 export class NoTicketsRef extends Data.TaggedError('NoTicketsRef')<{}> {
   override get message() {
@@ -121,6 +133,7 @@ export type SyncStopped =
   | SyncOff
   | ExportBlocked
   | SyncBusy
+  | BaseUnreachable
   | LayoutTooNew
   | RefFailure
   | StoreFailed
@@ -401,28 +414,31 @@ export const makeTicketsSync = Effect.fn('TicketsSync.make')(function* ({
   // --- Export ----------------------------------------------------------------------------------
 
   /**
-   * A commit of the store's changes on the last commit imported (`imported`, where the repository still
-   * has it); none where nothing differs. With no such commit every ticket is exported: one with no change
-   * since it was last synced at the clocks it had then, so that a store whose ref is gone (a new clone, a
-   * pruned ref) doesn't outrank what the remote has changed since.
+   * A commit of the store's changes on `base`, what the store last agreed with; none where nothing
+   * differs. With `rescan`, the base is older than that, so every ticket is compared with it. With no
+   * base every ticket is exported: one with no change since it was last synced at the clocks it had then,
+   * so that it doesn't outrank what another engine has changed since.
    */
   const exportLocal = ({
     state,
-    imported,
+    base,
+    rescan,
     listing,
   }: {
     readonly state: SyncState
-    readonly imported: Option.Option<CommitHash>
+    readonly base: Option.Option<CommitHash>
+    readonly rescan: boolean
     readonly listing: Listing
   }) =>
     Effect.gen(function* () {
-      const first = Option.isNone(imported)
+      const first = Option.isNone(base)
+      const whole = first || rescan
       const since = yield* local.changedSince(state.exportedSeq)
       const named: ReadonlyArray<TicketId> = since.ids
       const changedIds = new Set<string>(named)
-      if (!first && !since.deleted && named.length === 0) return Option.none()
+      if (!whole && !since.deleted && named.length === 0) return Option.none()
       const ids =
-        first || since.deleted
+        whole || since.deleted
           ? [...new Set([...(yield* local.allIds), ...named])]
           : named
       const tickets = yield* local.readTickets(ids)
@@ -509,7 +525,7 @@ export const makeTicketsSync = Effect.fn('TicketsSync.make')(function* ({
           recent &&
           !live.has(id) &&
           !listing.has(path) &&
-          (first || namedSet.has(id))
+          (whole || namedSet.has(id))
         ) {
           const text = yield* encodeTombstone(
             new Tombstone({ id, clock }),
@@ -548,7 +564,7 @@ export const makeTicketsSync = Effect.fn('TicketsSync.make')(function* ({
       const changed = files.length + graves.length
       const commit = yield* store.commitTree({
         tree,
-        parents: Option.toArray(imported),
+        parents: Option.toArray(base),
         message: `tickets: ${changed} changed (${engine})`,
         engine,
       })
@@ -1055,23 +1071,57 @@ export const makeTicketsSync = Effect.fn('TicketsSync.make')(function* ({
       return { to: merge, merge: Option.some(merge) }
     })
 
+  /**
+   * What the store's changes are compared with and committed on: the last commit imported. Where the
+   * repository no longer has it (a new clone, a pruned ref) it is fetched back from the remotes, so that
+   * the merge has its base; failing that the last commit the remote is known to hold, which is
+   * older, so every ticket is compared with it. With neither, no remote left to ask, the commit is forgotten and there is no base;
+   * with a remote that didn't answer, the cycle waits.
+   */
+  const baseOf = (state: SyncState) =>
+    Effect.gen(function* () {
+      const here = (commit: Option.Option<CommitHash>) =>
+        Option.match(commit, {
+          onNone: () => Effect.succeed(false),
+          onSome: store.hasCommit,
+        })
+      const none = Option.none<CommitHash>()
+      if (Option.isNone(state.lastImported))
+        return { base: none, rescan: false }
+      if (yield* here(state.lastImported))
+        return { base: state.lastImported, rescan: false }
+      let unreachable = Option.none<string>()
+      for (const remote of yield* store.remotes) {
+        const fetched = yield* store.fetch(remote)
+        if (fetched._tag === 'Unreachable')
+          unreachable = Option.some(fetched.message)
+        if (yield* here(state.lastImported))
+          return { base: state.lastImported, rescan: false }
+      }
+      if (yield* here(state.lastPushed))
+        return { base: state.lastPushed, rescan: true }
+      if (Option.isSome(unreachable))
+        return yield* new BaseUnreachable({ reason: unreachable.value })
+      yield* local.forgetImported
+      return { base: none, rescan: false }
+    })
+
   /** One cycle over the store and the local ref; none when it is to run again. */
   const settleOnce = Effect.gen(function* () {
     const state = yield* local.readState
     const seq = yield* local.lastSeq
     const head = yield* store.head
-    const imported = yield* Option.match(state.lastImported, {
-      onNone: () => Effect.succeed(Option.none<CommitHash>()),
-      onSome: commit =>
-        Effect.map(store.hasCommit(commit), has =>
-          has ? Option.some(commit) : Option.none<CommitHash>(),
-        ),
-    })
+    const { base: imported, rescan } = yield* baseOf(state)
     const listing = yield* Option.match(imported, {
       onNone: () => Effect.succeed<Listing>(new Map()),
       onSome: store.list,
     })
-    const made = yield* exportLocal({ state, imported, listing })
+    const made = yield* exportLocal({
+      state,
+      base: imported,
+      rescan,
+      listing,
+    })
     const ours = Option.isSome(made) ? Option.some(made.value.commit) : imported
     if (sameCommit(ours, head)) {
       if (seq !== state.exportedSeq) yield* local.recordSeen(seq)
@@ -1174,6 +1224,7 @@ export const makeTicketsSync = Effect.fn('TicketsSync.make')(function* ({
         Fetched: ({ commit: remoteHead }) =>
           Effect.gen(function* () {
             yield* mergeFetched(remoteHead)
+            yield* local.setPushed(remoteHead)
             const { imported } = yield* settle
             return Pulled.Merged({ imported })
           }),

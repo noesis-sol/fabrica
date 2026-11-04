@@ -55,6 +55,7 @@ const decodeClocks = Schema.decodeUnknownOption(Schema.fromJsonString(Clocks))
 /** The tickets ref's sync state. */
 export interface SyncState {
   readonly engine: EngineId
+  /** The last commit pushed, or fetched: the last the remote is known to hold. */
   readonly lastPushed: Option.Option<CommitHash>
   readonly lastImported: Option.Option<CommitHash>
   /** The last event whose ticket has been compared with the ref. */
@@ -431,6 +432,12 @@ export const makeLocal = Effect.fn('TicketsLocal.make')(function* (
         }),
       ),
     ).pipe(Effect.asVoid)
+
+  /** Forgets the last commit imported: neither the repository nor a remote has it any more. */
+  const forgetImported = storeError(
+    'forgetting the last import',
+    sql`UPDATE tickets_sync SET last_imported = NULL`,
+  ).pipe(Effect.asVoid)
 
   /** Marks the events up to `seq` as compared with the ref: none of their tickets differed from it. */
   const recordSeen = (seq: number) =>
@@ -819,6 +826,7 @@ export const makeLocal = Effect.fn('TicketsLocal.make')(function* (
     readTickets,
     recordExport,
     recordSeen,
+    forgetImported,
     keepPending,
     dropPending,
     pendingCommits,

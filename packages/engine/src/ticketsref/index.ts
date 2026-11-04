@@ -13,6 +13,7 @@ export {
   trackingRef,
 } from './store'
 export {
+  BaseUnreachable,
   ExportBlocked,
   NoTicketsRef,
   Pulled,
