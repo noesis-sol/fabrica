@@ -397,8 +397,11 @@ const engine = EngineId.make('engine-1')
 const maintainer: Actor = { _tag: 'maintainer' }
 const run = RunId.make('run-1')
 
-/** The provider's answer to a probe: it takes the key, or refuses it. */
-type Answer = 'takes' | 'refuses'
+/** The provider's answer to a call: it takes the key, refuses it, or streams `body`. */
+type Answer =
+  | 'takes'
+  | 'refuses'
+  | { readonly contentType: string; readonly body: string }
 
 /** A loopback Anthropic answering every call as `answer` says. */
 const fakeProvider = (answer: Answer) =>
@@ -408,11 +411,11 @@ const fakeProvider = (answer: Answer) =>
         const server = createServer((request, response) => {
           request.resume()
           request.on('end', () => {
-            if (answer === 'takes') {
-              response.writeHead(200, {
-                'content-type': anthropicAnswer.contentType,
-              })
-              response.end(anthropicAnswer.body)
+            if (answer === 'takes' || typeof answer === 'object') {
+              const { contentType, body } =
+                answer === 'takes' ? anthropicAnswer : answer
+              response.writeHead(200, { 'content-type': contentType })
+              response.end(body)
             } else {
               response.writeHead(401, { 'content-type': 'application/json' })
               response.end(anthropicBadKey)
@@ -587,7 +590,7 @@ export const ofKind = <K extends RunEvent['kind']>(
 
 /**
  * Runs `body` on every service a run runs on, its runs sharing one work graph, as one engine's runs of
- * the project do; the provider answers every call.
+ * the project do; the provider answers every call, as `answer` says.
  */
 export const withRuns = <
   A,
@@ -596,9 +599,10 @@ export const withRuns = <
 >(
   fixture: Project,
   body: Effect.Effect<A, E, R>,
+  answer: Answer = 'takes',
 ) =>
   Effect.gen(function* () {
-    const provider = yield* fakeProvider('takes')
+    const provider = yield* fakeProvider(answer)
     return yield* body.pipe(Effect.provide(services(fixture, provider.url)))
   }).pipe(Effect.scoped)
 

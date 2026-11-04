@@ -19,6 +19,8 @@ export type WakeReason = Data.TaggedEnum<{
   Requeued: { readonly ticket: TicketId }
   /** A ticket's turn in the merge queue ended: Base may have moved. */
   MergeEnded: { readonly ticket: TicketId }
+  /** Triage's verdict on a set-aside ticket came or was lost: the run may have waited for it (§16). */
+  Triaged: { readonly ticket: TicketId }
   /** The work graph changed by another's hand than the run's. */
   TicketsChanged: {}
   /** The holds changed to `holds` (§14): one was raised or lifted, and the tickets a probe freed are back in the queue. */
@@ -44,6 +46,7 @@ export const readsReady = (reasons: ReadonlyArray<WakeReason>): boolean =>
       Settled: () => false,
       Requeued: () => true,
       MergeEnded: () => true,
+      Triaged: () => false,
       TicketsChanged: () => true,
       HoldsChanged: () => true,
       Drain: () => false,

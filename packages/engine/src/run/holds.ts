@@ -205,10 +205,12 @@ export const makeEnvironmentHold = Effect.fn('EnvironmentHold.make')(
       settled: settle =>
         Effect.gen(function* () {
           const on = anyOn(yield* holds.current, 'ENVIRONMENT')
-          // While it holds, a ticket idle or failing its setup waits for the probe too, and nothing is counted.
+          // While it holds, a ticket idle, failing its setup or one triage blames the environment for waits
+          // for the probe too, and nothing is counted.
           if (on)
             return yield* Settle.$is('Idle')(settle) ||
-            Settle.$is('SetupFailed')(settle)
+            Settle.$is('SetupFailed')(settle) ||
+            Settle.$is('Verdict')(settle)
               ? input.reopen([settle.ticket])
               : Effect.void
           const trip = yield* Ref.modify(count, current => {

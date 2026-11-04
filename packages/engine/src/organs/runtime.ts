@@ -248,7 +248,7 @@ const forced = (
 }
 
 /** Why a question lost its answer, in a line. */
-const reasonOf = (cause: Cause.Cause<unknown>): string => {
+export const reasonOf = (cause: Cause.Cause<unknown>): string => {
   const error = Cause.squash(cause)
   return error instanceof Error ? error.message : String(error)
 }

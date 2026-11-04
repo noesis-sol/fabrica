@@ -46,6 +46,7 @@ import {
 import { Checks } from '../checks'
 import { Attention } from '../control/ports'
 import {
+  type Billing,
   type CostAccount,
   countProxyCalls,
   makeCostAccount,
@@ -77,7 +78,12 @@ import {
   HandBackWorker,
   type HandBackWorkerShape,
 } from '../merge/handbacks'
-import { makeOrganRuntime, makePredictor } from '../organs'
+import {
+  type TriageShape,
+  makeOrganRuntime,
+  makePredictor,
+  makeTriage,
+} from '../organs'
 import { onPanic } from '../panic'
 import { basePushes, pushSetting } from '../projects/base-sync'
 import { ModelProxy, Permits } from '../proxy'
@@ -463,10 +469,11 @@ const runStarted = Effect.fn('Run.started')(function* (
 
   // The run's cost account (§14.4): every call the model proxy counts to the run, from before any
   // session is granted a token. Every route the proxy reaches is paid for with an API key.
+  const billing = (): Billing => 'api_key'
   const cost = yield* makeCostAccount({
     project: config.project,
     run,
-    billing: () => 'api_key',
+    billing,
   })
   yield* countProxyCalls(cost)
   // The run's hand-backs, as the merge queue gives them (§13.7).
@@ -737,7 +744,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     settings: project,
     log: Option.some(log),
     holds: Option.some({ usage, credentials, held }),
-    billing: () => 'api_key',
+    billing,
   })
   // The predictor's guess at a ticket naming no files (§16): a question's end wakes the run, which reads
   // the ready tickets again, the guess among them.
@@ -754,6 +761,26 @@ const runStarted = Effect.fn('Run.started')(function* (
     detail: string,
     ticket = Option.none<TicketId>(),
   ) => wakes.wake(WakeReason.Stopped({ kind, ticket, detail }))
+
+  // Triage reads each ticket set aside, one after another (§16); its calls wait out the holds a worker's do.
+  const triage = yield* makeTriage({
+    organs,
+    graph,
+    log,
+    holds,
+    environment,
+    transcript: ticket =>
+      view.workers.watchTranscript(ticket, Option.none()).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.succeedNone,
+            onSome: Stream.runHead,
+          }),
+        ),
+      ),
+    git: ticket => ticketGit(ticket),
+    answered: ticket => wakes.wake(WakeReason.Triaged({ ticket })),
+  })
 
   // The run's questions answered for the maintainer where its settings say so (§15.2).
   const autoAnswers = yield* makeAutoAnswers({
@@ -898,7 +925,10 @@ const runStarted = Effect.fn('Run.started')(function* (
           graph.defer({ id: ticket, until: Option.none(), actor }),
         ),
       ),
-      asideInRun(ticket, reason, note),
+      Effect.andThen(
+        asideInRun(ticket, reason, note),
+        triage.setAside({ ticket, reason, detail: note }),
+      ),
     )
 
   /**
@@ -1089,12 +1119,12 @@ const runStarted = Effect.fn('Run.started')(function* (
     yield* setupsRetried(`${cause}: its setup runs again`)
   })
 
-  /** Whether the ticket's branch or worktree has changes; one that can't tell is taken as changed. */
-  const hasChanges = (ticket: TicketId) =>
+  /** What git has of the ticket: its branch's changes and, where its worktree is kept, what isn't committed. */
+  const ticketGit = (ticket: TicketId) =>
     Effect.gen(function* () {
       const listed = yield* worktrees.list({ home: config.home })
       const kept = listed.find(entry => entry.ticket === ticket)
-      const [branch, status] = yield* Effect.all(
+      const [changed, status] = yield* Effect.all(
         [
           git.changedFiles({
             repo: config.checkout,
@@ -1107,10 +1137,18 @@ const runStarted = Effect.fn('Run.started')(function* (
         ],
         { concurrency: 2 },
       )
-      return (
-        branch.length > 0 || Option.exists(status, found => !isClean(found))
-      )
-    }).pipe(Effect.orElseSucceed(() => true))
+      return { branch: ticketBranch(ticket), changed, status }
+    })
+
+  /** Whether the ticket's branch or worktree has changes; one that can't tell is taken as changed. */
+  const hasChanges = (ticket: TicketId) =>
+    ticketGit(ticket).pipe(
+      Effect.map(
+        ({ changed, status }) =>
+          changed.length > 0 || Option.exists(status, found => !isClean(found)),
+      ),
+      Effect.orElseSucceed(() => true),
+    )
 
   /** Counts the ticket's turn, ended as `end`, for the environment hold (§14.1). */
   const countedFor = (ticket: TicketId, end: WorkerEnd) =>
@@ -1203,6 +1241,11 @@ const runStarted = Effect.fn('Run.started')(function* (
                 text: `${ticket} set aside: ${reason}`,
               }),
               ...(yield* spentBy(ticket)),
+            })
+            yield* triage.setAside({
+              ticket,
+              reason: 'DEFERRED',
+              detail: reason,
             })
           }),
         WaitsFor: ({ ticket: other, needs }) =>
@@ -1646,6 +1689,7 @@ const runStarted = Effect.fn('Run.started')(function* (
                 }),
                 ...(yield* spentBy(ticket)),
               })
+              yield* triage.setAside({ ticket, reason, detail })
             }),
           ),
         // Nothing merges without a merge check (H62): the ticket is left for a run that has one.
@@ -2081,6 +2125,8 @@ const runStarted = Effect.fn('Run.started')(function* (
         return Option.none<Ending>()
       // So does a guess on its way: the ticket waiting for it is to come (§16).
       if ((yield* predictor.asking) && !draining) return Option.none<Ending>()
+      // So does a verdict triage owes, unless it drains: two can raise the environment hold (§16).
+      if ((yield* triage.awaited) && !draining) return Option.none<Ending>()
       const limitReached = Option.exists(
         limit,
         most => after.dispatched >= most,
@@ -2190,6 +2236,7 @@ const runStarted = Effect.fn('Run.started')(function* (
       log,
       cost,
       autoAnswers,
+      triage,
       afterFullCheck: pushes.after_run,
     })
   // A defect in the end goes through the end again as what it is: the steps it had taken are done, and
@@ -2225,6 +2272,7 @@ const endRun = Effect.fn('Run.end')(function* (input: {
   readonly log: RunLog['Service']
   readonly cost: CostAccount
   readonly autoAnswers: AutoAnswers
+  readonly triage: Pick<TriageShape, 'stop'>
   /** What follows the full check's pass: `push: after_run` pushes Base (§10.3). */
   readonly afterFullCheck: Effect.Effect<void>
 }) {
@@ -2234,6 +2282,7 @@ const endRun = Effect.fn('Run.end')(function* (input: {
   yield* input.supervision.stop
   yield* FiberSet.clear(input.workers)
   yield* Scope.close(input.mergeScope, Exit.void)
+  yield* input.triage.stop
   const left = yield* state.current
   yield* Effect.forEach(
     inProgress(left),
