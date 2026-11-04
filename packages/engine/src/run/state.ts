@@ -56,6 +56,32 @@ export const slotsTaken = (snapshot: RunSnapshot, concurrent: number): number =>
     concurrent,
   )
 
+/** Whether one more new dispatch, after `dispatched`, would pass `limit`. */
+const passesLimit = (
+  dispatched: number,
+  limit: Option.Option<number>,
+): boolean => Option.exists(limit, most => dispatched + 1 > most)
+
+/**
+ * Those of `items` a dispatch wouldn't refuse for passing `limit`, each taken in turn: a ticket with a
+ * dispatch number of its own keeps it, and passes no limit.
+ */
+export const withinLimit = <A>(input: {
+  readonly snapshot: RunSnapshot
+  readonly limit: Option.Option<number>
+  readonly items: ReadonlyArray<A>
+  readonly ticketOf: (item: A) => TicketId
+}): ReadonlyArray<A> => {
+  let dispatched = input.snapshot.dispatched
+  return input.items.filter(item => {
+    const taken = input.snapshot.tickets.get(input.ticketOf(item))
+    if (taken !== undefined && Option.isSome(taken.n)) return true
+    if (passesLimit(dispatched, input.limit)) return false
+    dispatched += 1
+    return true
+  })
+}
+
 /** Whether a ticket in `phase` is in progress: its part in the run can't end there (working, merging, …). */
 const inProgressIn = (phase: Phase): boolean =>
   Option.isNone(factsOf(phase).ends)
@@ -230,7 +256,7 @@ export const makeRunState = Effect.fn('RunState.make')(function* (
         const busy = Option.exists(before, ({ phase }) => inProgressIn(phase))
         const n = Option.getOrElse(earlier, () => current.dispatched + 1)
         const past =
-          Option.isNone(earlier) && Option.exists(input.limit, most => n > most)
+          Option.isNone(earlier) && passesLimit(current.dispatched, input.limit)
         if (current.ending || busy || past)
           return [Option.none<number>(), current] as const
         const after: TicketState = {

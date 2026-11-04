@@ -162,6 +162,7 @@ import {
   inProgress,
   makeRunState,
   slotsTaken,
+  withinLimit,
 } from './state'
 import { makeSupervision, toolFollowUp } from './supervisor'
 import {
@@ -2093,21 +2094,26 @@ const runStarted = Effect.fn('Run.started')(function* (
       // Whatever woke this look, a merge the run didn't make may have changed the list (§17).
       yield* requirements.baseMoved
       const gate = yield* requirements.gate
+      // The gate says what the run would take in its own slots; the budget, what it may (§7.3).
       const room =
         MayTake.$is('Yes')(may) && RequirementsGate.$is('Clear')(gate)
           ? project.concurrent - slotsTaken(before, project.concurrent)
           : 0
-      const free = yield* machine.free({
-        room,
-        wanted: candidates.length > 0,
-      })
+      const free = Math.min(room, yield* machine.left)
       const gated = yield* footprints.gate({
         ready: candidates,
         snapshot: before,
-        free,
+        free: room,
         guessing: waiting => predictor.offer({ ready: waiting, free }),
       })
-      yield* keepHeld(candidates, gated)
+      const wanted = withinLimit({
+        snapshot: before,
+        limit,
+        items: gated.take,
+        ticketOf: ({ ticket }) => ticket.id,
+      })
+      const claimed = wanted.slice(0, yield* machine.claim(wanted.length))
+      yield* keepHeld(candidates, { ...gated, take: claimed })
       const solo = new Set([
         ...gated.take
           .filter(taken => taken.solo)
@@ -2116,8 +2122,7 @@ const runStarted = Effect.fn('Run.started')(function* (
       ])
       yield* view.seen(candidates, ticket => solo.has(ticket.id))
       const dispatched = new Set<TicketId>()
-      const granted = yield* machine.claim(gated.take.length)
-      for (const taken of gated.take.slice(0, granted)) {
+      for (const taken of claimed) {
         const n = yield* state.dispatch({
           ticket: taken.ticket.id,
           title: taken.ticket.title,
@@ -2135,12 +2140,7 @@ const runStarted = Effect.fn('Run.started')(function* (
       }
       // Dispatched tickets leave the ready set the look keeps: they are the run's now.
       ready = ready.filter(ticket => !dispatched.has(ticket.id))
-      // Those it took may have reached the budget with a slot still free and a ticket left: it holds, so
-      // that a worker's end, in any run, wakes it (§14.3).
-      yield* machine.free({
-        room: room - dispatched.size,
-        wanted: candidates.length > dispatched.size,
-      })
+      yield* machine.settle(claimed.length < wanted.length)
       const after = yield* state.current
       if (inProgress(after).length > 0 || workersEnding.size > 0)
         return Option.none<Ending>()

@@ -3,10 +3,11 @@ import { Effect, Stream } from 'effect'
 import { MachineBudget } from '../engine/budget'
 import { type HoldsShape, type HoldsSnapshot, anyOn } from '../holds'
 
-// The run's side of the machine budget (spec §7.3, §14, §14.3): `HOLD: MACHINE` while a run with a free
-// slot and a ticket to take finds the engine's live workers at `machine_workers`, lifted as one ends. It
-// has side effects, so it runs apart from the question whether the run may take work. The slots a look
-// fills are claimed from the budget atomically, as another run's look may want the last one.
+// The run's side of the machine budget (spec §7.3, §14, §14.3): `HOLD: MACHINE` while a run with a ticket
+// it would take finds the engine's live workers at `machine_workers`, lifted as one ends; a run with none
+// (at its limit, or with every ticket held back) doesn't wait on the machine, and ends as it would. It has
+// side effects, so it runs apart from the question whether the run may take work. The slots a look fills
+// are claimed from the budget atomically, as another run's look may want the last one.
 
 /** The holds the question whether the run may take work reads: the machine's is decided apart. */
 export const apartFromMachine = (holds: HoldsSnapshot): HoldsSnapshot => ({
@@ -44,38 +45,18 @@ export const makeRunMachine = Effect.fn('RunMachine.make')(function* (input: {
     if (!(yield* budget.holds)) yield* lift
   })
   return {
-    /**
-     * The slots a look may fill, of the `room` the run has: none while the budget is reached, which
-     * holds a run that wants one; a run with no room or nothing to take doesn't wait on the machine.
-     */
-    free: ({
-      room,
-      wanted,
-    }: {
-      readonly room: number
-      readonly wanted: boolean
-    }) =>
-      Effect.gen(function* () {
-        if (room <= 0 || !wanted) {
-          yield* lift
-          return 0
-        }
-        const left = yield* budget.left
-        if (left <= 0) {
-          yield* hold
-          return 0
-        }
-        yield* lift
-        return Math.min(room, left)
-      }),
-    /** Claims `wanted` slots: those another run's look took since aren't given, and the run holds for them. */
-    claim: (wanted: number) =>
-      Effect.tap(seat.claim(wanted), granted =>
-        granted < wanted ? hold : Effect.void,
-      ),
+    /** The workers the budget allows beyond those live, for what is weighed before the slots are claimed. */
+    left: budget.left,
+    /** Claims as many of the `wanted` slots a look would fill as the budget leaves: another run's look may want the last one. */
+    claim: seat.claim,
     release: seat.release,
+    /**
+     * The look's slots are filled, `short` of what it would have taken for the budget: it holds, so that
+     * a worker's end in any run wakes it, and otherwise doesn't wait on the machine.
+     */
+    settle: (short: boolean) => (short ? hold : lift),
     moved: seat.moved,
-    /** Lifts the hold each time the live workers fall below the budget; runs for the run's life. */
+    /** Lifts the hold each time the live workers are counted below the budget; runs for the run's life. */
     watch: Stream.runForEach(budget.changes, () =>
       Effect.flatMap(budget.holds, reached => (reached ? Effect.void : lift)),
     ),

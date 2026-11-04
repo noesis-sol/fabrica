@@ -165,8 +165,7 @@ describe('the budget', () => {
         expect(yield* Queue.take(seen)).toBe(0)
         yield* Effect.scoped(
           Effect.gen(function* () {
-            const seat = yield* budget.join(Effect.succeed(3))
-            yield* seat.moved
+            yield* budget.join(Effect.succeed(3))
             expect(yield* Queue.take(seen)).toBe(3)
           }),
         )
@@ -234,7 +233,7 @@ describe('the holds', () => {
     ),
   )
 
-  it.effect('hold a run that wants a slot, and no other', () =>
+  it.effect('hold a run short of what it would take, and no other', () =>
     Effect.scoped(
       Effect.gen(function* () {
         const budget = yield* budgetOn(2)
@@ -251,22 +250,24 @@ describe('the holds', () => {
           on.map(({ hold }) => hold),
         )
 
-        expect(yield* machine.free({ room: 2, wanted: false })).toBe(0)
+        // Nothing it would take: it doesn't wait on the machine.
+        expect(yield* machine.claim(0)).toBe(0)
+        yield* machine.settle(false)
         expect(yield* on).toEqual([])
-        expect(yield* machine.free({ room: 0, wanted: true })).toBe(0)
-        expect(yield* on).toEqual([])
-        expect(yield* machine.free({ room: 2, wanted: true })).toBe(0)
+
+        expect(yield* machine.claim(1)).toBe(0)
+        yield* machine.settle(true)
         expect(yield* on).toEqual(['MACHINE'])
 
         // Lifted with room, by the look or as the budget's change is watched.
         yield* Ref.set(taken, 1)
-        expect(yield* machine.free({ room: 2, wanted: true })).toBe(1)
+        expect(yield* machine.left).toBe(1)
+        yield* machine.settle(false)
         expect(yield* on).toEqual([])
 
-        // Another run's look took it since: the run holds for what it couldn't claim.
-        yield* Ref.set(taken, 2)
-        expect(yield* machine.claim(1)).toBe(0)
-        expect(yield* on).toEqual(['MACHINE'])
+        // A worker ended before its raise: it doesn't hold for it.
+        yield* machine.settle(true)
+        expect(yield* on).toEqual([])
       }).pipe(Effect.provide(aLog())),
     ),
   )
@@ -295,26 +296,23 @@ describe("a look's word on the hold", () => {
         yield* machine.watch.pipe(Effect.forkScoped)
         yield* Effect.yieldNow
         // Each publication wakes the run, whose look says this again: a word that changes nothing would spin it.
-        const look = Effect.andThen(
-          machine.free({ room: 1, wanted: true }),
-          Effect.yieldNow,
-        )
+        const look = (short: boolean) =>
+          Effect.andThen(machine.settle(short), Effect.yieldNow)
         const settled = Effect.andThen(Effect.yieldNow, Ref.get(published))
         const atStart = yield* settled
 
-        yield* look
-        yield* look
-        yield* machine.free({ room: 0, wanted: true })
+        yield* look(false)
+        yield* look(false)
         expect(yield* settled).toBe(atStart)
 
         yield* Ref.set(taken, 2)
-        yield* look
-        yield* look
+        yield* look(true)
+        yield* look(true)
         expect(yield* settled).toBe(atStart + 1)
 
         yield* Ref.set(taken, 1)
-        yield* look
-        yield* look
+        yield* look(false)
+        yield* look(false)
         expect(yield* settled).toBe(atStart + 2)
       }).pipe(Effect.provide(aLog())),
     ),
@@ -505,12 +503,16 @@ const noFlags: RunFlags = {
   preflight: Option.none(),
 }
 
-/** Starts the project's run: `until` takes its records up to one `found` matches, keeping them; `ended` waits for its end. */
-const startRun = Effect.fn(function* (client: Client, project: ProjectId) {
+/** Starts the project's run: `until` takes its records up to one `found` matches, `seen` is every record so far, `ended` waits for its end. */
+const startRun = Effect.fn(function* (
+  client: Client,
+  project: ProjectId,
+  flags: RunFlags = noFlags,
+) {
   const { run } = yield* client['run.start']({
     project,
     mode: RunMode.cases.tickets.make({}),
-    flags: noFlags,
+    flags,
   })
   const queue = yield* Queue.unbounded<RunEvent>()
   const seen = yield* Ref.make<ReadonlyArray<RunEvent>>([])
@@ -520,7 +522,12 @@ const startRun = Effect.fn(function* (client: Client, project: ProjectId) {
     resume: Option.none(),
   }).pipe(
     Stream.flatMap(item => Stream.fromIterable(item.value)),
-    Stream.runForEach(event => Queue.offer(queue, event)),
+    Stream.runForEach(event =>
+      Effect.andThen(
+        Ref.update(seen, all => [...all, event]),
+        Queue.offer(queue, event),
+      ),
+    ),
     Effect.forkScoped,
   )
   const until = Effect.fn(function* (
@@ -528,9 +535,7 @@ const startRun = Effect.fn(function* (client: Client, project: ProjectId) {
     found: (event: RunEvent) => boolean,
   ) {
     for (let left = count; left > 0;) {
-      const event = yield* Queue.take(queue)
-      yield* Ref.update(seen, all => [...all, event])
-      if (found(event)) left -= 1
+      if (found(yield* Queue.take(queue))) left -= 1
     }
   })
   return { until, seen: Ref.get(seen), ended: Fiber.join(fiber) }
@@ -606,6 +611,42 @@ describe('a run on the engine', () => {
 
       yield* client['run.stop']({ project: wanting })
       yield* wantingRun.ended
+    }),
+  )
+
+  it.live('ends at its limit, while another run has the budget', () =>
+    Effect.gen(function* () {
+      const client = yield* newEngine(2)
+      const busy = yield* addProject(client, 'busy', {
+        ...scriptedSettings,
+        concurrent: 2,
+      })
+      yield* file(client, busy, 'First', 'hang')
+      yield* file(client, busy, 'Second', 'hang')
+      const limited = yield* addProject(client, 'limited', scriptedSettings)
+      const folder = yield* Effect.promise(() =>
+        mkdtemp(NodePath.join(places.root, 'g')),
+      )
+      const go = NodePath.join(folder, 'go')
+      yield* file(client, limited, 'Third', `wait ${go}`)
+      yield* file(client, limited, 'Fourth', `wait ${go}`)
+
+      // Its worker's end gives the other run the budget's last slot, and it has only a ticket past its limit.
+      const limitedRun = yield* startRun(client, limited, {
+        ...noFlags,
+        limit: Option.some(1),
+      })
+      yield* limitedRun.until(1, isDispatch)
+      const busyRun = yield* startRun(client, busy)
+      yield* busyRun.until(1, isDispatch)
+      writeFileSync(go, '')
+      yield* busyRun.until(1, isDispatch)
+      yield* limitedRun.ended
+      expect((yield* limitedRun.seen).filter(isDispatch)).toHaveLength(1)
+      expect((yield* limitedRun.seen).filter(isMachineHold)).toEqual([])
+
+      yield* client['run.stop']({ project: busy })
+      yield* busyRun.ended
     }),
   )
 

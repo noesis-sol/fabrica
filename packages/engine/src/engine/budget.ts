@@ -54,7 +54,7 @@ export interface MachineBudgetShape {
   readonly left: Effect.Effect<number>
   /** Whether the budget is reached: `HOLD: MACHINE` for a run with a free slot. */
   readonly holds: Effect.Effect<boolean>
-  /** The live workers now, then each change. */
+  /** The live workers now, then each time they are counted: a hold raised on a claim since over is lifted by the next. */
   readonly changes: Stream.Stream<number>
   /** The share of a worker counted already; `given` where the engine hosts no budget. */
   readonly shareOf: (given: number) => Effect.Effect<number>
@@ -167,7 +167,7 @@ export const makeMachineBudget = Effect.fn('MachineBudget.make')(function* (
       }),
     left,
     holds: Effect.map(left, room => room <= 0),
-    changes: SubscriptionRef.changes(published).pipe(Stream.changes),
+    changes: SubscriptionRef.changes(published),
     shareOf: () => share,
     counted: (_given, use) =>
       Effect.acquireUseRelease(
