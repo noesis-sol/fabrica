@@ -698,6 +698,43 @@ describe('a merge that changes the list on Base', () => {
     WHOLE_RUNS,
   )
 
+  it.effect(
+    'takes such a list in a look only a worker’s settling woke, before that look’s dispatch',
+    () => {
+      const fixture = project({ ...settings, concurrent: 1 })
+      return withRuns(
+        fixture,
+        Effect.gen(function* () {
+          const first = yield* file('First', 'nothing', { priority: 0 })
+          const second = yield* file('Second', 'hang', { priority: 4 })
+          const { control, records, running } = yield* startRun(fixture)
+          yield* until(records, isDispatchOf(first.id))
+          commit(fixture.checkout, 'a new tool', {
+            '.fabrica/settings.json': JSON.stringify({
+              ...settings,
+              concurrent: 1,
+              requires: [
+                {
+                  name: 'tool',
+                  check: hasMarker('tool'),
+                  install: 'touch tool',
+                },
+              ],
+            }),
+          })
+          yield* until(records, isDispatchOf(second.id))
+          expect(existsSync(join(fixture.checkout, 'tool'))).toBe(true)
+          yield* control.stop
+          expect(yield* Fiber.join(running)).toEqual({
+            kind: 'INTERRUPTED',
+            code: 130,
+          })
+        }),
+      )
+    },
+    WHOLE_RUNS,
+  )
+
   it.effect('runs none of a list a branch changed until it merges', () => {
     const fixture = project({ ...settings, concurrent: 1 })
     const go = `${fixture.data}-go`

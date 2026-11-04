@@ -781,6 +781,7 @@ const runStarted = Effect.fn('Run.started')(function* (
   const requirements = yield* makeRequirementsWatch({
     list: started.requirements,
     base: started.base,
+    baseCommit: started.baseCommit,
     run: {
       checkout: config.checkout,
       installLimit: project.check_timeout,
@@ -1511,7 +1512,7 @@ const runStarted = Effect.fn('Run.started')(function* (
           ended(
             Effect.gen(function* () {
               // Before the ticket leaves its slot: no look ends the run, or starts one, on the old list.
-              yield* requirements.merged
+              yield* requirements.baseMoved
               yield* sessions.drop(ticket)
               yield* state.move({
                 ticket,
@@ -1709,8 +1710,6 @@ const runStarted = Effect.fn('Run.started')(function* (
       .pipe(Effect.orElseSucceed(() => Option.none<CommitHash>()))
     if (Option.isNone(now) || now.value === baseSeen) return
     baseSeen = now.value
-    // Whoever moved it, a merge the run didn't make may have changed the list too (§17).
-    yield* requirements.merged
     const snapshot = yield* state.current
     const saved = (yield* sessions.all).filter(entry =>
       outOfHand(snapshot, entry.ticket),
@@ -1945,6 +1944,8 @@ const runStarted = Effect.fn('Run.started')(function* (
       const held = yield* holds.current
       const draining = yield* control.draining
       const may = mayTake({ holds: held, draining })
+      // Whatever woke this look, a merge the run didn't make may have changed the list (§17).
+      yield* requirements.baseMoved
       const gate = yield* requirements.gate
       const gated = yield* footprints.gate({
         ready: candidates,

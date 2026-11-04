@@ -1,8 +1,8 @@
 import { Data, type Duration, Effect, Option, Ref, Semaphore } from 'effect'
 
-import type { Requirement } from '@fabrica/contracts'
+import type { CommitHash, Requirement } from '@fabrica/contracts'
 
-import type { Git } from '../git'
+import { Git } from '../git'
 import type { ProcessRunner } from '../process'
 import {
   RequirementsList,
@@ -17,7 +17,7 @@ import type { Steps } from '../view/steps'
 import { record } from './records'
 
 // The requires list in a run (spec §17): checked as a start check before the first ticket and any worker
-// carried over, and again once a merge changed the list on Base, before the next ticket starts. What is
+// carried over, and again once a merge, the run's or anyone's, changed the list on Base, before the next ticket starts. What is
 // still missing stops the run `REQUIREMENTS_MISSING`, exit 2, with one list, each with its instruction: at
 // the start at once, after a merge once the running tickets finish. Only Base's list runs, read from
 // Base's commit (§12.6): a branch's entry is its worker's until it merges.
@@ -86,6 +86,8 @@ export const makeRequirementsWatch = Effect.fn('Run.requirementsWatch')(
   function* (input: {
     readonly list: ReadonlyArray<Requirement>
     readonly base: string
+    /** Base's commit that `list` was read from. */
+    readonly baseCommit: CommitHash
     readonly run: RequirementsInput
     readonly wake: Effect.Effect<void>
     readonly fork: (check: Effect.Effect<void>) => Effect.Effect<unknown>
@@ -98,6 +100,7 @@ export const makeRequirementsWatch = Effect.fn('Run.requirementsWatch')(
       gate: RequirementsGate.Clear(),
     })
     const reading = yield* Semaphore.make(1)
+    let seen = input.baseCommit
     const checking = yield* Semaphore.make(1)
 
     const checkTurn = (list: ReadonlyArray<Requirement>, generation: number) =>
@@ -137,13 +140,24 @@ export const makeRequirementsWatch = Effect.fn('Run.requirementsWatch')(
       )
 
     return {
-      /** Takes Base's list as it is now, after a merge: where it changed, the gate closes until it is checked. */
-      merged: reading
+      /**
+       * Takes Base's list as it is now, where Base moved since the last time: where the list changed, the
+       * gate closes until it is checked. Only Base's commit is read where it didn't move, so a run asks
+       * this as each merge ends and in each look, which nothing wakes for a merge the run didn't make.
+       */
+      baseMoved: reading
         .withPermit(
           Effect.gen(function* () {
+            const git = yield* Git
+            const revision = `refs/heads/${base}`
+            const commit = yield* git
+              .commitHash({ repo: run.checkout, revision })
+              .pipe(Effect.orElseSucceed(() => Option.none<CommitHash>()))
+            if (Option.isNone(commit) || commit.value === seen) return
+            seen = commit.value
             const read = yield* requirementsAt({
               repo: run.checkout,
-              revision: `refs/heads/${base}`,
+              revision: commit.value,
             })
             if (RequirementsList.$is('Unreadable')(read)) {
               yield* record(run.log, {
