@@ -53,7 +53,8 @@ describe('verifier rounds across dispatches', () => {
         yield* Effect.gen(function* () {
           const graph = yield* WorkGraph
           const id = yield* filed('FAIL,DISAGREE,PASS')
-          yield* runProject(configOf(fixture))
+          // Its limit ends the run with the question waiting; without one, it would wait for the answer.
+          yield* runProject(configOf(fixture, Option.some(1)))
           const first = yield* readEvents({
             root: fixture.checkout,
             run: Option.some(run),

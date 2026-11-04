@@ -23,8 +23,8 @@ import {
   QuestionChoices,
   QuestionOption,
   SessionId,
-  ToolCallId,
   type TicketId,
+  ToolCallId,
 } from '@fabrica/contracts'
 import { Agent, Daemon, Talks } from '@fabrica/engine'
 import {

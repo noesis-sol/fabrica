@@ -186,9 +186,13 @@ describe('the verifier', () => {
     () =>
       Effect.gen(function* () {
         const fixture = project()
+        // Its limit ends the run with the question waiting; without one, it would wait for the answer.
         const { id, events, detail, entries } = yield* runOne(
           fixture,
           'FAIL,DISAGREE',
+          undefined,
+          undefined,
+          Option.some(1),
         )
         // No third round: the worker asked instead.
         expect(promptsOf(entries, 'verifier')).toHaveLength(2)

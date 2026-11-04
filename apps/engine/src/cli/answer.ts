@@ -1,5 +1,6 @@
 import {
   Console,
+  Data,
   DateTime,
   Effect,
   Option,
@@ -38,10 +39,10 @@ import { projectFlag, refused, withProject } from './tickets-project'
 // `--allow`, `--refuse`), which ask nothing, and reads the requests with `--json`; `--revise` changes
 // an answer already given (H53).
 
-const fromTerminal = (text: string) => text.split('\n').map(sanitiseLine)
+/** Text from an agent, as its lines, each sanitised. */
+const linesOf = (text: string) => text.split('\n').map(sanitiseLine)
 
-/** Why a command line asks for something it doesn't hold together. */
-const notTogether = (reason: string) => Effect.fail(refused(reason))
+const refuseWith = (reason: string) => Effect.fail(refused(reason))
 
 const Asked = Schema.Array(AttentionRequest)
 
@@ -65,7 +66,7 @@ const questionLines = (question: Question): ReadonlyArray<string> => [
   ...(question.maintainerOnly ? ['  Only you can answer this one.'] : []),
   ...Option.match(question.description, {
     onNone: () => [],
-    onSome: text => fromTerminal(text).map(line => `  ${line}`),
+    onSome: text => linesOf(text).map(line => `  ${line}`),
   }),
   ...(question.blocks.length === 0
     ? []
@@ -94,18 +95,18 @@ const permissionLines = (request: Permission): ReadonlyArray<string> => [
   `Permission ${sanitiseLine(request.id)} for ${sanitiseLine(request.ticket)}: ${sanitiseLine(request.tool)}`,
   `  Why it asks: ${sanitiseLine(request.why)}`,
   ...(request.shown._tag === 'command'
-    ? request.shown.lines.flatMap(fromTerminal).map(line => `  $ ${line}`)
+    ? request.shown.lines.flatMap(linesOf).map(line => `  $ ${line}`)
     : request.shown._tag === 'edit'
       ? [
           `  Edit ${sanitiseLine(request.shown.path)}:`,
-          ...fromTerminal(request.shown.diff).map(line => `  ${line}`),
+          ...linesOf(request.shown.diff).map(line => `  ${line}`),
         ]
       : request.shown._tag === 'write'
         ? [
             `  Write ${sanitiseLine(request.shown.path)}:`,
-            ...fromTerminal(request.shown.content).map(line => `  ${line}`),
+            ...linesOf(request.shown.content).map(line => `  ${line}`),
           ]
-        : fromTerminal(JSON.stringify(request.shown.input, null, 2)).map(
+        : linesOf(JSON.stringify(request.shown.input, null, 2)).map(
             line => `  ${line}`,
           )),
   '  1. Allow once',
@@ -115,29 +116,29 @@ const permissionLines = (request: Permission): ReadonlyArray<string> => [
 ]
 
 /** What a line typed for a question comes to. */
-type QuestionLine =
-  | { readonly _tag: 'pass' }
-  | { readonly _tag: 'talk' }
-  | { readonly _tag: 'again'; readonly why: string }
-  | { readonly _tag: 'answer'; readonly answer: QuestionAnswer }
+type QuestionLine = Data.TaggedEnum<{
+  Pass: {}
+  Talk: {}
+  Again: { readonly why: string }
+  Answer: { readonly answer: QuestionAnswer }
+}>
+const QuestionLine = Data.taggedEnum<QuestionLine>()
 
 const readQuestionLine = (question: Question, typed: string): QuestionLine => {
   const line = typed.trim()
-  if (line === '') return { _tag: 'pass' }
-  if (line === 't') return { _tag: 'talk' }
+  if (line === '') return QuestionLine.Pass()
+  if (line === 't') return QuestionLine.Talk()
   if (Option.isSome(question.choices) && /^\d+$/u.test(line)) {
     const index = Number(line) - 1
     return index >= 0 && index < question.choices.value.options.length
-      ? {
-          _tag: 'answer',
+      ? QuestionLine.Answer({
           answer: QuestionAnswer.cases.option.make({ index }),
-        }
-      : { _tag: 'again', why: `It has no option ${line}.` }
+        })
+      : QuestionLine.Again({ why: `It has no option ${line}.` })
   }
-  return {
-    _tag: 'answer',
+  return QuestionLine.Answer({
     answer: QuestionAnswer.cases.text.make({ text: line }),
-  }
+  })
 }
 
 /** The decision a line typed for a permission request gives, or none where it gives none. */
@@ -194,7 +195,7 @@ const askAll = (options: {
       return yield* Option.match(only, {
         onNone: () => Console.log('Nothing waits on you.'),
         onSome: id =>
-          notTogether(
+          refuseWith(
             `${sanitiseLine(id)} isn't an open question or permission request in ${sanitiseLine(project)}: an answered question is changed with --revise`,
           ),
       })
@@ -232,32 +233,40 @@ const askAll = (options: {
         while (true) {
           const line = yield* nextLine
           if (Option.isNone(line)) return false
-          const read = readQuestionLine(question, line.value)
-          if (read._tag === 'pass') return true
-          if (read._tag === 'again') {
-            yield* Console.log(read.why)
-            continue
-          }
-          if (read._tag === 'talk') {
-            yield* talkIn({
-              client,
-              project,
-              context: TalkContext.cases.answer.make({
-                questions: [question.ticket],
-              }),
-              model,
-              lines: Stream.fromQueue(input),
-            }).pipe(Effect.scoped)
-            return false
-          }
-          const done = yield* give(
-            AttentionAnswer.cases.question.make({
-              project,
-              ticket: question.ticket,
-              answer: read.answer,
-            }),
+          const settled = yield* QuestionLine.$match(
+            readQuestionLine(question, line.value),
+            {
+              Pass: () => Effect.succeedSome(true),
+              Again: ({ why }) =>
+                Effect.as(Console.log(why), Option.none<boolean>()),
+              // The talk has the terminal until stdin ends, which ends the asking too.
+              Talk: () =>
+                Effect.as(
+                  talkIn({
+                    client,
+                    project,
+                    context: TalkContext.cases.answer.make({
+                      questions: [question.ticket],
+                    }),
+                    model,
+                    lines: Stream.fromQueue(input),
+                  }).pipe(Effect.scoped),
+                  Option.some(false),
+                ),
+              Answer: ({ answer }) =>
+                Effect.map(
+                  give(
+                    AttentionAnswer.cases.question.make({
+                      project,
+                      ticket: question.ticket,
+                      answer,
+                    }),
+                  ),
+                  done => (done ? Option.some(true) : Option.none<boolean>()),
+                ),
+            },
           )
-          if (done) return true
+          if (Option.isSome(settled)) return settled.value
         }
       })
 
@@ -298,9 +307,11 @@ const askAll = (options: {
   }).pipe(Effect.scoped)
 
 /** What the command line answers, where it answers. */
-type Given =
-  | { readonly _tag: 'question'; readonly answer: QuestionAnswer }
-  | { readonly _tag: 'permission'; readonly decision: PermissionDecision }
+type Given = Data.TaggedEnum<{
+  Question: { readonly answer: QuestionAnswer }
+  Permission: { readonly decision: PermissionDecision }
+}>
+const Given = Data.taggedEnum<Given>()
 
 const givenOf = (flags: {
   readonly option: Option.Option<number>
@@ -317,38 +328,42 @@ const givenOf = (flags: {
     Number(Option.isSome(allow)) +
     Number(refuse)
   if (answers > 1)
-    return notTogether('give one answer: --option, --text, --allow or --refuse')
+    return refuseWith('give one answer: --option, --text, --allow or --refuse')
   if (Option.isSome(note) && !refuse)
-    return notTogether('--note goes with --refuse')
+    return refuseWith('--note goes with --refuse')
   if (revise && Option.isNone(option) && Option.isNone(text))
-    return notTogether('--revise takes the new answer: --option or --text')
+    return refuseWith('--revise takes the new answer: --option or --text')
   if (Option.isSome(option))
     return option.value < 1
-      ? notTogether('--option takes the number shown, from 1')
-      : Effect.succeedSome<Given>({
-          _tag: 'question',
-          answer: QuestionAnswer.cases.option.make({
-            index: option.value - 1,
+      ? refuseWith('--option takes the number shown, from 1')
+      : Effect.succeedSome(
+          Given.Question({
+            answer: QuestionAnswer.cases.option.make({
+              index: option.value - 1,
+            }),
           }),
-        })
+        )
   if (Option.isSome(text))
-    return Effect.succeedSome<Given>({
-      _tag: 'question',
-      answer: QuestionAnswer.cases.text.make({ text: text.value }),
-    })
+    return Effect.succeedSome(
+      Given.Question({
+        answer: QuestionAnswer.cases.text.make({ text: text.value }),
+      }),
+    )
   if (Option.isSome(allow))
-    return Effect.succeedSome<Given>({
-      _tag: 'permission',
-      decision:
-        allow.value === 'once'
-          ? PermissionDecision.cases.allow_once.make({})
-          : PermissionDecision.cases.allow_run.make({}),
-    })
+    return Effect.succeedSome(
+      Given.Permission({
+        decision:
+          allow.value === 'once'
+            ? PermissionDecision.cases.allow_once.make({})
+            : PermissionDecision.cases.allow_run.make({}),
+      }),
+    )
   if (refuse)
-    return Effect.succeedSome<Given>({
-      _tag: 'permission',
-      decision: PermissionDecision.cases.refuse.make({ note }),
-    })
+    return Effect.succeedSome(
+      Given.Permission({
+        decision: PermissionDecision.cases.refuse.make({ note }),
+      }),
+    )
   return Effect.succeedNone
 }
 
@@ -382,7 +397,7 @@ const answerGiven = (options: {
 }) =>
   Effect.gen(function* () {
     const { client, project, id, given, revise } = options
-    if (given._tag === 'permission') {
+    if (Given.$is('Permission')(given)) {
       const permission = yield* Option.match(PermissionId.makeOption(id), {
         onNone: () =>
           Effect.fail(
@@ -503,9 +518,7 @@ export const answer = Command.make(
       const json = yield* Json
       if (flags.talk) {
         if (Option.isSome(given))
-          return yield* notTogether(
-            '--talk asks in the talk: give it no answer',
-          )
+          return yield* refuseWith('--talk asks in the talk: give it no answer')
         return yield* answerTalkOn({
           questions: Option.toArray(flags.id),
           project: flags.project,
@@ -516,7 +529,7 @@ export const answer = Command.make(
         Option.match(given, {
           onSome: answered =>
             Option.match(flags.id, {
-              onNone: () => notTogether('name the request an answer is for'),
+              onNone: () => refuseWith('name the request an answer is for'),
               onSome: id =>
                 answerGiven({
                   client,

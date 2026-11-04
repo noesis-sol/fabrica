@@ -2045,8 +2045,8 @@ const runStarted = Effect.fn('Run.started')(function* (
 
   /**
    * The open questions the run's tickets wait on (§15.3): each blocks an open ticket in the run's scope.
-   * Read only as the run would otherwise end. A deferred ticket stays out of it: no answer would free
-   * it, so a question on it alone keeps no run going.
+   * Read only as the run would otherwise end. A deferred ticket or a maintainer task stays out of it: an
+   * answer frees no work the run could take, so a question on one alone keeps no run going.
    */
   const questionsWaiting = Effect.gen(function* () {
     const [questions, open, edges] = yield* Effect.all(
@@ -2063,13 +2063,14 @@ const runStarted = Effect.fn('Run.started')(function* (
     })
     const waiting = new Set(
       open
-        .filter(({ id, type }) =>
-          type === 'question'
-            ? false
-            : Option.match(scope, {
-                onNone: () => true,
-                onSome: within => within.has(id),
-              }),
+        .filter(
+          ({ id, type }) =>
+            type !== 'question' &&
+            type !== 'manual' &&
+            Option.match(scope, {
+              onNone: () => true,
+              onSome: within => within.has(id),
+            }),
         )
         .map(({ id }) => id),
     )

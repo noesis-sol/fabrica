@@ -528,7 +528,10 @@ export const services = (
   return controlLayer.pipe(Layer.provideMerge(middle))
 }
 
-export const configOf = (fixture: Project): RunConfig => ({
+export const configOf = (
+  fixture: Project,
+  limit: Option.Option<number> = Option.none(),
+): RunConfig => ({
   project: ProjectId.make('p1'),
   engine,
   version: '0.0.0-test',
@@ -538,7 +541,7 @@ export const configOf = (fixture: Project): RunConfig => ({
   sockets: fixture.sockets,
   options: {
     mode: RunMode.Tickets(),
-    limit: Option.none(),
+    limit,
     concurrent: Option.none(),
   },
   settings: { flags: {}, environment: {}, engineSettings: {} },
@@ -616,6 +619,7 @@ export const runOne = (
   verify: string,
   during: (ticket: TicketId) => Effect.Effect<void> = () => Effect.void,
   telemetry: Layer.Layer<Telemetry> = noTelemetry,
+  limit: Option.Option<number> = Option.none(),
 ) =>
   Effect.gen(function* () {
     const provider = yield* fakeProvider
@@ -631,7 +635,7 @@ export const runOne = (
         actor: maintainer,
       })
       const [end] = yield* Effect.all(
-        [runProject(configOf(fixture)), during(made.id)],
+        [runProject(configOf(fixture, limit)), during(made.id)],
         { concurrency: 'unbounded' },
       )
       const { events } = yield* readEvents({

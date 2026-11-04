@@ -9,7 +9,6 @@ import {
   DraftOptionsTool,
   ListQuestionsTool,
   type ProjectId,
-  type QuestionAnswer,
   QuestionInTalk,
   QuestionsInTalk,
   type TalkId,
@@ -194,18 +193,6 @@ const refusal = (options: {
   return Option.none()
 }
 
-/** The answer in words, as the attention requests will record it, where the question has that option. */
-const answerWords = (
-  question: QuestionRequest,
-  answer: QuestionAnswer,
-): string =>
-  answer._tag === 'text'
-    ? answer.text
-    : Option.match(question.choices, {
-        onNone: () => '',
-        onSome: ({ options }) => options[answer.index]?.label ?? '',
-      })
-
 const invalid = (issue: string) =>
   Effect.fail(ToolRefusal.cases.invalid.make({ issue }))
 
@@ -294,7 +281,10 @@ export const makeAnswerMode: Effect.Effect<
 
   const answerQuestion: TalkTool<'answer'> = talkTool(
     AnswerQuestionTool,
-    ({ question, answer }, { talk, project, context, maintainerMessages }) =>
+    (
+      { question, answer },
+      { talk, project, context, graph, maintainerMessages },
+    ) =>
       answers.withPermit(
         Effect.gen(function* () {
           const requests = yield* open(project.id, context)
@@ -348,9 +338,20 @@ export const makeAnswerMode: Effect.Effect<
                 ),
             }),
           )
+          // Read back in the words the attention requests recorded: an option's label, or the maintainer's.
+          const { ticket: recorded } = yield* Effect.orDie(
+            Effect.flatMap(graph, read => read.show(question)),
+          )
           return new AnswerRecorded({
             question,
-            answer: answerWords(ask, answer),
+            answer: yield* Option.match(
+              Option.flatMap(recorded.question, each => each.answer),
+              {
+                onNone: () =>
+                  Effect.die(`${question} was answered with no answer kept`),
+                onSome: Effect.succeed,
+              },
+            ),
             left: requests
               .map(({ ticket }) => ticket)
               .filter(ticket => ticket !== question),

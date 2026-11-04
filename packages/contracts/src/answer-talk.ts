@@ -3,7 +3,7 @@ import { Schema } from 'effect'
 import { TicketId } from './ids'
 import { QuestionAnswer } from './rpc/attention'
 import { Note, QuestionChoices, Text, TicketStatus } from './ticket'
-import { type AnyTool, CheckOwnParameters } from './tools'
+import { type AnyTool, noArguments } from './tools'
 
 // The answer talk's question tools (spec §15.3): the open questions in its scope, with their options,
 // the tickets they block and the ticket they were asked from; options drafted for a question filed
@@ -64,7 +64,7 @@ export const ListQuestionsTool = {
     'Lists the open questions in this talk, those that arrived since it opened among them, each with ' +
     'its options, the tickets it blocks and the ticket it was asked from, and the deferred tickets, ' +
     'which you mention and never release.',
-  parameters: CheckOwnParameters,
+  parameters: noArguments('list_questions'),
   success: QuestionsInTalk,
 } satisfies AnyTool
 

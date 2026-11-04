@@ -14,13 +14,15 @@ import {
   Scope,
   Stream,
 } from 'effect'
-import { mkdtempSync, realpathSync } from 'node:fs'
+import { mkdtempSync, readFileSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import * as NodePath from 'node:path'
+import { join } from 'node:path'
 
 import { beforeAll, describe, expect, it } from '@effect/vitest'
 import {
   Actor,
+  AnswerTalkTools,
   AttentionAnswer,
   Edge,
   ProjectId,
@@ -32,6 +34,7 @@ import {
   type TicketId,
   type ToolRefusal,
   decodeProjectSettings,
+  toolJsonSchema,
 } from '@fabrica/contracts'
 
 import type { PiEvent } from '../src/agent'
@@ -517,6 +520,14 @@ describe('the answer talk', () => {
     }).pipe(Effect.scoped),
   )
 
+  it('gives its tools to Pi as JSON Schema', () => {
+    expect(AnswerTalkTools.map(tool => toolJsonSchema(tool).name)).toEqual([
+      'list_questions',
+      'draft_options',
+      'answer_question',
+    ])
+  })
+
   it.effect('takes a new question into the talk as it arrives', () =>
     Effect.gen(function* () {
       const engine = yield* newEngine
@@ -624,6 +635,16 @@ const controlOf = Effect.gen(function* () {
   }
 })
 
+const plainQuestion = (
+  graph: WorkGraphShape,
+  title: string,
+  blocks: ReadonlyArray<TicketId>,
+) =>
+  graph.ask({
+    question: { title, consequential: false, maintainerOnly: false, blocks },
+    actor: worker,
+  })
+
 describe('a run with nothing ready but questions', () => {
   it.effect(
     'asks for the answer talk instead of ending, and takes up what the answer frees',
@@ -693,22 +714,20 @@ describe('a run with nothing ready but questions', () => {
         }),
       )
       expect(end).toEqual({ kind: 'DRAINED', code: 0 })
+      expect(
+        readFileSync(join(fixture.checkout, '.fabrica/fabrica.log'), 'utf8'),
+      ).toContain('waits on the question')
     }),
   )
 
-  it.effect('ends as ever on questions that hold no work in its scope', () =>
+  it.effect('ends as ever on questions no answer would free work by', () =>
     Effect.gen(function* () {
       const fixture = runFixture()
       const end = yield* withRuns(
         fixture,
         Effect.gen(function* () {
           const graph = yield* WorkGraph
-          const own = yield* file('Does its work', 'finish')
-          // Blocks a ticket outside the run's scope, one deferred, and nothing.
-          const away = yield* graph.create({
-            ticket: { type: 'task', title: 'Elsewhere' },
-            actor: maintainer,
-          })
+          // One blocks a deferred ticket, one a maintainer task, and one nothing.
           const parked = yield* graph.create({
             ticket: { type: 'task', title: 'Parked' },
             actor: maintainer,
@@ -718,19 +737,33 @@ describe('a run with nothing ready but questions', () => {
             until: Option.none(),
             actor: maintainer,
           })
-          const question = (title: string, blocks: ReadonlyArray<TicketId>) =>
-            graph.ask({
-              question: {
-                title,
-                consequential: false,
-                maintainerOnly: false,
-                blocks,
-              },
-              actor: worker,
-            })
-          yield* question('About elsewhere', [away.id])
-          yield* question('About the parked', [parked.id])
-          yield* question('About nothing', [])
+          const task = yield* graph.create({
+            ticket: { type: 'manual', title: 'Buy the domain' },
+            actor: maintainer,
+          })
+          yield* plainQuestion(graph, 'About the parked', [parked.id])
+          yield* plainQuestion(graph, 'About the task', [task.id])
+          yield* plainQuestion(graph, 'About nothing', [])
+          return yield* runProject(configOf(fixture, options()))
+        }),
+      )
+      expect(end).toEqual({ kind: 'READY_EMPTY', code: 0 })
+    }),
+  )
+
+  it.effect('ends as ever on a question outside its scope', () =>
+    Effect.gen(function* () {
+      const fixture = runFixture()
+      const end = yield* withRuns(
+        fixture,
+        Effect.gen(function* () {
+          const graph = yield* WorkGraph
+          const own = yield* file('Does its work', 'finish')
+          const away = yield* graph.create({
+            ticket: { type: 'task', title: 'Elsewhere' },
+            actor: maintainer,
+          })
+          yield* plainQuestion(graph, 'About elsewhere', [away.id])
           return yield* runProject(
             configOf(
               fixture,

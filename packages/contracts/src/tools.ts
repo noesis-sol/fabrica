@@ -262,13 +262,16 @@ export const AddNoteTool = {
 } satisfies AnyTool
 
 /** No arguments: an empty struct alone takes any value but null, so the check refuses every key. */
-export const CheckOwnParameters = Schema.Struct({}).check(
-  Schema.makeFilter(input =>
-    typeof input === 'object' && Object.keys(input).length === 0
-      ? undefined
-      : 'check_own takes no arguments',
-  ),
-)
+export const noArguments = (tool: string) =>
+  Schema.Struct({}).check(
+    Schema.makeFilter(input =>
+      typeof input === 'object' && Object.keys(input).length === 0
+        ? undefined
+        : `${tool} takes no arguments`,
+    ),
+  )
+
+export const CheckOwnParameters = noArguments('check_own')
 
 /** What `check_own` came to: each case that ran gives the tree it ran on and the file its whole output is in. */
 export const CheckOwnRan = Schema.TaggedUnion({
