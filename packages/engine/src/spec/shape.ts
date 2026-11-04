@@ -25,7 +25,7 @@ export interface TreeShape {
   readonly tickets: number
   /** The longest chain, the ticket first waited on first; empty for no tickets. */
   readonly chain: ReadonlyArray<TicketId>
-  /** The most held first. */
+  /** The tickets, epics among them, that `hubHolds` or more open tickets wait on directly, the most held first. */
   readonly hubs: ReadonlyArray<Hub>
 }
 
@@ -94,16 +94,19 @@ export const treeShape = (
         ? [id]
         : []
   const after = new Map<TicketId, Array<TicketId>>()
+  const holding = new Map<TicketId, ReadonlySet<TicketId>>()
   for (const { from, to, kind } of edges) {
-    if (kind !== 'blocks' || !open.has(to)) continue
+    if (kind !== 'blocks' || !open.has(to) || from === to) continue
+    if (open.has(from) || epics.has(from))
+      holding.set(from, new Set([...(holding.get(from) ?? []), to]))
     for (const waited of waitedOn(from)) {
       const waiting = after.get(waited) ?? []
       if (waited !== to && !waiting.includes(to))
         after.set(waited, [...waiting, to])
     }
   }
-  const hubs = ids
-    .map(id => ({ id, holds: after.get(id)?.length ?? 0 }))
+  const hubs = [...holding]
+    .map(([id, waiting]) => ({ id, holds: waiting.size }))
     .filter(hub => hub.holds >= hubHolds)
     .sort((one, other) => other.holds - one.holds)
   return { tickets: ids.length, chain: longestChain(ids, after), hubs }

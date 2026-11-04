@@ -1400,6 +1400,36 @@ describe("A tree's shape (§15.5)", () => {
     )
   })
 
+  it('names as a hub the epic others wait on directly, not the tickets under it', () => {
+    const shape = treeShape(
+      [
+        ticket('e', 'epic'),
+        ticket('a'),
+        ticket('b'),
+        ticket('x'),
+        ticket('y'),
+        ticket('z'),
+      ],
+      [
+        {
+          from: TicketId.make('fa-e'),
+          to: TicketId.make('fa-a'),
+          kind: 'parent' as const,
+        },
+        {
+          from: TicketId.make('fa-e'),
+          to: TicketId.make('fa-b'),
+          kind: 'parent' as const,
+        },
+        blocks('e', 'x'),
+        blocks('e', 'y'),
+        blocks('e', 'z'),
+      ],
+    )
+    expect(shape.hubs).toEqual([{ id: 'fa-e', holds: 3 }])
+    expect(shape.chain).toHaveLength(2)
+  })
+
   it('leaves out epics and closed tickets, and warns of no tree wide enough', () => {
     const shape = treeShape(
       [
