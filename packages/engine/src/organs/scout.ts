@@ -225,9 +225,27 @@ export const proposalsOf = (answer: ScoutAnswer): ScoutProposals => {
   // fast suites it names, and with none that an earlier full suite already runs. Each suite runs once.
   const runner = full.find(suite => suite.own_runner)
   const runBy = new Map<string, string>()
+  const fastCommandOf = new Map(
+    answer.fast.map(suite => [writtenOut(suite.name), suite.command]),
+  )
   const tier =
     runner === undefined
       ? full.filter(suite => {
+          // A fast suite's command listed again, where another full suite says it runs those tests.
+          const coverer = full.find(
+            other =>
+              other !== suite &&
+              other.runs_fast_suites.some(
+                name => fastCommandOf.get(writtenOut(name)) === suite.command,
+              ),
+          )
+          if (coverer !== undefined) {
+            leave(
+              `the full suite ${suite.name}`,
+              `${coverer.name} already runs its tests, and no test runs twice`,
+            )
+            return false
+          }
           const names = suite.runs_fast_suites.map(writtenOut)
           const earlier = names.flatMap(name => {
             const by = runBy.get(name)

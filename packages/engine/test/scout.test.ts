@@ -145,6 +145,52 @@ describe('the fast suites a full suite names', () => {
     ).toThrow('Two fast suites are named "tests"')
   })
 
+  it.each([
+    ['after', ['all', 'q again']],
+    ['before', ['q again', 'all']],
+  ])(
+    'leaves out a covered suite listed again %s the full suite that runs it',
+    (_, order) => {
+      const suites = {
+        all: fullSuite('all', 'pytest', { runs_fast_suites: ['q'] }),
+        'q again': fullSuite('q again', 'pytest -m q'),
+      }
+      const proposals = proposalsFrom({
+        fast: [fastSuite('q', 'pytest -m q')],
+        full: order.map(name =>
+          name === 'all' ? suites.all : suites['q again'],
+        ),
+      })
+      expect(proposals.checkFull).toEqual(Option.some('pytest'))
+      expect(proposals.leftOut).toEqual([
+        {
+          what: 'the full suite q again',
+          reason: 'all already runs its tests, and no test runs twice',
+        },
+      ])
+    },
+  )
+
+  it('keeps a full suite naming its own command as the fast suite', () => {
+    const proposals = proposalsFrom({
+      fast: [fastSuite('tests', 'pnpm test')],
+      full: [fullSuite('tests', 'pnpm test', { runs_fast_suites: ['tests'] })],
+    })
+    expect(proposals.checkFull).toEqual(Option.some('pnpm test'))
+    expect(proposals.leftOut).toEqual([])
+  })
+
+  it('counts nothing as run by a suite it left out', () => {
+    const proposals = proposalsFrom({
+      fast: [fastSuite('q', 'pytest -m q'), fastSuite('lint', 'ruff check .')],
+      full: [
+        fullSuite('all', 'pytest', { runs_fast_suites: ['q'] }),
+        fullSuite('q again', 'pytest -m q', { runs_fast_suites: ['lint'] }),
+      ],
+    })
+    expect(proposals.checkFull).toEqual(Option.some('ruff check . && pytest'))
+  })
+
   it('takes a suite named under another name to be run too', () => {
     const proposals = proposalsFrom({
       fast: [fastSuite('a', 'pytest'), fastSuite('b', 'pytest')],
