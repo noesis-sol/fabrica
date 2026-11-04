@@ -319,18 +319,25 @@ const findOptions = (
       index++
       break
     }
-    if (word.text === '-D' || word.text === '-f') {
-      const value = args[index + 1]
-      if (word.text === '-f' && value !== undefined) rootsGiven.push(value)
+    if (word.text === '-D') {
       index++
-    } else if (/^-(?:[HLPEXdsx]+|O\d*)$/u.test(word.text)) continue
-    else if (word.text.startsWith('-f') && !findPrimaries.test(word.text)) {
+      continue
+    }
+    if (/^-(?:[HLPEXdsx]+|O\d*)$/u.test(word.text)) continue
+    // BSD's `-f root`, the root attached or the option last in a group: `-fout`, `-Hf out`.
+    const given = /^-[HLPEXdsx]*f(.*)$/u.exec(word.text)?.[1]
+    if (given === undefined || findPrimaries.test(word.text)) break
+    if (given !== '')
       rootsGiven.push({
-        text: word.text.slice(2),
-        pattern: word.pattern.slice(2),
+        text: given,
+        pattern: word.pattern.slice(word.pattern.length - given.length),
         dynamic: false,
       })
-    } else break
+    else {
+      const value = args[index + 1]
+      if (value !== undefined) rootsGiven.push(value)
+      index++
+    }
   }
   return { words: args.slice(index), rootsGiven }
 }
@@ -725,7 +732,8 @@ class Policy {
     if (
       args.some(
         ({ text }) =>
-          /^-[HLPEXdsx]*L[HLPEXdsx]*$/u.test(text) || text === '-follow',
+          /^-[HLPEXdsx]*L[HLPEXdsx]*(?:f.*)?$/u.test(text) ||
+          text === '-follow',
       ) &&
       expression.some(({ text }) => findActions.has(text))
     )
@@ -738,7 +746,10 @@ class Policy {
       if (word === undefined || word.text === '-delete') continue
       if (!findActions.has(word.text)) continue
       const end = expression.findIndex(
-        ({ text }, at) => at > index && (text === ';' || text === '+'),
+        // `+` ends the command only straight after `{}`.
+        ({ text }, at) =>
+          at > index &&
+          (text === ';' || (text === '+' && expression[at - 1]?.text === '{}')),
       )
       const inner = expression.slice(index + 1, end === -1 ? undefined : end)
       // `-execdir` and `-okdir` run in each match's folder, which the gate doesn't follow.

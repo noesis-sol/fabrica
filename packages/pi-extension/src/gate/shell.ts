@@ -111,12 +111,15 @@ class Reader {
     let writes: Array<Word> = []
     /** Words that name no command: a function's name, a loop's variable and list, a case's subject. */
     let skip: number | 'rest' = 0
+    /** A `[[ … ]]` test's parenthesis ended the words before it: what follows is still the test. */
+    let testing = false
     const finish = () => {
       if (words.length > 0 || writes.length > 0)
         this.commands.push({ words, writes })
       words = []
       writes = []
       skip = 0
+      testing = false
     }
     while (this.index < this.source.length) {
       const char = this.peek()
@@ -165,9 +168,11 @@ class Reader {
       if (char === '(') {
         // Among a command's words, or against a word, it is no subshell: an extended glob (`@(out)`,
         // zsh's `(out)/x`), which matches what the gate would read as a command. A function's `()`,
-        // an array's `=(` and `time (…)` aside.
+        // an array's `=(`, `time (…)` and a `[[ … ]]` test aside.
         const before = this.source[this.index - 1] ?? ' '
+        const test: boolean = words[0]?.text === '[[' || testing
         if (
+          !test &&
           (words.some(({ text }) => text !== 'time' && text !== '-p') ||
             !breaking.has(before)) &&
           this.peek(1) !== ')' &&
@@ -179,8 +184,9 @@ class Reader {
         this.index++
         finish()
         this.list(')')
+        testing = test
         const after = this.peek()
-        if (after !== '' && after !== '`' && !breaking.has(after))
+        if (!test && after !== '' && after !== '`' && !breaking.has(after))
           throw new Unparsable({ reason: 'a parenthesis against a word' })
         continue
       }

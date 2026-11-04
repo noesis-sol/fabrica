@@ -6,7 +6,8 @@
 - A wildcard segment now stands for the entries of its folder it may match, at any depth where it is `**`, so
   `rm -rf */x` is read through a link among them; a bracket stands for them all, and past 4096
   steps the gate asks. A `cd` to a wildcard follows each entry, so more than 64 of them ask.
-- `find`'s options before its roots are read (`find -H out -delete` removes through `out`), and `find -L` that acts
+- `find`'s options before its roots are read (`find -H out -delete` and BSD's `find -Hf out -- -delete` remove
+  through `out`), `+` ends its `-exec` only straight after `{}`, and `find -L` that acts
   on what it walks, and `chmod`, `chown`, `chgrp` and `chflags -L`, ask: they follow links the gate doesn't walk.
 - A Pi file tool's path is also read as the plain text Pi opens, its Unicode spaces plain, so a link named `{a,b}` or
   `q\z` is followed; its reading as a shell pattern stays, so that one the gate refuses stays refused.
