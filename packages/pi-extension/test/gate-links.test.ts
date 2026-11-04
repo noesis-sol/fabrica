@@ -69,6 +69,23 @@ const commands: ReadonlyArray<readonly [Expected, string]> = [
   ['refused', 'rm -rf out/*'],
   ['refused', 'mv out/file here'],
   ['refused', 'find out/ -delete'],
+  // `find`'s options before its roots: `-H` and `-L` go through a root, `-L` through what it walks.
+  ['refused', 'find -H out -delete'],
+  ['refused', 'find -L out -delete'],
+  ['refused', 'find -P out -delete'],
+  ['refused', 'find -L out -exec rm {} +'],
+  ['refused', 'find -H -O2 out -delete'],
+  ['refused', 'find -f out -delete'],
+  ['asked', 'find -L . -type f -exec rm {} +'],
+  ['asked', 'find . -follow -delete'],
+  ['allowed', 'find -L . -name x'],
+  ['allowed', 'find -H . -delete'],
+  ['allowed', 'find src -type f -exec rm {} +'],
+  // So do `chmod -L` and its like, as they walk.
+  ['asked', 'chmod -RL 700 .'],
+  ['asked', 'chown -RL me .'],
+  ['asked', 'chflags -RL nodump .'],
+  ['allowed', 'chmod -R 700 src'],
   // A link at the end of a write is followed, a dangling one too: the write creates its target.
   ['asked', 'echo x > file'],
   ['asked', 'echo x > dangling'],
@@ -100,6 +117,20 @@ const commands: ReadonlyArray<readonly [Expected, string]> = [
   ['refused', 'rm -rf nest/*/'],
   ['asked', 'echo x > */new'],
   ['asked', 'touch o*/new'],
+  ['refused', 'rm -rf O*/file'],
+  ['refused', 'rm -rf ?ut/file'],
+  ['refused', 'rm -rf [o]ut/file'],
+  // One that can't match the link is no way through it.
+  ['allowed', 'rm -rf s*/x'],
+  ['allowed', 'rm -rf build*/x'],
+  ['allowed', 'rm -rf *rc/x'],
+  ['allowed', 'echo x > s*/new'],
+  ['allowed', 'rm -rf o\\*/x'],
+  // `**` under `globstar` or zsh reaches a link at any depth.
+  ['refused', 'rm -rf **/out/file'],
+  ['refused', 'rm -rf nest/**/file'],
+  ['refused', "zsh -c 'rm -rf **/out/file'"],
+  ['allowed', 'rm -rf src/**/x'],
   // At the end of a removal, it takes what it matches, links as links.
   ['allowed', 'rm -rf *'],
   ['allowed', 'rm -rf nest/*'],
@@ -169,6 +200,34 @@ describe('path confinement through links', () => {
     }),
   )
 
+  it.effect('reads a tool’s path as the plain text Pi opens', () =>
+    Effect.gen(function* () {
+      const { worktree, outside } = yield* scene
+      const context = { worktree, home: Option.none<string>() }
+      const written = (path: string) =>
+        analyze('write', { path, content: 'x' }, context).findings
+      for (const name of [
+        '{a,b}',
+        'q\\z',
+        'a*',
+        'b[c]',
+        'd?',
+        'e,f',
+        'my out',
+      ]) {
+        symlinkSync(outside, join(worktree, name))
+        expect(outcome(written(`${name}/x`)), name).toBe('asked')
+      }
+      // Pi reads these spaces as a plain one.
+      expect(outcome(written('my\u00A0out/x'))).toBe('asked')
+      expect(outcome(written('my\u3000out/x'))).toBe('asked')
+      expect(outcome(written('@my out/x'))).toBe('asked')
+      expect(outcome(written('src/{a,b}.ts'))).toBe('allowed')
+      // A pattern a shell would read is still read as one.
+      expect(outcome(written('src/{a.ts'))).toBe('refused')
+    }),
+  )
+
   it.effect('compares with the worktree’s real path, however it is named', () =>
     Effect.gen(function* () {
       const { base, worktree, outside } = yield* scene
@@ -217,12 +276,16 @@ describe('path confinement through links', () => {
       mkdirSync(crowd)
       for (let index = 0; index < 4200; index++)
         writeFileSync(join(crowd, `${index}`), '')
-      const findings = commandFindings('rm -rf crowd/*/x', {
-        worktree,
-        home: Option.none(),
-      })
-      expect(outcome(findings)).toBe('asked')
-      expect(reasons(findings)).toContain('reaches more than the gate follows')
+      for (const command of ['rm -rf crowd/*/x', 'rm -rf crowd/**/x']) {
+        const findings = commandFindings(command, {
+          worktree,
+          home: Option.none(),
+        })
+        expect(outcome(findings), command).toBe('asked')
+        expect(reasons(findings)).toContain(
+          'reaches more than the gate follows',
+        )
+      }
     }),
   )
 

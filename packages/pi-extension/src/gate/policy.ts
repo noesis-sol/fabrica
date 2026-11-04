@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import type { Permissions } from '@fabrica/contracts'
 
 import { type CommandContext, Finding, commandFindings } from './commands'
-import { Confinement, confine, realFolder } from './paths'
+import { Confinement, confine, escapedPath, realFolder, worst } from './paths'
 
 // The permission policy (spec §12.6): a tool call read for what it does (a read, a write, a command,
 // another tool) and its findings, and the project's level applied to them. `workspace` reads
@@ -35,9 +35,13 @@ export type Ruling = Data.TaggedEnum<{
 }>
 export const Ruling = Data.taggedEnum<Ruling>()
 
-/** The path a Pi file tool takes, as Pi reads it: a leading `@` dropped, a `file://` URL as its path. */
+/** The spaces Pi reads as a plain space in a file tool's path. */
+const unicodeSpaces = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/gu
+
+/** The path a Pi file tool takes, as Pi reads it: its spaces plain, a leading `@` dropped, a `file://` URL as its path. */
 const toolPath = (path: string): string => {
-  const bare = path.startsWith('@') ? path.slice(1) : path
+  const spaced = path.replace(unicodeSpaces, ' ')
+  const bare = spaced.startsWith('@') ? spaced.slice(1) : spaced
   return bare.startsWith('file://') ? fileURLToPath(bare) : bare
 }
 
@@ -49,12 +53,11 @@ const written = (
   if (typeof path !== 'string')
     return [Finding.Ask({ reason: 'the call names no path the gate can read' })]
   const worktree = realFolder(context.worktree)
+  const paths = { ...context, worktree, cwd: Option.some(worktree) }
+  const opened = toolPath(path)
+  // Pi opens the path as plain text; read as a shell pattern too, a pattern is refused or asked.
   return Confinement.$match(
-    confine(toolPath(path), {
-      ...context,
-      worktree,
-      cwd: Option.some(worktree),
-    }),
+    worst([confine(opened, paths), confine(escapedPath(opened), paths)]),
     {
       Inside: () => [],
       Outside: ({ path: outside }) => [

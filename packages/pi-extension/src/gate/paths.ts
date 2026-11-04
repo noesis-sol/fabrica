@@ -5,9 +5,9 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { Expansion, expandBraces } from './braces'
 
 // Path confinement (spec §12.6, §20.2): whether a path, or a shell glob, stays inside the worktree.
-// Every brace alternative is checked; a glob's wildcard segment stands for any entry of its folder,
-// and for `..` where it can match that (a dot followed by a wildcard: older shells match `.*` against
-// `..`). A leading `~` is the home folder; a relative path is read from the folder it is resolved in,
+// Every brace alternative is checked; a glob's wildcard segment stands for the entries of its folder
+// it may match, at any depth where it is `**`, and for `..` where it can match that (a dot followed by
+// a wildcard: older shells match `.*` against `..`). A leading `~` is the home folder; a relative path is read from the folder it is resolved in,
 // which may be unknown (after `cd "$dir"`). Files in a worktree are hostile (H62), so a path is walked
 // on the file system, a segment at a time, as the system resolves it: a link is followed, a dangling
 // one too (a write creates its target, which `realpath` would refuse to name), `..` after a link is
@@ -81,12 +81,51 @@ const literal = (segment: string): Option.Option<string> => {
 const canMatchParent = (segment: string): boolean =>
   segment.startsWith('.') || segment.startsWith('\\.')
 
-/** One step of a path: a name to go through, or a wildcard, which can match `..` where it `climbs`. */
+/** One step of a path: a name to go through, or a wildcard. */
 type Step = Data.TaggedEnum<{
   Name: { readonly text: string }
-  Wildcard: { readonly climbs: boolean }
+  Wildcard: {
+    /** It can match `..`. */
+    readonly climbs: boolean
+    /** It spans folders too: `**` under `globstar` or zsh. */
+    readonly recursive: boolean
+    /** Whether it may match an entry of its folder. */
+    readonly matches: (name: string) => boolean
+  }
 }>
 const Step = Data.taggedEnum<Step>()
+
+/**
+ * The entries a wildcard segment may match, read generously: without regard to case (`nocaseglob`)
+ * or a leading dot (`dotglob`), with `?` as `*` (one character may be several bytes), and any entry
+ * where it holds what the gate doesn't read (a bracket, an extended glob, a character outside ASCII).
+ */
+const matcher = (segment: string): ((name: string) => boolean) => {
+  const parts = ['']
+  for (let index = 0; index < segment.length; index++) {
+    const escaped = segment[index] === '\\'
+    if (escaped) index++
+    const char = segment[index] ?? ''
+    if (!escaped && (char === '*' || char === '?')) parts.push('')
+    else if (!/^[ -~]$/u.test(char) || (!escaped && /[[()|#^~]/u.test(char)))
+      return () => true
+    else parts[parts.length - 1] += char.toLowerCase()
+  }
+  const first = parts[0] ?? ''
+  const final = parts.at(-1) ?? ''
+  const middle = parts.slice(1, -1)
+  return name => {
+    const lower = name.toLowerCase()
+    if (!lower.startsWith(first)) return false
+    let at = first.length
+    for (const part of middle) {
+      const found = lower.indexOf(part, at)
+      if (found === -1) return false
+      at = found + part.length
+    }
+    return lower.length - final.length >= at && lower.endsWith(final)
+  }
+}
 
 /** A path's text as its steps. */
 const names = (path: string): ReadonlyArray<Step> =>
@@ -96,7 +135,13 @@ const names = (path: string): ReadonlyArray<Step> =>
 const steps = (alternative: string): ReadonlyArray<Step> =>
   segments(alternative).flatMap(segment =>
     Option.match(literal(segment), {
-      onNone: () => [Step.Wildcard({ climbs: canMatchParent(segment) })],
+      onNone: () => [
+        Step.Wildcard({
+          climbs: canMatchParent(segment),
+          recursive: /^\*\*+$/u.test(segment),
+          matches: matcher(segment),
+        }),
+      ],
       onSome: names,
     }),
   )
@@ -277,10 +322,13 @@ const walk = (
           },
         })
       },
-      Wildcard: ({ climbs }) => {
+      Wildcard: ({ climbs, recursive, matches }) => {
         // A wildcard that matches nothing stays as it is written.
         asWritten()
-        const climbed = climbs ? [next(dirname(at))] : []
+        const climbed = [
+          ...(climbs ? [next(dirname(at))] : []),
+          ...(recursive ? [next(at)] : []),
+        ]
         if (isLast && last === 'kept') return climbed
         return Listing.$match(listingOf(at), {
           Unreadable: ({ reason }) => {
@@ -289,11 +337,17 @@ const walk = (
           },
           Listed: ({ entries }) => [
             ...climbed,
-            ...entries.map(name => ({
-              ...walker,
-              path: [Step.Name({ text: name }), ...after],
-              index: 0,
-            })),
+            ...entries.filter(matches).flatMap(name => {
+              const entry = Step.Name({ text: name })
+              const into = (rest: ReadonlyArray<Step>): Walker => ({
+                ...walker,
+                path: [entry, ...rest],
+                index: 0,
+              })
+              return recursive
+                ? [into(after), into([current, ...after])]
+                : [into(after)]
+            }),
           ],
         })
       },
@@ -382,6 +436,17 @@ export const locations = (
         ),
       }),
   })
+
+/** The most a command can be held to among `found`, readings of one path: refused, outside, can't tell, or inside. */
+export const worst = (found: ReadonlyArray<Confinement>): Confinement =>
+  found.find(Confinement.$is('Refused')) ??
+  found.find(Confinement.$is('Outside')) ??
+  found.find(Confinement.$is('Unknown')) ??
+  Confinement.Inside()
+
+/** `path`, plain text a tool opens as it is, in the escaped form `confine` reads: no braces or wildcards in it. */
+export const escapedPath = (path: string): string =>
+  path.replace(/[\\*?[{},]/gu, '\\$&')
 
 /** Where `pattern`, a path or a shell glob in its escaped form, lands: outside where any alternative does. */
 export const confine = (

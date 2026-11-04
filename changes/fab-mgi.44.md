@@ -3,7 +3,12 @@
   parent, and the worktree is compared by its real path. A write through a link out of the worktree is asked and a
   removal through one refused; removing the link itself (`rm link`) stays allowed, as `rm link/` and `shred link`
   don't. `cd` and Pi's file tools take `..` off a path first, so that reading must stay inside as well.
-- A wildcard segment now stands for every entry of its folder, so `rm -rf */x` is read through a link among them;
-  past 4096 steps the gate asks. A `cd` to a wildcard follows each entry, so more than 64 of them ask.
+- A wildcard segment now stands for the entries of its folder it may match, at any depth where it is `**`, so
+  `rm -rf */x` is read through a link among them; a bracket or an extended glob stands for them all, and past 4096
+  steps the gate asks. A `cd` to a wildcard follows each entry, so more than 64 of them ask.
+- `find`'s options before its roots are read (`find -H out -delete` removes through `out`), and `find -L` that acts
+  on what it walks, and `chmod`, `chown`, `chgrp` and `chflags -L`, ask: they follow links the gate doesn't walk.
+- A Pi file tool's path is also read as the plain text Pi opens, its Unicode spaces plain, so a link named `{a,b}` or
+  `q\z` is followed; its reading as a shell pattern stays, so that one the gate refuses stays refused.
 - `ln -s` to a target outside the worktree asks: the link isn't on disk yet for the rest of its command line to be
   read through.

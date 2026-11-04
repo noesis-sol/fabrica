@@ -11,6 +11,7 @@ import {
   isInside,
   locations,
   realFolder,
+  worst,
 } from './paths'
 import { Script, type SimpleCommand, type Word, parseScript } from './shell'
 
@@ -295,6 +296,33 @@ const configReads = (words: ReadonlyArray<Word>): boolean => {
   )
 }
 
+/** What `find` does with what it finds, beyond reading it. */
+const findActions = new Set(['-delete', '-exec', '-execdir', '-ok', '-okdir'])
+
+/** `find`'s arguments past the options before its roots (`-H`, `-L`, `-O2`, `-D tree`, BSD's `-f root`). */
+const findOptions = (
+  args: ReadonlyArray<Word>,
+): {
+  readonly options: ReadonlyArray<Word>
+  readonly words: ReadonlyArray<Word>
+  readonly rootsGiven: ReadonlyArray<Word>
+} => {
+  const options: Array<Word> = []
+  const rootsGiven: Array<Word> = []
+  let index = 0
+  for (; index < args.length; index++) {
+    const word = args[index]
+    if (word === undefined || word.dynamic) break
+    if (word.text === '-D' || word.text === '-f') {
+      const value = args[index + 1]
+      if (word.text === '-f' && value !== undefined) rootsGiven.push(value)
+      index++
+    } else if (/^-(?:[HLPEXdsx]+|O\d*)$/u.test(word.text)) options.push(word)
+    else break
+  }
+  return { options, words: args.slice(index), rootsGiven }
+}
+
 /**
  * The folders a command may run in, none where the gate can't tell one. The gate reads a command
  * line as one list, without knowing which of its commands run (one in a subshell, after a failing
@@ -360,14 +388,8 @@ class Policy {
       return Confinement.Unknown({
         reason: `${word.text} is known only when it runs`,
       })
-    const found = cwd.map(folder =>
-      confine(word.pattern, this.paths(folder), last),
-    )
-    return (
-      found.find(Confinement.$is('Refused')) ??
-      found.find(Confinement.$is('Outside')) ??
-      found.find(Confinement.$is('Unknown')) ??
-      Confinement.Inside()
+    return worst(
+      cwd.map(folder => confine(word.pattern, this.paths(folder), last)),
     )
   }
 
@@ -652,24 +674,31 @@ class Policy {
   }
 
   find(args: ReadonlyArray<Word>, cwd: Folders, depth: number): void {
-    const start = args.findIndex(
+    const { options, words, rootsGiven } = findOptions(args)
+    const start = words.findIndex(
       ({ text, dynamic }) =>
         !dynamic && (text.startsWith('-') || text === '(' || text === '!'),
     )
-    const given = start === -1 ? args : args.slice(0, start)
+    const given = [
+      ...rootsGiven,
+      ...(start === -1 ? words : words.slice(0, start)),
+    ]
     const roots: ReadonlyArray<Word> =
       given.length > 0 ? given : [{ text: '.', pattern: '.', dynamic: false }]
-    const expression = start === -1 ? [] : args.slice(start)
+    const expression = start === -1 ? [] : words.slice(start)
+    if (
+      (options.some(({ text }) => text.includes('L')) ||
+        expression.some(({ text }) => text === '-follow')) &&
+      expression.some(({ text }) => findActions.has(text))
+    )
+      this.ask('find follows links as it walks, where the gate can’t tell')
     // `-H` and `-L` go through a root that is a link.
     if (expression.some(({ text }) => text === '-delete'))
       for (const root of roots) this.removed(root, cwd, 'followed')
     for (let index = 0; index < expression.length; index++) {
       const word = expression[index]
-      if (
-        word === undefined ||
-        !['-exec', '-execdir', '-ok', '-okdir'].includes(word.text)
-      )
-        continue
+      if (word === undefined || word.text === '-delete') continue
+      if (!findActions.has(word.text)) continue
       const end = expression.findIndex(
         ({ text }, at) => at > index && (text === ';' || text === '+'),
       )
@@ -689,6 +718,10 @@ class Policy {
   }
 
   plain(name: string, args: ReadonlyArray<Word>, cwd: Folders): void {
+    if ((modeWriters.has(name) || name === 'chflags') && hasOption(args, '-L'))
+      this.ask(
+        `${name} -L follows links as it walks, where the gate can’t tell`,
+      )
     if (removals.has(name)) {
       // `shred` overwrites what a link points at; the others remove the link.
       const last = name === 'shred' ? 'followed' : 'kept'
