@@ -1,4 +1,4 @@
-import { Effect, Fiber, Layer, PubSub, Ref, type Scope } from 'effect'
+import { Effect, Fiber, Layer, PubSub, Ref } from 'effect'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
