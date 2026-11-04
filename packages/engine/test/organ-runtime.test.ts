@@ -665,6 +665,7 @@ const services = (input: {
         Layer.provide(checksLayer, Layer.merge(runner, git)),
         Layer.provide(layerWake, noSleepCauses),
         attention,
+        input.telemetry,
       ),
     ),
   )

@@ -34,6 +34,7 @@ import {
   ProjectId,
   ProjectNotFound,
   ProjectSource,
+  Retention,
   ReviewRpcs,
   RunEvent,
   RunId,
@@ -57,6 +58,7 @@ import {
 import { Projects, layer as projectsLayer } from '../src/projects'
 import { reviewHandlersOn } from '../src/rpc/review'
 import { eventsPath, logPath, reportPath } from '../src/runlog'
+import { telemetryLayer } from '../src/telemetry'
 import { importBeads } from '../src/workgraph'
 
 // The Review group over RPC (spec §8.1, §18.4, §20.2): a ticket's branch diff, a run's merged diff, its
@@ -172,6 +174,15 @@ const clientFor = (checkout: string, held: ReadonlyArray<TicketId> = []) =>
     const services = yield* Layer.build(
       reviewHandlersOn.pipe(
         Layer.provideMerge(projectsLayer),
+        Layer.provide(
+          telemetryLayer({
+            filename: ':memory:',
+            retention: {
+              raw: Retention.cases.Forever.make({}),
+              daily: Retention.cases.Forever.make({}),
+            },
+          }),
+        ),
         Layer.provide(
           gitLayer(gitConfig).pipe(
             Layer.provide(runnerLayer(runnerConfig())),

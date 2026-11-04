@@ -336,7 +336,7 @@ The engine samples its host's load every few seconds for the console's system st
 | Workers | `worker.message`, `worker.interrupt`, `worker.release` | a worker's transcript |
 | Attention | `attention.list`, `attention.answer`, `attention.revise` (a question's answer changed, §15.2) | open requests |
 | Talks | `talk.open` (mode, context), `talk.send`, `talk.close` | a talk's transcript |
-| Review | `diff.ticket`, `diff.run`, `report.list`, `report.get`, `log.tail` | |
+| Review | `diff.ticket`, `diff.run`, `report.list`, `report.get`, `log.tail`, `gate.counts` (the gate's decisions per ticket, §12.6) | |
 | Insights | `insights.summary`, `insights.query` (a named query with its parameters; no SQL from clients), `insights.export` (the recorded rows as Parquet files in a folder on the engine's host, §21) | |
 
 ### 8.2 Transports
@@ -617,7 +617,7 @@ The extension's tools forward to the engine over a per-agent Unix domain socket 
 | `ask` | Reads | Every write and command | As above |
 | `full` | Everything but the refusals | Nothing | `git push` |
 
-A request the gate can't decide becomes an attention request (§15.1); every decision (allowed, asked and answered, refused) is logged and counted for the reviewer. `full` SHOULD be used only with containers (§12.7).
+A request the gate can't decide becomes an attention request (§15.1); every decision (allowed, asked and answered, refused) is logged and counted for the reviewer: each is recorded as a tool call's row (§21), tied to its run and ticket with its reason where it asked or refused, and read back per ticket by the reviewer, the Review screen beside a ticket's or a run's diff (`gate.counts`) and the named query `gate_decisions`; a reason goes in no export. `full` SHOULD be used only with containers (§12.7).
 
 While a ticket waits to merge or merges, the gate refuses `git commit` and other writes to its branch in its worktree, saying why, and the engine holds the maintainer's messages to its worker until the merge is over (H59), so the commit checked is the commit merged (§13.7).
 
@@ -965,7 +965,7 @@ orchestra-coyp's list \[DECISION\]: `requires` in the project's settings, each e
 | Worker view | The ticket on top (H91): its ID, type and priority, its title and the start of its description, the whole ticket (design, acceptance, notes, links, the tickets it blocks) a key or a click away. Beside it, figures that move during a turn, not only at its end (its time, its context use against the model's window, its share of the provider's usage window, marked an estimate). The transcript as it happens (messages, thinking collapsed, tool calls and their output in xterm.js, diffs in Monaco, bare URLs as links). A composer to message or interrupt the worker (it is then steered: the engine sends it nothing until released), which, once the worker has finished, keeps its text and offers to file it as a ticket. No spending panel: cost is in Insights, as the maintainer chose in tutti (tutti-cxgo.1 to .6, -g0wd) |
 | Talks | The refine and feature talks, full height; the run and answer talks open here too from the console |
 | Backlog | Epics and tickets, their dependencies (the graph), what is ready and why the rest isn't (`tickets.why`), questions, deferred tickets, the tickets a run finished; read-only (editing in the app comes later; the CLI and the run talk cover it) |
-| Review | A ticket's branch diff, a run's merged diff, run reports, the log |
+| Review | A ticket's branch diff, a run's merged diff, what the gate decided on each ticket, run reports, the log |
 | Insights | From the engine's telemetry (§21): tokens and cost per model, ticket, run and project; time per phase (working, checks, the merge queue, hand-backs, holds); check durations and failures; hand-back and set-aside rates; models compared on similar tickets |
 | Engines and projects | Known engines (local, SSH, WSL2, TLS), their versions and status; Add engine (§9.2); projects per engine, each trusted or not (§12.1); credentials and sign-ins (§20.3) |
 | Settings | The project's, the engine's and the app's settings (the theme among them), with their sources |
@@ -1054,7 +1054,7 @@ Exact pins and a committed lockfile; CI verifies the checksums of every download
 - **Writes** go from one fiber, in batches; a crash loses at most the open batch.
 - **Reads in place:** the event stream (`events.jsonl`) and Pi's session files are queried where they lie, and the work graph is attached read-only for joins with tickets \[VERIFY that the `json` and `sqlite` extensions can be bundled with the engine rather than downloaded at run time, and that DuckDB reads the work graph safely while the engine writes it\].
 - **Retention:** raw rows for 90 days, daily aggregates kept (engine settings).
-- **Uses:** the cost figures (§14.4), the run report (§16), the app's Insights screen (§18.4), `fabrica insights`. The named queries include where a ticket's time goes (phases, waiting by reason, the merge queue, checks by suite, hand-backs, waiting on the maintainer), the waits of questions and permission requests, check durations and flaky tests by test, and cost per merged ticket by run. tutti's queries over its event stream (`docs/analytics.md`) drove three speed scans that took a ticket from ready to merged from a median 90 minutes to 21 (2026-10-25 to 27).
+- **Uses:** the cost figures (§14.4), the run report (§16), the app's Insights screen (§18.4), `fabrica insights`. The named queries include where a ticket's time goes (phases, waiting by reason, the merge queue, checks by suite, hand-backs, waiting on the maintainer), the waits of questions and permission requests, the gate's decisions per ticket by verdict and reason (§12.6), check durations and flaky tests by test, and cost per merged ticket by run. tutti's queries over its event stream (`docs/analytics.md`) drove three speed scans that took a ticket from ready to merged from a median 90 minutes to 21 (2026-10-25 to 27).
 - **Export**, optional and off by default: Parquet files on demand (`fabrica insights export <folder>`, one file per recorded table, written on the engine's host), or OTLP/HTTP to the endpoint the engine's `telemetry.otlp_endpoint` names (an OpenTelemetry Collector, ClickHouse or another store behind it; read as the engine starts), carrying Effect's spans and metrics (`effect/observability`'s OTLP exporters, @effect/opentelemetry's as Effect 4 ships them) and the recorded rows, one log record each. Exports carry metadata only (counts, durations, model IDs, token totals, cost, error tags), never prompts, code, file contents, secrets or absolute paths: one module decides it for both, keeping numbers and flags, and text only where its name isn't content's and it is short and names no place; a span's status message and an exception's message and stack never leave. Content capture, were it ever offered, would be a separate explicit setting, with a redaction step before anything is written. No Fabrica-hosted telemetry service in v1.
 
 ## 22. Packaging, signing and distribution

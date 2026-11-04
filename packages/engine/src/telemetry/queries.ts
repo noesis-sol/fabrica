@@ -28,13 +28,14 @@ import {
   TelemetryDb,
   type Value,
 } from './duckdb'
+import { gateVerdictColumn } from './rows'
 
 // The named queries (spec §21, §18.4): each a statement over the recorded rows' copies in DuckDB, the
 // projects' event streams and Pi's session files, the last two read where they lie. No SQL comes from
 // a client: a query is named, with its parameters, and answers a table of named columns. The event
 // stream gives what a run saw (phases, questions, checks with their commits and output, merges, each
 // turn's tokens and cost); Pi's session files give every model call of a ticket's sessions; the
-// recorded rows give checks, holds, merges, hand-backs, the gate's asks and worker sessions. A file is
+// recorded rows give checks, holds, merges, hand-backs, the gate's decisions and worker sessions. A file is
 // read only where it is a regular file in real folders: a link planted in a checkout's `.fabrica/` is
 // passed over (§20.2, H62). DuckDB reserves `at`, so the rows' time column is written `"at"`.
 
@@ -324,6 +325,27 @@ const waits: Statement = {
     SELECT * FROM parts ORDER BY wait`,
 }
 
+const gateDecisions = (
+  query: InsightsQuery & { readonly _tag: 'gate_decisions' },
+): Statement => ({
+  columns: [
+    ['ticket', 'text'],
+    ['verdict', 'text'],
+    ['reason', 'text'],
+    ['decisions', 'count'],
+  ],
+  body: `
+    SELECT ticket, ${gateVerdictColumn} AS verdict, reason, count(*) AS decisions
+    FROM tool_calls
+    WHERE ticket IS NOT NULL AND ${recorded()}
+      AND ($ticket IS NULL OR ticket = $ticket) AND ($run IS NULL OR run = $run)
+    GROUP BY ALL ORDER BY ticket, verdict, decisions DESC, reason`,
+  parameters: {
+    ticket: Option.getOrNull(query.ticket),
+    run: Option.getOrNull(query.run),
+  },
+})
+
 const checkDurations = (
   query: InsightsQuery & { readonly _tag: 'check_durations' },
 ): Statement => ({
@@ -500,6 +522,7 @@ const statementOf = (query: InsightsQuery): Statement =>
     cost_per_merged_ticket: () => costPerMergedTicket,
     tokens_by_model: tokensByModel,
     hand_back_rates: () => handBackRates,
+    gate_decisions: gateDecisions,
     models_compared: () => modelsCompared,
   })
 

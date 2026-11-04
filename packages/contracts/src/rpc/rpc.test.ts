@@ -1009,6 +1009,24 @@ const samples: Record<string, Samples> = {
     success: [{ run, markdown: '# Run r-1\n', writtenAt: at }],
     error: [{ _tag: 'NoReport', project, run }],
   },
+  'gate.counts': {
+    payload: [{ project }, { project, ticket }, { project, run }],
+    success: [
+      [
+        {
+          ticket,
+          allowed: 3,
+          asked: 1,
+          refused: 1,
+          reasons: [
+            { verdict: 'refused', reason: 'git push', count: 1 },
+            { verdict: 'asked', reason: 'writes outside', count: 1 },
+          ],
+        },
+      ],
+    ],
+    error: [notFound],
+  },
   'log.tail': {
     payload: [{ project, lines: 50 }],
     success: [{ lines: ['10:15:00 Dispatching fa-a1b2'] }],
@@ -1040,6 +1058,7 @@ const samples: Record<string, Samples> = {
       { query: { _tag: 'cost_per_merged_ticket' } },
       { query: { _tag: 'tokens_by_model', by: 'run' } },
       { query: { _tag: 'hand_back_rates' } },
+      { query: { _tag: 'gate_decisions', project, ticket } },
       { query: { _tag: 'models_compared', since: at } },
     ],
     success: [
@@ -1202,6 +1221,7 @@ describe('the protocol’s groups', () => {
       'diff.run',
       'report.list',
       'report.get',
+      'gate.counts',
       'log.tail',
       'insights.summary',
       'insights.query',

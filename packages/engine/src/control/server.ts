@@ -27,6 +27,7 @@ import {
   ControlUnauthorized,
   type MergeStanding,
   type ProjectId,
+  type RunId,
   type SessionId,
   type TicketId,
   layerNdjson,
@@ -34,6 +35,7 @@ import {
 
 import { Checks } from '../checks'
 import { Git } from '../git'
+import { Telemetry } from '../telemetry/service'
 import { Wake } from '../time'
 import { WorkGraph } from '../workgraph'
 import type { Outcome } from './outcome'
@@ -64,6 +66,8 @@ export interface ControlSession {
   readonly project: ProjectId
   readonly ticket: TicketId
   readonly session: SessionId
+  /** The run it works for, which its gate's decisions are counted under; none outside a run. */
+  readonly run?: RunId
   /** The ticket's worker, its verifier (§13.6), or an organ's session (§16). */
   readonly role: ControlRole
   readonly worktree: string
@@ -189,6 +193,7 @@ export const make = Effect.gen(function* () {
   const wake = yield* Wake
   const passes = yield* CheckOwnPasses
   const attention = yield* Attention
+  const telemetry = yield* Telemetry
 
   const open = Effect.fn('ControlServer.open')(function* (
     session: ControlSession,
@@ -204,6 +209,7 @@ export const make = Effect.gen(function* () {
       wake,
       passes,
       attention,
+      telemetry,
       outcomes,
     })
     const handlers = ControlRpcs.toLayer(
@@ -272,9 +278,9 @@ export const make = Effect.gen(function* () {
   return ControlServer.of({ open })
 })
 
-/** The control server, over the work graph, git, the checks, time awake, the passes and the attention service. */
+/** The control server, over the work graph, git, the checks, time awake, the passes, the attention service and telemetry. */
 export const layer: Layer.Layer<
   ControlServer,
   never,
-  WorkGraph | Git | Checks | Wake | CheckOwnPasses | Attention
+  WorkGraph | Git | Checks | Wake | CheckOwnPasses | Attention | Telemetry
 > = Layer.effect(ControlServer, make)

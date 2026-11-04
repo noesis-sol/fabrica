@@ -11,6 +11,8 @@ import {
   Actor,
   Diff,
   type FileDiff,
+  GateCounts,
+  type GateReason,
   type Note,
   Report,
   RunEntry,
@@ -33,7 +35,8 @@ import { showDiff } from '../mounts/monaco'
 // beside it, where the worker, the verifier or triage said why it was set aside; reached from
 // navigation, the screen shows the scoped project's last report and its log, and the run going, where
 // one is, as its diff. The Report view lists the project's runs, newest first, to read any one's report,
-// and a report offers its run's merged diff. Answers that arrive for a diff, a ticket, a report or a
+// and a report offers its run's merged diff. Beside a diff, what the gate decided (§12.6): on the ticket,
+// or on each ticket of the run. Answers that arrive for a diff, a ticket, a report or a
 // project no longer shown are dropped, so a slow answer never replaces a newer choice.
 
 /** What the screen shows: a diff, the report, or the log. */
@@ -61,6 +64,8 @@ export const Model = Schema.Struct({
   files: VirtualList.Model,
   /** What the diff view said where Monaco couldn't draw the file: its patch is shown as text instead. */
   viewProblem: Schema.Option(Schema.String),
+  /** What the gate decided on the subject's ticket, or on each ticket of its run. */
+  gate: AsyncData.Schema(Schema.Array(GateCounts), Schema.String).schema,
   /** A ticket's diff's ticket whole, for its notes; idle for a run's diff. */
   ticket: AsyncData.Schema(TicketDetail, Schema.String).schema,
   /** The project's runs, newest first, a report to read chosen from them. */
@@ -87,6 +92,7 @@ export const init = (): Model => ({
   file: Option.none(),
   files: filesList(),
   viewProblem: Option.none(),
+  gate: AsyncData.Idle(),
   ticket: AsyncData.Idle(),
   runs: AsyncData.Idle(),
   reportRun: Option.none(),
@@ -103,6 +109,8 @@ export const Message = defineMessageUnion({
   RequestedLog: {},
   SucceededLoadDiff: { subject: Subject, diff: Diff },
   FailedLoadDiff: { subject: Subject, reason: Schema.String },
+  SucceededLoadGate: { subject: Subject, counts: Schema.Array(GateCounts) },
+  FailedLoadGate: { subject: Subject, reason: Schema.String },
   SucceededLoadTicket: {
     project: EngineProject,
     ticket: TicketId,
@@ -163,6 +171,34 @@ export const LoadDiff = Command.define('LoadDiff', {
       Effect.map(diff => Message.SucceededLoadDiff({ subject, diff })),
       Effect.catch(reason =>
         Effect.succeed(Message.FailedLoadDiff({ subject, reason })),
+      ),
+    ),
+})
+
+/** What the gate decided on the subject's ticket, or on each ticket of its run (§12.6). */
+export const LoadGate = Command.define('LoadGate', {
+  args: { subject: Subject },
+  messages: [Message.SucceededLoadGate, Message.FailedLoadGate],
+  execute: ({ subject }) =>
+    requestProject(subject.project, client =>
+      client.rpc['gate.counts'](
+        Subject.match(subject, {
+          Ticket: ({ project, ticket }) => ({
+            project: project.project,
+            ticket: Option.some(ticket),
+            run: Option.none(),
+          }),
+          Run: ({ project, run }) => ({
+            project: project.project,
+            ticket: Option.none(),
+            run: Option.some(run),
+          }),
+        }),
+      ),
+    ).pipe(
+      Effect.map(counts => Message.SucceededLoadGate({ subject, counts })),
+      Effect.catch(reason =>
+        Effect.succeed(Message.FailedLoadGate({ subject, reason })),
       ),
     ),
 })
@@ -309,6 +345,11 @@ const show = (
     : keptSubject
       ? reload(model.diff)
       : AsyncData.Loading()
+  const gate = Option.isNone(subject)
+    ? AsyncData.Idle()
+    : keptSubject
+      ? reload(model.gate)
+      : AsyncData.Loading()
   const ticket = Option.flatMap(subject, ticketOf)
   return {
     model: modifyFields(model, {
@@ -319,6 +360,7 @@ const show = (
       file: file => (keptSubject ? file : Option.none()),
       files: files => (keptSubject ? files : filesList()),
       viewProblem: problem => (keptSubject ? problem : Option.none()),
+      gate: () => gate,
       ticket: detail =>
         Option.isNone(ticket)
           ? AsyncData.Idle()
@@ -333,7 +375,10 @@ const show = (
     commands: [
       ...Option.match(subject, {
         onNone: () => [],
-        onSome: chosen => [LoadDiff({ subject: chosen })],
+        onSome: chosen => [
+          LoadDiff({ subject: chosen }),
+          LoadGate({ subject: chosen }),
+        ],
       }),
       ...Option.match(ticket, {
         onNone: () => [],
@@ -458,9 +503,10 @@ export const update = (model: Model, message: Message): Return =>
               file: () => Option.none(),
               files: filesList,
               viewProblem: () => Option.none(),
+              gate: () => AsyncData.Loading(),
               ticket: () => AsyncData.Idle(),
             }),
-            commands: [LoadDiff({ subject })],
+            commands: [LoadDiff({ subject }), LoadGate({ subject })],
           }
     },
     RequestedLog: () =>
@@ -479,6 +525,16 @@ export const update = (model: Model, message: Message): Return =>
     FailedLoadDiff: ({ subject, reason }) => ({
       model: showsSubject(model, subject)
         ? modifyFields(model, { diff: () => AsyncData.fail(reason) })
+        : model,
+    }),
+    SucceededLoadGate: ({ subject, counts }) => ({
+      model: showsSubject(model, subject)
+        ? modifyFields(model, { gate: () => AsyncData.succeed(counts) })
+        : model,
+    }),
+    FailedLoadGate: ({ subject, reason }) => ({
+      model: showsSubject(model, subject)
+        ? modifyFields(model, { gate: () => AsyncData.fail(reason) })
         : model,
     }),
     SucceededLoadTicket: ({ project, ticket, detail }) => ({
@@ -766,9 +822,86 @@ const noteView = (
     ],
   )
 
-/** A ticket's diff's ticket: its title and its notes, which say why it was set aside. */
+const gateReasonWord: Record<GateReason['verdict'], string> = {
+  asked: 'Asked',
+  refused: 'Refused',
+}
+
+/** One ticket's decisions: each verdict's count, and the reasons it asked or refused. */
+const gateEntry = (
+  counts: GateCounts,
+  named: boolean,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.keyed('li')(
+    counts.ticket,
+    [h.Class('flex flex-col gap-2')],
+    [
+      ...(named ? [h.p([h.Class('font-mono')], [counts.ticket])] : []),
+      h.p(
+        [],
+        [
+          `${counts.allowed} allowed · ${counts.asked} asked · ${counts.refused} refused`,
+        ],
+      ),
+      ...counts.reasons.map(({ verdict, reason, count }) =>
+        h.p(
+          [h.Class('whitespace-pre-wrap break-words text-muted')],
+          [`${gateReasonWord[verdict]} ${count}×: ${reason}`],
+        ),
+      ),
+    ],
+  )
+
+/** What the gate decided on the subject (§12.6): on its ticket, or on each ticket of its run, named. */
+const gateSection = (
+  model: Model,
+  subject: Subject,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.section(
+    [h.AriaLabel('Gate decisions'), h.Class('flex flex-col gap-8')],
+    [
+      h.h3([h.Class('text-sm font-extrabold')], ['Gate decisions']),
+      AsyncData.matchData(model.gate, {
+        onEmpty: () => note("Reading the gate's decisions…", h),
+        onFailure: reason =>
+          problemLine(`The gate's decisions couldn't be read: ${reason}`, h),
+        onData: counts =>
+          counts.length === 0
+            ? note('No decisions recorded.', h)
+            : h.ul(
+                [h.Class('flex flex-col gap-10')],
+                counts.map(each =>
+                  gateEntry(each, Option.isNone(ticketOf(subject)), h),
+                ),
+              ),
+      }),
+    ],
+  )
+
+const asideClass =
+  'flex shrink-0 flex-col gap-8 overflow-auto rounded-card bg-panel p-12 text-xs'
+
+/** A run's diff's aside: what the gate decided on each of its tickets. */
+const runAside = (
+  model: Model,
+  subject: Subject,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.aside(
+    [
+      h.AriaLabel('Gate decisions of the run'),
+      h.Class(asideClass),
+      h.Style({ width: '320px' }),
+    ],
+    [gateSection(model, subject, h)],
+  )
+
+/** A ticket's diff's ticket: its title and its notes, which say why it was set aside, and what the gate decided. */
 const notesView = (
   model: Model,
+  subject: Subject,
   ticket: TicketId,
   inputs: ViewInputs,
   h: HtmlBuilder<Message>,
@@ -776,9 +909,7 @@ const notesView = (
   h.aside(
     [
       h.AriaLabel(`Notes on ${ticket}`),
-      h.Class(
-        'flex shrink-0 flex-col gap-8 overflow-auto rounded-card bg-panel p-12 text-xs',
-      ),
+      h.Class(asideClass),
       h.Style({ width: '320px' }),
     ],
     [
@@ -801,6 +932,7 @@ const notesView = (
             ],
           ),
       }),
+      gateSection(model, subject, h),
     ],
   )
 
@@ -827,9 +959,9 @@ const diffView = (
             [h.Class('flex min-h-0 flex-1 gap-12')],
             [
               diffBody(model, subject, h),
-              ...Option.match(ticketOf(subject), {
-                onNone: () => [],
-                onSome: ticket => [notesView(model, ticket, inputs, h)],
+              Option.match(ticketOf(subject), {
+                onNone: () => runAside(model, subject, h),
+                onSome: ticket => notesView(model, subject, ticket, inputs, h),
               }),
             ],
           ),

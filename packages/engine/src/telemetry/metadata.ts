@@ -30,6 +30,7 @@ export const contentFields: ReadonlySet<string> = new Set([
   'command',
   'path',
   'question',
+  'reason',
   'notes',
   'stacktrace',
   'stack',

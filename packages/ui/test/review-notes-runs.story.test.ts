@@ -156,6 +156,7 @@ describe("a set-aside ticket's notes", () => {
       click(role('button', { name: 'Review' })),
       SceneCommand.expectExact(
         Review.LoadDiff({ subject: ticketSubject }),
+        Review.LoadGate({ subject: ticketSubject }),
         Review.LoadTicket({ project: scoped, ticket }),
         Review.LoadRuns({ project: scoped }),
         Review.LoadReport({ project: scoped, run: Option.none() }),
@@ -171,6 +172,13 @@ describe("a set-aside ticket's notes", () => {
         [
           Review.LoadDiff,
           Review.Message.SucceededLoadDiff({ subject: ticketSubject, diff }),
+        ],
+        [
+          Review.LoadGate,
+          Review.Message.SucceededLoadGate({
+            subject: ticketSubject,
+            counts: [],
+          }),
         ],
         [
           Review.LoadTicket,
@@ -256,6 +264,16 @@ describe("a set-aside ticket's notes", () => {
       Command.expectExact(
         Review.LoadDiff({
           subject: Review.Subject.Run({ project: scoped, run: last }),
+        }),
+        Review.LoadGate({
+          subject: Review.Subject.Run({ project: scoped, run: last }),
+        }),
+      ),
+      Command.resolve(
+        Review.LoadGate,
+        Review.Message.SucceededLoadGate({
+          subject: Review.Subject.Run({ project: scoped, run: last }),
+          counts: [],
         }),
       ),
       Command.resolve(

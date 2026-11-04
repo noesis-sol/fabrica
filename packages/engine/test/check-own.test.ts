@@ -50,6 +50,7 @@ import {
 } from '../src/process'
 import { layerWake, noSleepCauses } from '../src/time'
 import { WorkGraph, makeWorkGraph, storeLayer } from '../src/workgraph'
+import { noTelemetry } from './run-harness'
 
 // The `check_own` tool over a real control socket (spec §12.3, §13.6, H89): the engine runs the
 // project's `check_own` in the worktree through the Checks service, against stub scripts and real git
@@ -146,6 +147,7 @@ const services = () => {
         gitService,
         Layer.provide(checksLayer, Layer.merge(runner, gitService)),
         Layer.provide(layerWake, noSleepCauses),
+        noTelemetry,
         Layer.succeed(Attention)({
           permission: () =>
             Effect.succeed(PermissionDecision.cases.allow_run.make({})),

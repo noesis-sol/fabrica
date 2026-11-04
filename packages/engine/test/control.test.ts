@@ -78,6 +78,7 @@ import {
 } from '../src/process'
 import { layerWake, noSleepCauses } from '../src/time'
 import { WorkGraph, makeWorkGraph, storeLayer } from '../src/workgraph'
+import { noTelemetry } from './run-harness'
 
 // The agent control server (spec §12.2, §12.3, §20.2) over a real Unix socket: a client speaking the
 // control group with the session's token, against an in-memory work graph and a real git repository
@@ -197,6 +198,7 @@ const services = controlLayer.pipe(
       ),
       Layer.provide(layerWake, noSleepCauses),
       attentionLayer,
+      noTelemetry,
     ),
   ),
   Layer.provideMerge(

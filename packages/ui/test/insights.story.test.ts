@@ -187,6 +187,15 @@ const tables: Record<Insights.Panel, InsightsTable> = {
       ['set aside', 2, 0.095],
     ],
   }),
+  gate: table({
+    columns: [
+      { name: 'Ticket', unit: 'text' },
+      { name: 'Verdict', unit: 'text' },
+      { name: 'Reason', unit: 'text' },
+      { name: 'Decisions', unit: 'count' },
+    ],
+    rows: [['fa-1', 'refused', 'git push', 1]],
+  }),
   models: table({
     columns: [
       { name: 'Model', unit: 'text' },

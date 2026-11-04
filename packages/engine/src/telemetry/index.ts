@@ -8,6 +8,7 @@ export {
   makeTelemetryDb,
   telemetryDbLayer,
 } from './duckdb'
+export { type GateScope, readGateCounts } from './gate-counts'
 export { metadataSerialization } from './metadata'
 export { telemetryMigrations } from './migrations'
 export { type OtlpExportOptions, otlpExportLayer } from './otlp'

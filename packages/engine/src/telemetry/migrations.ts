@@ -59,8 +59,12 @@ const equivalents = statements(
   `ALTER TABLE daily ADD COLUMN equivalent_usd REAL`,
 )
 
+// Why the gate asked or refused, for the reviewer's counts (§12.6).
+const gateReasons = statements(`ALTER TABLE tool_calls ADD COLUMN reason TEXT`)
+
 /** The telemetry store's migrations, in order. */
 export const telemetryMigrations: Migrations = {
   '0001_telemetry': rows,
   '0002_model_call_equivalents': equivalents,
+  '0003_tool_call_reasons': gateReasons,
 }

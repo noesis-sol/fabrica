@@ -384,6 +384,7 @@ const verifyRound = Effect.fn('Verifier.round')(function* (input: {
     project: config.project,
     ticket,
     session,
+    run: context.run,
     role: ControlRole.Verifier({ round: input.round }),
     worktree: worktree.path,
     folder: config.sockets,

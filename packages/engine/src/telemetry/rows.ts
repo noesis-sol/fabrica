@@ -61,6 +61,8 @@ export type TelemetryRow = Data.TaggedEnum<{
     readonly allowed: boolean
     /** The gate asked the maintainer before deciding. */
     readonly asked: boolean
+    /** Why it asked or refused; none for a call it allowed unasked. */
+    readonly reason?: string | undefined
   }
   /** A check or a setup (§13.6, §13.7). */
   Check: Tie & {
@@ -133,6 +135,9 @@ export const rowTables: { readonly [K in RowKind]: string } = {
   ProcessSample: 'process_samples',
 }
 
+/** A `tool_calls` row's verdict (§12.6), in SQL both stores read: asked and answered, allowed, or refused. */
+export const gateVerdictColumn = `CASE WHEN asked = 1 THEN 'asked' WHEN allowed = 1 THEN 'allowed' ELSE 'refused' END`
+
 /** A column's value as SQLite stores it. */
 export type Column = string | number | null
 
@@ -181,6 +186,7 @@ export const columnsOf = (row: TelemetryRow, at: number): Columns =>
       duration_ms: millis(call.duration),
       allowed: call.allowed ? 1 : 0,
       asked: call.asked ? 1 : 0,
+      reason: orNull(call.reason),
     }),
     Check: check => ({
       at,

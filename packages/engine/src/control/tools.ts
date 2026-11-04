@@ -1,7 +1,7 @@
 import {
   Data,
   Deferred,
-  type Duration,
+  Duration,
   Effect,
   Option,
   Queue,
@@ -24,14 +24,16 @@ import {
   type Files,
   type FinishCheckOwn,
   type GateDecided,
+  GateVerdict,
   LinkedTicket,
   type MergeStanding,
   Noted,
   type PermissionAsked,
-  type PermissionDecision,
+  PermissionDecision,
   type ProjectId,
   type QuestionChoices,
   RepoPath,
+  type RunId,
   type SessionId,
   type TicketId,
   TicketMetadata,
@@ -49,6 +51,8 @@ import {
   isClean,
 } from '../git'
 import { ExitStatus } from '../process'
+import { TelemetryRow } from '../telemetry/rows'
+import type { TelemetryShape } from '../telemetry/service'
 import type { Wake } from '../time'
 import type {
   EdgeCycle,
@@ -103,6 +107,8 @@ export interface ToolContext {
   readonly project: ProjectId
   readonly ticket: TicketId
   readonly session: SessionId
+  /** The run it works for, which its gate's decisions are counted under; none outside a run. */
+  readonly run?: RunId | undefined
   readonly role: ControlRole
   readonly worktree: string
   /** How long `ask_and_wait` holds the agent for an answer, in time awake. */
@@ -114,10 +120,44 @@ export interface ToolContext {
   readonly wake: Wake['Service']
   readonly passes: CheckOwnPassesShape
   readonly attention: AttentionShape
+  readonly telemetry: TelemetryShape
   /** Where the ticket stands in the merge queue (§12.6, H59). */
   readonly mergeStanding: Effect.Effect<MergeStanding>
   readonly outcomes: Queue.Queue<Outcome>
 }
+
+/** The most of a gate's reason recorded: a refusal can quote a whole command. */
+const longestGateReason = 500
+
+/** What a row records of the gate's verdict (§12.6): whether the call went ahead, whether it asked, and why. */
+interface GateRuling {
+  readonly allowed: boolean
+  readonly asked: boolean
+  readonly reason: string | undefined
+}
+
+const gateRuling = (verdict: GateVerdict): GateRuling =>
+  GateVerdict.match(verdict, {
+    allowed: (): GateRuling => ({
+      allowed: true,
+      asked: false,
+      reason: undefined,
+    }),
+    asked: ({ why, decision }): GateRuling => ({
+      allowed: PermissionDecision.match(decision, {
+        allow_once: () => true,
+        allow_run: () => true,
+        refuse: () => false,
+      }),
+      asked: true,
+      reason: why.slice(0, longestGateReason),
+    }),
+    refused: ({ reason }): GateRuling => ({
+      allowed: false,
+      asked: false,
+      reason: reason.slice(0, longestGateReason),
+    }),
+  })
 
 /** A question's fields, as `ask_question` and `ask_and_wait` take them. */
 interface Asking {
@@ -164,6 +204,8 @@ export const makeTools = (context: ToolContext) => {
   const actor: Actor = { _tag: 'worker', session: context.session }
   /** One `check_own` at a time: the worktree's tree is read through one git folder of the engine's own. */
   const checking = Semaphore.makeUnsafe(1)
+  /** How long each call the gate asked about waited for its answer, until its decision is reported. */
+  const permissionWaits = new Map<string, Duration.Duration>()
 
   const publish = (outcome: Outcome) => Queue.offer(outcomes, outcome)
 
@@ -569,13 +611,23 @@ export const makeTools = (context: ToolContext) => {
         shown: input.shown,
         why: input.why,
       })
-      .pipe(Effect.withSpan('Control.request_permission'))
+      .pipe(
+        Effect.timed,
+        Effect.map(([waited, decision]) => {
+          permissionWaits.set(input.toolCall, waited)
+          return decision
+        }),
+        Effect.withSpan('Control.request_permission'),
+      )
 
   const mergeStanding = context.mergeStanding.pipe(
     Effect.withSpan('Control.merge_standing'),
   )
 
-  /** The gate's decision, logged with the session's ticket (§12.6). */
+  /**
+   * The gate's decision, logged with the session's ticket and recorded for the reviewer's counts and
+   * the run's insights (§12.6, §21). An organ's session has no ticket of its own to count it under.
+   */
   const reportGateDecision = (decided: GateDecided): Effect.Effect<void> =>
     Effect.logInfo(`gate ${decided.verdict._tag}: ${decided.tool}`).pipe(
       Effect.annotateLogs({
@@ -585,6 +637,26 @@ export const makeTools = (context: ToolContext) => {
         tool: decided.tool,
         verdict: decided.verdict,
       }),
+      Effect.andThen(
+        Effect.suspend(() => {
+          const waited = permissionWaits.get(decided.toolCall) ?? Duration.zero
+          permissionWaits.delete(decided.toolCall)
+          return context.telemetry.record(
+            TelemetryRow.ToolCall({
+              project: context.project,
+              run: context.run,
+              ticket: ControlRole.$match(context.role, {
+                Worker: () => ticket,
+                Verifier: () => ticket,
+                Organ: () => undefined,
+              }),
+              tool: decided.tool,
+              duration: waited,
+              ...gateRuling(decided.verdict),
+            }),
+          )
+        }),
+      ),
       Effect.withSpan('Control.report_gate_decision'),
     )
 

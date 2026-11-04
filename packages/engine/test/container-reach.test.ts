@@ -53,6 +53,7 @@ import { containedAgent, controlTransportOf } from '../src/run/contained'
 import { SecretMissing, Secrets } from '../src/secrets'
 import { layerWake, noSleepCauses } from '../src/time'
 import { WorkGraph, makeWorkGraph, storeLayer } from '../src/workgraph'
+import { noTelemetry } from './run-harness'
 
 // How a worker in a container reaches the engine (spec §12.7): the control channel over its token-scoped
 // TCP listener on Podman Machine (fab-mgi.61), the model proxy over a Unix socket of the agent's on Linux
@@ -116,6 +117,7 @@ const controlServices = () => {
         gitService,
         Layer.provide(checksLayer, Layer.merge(runner, gitService)),
         Layer.provide(layerWake, noSleepCauses),
+        noTelemetry,
         Layer.succeed(Attention)({
           permission: () =>
             Effect.succeed(PermissionDecision.cases.allow_run.make({})),

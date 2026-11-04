@@ -987,6 +987,67 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
       ],
       "type": "object",
     },
+    "GateCountsEncoded": {
+      "additionalProperties": true,
+      "properties": {
+        "allowed": {
+          "minimum": 0,
+          "type": "integer",
+        },
+        "asked": {
+          "minimum": 0,
+          "type": "integer",
+        },
+        "reasons": {
+          "items": {
+            "$ref": "#/$defs/GateReasonEncoded",
+          },
+          "type": "array",
+        },
+        "refused": {
+          "minimum": 0,
+          "type": "integer",
+        },
+        "ticket": {
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)+(?:\\.[1-9][0-9]*)*$",
+          "type": "string",
+        },
+      },
+      "required": [
+        "ticket",
+        "allowed",
+        "asked",
+        "refused",
+        "reasons",
+      ],
+      "type": "object",
+    },
+    "GateReasonEncoded": {
+      "additionalProperties": true,
+      "properties": {
+        "count": {
+          "minimum": 0,
+          "type": "integer",
+        },
+        "reason": {
+          "pattern": "\\S",
+          "type": "string",
+        },
+        "verdict": {
+          "enum": [
+            "asked",
+            "refused",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "verdict",
+        "reason",
+        "count",
+      ],
+      "type": "object",
+    },
     "HoldEncoded": {
       "additionalProperties": true,
       "properties": {
@@ -12031,6 +12092,41 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
       "payload": {
         "additionalProperties": true,
         "properties": {
+          "project": {
+            "pattern": "^\\S+$",
+            "type": "string",
+          },
+          "run": {
+            "pattern": "^\\S+$",
+            "type": "string",
+          },
+          "ticket": {
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)+(?:\\.[1-9][0-9]*)*$",
+            "type": "string",
+          },
+        },
+        "required": [
+          "project",
+        ],
+        "type": "object",
+      },
+      "stream": false,
+      "success": {
+        "items": {
+          "$ref": "#/$defs/GateCountsEncoded",
+        },
+        "type": "array",
+      },
+      "tag": "gate.counts",
+    },
+    {
+      "error": {
+        "$ref": "#/$defs/ProjectNotFoundEncoded",
+      },
+      "group": "review",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
           "lines": {
             "minimum": 1,
             "type": "integer",
@@ -12272,6 +12368,36 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
                   },
                   "since": {
                     "type": "integer",
+                  },
+                },
+                "required": [
+                  "_tag",
+                ],
+                "type": "object",
+              },
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "_tag": {
+                    "enum": [
+                      "gate_decisions",
+                    ],
+                    "type": "string",
+                  },
+                  "project": {
+                    "pattern": "^\\S+$",
+                    "type": "string",
+                  },
+                  "run": {
+                    "pattern": "^\\S+$",
+                    "type": "string",
+                  },
+                  "since": {
+                    "type": "integer",
+                  },
+                  "ticket": {
+                    "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)+(?:\\.[1-9][0-9]*)*$",
+                    "type": "string",
                   },
                 },
                 "required": [

@@ -50,6 +50,7 @@ import {
 } from '../src/process'
 import { layerWake, noSleepCauses } from '../src/time'
 import { WorkGraph, makeWorkGraph, storeLayer } from '../src/workgraph'
+import { noTelemetry } from './run-harness'
 
 // `finish` as the project's `check_own` asks, over a real control socket (spec §12.3, H62, H89): where
 // it is "none", nothing records a pass, so `finish` takes "none" in its place and the outcome says the
@@ -143,6 +144,7 @@ const services = () => {
         gitService,
         Layer.provide(checksLayer, Layer.merge(runner, gitService)),
         Layer.provide(layerWake, noSleepCauses),
+        noTelemetry,
         Layer.succeed(Attention)({
           permission: () =>
             Effect.succeed(PermissionDecision.cases.allow_run.make({})),

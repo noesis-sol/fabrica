@@ -517,6 +517,7 @@ export const runWorker = Effect.fn('Run.worker')(function* (
     project: config.project,
     ticket,
     session,
+    run: context.run,
     role: ControlRole.Worker(),
     worktree: worktree.path,
     folder: config.sockets,

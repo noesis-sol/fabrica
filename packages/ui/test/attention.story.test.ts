@@ -824,6 +824,12 @@ describe('reviews and tasks', () => {
             ticket: TicketId.make('fa-11'),
           }),
         }),
+        Review.LoadGate({
+          subject: Review.Subject.Ticket({
+            project: scoped,
+            ticket: TicketId.make('fa-11'),
+          }),
+        }),
         Review.LoadTicket({ project: scoped, ticket: TicketId.make('fa-11') }),
         Review.LoadRuns({ project: scoped }),
         Review.LoadReport({ project: scoped, run: Option.none() }),
@@ -833,6 +839,16 @@ describe('reviews and tasks', () => {
         [
           Review.LoadDiff,
           Review.Message.FailedLoadDiff({
+            subject: Review.Subject.Ticket({
+              project: scoped,
+              ticket: TicketId.make('fa-11'),
+            }),
+            reason: 'the engine is not connected',
+          }),
+        ],
+        [
+          Review.LoadGate,
+          Review.Message.FailedLoadGate({
             subject: Review.Subject.Ticket({
               project: scoped,
               ticket: TicketId.make('fa-11'),

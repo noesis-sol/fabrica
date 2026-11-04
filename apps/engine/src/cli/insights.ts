@@ -52,6 +52,7 @@ const queries: { readonly [K in InsightsQueryName]: string } = {
   cost_per_merged_ticket: 'cost per merged ticket, by run',
   tokens_by_model: 'tokens and cost per model, by run, ticket or project',
   hand_back_rates: 'hand-back and set-aside rates',
+  gate_decisions: "the gate's decisions per ticket, by verdict and reason",
   models_compared: 'models compared on tickets of a type',
 }
 
@@ -221,6 +222,15 @@ const queryOf = (
     case 'hand_back_rates':
       return Effect.succeed(
         InsightsQuery.cases.hand_back_rates.make({ project, since }),
+      )
+    case 'gate_decisions':
+      return Effect.succeed(
+        InsightsQuery.cases.gate_decisions.make({
+          project,
+          ticket: flags.ticket,
+          run: flags.run,
+          since,
+        }),
       )
     case 'models_compared':
       return Effect.succeed(

@@ -39,6 +39,7 @@ export const Panel = Schema.Literals([
   'flaky',
   'waits',
   'handBacks',
+  'gate',
   'models',
 ])
 export type Panel = typeof Panel.Type
@@ -62,6 +63,7 @@ export const panelTitle: Record<Panel, string> = {
   flaky: 'Flaky tests',
   waits: 'Waits on you',
   handBacks: 'Hand-back and set-aside rates',
+  gate: "The gate's decisions",
   models: 'Models compared',
 }
 
@@ -74,6 +76,7 @@ const panelAbout: Record<Panel, string> = {
   flaky: 'Tests that failed and passed on the same tree.',
   waits: 'How long questions and permission requests waited.',
   handBacks: 'How often tickets were handed back or set aside.',
+  gate: 'What the gate allowed, asked you about and refused on each ticket, and why.',
   models: 'Models side by side on similar tickets.',
 }
 
@@ -134,6 +137,16 @@ export const queryOf = (
     Match.when('handBacks', () =>
       Option.some(InsightsQuery.cases.hand_back_rates.make({ project, since })),
     ),
+    Match.when('gate', () =>
+      Option.some(
+        InsightsQuery.cases.gate_decisions.make({
+          project,
+          ticket: Option.none(),
+          run: Option.none(),
+          since,
+        }),
+      ),
+    ),
     Match.when('models', () =>
       Option.some(InsightsQuery.cases.models_compared.make({ project, since })),
     ),
@@ -172,6 +185,7 @@ const eachPanel = <A>(f: (panel: Panel) => A): Record<Panel, A> => ({
   flaky: f('flaky'),
   waits: f('waits'),
   handBacks: f('handBacks'),
+  gate: f('gate'),
   models: f('models'),
 })
 

@@ -39,6 +39,13 @@ export const InsightsQuery = Schema.TaggedUnion({
   },
   /** Hand-back and set-aside rates. */
   hand_back_rates: { project, since },
+  /** The gate's decisions per ticket, by verdict and reason (§12.6). */
+  gate_decisions: {
+    project,
+    ticket: optional(TicketId),
+    run: optional(RunId),
+    since,
+  },
   /** Models compared on similar tickets. */
   models_compared: { project, since },
 })

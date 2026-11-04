@@ -3,12 +3,12 @@ import { Rpc, RpcGroup } from 'effect/rpc'
 
 import { CommitHash, ProjectId, RunId, TicketId } from '../ids'
 import { Text } from '../ticket'
-import { Moment, Ordinal, optional } from './common'
+import { Count, Moment, Ordinal, optional } from './common'
 import { ProjectNotFound, TicketNotFound } from './errors'
 import { NoRun, RunNotFound } from './runs'
 
 // The Review group (spec §8.1, §18.4): a ticket's branch diff, a run's merged diff, the project's runs,
-// their reports and the human log's tail.
+// their reports, the human log's tail and what the gate decided on each ticket.
 
 /** How a file changed. */
 export const FileChange = Schema.Literals([
@@ -48,6 +48,22 @@ export class RunEntry extends Schema.Class<RunEntry>('RunEntry')({
   startedAt: Moment,
 }) {}
 
+/** One reason the gate gave for asking or refusing (§12.6), and how many of a ticket's decisions gave it. */
+export class GateReason extends Schema.Class<GateReason>('GateReason')({
+  verdict: Schema.Literals(['asked', 'refused']),
+  reason: Text,
+  count: Count,
+}) {}
+
+/** What the gate decided on a ticket's tool calls (§12.6), each verdict counted, its reasons most given first. */
+export class GateCounts extends Schema.Class<GateCounts>('GateCounts')({
+  ticket: TicketId,
+  allowed: Count,
+  asked: Count,
+  refused: Count,
+  reasons: Schema.Array(GateReason),
+}) {}
+
 /** The ticket has no branch to diff: never dispatched, or its worktree gone. */
 export class NoBranch extends Schema.TaggedError<NoBranch>()('NoBranch', {
   project: ProjectId,
@@ -82,6 +98,16 @@ export const ReviewRpcs = RpcGroup.make(
     payload: { project: ProjectId, run: optional(RunId) },
     success: Report,
     error: Schema.Union([ProjectNotFound, NoRun, RunNotFound, NoReport]),
+  }),
+  /** The gate's decisions per ticket (§12.6): the project's, narrowed to a ticket or a run where one is named. */
+  Rpc.make('gate.counts', {
+    payload: {
+      project: ProjectId,
+      ticket: optional(TicketId),
+      run: optional(RunId),
+    },
+    success: Schema.Array(GateCounts),
+    error: ProjectNotFound,
   }),
   /** The human log's last lines (§7.5). */
   Rpc.make('log.tail', {

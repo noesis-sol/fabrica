@@ -164,6 +164,7 @@ describe("a set-aside ticket's diff", () => {
       expectScene(role('heading', { name: 'Review', level: 1 })).toExist(),
       SceneCommand.expectExact(
         Review.LoadDiff({ subject: ticketSubject }),
+        Review.LoadGate({ subject: ticketSubject }),
         Review.LoadTicket({ project: scoped, ticket }),
         Review.LoadRuns({ project: scoped }),
         Review.LoadReport({ project: scoped, run: Option.none() }),
@@ -176,6 +177,13 @@ describe("a set-aside ticket's diff", () => {
           Review.Message.SucceededLoadDiff({
             subject: ticketSubject,
             diff: ticketDiff,
+          }),
+        ],
+        [
+          Review.LoadGate,
+          Review.Message.SucceededLoadGate({
+            subject: ticketSubject,
+            counts: [],
           }),
         ],
         [
@@ -252,7 +260,14 @@ describe("a set-aside ticket's diff", () => {
         )
       }),
       message(Review.Message.RequestedRunDiff({ project: scoped, run })),
-      Command.expectExact(Review.LoadDiff({ subject: runSubject })),
+      Command.expectExact(
+        Review.LoadDiff({ subject: runSubject }),
+        Review.LoadGate({ subject: runSubject }),
+      ),
+      Command.resolve(
+        Review.LoadGate,
+        Review.Message.SucceededLoadGate({ subject: runSubject, counts: [] }),
+      ),
       // The ticket's diff, answering late, is not the run's.
       Command.resolve(
         Review.LoadDiff,
@@ -347,7 +362,14 @@ describe('reports and the log', () => {
         ),
       ).toExist(),
       click(role('button', { name: "The run's merged diff" })),
-      SceneCommand.expectExact(Review.LoadDiff({ subject: runSubject })),
+      SceneCommand.expectExact(
+        Review.LoadDiff({ subject: runSubject }),
+        Review.LoadGate({ subject: runSubject }),
+      ),
+      SceneCommand.resolve(
+        Review.LoadGate,
+        Review.Message.SucceededLoadGate({ subject: runSubject, counts: [] }),
+      ),
       expectScene(role('heading', { name: 'What run r-7 merged' })).toExist(),
       SceneCommand.resolve(
         Review.LoadDiff,

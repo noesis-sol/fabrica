@@ -20,9 +20,11 @@ import { readFileTail, readFileTextWritten } from '../files'
 import { Git, ticketBranch } from '../git'
 import { Projects } from '../projects/service'
 import { logPath, readEvents, reportPath } from '../runlog'
+import { Telemetry, TelemetryStore, readGateCounts } from '../telemetry'
 
 // The Review group's handlers (spec §8.1, §18.4): a ticket's branch diff against its merge base with
-// Base, a run's merged diff on Base, the project's runs, a run's report and the human log's last lines. The project is
+// Base, a run's merged diff on Base, the project's runs, a run's report, the human log's last lines
+// and the gate's decisions per ticket, read from the telemetry store. The project is
 // read through the Projects service, and a ticket's diff asks its work graph first: a ticket it
 // doesn't have is `TicketNotFound`, one it has without a branch `NoBranch`. The diffs are read
 // through the Git service, the report, the log and the event stream through the safe reader, so a link, a pipe or a folder planted in the checkout's .fabrica/ is
@@ -43,10 +45,12 @@ const reportable = (run: RunId): boolean => !run.includes('/')
 /** A branch by its full ref, so a tag of the same name is never taken for it. */
 const branchRef = (branch: string): string => `refs/heads/${branch}`
 
-/** The Review group's handlers on the Git and Projects services in context. */
+/** The Review group's handlers on the Git, Projects and telemetry services in context. */
 export const makeReviewHandlers = Effect.gen(function* () {
   const git = yield* Git
   const projects = yield* Projects
+  const telemetry = yield* Telemetry
+  const store = yield* TelemetryStore
 
   /** Fails `TicketNotFound` where the project's work graph doesn't have `ticket`. */
   const known = (project: ProjectId, ticket: TicketId) =>
@@ -220,16 +224,30 @@ export const makeReviewHandlers = Effect.gen(function* () {
     return { lines: tail }
   })
 
+  const gateCounts = Effect.fn('Review.gateCounts')(function* (scope: {
+    readonly project: ProjectId
+    readonly ticket: Option.Option<TicketId>
+    readonly run: Option.Option<RunId>
+  }) {
+    yield* projects.find(scope.project)
+    return yield* readGateCounts(scope).pipe(
+      Effect.provideService(Telemetry, telemetry),
+      Effect.provideService(TelemetryStore, store),
+      Effect.orDie,
+    )
+  })
+
   return ReviewRpcs.of({
     'diff.ticket': diffTicket,
     'diff.run': diffRun,
     'report.list': reportList,
     'report.get': reportGet,
+    'gate.counts': gateCounts,
     'log.tail': logTail,
   })
 })
 
-/** The Review group's handlers on the Git and Projects services in context. */
+/** The Review group's handlers on the Git, Projects and telemetry services in context. */
 export const reviewHandlersOn = ReviewRpcs.toLayer(makeReviewHandlers)
 
 /** The Review group's handlers, their git the daemon's (§7.7: on the engine's host, in time awake). */
