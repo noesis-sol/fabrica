@@ -208,6 +208,8 @@ export const makeRequirementsWatch = Effect.fn('Run.requirementsWatch')(
         )
         .pipe(Effect.provideContext(services)),
       gate: Effect.map(Ref.get(watched), ({ gate }) => gate),
+      /** The list as the run holds it now: the start's, or the last that a merge changed it to. */
+      list: Effect.map(Ref.get(watched), ({ list }) => list),
     }
   },
 )

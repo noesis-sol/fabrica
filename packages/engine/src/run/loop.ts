@@ -717,28 +717,6 @@ const runStarted = Effect.fn('Run.started')(function* (
     })),
   })
   const workers = yield* FiberSet.make<void>()
-  const context: WorkerContext = {
-    config,
-    run,
-    started,
-    log,
-    merges,
-    setup,
-    sessions,
-    actor,
-    desk: view.workers,
-    cost,
-  }
-  yield* Deferred.succeed(
-    handBackWorker,
-    yield* makeHandBackWorker({
-      context,
-      supervision,
-      actor,
-      drawSession,
-    }),
-  )
-
   const stop = (
     kind: StopKind,
     detail: string,
@@ -793,6 +771,29 @@ const runStarted = Effect.fn('Run.started')(function* (
     fork: check =>
       watched('the requirements check')(check).pipe(Scope.provide(runScope)),
   })
+
+  const context: WorkerContext = {
+    config,
+    run,
+    started,
+    requirements: requirements.list,
+    log,
+    merges,
+    setup,
+    sessions,
+    actor,
+    desk: view.workers,
+    cost,
+  }
+  yield* Deferred.succeed(
+    handBackWorker,
+    yield* makeHandBackWorker({
+      context,
+      supervision,
+      actor,
+      drawSession,
+    }),
+  )
 
   /**
    * A change of the work graph the run made failed: the run stops, `TRACKER_FAILED`. One refused, its

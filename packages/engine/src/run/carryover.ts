@@ -5,6 +5,7 @@ import {
   type Actor,
   CommitHash,
   type EngineId,
+  type Requirement,
   TicketId,
 } from '@fabrica/contracts'
 
@@ -100,12 +101,17 @@ const location = (checkout: string) => ({
 const digest = (text: string) =>
   createHash('sha256').update(text).digest('hex').slice(0, 16)
 
-/** What a session begins with now: the run's settings, and the project's worker rules on Base. */
+/**
+ * What a session begins with now: the run's settings, the requires list as the run holds it, which a
+ * merge may have changed since its start (§17), and the project's worker rules on Base.
+ */
 export const beganNow = Effect.fn('CarryOver.beganNow')(function* (input: {
   readonly checkout: string
   readonly started: Started
+  readonly requirements: Effect.Effect<ReadonlyArray<Requirement>>
 }) {
   const project = input.started.settings.project
+  const requirements = yield* input.requirements
   const rules = yield* readFileText({
     root: input.checkout,
     path: workerRulesPath,
@@ -116,7 +122,7 @@ export const beganNow = Effect.fn('CarryOver.beganNow')(function* (input: {
   return {
     templates: project.templates,
     projectRules: rules,
-    requirements: project.requires.map(requirement => ({
+    requirements: requirements.map(requirement => ({
       name: requirement.name,
       entry: requirementWords(requirement),
     })),

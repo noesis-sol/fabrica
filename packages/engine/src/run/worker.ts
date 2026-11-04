@@ -17,6 +17,7 @@ import {
   ModelName,
   ModelOverride,
   PermissionsVariable,
+  type Requirement,
   type RunId,
   type SessionId,
   type SetAsideReason,
@@ -126,6 +127,8 @@ export interface WorkerContext {
   readonly config: RunConfig
   readonly run: RunId
   readonly started: Started
+  /** The requires list on Base as the run holds it now, a merge's change taken (§17). */
+  readonly requirements: Effect.Effect<ReadonlyArray<Requirement>>
   readonly log: RunLog['Service']
   readonly merges: MergeQueueShape
   /** The project's setup, as a dispatch sets its worktree up (§13.8). */
@@ -428,6 +431,7 @@ const begin = Effect.fn('Run.begin')(function* (
           yield* beganNow({
             checkout: context.config.checkout,
             started: context.started,
+            requirements: context.requirements,
           }),
         )
         return Result.succeed<Begun>({
@@ -560,7 +564,11 @@ export const runWorker = Effect.fn('Run.worker')(function* (
           ),
         onSome: base =>
           Effect.flatMap(
-            beganNow({ checkout: config.checkout, started }),
+            beganNow({
+              checkout: config.checkout,
+              started,
+              requirements: context.requirements,
+            }),
             began =>
               context.sessions.save({
                 ticket,
