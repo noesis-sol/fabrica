@@ -64,6 +64,7 @@ import {
 import { type RunConfig, RunMode, runProject } from '../src/run'
 import { layerRunLog, readEvents } from '../src/runlog'
 import { Held, SecretMissing, SecretName, Secrets } from '../src/secrets'
+import type { Telemetry } from '../src/telemetry'
 import { layerWake, noBattery, noSleepCauses } from '../src/time'
 import { WorkGraph, makeWorkGraph, storeLayer } from '../src/workgraph'
 import { anthropicAnswer } from './proxy-streams'
@@ -79,7 +80,8 @@ import { noTelemetry } from './run-harness'
 // no verdict), the last one for every later round. `HELD` has the provider refuse a call of the verifier's
 // for its usage limit and ends its turn on a failed call once the proxy keeps a call at its permit, as Pi
 // does, giving a PASS once told to carry on; `HELD-ANSWERED` does the same but its last call was answered;
-// `FAILED` ends its turn on a failed call with nothing held.
+// `FAILED` ends its turn on a failed call with nothing held; `GATE` has the worker report an allowed call
+// and the verifier a refused one, before its PASS.
 
 const STUB = `import { execFileSync } from 'node:child_process'
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
@@ -179,6 +181,14 @@ const verify = async message => {
   const word = script[Math.min(round, script.length) - 1]
   if (word === 'none') return
   if (word === 'FAILED') return lastCall('error')
+  if (word === 'GATE') {
+    await call('report_gate_decision', {
+      toolCall: 'verifier-call',
+      tool: 'bash',
+      verdict: { _tag: 'refused', reason: 'git push: workers never push' },
+    })
+    return call('verdict', { verdict: verdictOf('PASS', round) })
+  }
   if (word === 'HELD' && message.startsWith('Your turn ended as a hold'))
     return call('verdict', { verdict: verdictOf('PASS', round) })
   if (word === 'HELD' || word === 'HELD-ANSWERED') {
@@ -193,6 +203,12 @@ const work = async message => {
   await tryCall('verdict', { verdict: { _tag: 'PASS', summary: 'Mine.', findings: [] } })
   const view = await call('get_ticket', {})
   const ticket = view.ticket
+  if (/verify: GATE/.test(ticket.description ?? ''))
+    await call('report_gate_decision', {
+      toolCall: 'worker-call',
+      tool: 'read',
+      verdict: { _tag: 'allowed' },
+    })
   if (/disagrees with round/.test(message))
     return call('ask_question', {
       title: 'Which round holds?',
@@ -459,7 +475,11 @@ const attentionLayer = Layer.succeed(Attention)(
 )
 
 /** Every service a run runs on, live, over the boundaries' stand-ins. */
-export const services = (fixture: Project, provider: string) => {
+export const services = (
+  fixture: Project,
+  provider: string,
+  telemetry: Layer.Layer<Telemetry> = noTelemetry,
+) => {
   const runner = Layer.provideMerge(runnerLayer(runnerConfig()), liveDeadlines)
   const gitServices = Layer.provideMerge(
     worktreesLayer,
@@ -481,7 +501,7 @@ export const services = (fixture: Project, provider: string) => {
     checkOwnPassesLayer,
     Layer.provide(layerWake, noSleepCauses),
     noBattery,
-    noTelemetry,
+    telemetry,
     attentionLayer,
     liveMergeWaits,
     agentLayer({
@@ -595,6 +615,7 @@ export const runOne = (
   fixture: Project,
   verify: string,
   during: (ticket: TicketId) => Effect.Effect<void> = () => Effect.void,
+  telemetry: Layer.Layer<Telemetry> = noTelemetry,
 ) =>
   Effect.gen(function* () {
     const provider = yield* fakeProvider
@@ -625,7 +646,7 @@ export const runOne = (
         detail,
         entries: entriesOf(fixture, made.id),
       }
-    }).pipe(Effect.provide(services(fixture, provider.url)))
+    }).pipe(Effect.provide(services(fixture, provider.url, telemetry)))
   }).pipe(Effect.scoped)
 
 /** A whole run's limit: up to five Pi sessions in turn, beside every other test file. */

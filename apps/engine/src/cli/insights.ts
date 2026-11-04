@@ -292,11 +292,11 @@ export const insights = Command.make(
       Flag.optional,
     ),
     ticket: Flag.String('ticket').pipe(
-      Flag.withDescription("ticket_time: this ticket's alone"),
+      Flag.withDescription("ticket_time, gate_decisions: this ticket's alone"),
       Flag.optional,
     ),
     run: Flag.String('run').pipe(
-      Flag.withDescription("ticket_time: this run's alone"),
+      Flag.withDescription("ticket_time, gate_decisions: this run's alone"),
       Flag.optional,
     ),
     suite: Flag.Literals('suite', CheckSuite.literals).pipe(
