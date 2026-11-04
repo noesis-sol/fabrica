@@ -5,11 +5,11 @@ import { beforeAll, describe, expect, it } from '@effect/vitest'
 import type { TicketId } from '@fabrica/contracts'
 
 import {
+  type Project,
   entriesOf,
   ofKind,
   phasesOf,
   project,
-  type Project,
   promptsOf,
   runOne,
   setUpFixtures,
