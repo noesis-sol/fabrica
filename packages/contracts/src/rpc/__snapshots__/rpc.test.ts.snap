@@ -10839,6 +10839,102 @@ exports[`the protocol’s JSON Schema > matches its snapshot 1`] = `
     },
     {
       "error": {
+        "$ref": "#/$defs/ProjectNotFoundEncoded",
+      },
+      "group": "runs",
+      "payload": {
+        "additionalProperties": true,
+        "properties": {
+          "project": {
+            "pattern": "^\\S+$",
+            "type": "string",
+          },
+          "resume": {
+            "additionalProperties": true,
+            "properties": {
+              "after": {
+                "minimum": 0,
+                "type": "integer",
+              },
+              "epoch": {
+                "pattern": "^\\S+$",
+                "type": "string",
+              },
+            },
+            "required": [
+              "epoch",
+              "after",
+            ],
+            "type": "object",
+          },
+        },
+        "required": [
+          "project",
+        ],
+        "type": "object",
+      },
+      "stream": true,
+      "success": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": [
+                  "snapshot",
+                ],
+                "type": "string",
+              },
+              "epoch": {
+                "pattern": "^\\S+$",
+                "type": "string",
+              },
+              "seq": {
+                "minimum": 0,
+                "type": "integer",
+              },
+              "value": {
+                "$ref": "#/$defs/RunEvents",
+              },
+            },
+            "required": [
+              "_tag",
+              "epoch",
+              "seq",
+              "value",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": true,
+            "properties": {
+              "_tag": {
+                "enum": [
+                  "patch",
+                ],
+                "type": "string",
+              },
+              "seq": {
+                "minimum": 0,
+                "type": "integer",
+              },
+              "value": {
+                "$ref": "#/$defs/RunEvents",
+              },
+            },
+            "required": [
+              "_tag",
+              "seq",
+              "value",
+            ],
+            "type": "object",
+          },
+        ],
+      },
+      "tag": "run.watchTalkActions",
+    },
+    {
+      "error": {
         "anyOf": [
           {
             "$ref": "#/$defs/ProjectNotFoundEncoded",

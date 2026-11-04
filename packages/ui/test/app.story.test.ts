@@ -527,6 +527,7 @@ const handlers = served.toLayer({
   'run.preflight': notServed,
   'run.watchView': () => Stream.fromIterable(items),
   'run.watchEvents': () => Stream.die('not served'),
+  'run.watchTalkActions': () => Stream.never,
 })
 
 describe('frames decoded into the Model', () => {

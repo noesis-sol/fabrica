@@ -824,6 +824,11 @@ const samples: Record<string, Samples> = {
     success: [snapshot([event]), patch([event, event])],
     error: [{ _tag: 'RunNotFound', project, run }],
   },
+  'run.watchTalkActions': {
+    payload: [{ project }, { project, resume: { epoch: 'ep-1', after: 0 } }],
+    success: [snapshot([event]), patch([event, event])],
+    error: [notFound],
+  },
   'worker.message': {
     payload: [{ project, ticket, text: 'Use the existing session store.' }],
     error: [noWorker],
@@ -1515,6 +1520,7 @@ describe('the protocol’s JSON Schema', () => {
       'tickets.watch',
       'run.watchView',
       'run.watchEvents',
+      'run.watchTalkActions',
       'worker.watchTranscript',
       'attention.watch',
       'talk.watchTranscript',

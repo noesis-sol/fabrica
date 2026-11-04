@@ -197,6 +197,8 @@ const engineServing = ({
       askedStream('run.watchView', Option.some(project)),
     'run.watchEvents': ({ project }) =>
       askedStream('run.watchEvents', Option.some(project)),
+    'run.watchTalkActions': ({ project }) =>
+      askedStream('run.watchTalkActions', Option.some(project)),
     'attention.list': notServed,
     'attention.answer': ({ answer }) =>
       Effect.andThen(ask('attention.answer', Option.some(answer.project)), () =>

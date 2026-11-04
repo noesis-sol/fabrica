@@ -10,8 +10,8 @@ import { RunHeader, RunMode, RunView, RunViewPatch } from './run-view'
 import { resume, streamItem } from './stream'
 
 // The Runs group (spec §8.1, §13): starting a run in a mode with its flags, stopping, draining and
-// undraining it, its status, an overnight run's pre-flight (§15.6), and the streams of its view (§8.3)
-// and its events (§13.12).
+// undraining it, its status, an overnight run's pre-flight (§15.6), and the streams of its view (§8.3),
+// its events (§13.12) and the run talk's actions with no run going (§15.4).
 
 /**
  * What a pre-flight line is about (§15.6), one line for each: a start names the lines it fixes or
@@ -177,6 +177,16 @@ export const RunRpcs = RpcGroup.make(
     payload: { project: ProjectId, run: optional(RunId), resume },
     success: RunEventsItem,
     error: Schema.Union([ProjectNotFound, NoRun, RunNotFound]),
+    stream: true,
+  }),
+  /**
+   * The project's talk actions with no run going (§15.4): those since its last run, then each as it is
+   * recorded; a run's own are on its events stream. It goes on through the project's runs.
+   */
+  Rpc.make('run.watchTalkActions', {
+    payload: { project: ProjectId, resume },
+    success: RunEventsItem,
+    error: ProjectNotFound,
     stream: true,
   }),
 )

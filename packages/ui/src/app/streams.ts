@@ -8,7 +8,7 @@ import {
   BacklogPatch,
   HostLoad,
   type Resume,
-  type RunEvent,
+  RunEvent,
   RunEvents,
   RunView,
   RunViewPatch,
@@ -175,6 +175,32 @@ export const applyEvents = (
         ),
   )
 
+const sameEvent = Schema.toEquivalence(RunEvent)
+
+/**
+ * The events shown with the run talk's actions of `items` on top (§15.4): the actions come with no run
+ * going, so a snapshot's go above what the last run's stream kept, and one sent again, or by that
+ * stream as well, takes the place of its copy.
+ */
+const applyTalkActions = (
+  current: Option.Option<ReadonlyArray<RunEvent>>,
+  items: Array.NonEmptyReadonlyArray<typeof EventsItem.Type>,
+): Option.Option<ReadonlyArray<RunEvent>> =>
+  Array.reduce(items, current, (events, item) =>
+    item._tag === 'snapshot'
+      ? Option.some(
+          Array.appendAll(
+            Array.reverse(item.value),
+            Option.getOrElse(events, () => []).filter(
+              kept => !item.value.some(action => sameEvent(action, kept)),
+            ),
+          ),
+        )
+      : Option.map(events, before =>
+          Array.appendAll(Array.reverse(item.value), before),
+        ),
+  )
+
 /**
  * One project's run's events, newest first, from its stream's first snapshot, the project named
  * with its engine.
@@ -233,6 +259,18 @@ export const applyProjectEvents = (
   applyProjectEntry(current, project, {
     read: entry => entry.events,
     applied: events => applyEvents(events, items),
+    make: events => ({ project, events }),
+  })
+
+/** `applyProjectEvents` for the run talk's actions with no run going (`applyTalkActions`). */
+export const applyProjectTalkActions = (
+  current: ReadonlyArray<ProjectEvents>,
+  project: EngineProject,
+  items: Array.NonEmptyReadonlyArray<typeof EventsItem.Type>,
+): ReadonlyArray<ProjectEvents> =>
+  applyProjectEntry(current, project, {
+    read: entry => entry.events,
+    applied: events => applyTalkActions(events, items),
     make: events => ({ project, events }),
   })
 

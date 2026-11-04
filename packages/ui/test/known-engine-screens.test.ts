@@ -116,6 +116,7 @@ const engineServing = ({
     'run.preflight': notServed,
     'run.watchView': () => Stream.never,
     'run.watchEvents': () => Stream.never,
+    'run.watchTalkActions': () => Stream.never,
     'attention.list': notServed,
     'attention.answer': notServed,
     'attention.revise': notServed,

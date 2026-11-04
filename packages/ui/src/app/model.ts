@@ -109,7 +109,8 @@ export const Model = Schema.Struct({
   runViews: Schema.Array(ProjectRunView),
   /**
    * The events History shows, each project's newest first, from its stream's first snapshot: the
-   * scoped project's run's, or under All projects every project's run going (§18.3).
+   * scoped project's run's and its talk actions with no run going (§15.4), or under All projects every
+   * project's run going (§18.3).
    */
   events: Schema.Array(ProjectEvents),
   /**

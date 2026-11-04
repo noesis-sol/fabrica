@@ -134,6 +134,7 @@ const handlersOf = (attentionAnswered: Deferred.Deferred<void>) =>
       'run.preflight': notImplemented('run.preflight'),
       'run.watchView': notImplemented('run.watchView'),
       'run.watchEvents': notImplemented('run.watchEvents'),
+      'run.watchTalkActions': notImplemented('run.watchTalkActions'),
     })
   })
 

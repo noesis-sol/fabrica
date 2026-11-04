@@ -85,6 +85,7 @@ const talkIn = Effect.fn(function* (scope: Scope.Scope) {
     status: () => unused,
     hosted: unused,
     watchEvents: () => Stream.die('not asked of it by these tools'),
+    watchTalkActions: () => Stream.die('not asked of it by these tools'),
     watchView: () => Stream.die('not asked of it by these tools'),
     message: at =>
       desk.message({ ticket: at.ticket, text: at.text, merging: false }).pipe(

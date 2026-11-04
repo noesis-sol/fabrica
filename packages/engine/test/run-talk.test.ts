@@ -927,6 +927,7 @@ describe('answers through the talk', () => {
       status: () => unused,
       hosted: unused,
       watchEvents: () => Stream.die('not asked of it by these tools'),
+      watchTalkActions: () => Stream.die('not asked of it by these tools'),
       watchView: () => Stream.die('not asked of it by these tools'),
       message: () => unused,
       interrupt: () => unused,

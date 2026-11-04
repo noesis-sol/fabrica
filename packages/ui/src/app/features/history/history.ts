@@ -8,7 +8,7 @@ import type { ProjectId, RunEvent, RunId } from '@fabrica/contracts'
 
 import * as History from '../../../console/history'
 import * as Sidebar from '../../../console/sidebar'
-import { EngineRun } from '../../engine-project'
+import { EngineProject, EngineRun } from '../../engine-project'
 import { withEngineClient } from '../../engine-route'
 import type { Handlers, SubscriptionServices } from '../../feature'
 import { perFrame } from '../../frame'
@@ -16,12 +16,16 @@ import { Message } from '../../message'
 import type { Model } from '../../model'
 import { liveRuns } from '../../notify'
 import * as RemoteEngines from '../../remote-engines'
-import { applyProjectEvents, watchOf } from '../../streams'
+import {
+  applyProjectEvents,
+  applyProjectTalkActions,
+  watchOf,
+} from '../../streams'
 import type { SubscriptionEnvironment } from '../../subscriptions'
 import type { messages } from './message'
 
-// History (spec §18.3): the events of the scoped project's run, or under All projects of every project's
-// run going, each row with its project's chip.
+// History (spec §18.3): the events of the scoped project's run, with its talk actions while no run goes
+// (§15.4), or under All projects of every project's run going, each row with its project's chip.
 
 const foldHistory = Update.foldChild({
   update: History.update,
@@ -41,6 +45,15 @@ export const update = (model: Model): Handlers<keyof typeof messages> => ({
       ? {
           model: modifyFields(model, {
             events: events => applyProjectEvents(events, project, items),
+          }),
+        }
+      : { model },
+  ReceivedTalkActions: ({ project, items }) =>
+    Option.contains(model.scope, project) &&
+    Option.isNone(Sidebar.goingRun(model.console.sidebar, project))
+      ? {
+          model: modifyFields(model, {
+            events: events => applyProjectTalkActions(events, project, items),
           }),
         }
       : { model },
@@ -105,6 +118,29 @@ export const eventMessages = (
     Stream.catch(() => Stream.empty),
   )
 
+/** The run talk's actions on the project with no run going (§15.4), a frame's at a time. */
+export const talkActionMessages = (
+  client: EngineClientShape,
+  project: EngineProject,
+  nextFrame: SubscriptionEnvironment['nextFrame'],
+): Stream.Stream<Message> =>
+  watchOf<ReadonlyArray<RunEvent>, ReadonlyArray<RunEvent>>(client)(resume =>
+    client.rpc['run.watchTalkActions']({ project: project.project, resume }),
+  ).pipe(
+    perFrame(nextFrame),
+    Stream.map(items => Message.ReceivedTalkActions({ project, items })),
+    Stream.catch(() => Stream.empty),
+  )
+
+/**
+ * The project whose talk actions History follows (§15.4): the scoped one, while its row shows no run
+ * going, whether none has been viewed or the last one's view is kept.
+ */
+const talkActionsProject = (model: Model): Option.Option<EngineProject> =>
+  Option.filter(RemoteEngines.liveScope(model), project =>
+    Option.isNone(Sidebar.goingRun(model.console.sidebar, project)),
+  )
+
 /**
  * The runs whose events History shows (§18.3): the scoped project's viewed run, or under All projects
  * every run going that the sidebar's rows show, each on its engine.
@@ -143,6 +179,20 @@ export const subscriptions = ({ nextFrame }: SubscriptionEnvironment) =>
             ),
             { concurrency: 'unbounded' },
           ),
+      },
+    ),
+    talkActions: entry(
+      { project: Schema.Option(EngineProject) },
+      {
+        modelToDependencies: model => ({ project: talkActionsProject(model) }),
+        dependenciesToStream: ({ project }) =>
+          Option.match(project, {
+            onNone: () => Stream.empty,
+            onSome: project =>
+              withEngineClient(project.engine, client =>
+                talkActionMessages(client, project, nextFrame),
+              ),
+          }),
       },
     ),
   }))

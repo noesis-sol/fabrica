@@ -6,6 +6,7 @@ import {
   Exit,
   Layer,
   Option,
+  PubSub,
   Ref,
   Scope,
   Semaphore,
@@ -82,7 +83,8 @@ import { StartChecked } from './start-checks'
 // slots each run's scheduler counts. A start answers once the run's start checks have: with their
 // problems, all together, or with the run. Each run's records are kept as its log writes them, so its events stream
 // sends those written so far, then each as it is written, and ends with the run; an earlier run's are
-// read from the project's event stream. The project's row says whether a run goes. As the engine
+// read from the project's event stream, and the run talk's actions with no run going are sent as they
+// are written, on a stream of their own. The project's row says whether a run goes. As the engine
 // stops, every run is stopped and waited for before its scope closes, so each ends `INTERRUPTED`.
 
 /** A run's records so far, and whether it has ended. */
@@ -104,6 +106,12 @@ interface Going {
   readonly view: RunViewHandle
   /** Its log's `emit`, kept for its events stream, while its files are open. */
   readonly emit: Ref.Ref<Option.Option<RunLog['Service']['emit']>>
+}
+
+/** A talk action written with no run going, and its project. */
+interface IdleAction {
+  readonly project: ProjectId
+  readonly action: RunEvent
 }
 
 /** A worker of a project's run, as the Workers group names it. */
@@ -159,6 +167,14 @@ export interface RunsShape {
     readonly run: Option.Option<RunId>
     readonly resume: Option.Option<Resume>
   }) => Stream.Stream<RunEventsItem, ProjectNotFound | NoRun | RunNotFound>
+  /**
+   * The project's talk actions with no run going (§15.4): those since its last run, none while one
+   * goes, then each as it is written. It goes on through the project's runs, silent while one goes.
+   */
+  readonly watchTalkActions: (input: {
+    readonly project: ProjectId
+    readonly resume: Option.Option<Resume>
+  }) => Stream.Stream<RunEventsItem, ProjectNotFound>
   /** The view of the project's run (§8.3): a snapshot or the patches after `resume`, then each patch; ends with the run. */
   readonly watchView: (input: {
     readonly project: ProjectId
@@ -236,6 +252,17 @@ const drawEpoch = Effect.map(drawBase36(12), random =>
   StreamEpoch.make(`events-${random}`),
 )
 
+/** The talk actions in `events` since the last run began or ended. */
+const talkActionsSinceRun = (
+  events: ReadonlyArray<RunEvent>,
+): ReadonlyArray<RunEvent> =>
+  events
+    .slice(
+      events.findLastIndex(({ kind }) => kind === 'start' || kind === 'end') +
+        1,
+    )
+    .filter(({ kind }) => kind === 'talk_action')
+
 /** How the last run in `events` ended, where its end was written. */
 const lastEnded = (
   events: ReadonlyArray<RunEvent>,
@@ -269,6 +296,7 @@ export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
   const going = yield* Ref.make<ReadonlyMap<ProjectId, Going>>(new Map())
   const startLock = yield* Semaphore.make(1)
+  const idleActions = yield* PubSub.unbounded<IdleAction>()
 
   // As the engine stops, each run is stopped and waited for; then the runs' own scope closes. The
   // finalizer is added after that scope, so it runs before it.
@@ -571,6 +599,7 @@ export const make = Effect.gen(function* () {
 
   /** Writes `draft` on the project's stream with no run's log open: under its last run, or a new ID where it has had none. */
   const recordIdle = Effect.fn('Runs.recordIdle')(function* (
+    project: ProjectId,
     root: string,
     draft: EventDraft,
   ) {
@@ -580,7 +609,9 @@ export const make = Effect.gen(function* () {
       onNone: () => Effect.map(localNow, now => RunId.make(now)),
     })
     const log = yield* openRunLog({ root, run })
-    yield* log.emit(draft)
+    const event = yield* log.emit(draft)
+    if (event.kind === 'talk_action')
+      yield* PubSub.publish(idleActions, { project, action: event })
   }, Effect.scoped)
 
   /** In the zone runs' records are dated in: with no run hosted, the host's. */
@@ -591,19 +622,41 @@ export const make = Effect.gen(function* () {
       ? Effect.provideContext(effect, hosting.services)
       : Effect.provide(effect, DateTime.layerCurrentZoneLocal)
 
+  /** The `emit` of the project's run going's log, while its files are open. */
+  const goingEmit = Effect.fn('Runs.goingEmit')(function* (project: ProjectId) {
+    const run = (yield* Ref.get(going)).get(project)
+    return run === undefined ? Option.none() : yield* Ref.get(run.emit)
+  })
+
   const recordOn = Effect.fn('Runs.record')(function* (
     project: ProjectId,
     draft: EventDraft,
   ) {
     const { path } = yield* projects.find(project)
-    const run = (yield* Ref.get(going)).get(project)
-    const emit = run === undefined ? Option.none() : yield* Ref.get(run.emit)
-    yield* Option.match(emit, {
+    yield* Option.match(yield* goingEmit(project), {
       onSome: write => Effect.asVoid(write(draft)),
       // Under the start lock, so a run starting opens its files after this record.
-      onNone: () => startLock.withPermit(inRunsZone(recordIdle(path, draft))),
+      onNone: () =>
+        startLock.withPermit(inRunsZone(recordIdle(project, path, draft))),
     })
   })
+
+  /** The project's event stream; none where it can't be read, which is logged. */
+  const projectEvents = (
+    project: ProjectId,
+    root: string,
+  ): Effect.Effect<ReadonlyArray<RunEvent>> =>
+    readEvents({ root, run: Option.none() }).pipe(
+      Effect.map(({ events }) => events),
+      Effect.catch(error =>
+        Effect.as(
+          Effect.logWarning(
+            `the event stream of ${project} couldn't be read: ${error.message}`,
+          ),
+          [],
+        ),
+      ),
+    )
 
   const status = Effect.fn('Runs.status')(function* (project: ProjectId) {
     const record = yield* projects.find(project)
@@ -615,21 +668,9 @@ export const make = Effect.gen(function* () {
           state: yield* run.control.state,
         }),
       })
-    const read = yield* readEvents({
-      root: record.path,
-      run: Option.none(),
-    }).pipe(
-      Effect.map(({ events }) => lastEnded(events)),
-      Effect.catch(error =>
-        Effect.as(
-          Effect.logWarning(
-            `the event stream of ${project} couldn't be read: ${error.message}`,
-          ),
-          Option.none<RunEnded>(),
-        ),
-      ),
-    )
-    return RunStatus.cases.idle.make({ last: read })
+    return RunStatus.cases.idle.make({
+      last: lastEnded(yield* projectEvents(project, record.path)),
+    })
   })
 
   const hosted = Effect.gen(function* () {
@@ -679,6 +720,49 @@ export const make = Effect.gen(function* () {
           return yield* new RunNotFound({ project: input.project, run: asked })
         const epoch = yield* drawEpoch
         return Stream.succeed<Feed>({ events, ended: true }).pipe(
+          Stream.mapAccum(Option.none<number>, eventItems(epoch, input.resume)),
+        )
+      }),
+    )
+
+  const watchTalkActions = (input: {
+    readonly project: ProjectId
+    readonly resume: Option.Option<Resume>
+  }): Stream.Stream<RunEventsItem, ProjectNotFound> =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const { path } = yield* projects.find(input.project)
+        // This subscription's own: a client resuming is sent a new snapshot.
+        const epoch = yield* drawEpoch
+        // Under the start lock, as those with no run going are written: none falls between the two.
+        const { written, actions } = yield* startLock.withPermit(
+          Effect.all({
+            written: PubSub.subscribe(idleActions),
+            actions: Effect.flatMap(goingEmit(input.project), emit =>
+              Option.isSome(emit)
+                ? Effect.succeed<ReadonlyArray<RunEvent>>([])
+                : Effect.map(
+                    projectEvents(input.project, path),
+                    talkActionsSinceRun,
+                  ),
+            ),
+          }),
+        )
+        const feedOf = (events: ReadonlyArray<RunEvent>): Feed => ({
+          events,
+          ended: false,
+        })
+        return Stream.fromSubscription(written).pipe(
+          Stream.filter(({ project }) => project === input.project),
+          Stream.mapAccum(
+            () => actions,
+            (events, { action }) => {
+              const next = [...events, action]
+              return [next, [feedOf(next)]]
+            },
+          ),
+          // Sent at once, not with the first action.
+          Stream.prepend([feedOf(actions)]),
           Stream.mapAccum(Option.none<number>, eventItems(epoch, input.resume)),
         )
       }),
@@ -769,6 +853,7 @@ export const make = Effect.gen(function* () {
     status,
     hosted,
     watchEvents,
+    watchTalkActions,
     watchView,
     message,
     interrupt,
