@@ -8,9 +8,6 @@ import { Data, Option, Result } from 'effect'
 /** The most a spec may be, in bytes, from a URL or a file. */
 export const specMaxBytes = 5 * 1024 * 1024
 
-/** Where a spec from outside the repository is committed, as a copy (§10.2). */
-export const specsFolder = '.fabrica/specs'
-
 /** The longest a copy's name is, before `.md` is added. */
 const maxNameLength = 100
 
@@ -26,7 +23,7 @@ export type SpecSource = Data.TaggedEnum<{
     readonly url: URL
     /** The URL as it is recorded and shown. */
     readonly shown: string
-    /** The name of its copy under `specsFolder`. */
+    /** The name of its copy among the project's specs. */
     readonly name: string
   }
 }>

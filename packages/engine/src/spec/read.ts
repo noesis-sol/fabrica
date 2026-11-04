@@ -7,6 +7,7 @@ import type { CommitHash } from '@fabrica/contracts'
 
 import { readFileBytes, writeFileWhole } from '../files'
 import { Git } from '../git'
+import { specsFolder } from '../projects/layout'
 import { fetchSpec } from './fetch'
 import {
   SourceTrailer,
@@ -14,7 +15,6 @@ import {
   copyName,
   specMaxBytes,
   specSource,
-  specsFolder,
 } from './source'
 
 // The spec a run builds (spec §15.5, H83): read with the start checks, and committed once they pass. A
@@ -237,7 +237,7 @@ export const commitSpec = Effect.fn('Spec.commit')(function* (input: {
   if (Option.contains(held, text) && Option.isSome(last))
     return { ...rest, commit: last.value.commit } satisfies CommittedSpec
   yield* writeFileWhole({ root: checkout, path: spec.path }, text)
-  const commit = yield* git.commitFile({
+  const made = yield* git.commitFile({
     repo: checkout,
     path: spec.path,
     message: [
@@ -249,5 +249,11 @@ export const commitSpec = Effect.fn('Spec.commit')(function* (input: {
       ),
     ].join('\n'),
   })
-  return { ...rest, commit } satisfies CommittedSpec
+  // The same text to git, whose line endings it normalises: kept as it is.
+  const commit = Option.orElse(made, () =>
+    Option.map(last, ({ commit: kept }) => kept),
+  )
+  if (Option.isNone(commit))
+    return yield* problem(`git commits nothing of the spec ${spec.path}`)
+  return { ...rest, commit: commit.value } satisfies CommittedSpec
 })

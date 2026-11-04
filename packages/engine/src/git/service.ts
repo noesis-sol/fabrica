@@ -181,13 +181,13 @@ export interface GitShape {
   /**
    * Commits the file `path` alone, as it is in the worktree, on the branch checked out, whatever else
    * is staged: the engine's own commit (a spec, §15.5), run past the project's hooks and unsigned.
-   * Returns the commit.
+   * Returns the commit; none where git, normalising its line endings, finds nothing changed.
    */
   readonly commitFile: (input: {
     readonly repo: string
     readonly path: string
     readonly message: string
-  }) => Effect.Effect<CommitHash, GitFailed | CantTell>
+  }) => Effect.Effect<Option.Option<CommitHash>, GitFailed | CantTell>
   /** Puts the worktree's branch, index and files back at the commit `to`, dropping what moved them since. */
   readonly resetTo: (input: {
     readonly worktree: string
@@ -1113,6 +1113,20 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     readonly message: string
   }) {
     yield* writeOnly({ cwd: repo, args: ['add', '--force', '--', path] })
+    const changed = yield* readExit(
+      'commitFile',
+      {
+        cwd: repo,
+        args: ['diff', '--cached', '--quiet', '--no-ext-diff', '--', path],
+      },
+      exit =>
+        exit.code === 0
+          ? Option.some(false)
+          : exit.code === 1
+            ? Option.some(true)
+            : Option.none(),
+    )
+    if (!changed) return Option.none<CommitHash>()
     yield* writeOnly({
       cwd: repo,
       args: [
@@ -1131,7 +1145,10 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     return yield* readExit(
       'commitFile',
       { cwd: repo, args: ['rev-parse', '--verify', 'HEAD^{commit}'] },
-      exit => (exit.code === 0 ? parseHash(exit.stdout) : Option.none()),
+      exit =>
+        exit.code === 0
+          ? Option.map(parseHash(exit.stdout), Option.some)
+          : Option.none(),
     )
   })
 

@@ -596,6 +596,38 @@ describe('A spec committed (§15.5)', () => {
       }),
   )
 
+  it.effect(
+    'keeps a spec git normalises the line endings of, and a second run starts',
+    () =>
+      Effect.gen(function* () {
+        const fixture = project(settings, {
+          ...breakdownFile({
+            root: rootCall,
+            answers: [{ items: [item('one')] }],
+          }),
+          '.gitattributes': '* text=auto\n',
+        })
+        const outside = join(fixture.data, '..', 'crlf.md')
+        writeFileSync(outside, '# Shop\r\nline\r\n')
+        const mode = options({ mode: RunMode.Spec({ source: outside }) })
+        yield* withRuns(
+          fixture,
+          Effect.gen(function* () {
+            expect(yield* runProject(configOf(fixture, mode))).toMatchObject({
+              code: 0,
+            })
+            const head = git(fixture.checkout, 'rev-parse', 'HEAD')
+            expect(yield* runProject(configOf(fixture, mode))).toMatchObject({
+              code: 0,
+            })
+            expect(git(fixture.checkout, 'rev-parse', 'HEAD')).toBe(head)
+            expect(git(fixture.checkout, 'status', '--porcelain')).toBe('')
+            expect(ofKind(yield* eventsOf(fixture), 'organ')).toHaveLength(1)
+          }),
+        )
+      }),
+  )
+
   it.effect('refuses a copy of the same name from another source', () =>
     Effect.gen(function* () {
       const fixture = project()

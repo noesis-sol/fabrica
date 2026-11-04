@@ -38,7 +38,6 @@ export {
   shownUrl,
   specMaxBytes,
   specSource,
-  specsFolder,
 } from './source'
 export {
   SpecState,
