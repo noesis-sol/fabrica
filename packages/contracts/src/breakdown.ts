@@ -114,7 +114,7 @@ export type SpecTicketChange = typeof SpecTicketChange.Type
 export const BreakdownAnswer = Schema.Struct({
   items: Schema.Array(TreeItem).annotate({
     description:
-      'The epics and tickets the tree still needs, each naming its parent by key: "root" for the root epic, and "environment" among what it waits on only where it says so, as every ticket waits on that one anyway.',
+      'The epics and tickets the tree still needs, each naming its parent by key: "root" for the root epic. The environment ticket goes by "environment"; every ticket waits on it without saying so.',
   }),
   changes: Schema.OptionFromOptionalKey(
     Schema.Array(SpecTicketChange).annotate({

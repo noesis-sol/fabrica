@@ -101,10 +101,10 @@ export const gistOf = (url: URL): Option.Option<string> => {
 
 /**
  * The name of a copy of the spec called `name`: made a safe file name (letters, digits, `.`, `_` and
- * `-`, no leading dot), `.md` added unless it ends in `.md`, `.markdown` or `.txt`; empty where
+ * `-`, no leading dot), `.md` added unless it ends in `.md`, `.markdown` or `.txt`; none where
  * nothing of it is left.
  */
-export const copyName = (name: string): string => {
+export const copyName = (name: string): Option.Option<string> => {
   const trim = (text: string) =>
     text.replace(/^[.-]+/u, '').replace(/[.-]+$/u, '')
   const safe = trim(
@@ -115,8 +115,8 @@ export const copyName = (name: string): string => {
         .replace(/-{2,}/gu, '-'),
     ).slice(0, maxNameLength),
   )
-  if (safe === '') return ''
-  return /\.(md|markdown|txt)$/iu.test(safe) ? safe : `${safe}.md`
+  if (safe === '') return Option.none()
+  return Option.some(/\.(md|markdown|txt)$/iu.test(safe) ? safe : `${safe}.md`)
 }
 
 /** A path segment of a URL, decoded where it reads as percent-encoded text. */
@@ -160,9 +160,9 @@ export const specSource = (
       `the spec ${shown} holds a user name or password, and Fabrica sends no credentials: give the URL without them`,
     )
   const name = copyName(decoded(segmentsOf(url).at(-1) ?? ''))
-  if (name === '')
+  if (Option.isNone(name))
     return Result.fail(
       `the spec ${shown} names no file: give the URL of the spec's raw file`,
     )
-  return Result.succeed(SpecSource.Url({ url, shown, name }))
+  return Result.succeed(SpecSource.Url({ url, shown, name: name.value }))
 }

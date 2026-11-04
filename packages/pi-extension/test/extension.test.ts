@@ -562,6 +562,7 @@ describe('the first-party extension', () => {
       role: 'worker',
       answerTool: Option.none(),
       talkTools: [],
+      organFilesRoot: false,
       projectTrusted: false,
       configFolder: Option.none(),
       permissions: 'workspace',

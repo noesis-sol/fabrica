@@ -30,6 +30,7 @@ import {
   SpecProblem,
   commitSpec,
   copyName,
+  fetchSpec,
   githubFile,
   narrowWarning,
   readSpec,
@@ -438,11 +439,34 @@ describe('A spec at a URL (§15.5, H83)', () => {
         const server = yield* stubServer(() => ({}))
         const given = 'https://github.com/me/shop/blob/main/docs/shop.md'
         const gh = join(binFolder(), 'gh')
-        const missing = problemOf(
-          yield* readFrom(fixture.checkout, given, server.base),
+        // On a PATH of the test's folder alone: a host may well have a gh of its own.
+        const config = runnerConfig()
+        const missing = yield* Effect.flip(
+          fetchSpec({
+            url: new URL(given),
+            shown: given,
+            checkout: fixture.checkout,
+          }),
+        ).pipe(
+          Effect.provideService(SpecFetching, {
+            ca: Option.some(certificate.certificate),
+            hosts: { raw: `${server.base}/raw`, api: `${server.base}/api` },
+          }),
+          Effect.provide(
+            Layer.provide(
+              runnerLayer({
+                ...config,
+                hostEnvironment: {
+                  ...config.hostEnvironment,
+                  PATH: binFolder(),
+                },
+              }),
+              liveDeadlines,
+            ),
+          ),
         )
-        expect(missing).toContain('is private or missing')
-        expect(missing).toContain('install gh')
+        expect(missing.reason).toContain('is private or missing')
+        expect(missing.reason).toContain('install gh')
 
         writeFileSync(
           gh,
@@ -482,10 +506,12 @@ describe('A spec at a URL (§15.5, H83)', () => {
   })
 
   it('names a copy after the last path segment', () => {
-    expect(copyName('shop')).toBe('shop.md')
-    expect(copyName('shop.txt')).toBe('shop.txt')
-    expect(copyName('../..')).toBe('')
-    expect(copyName('my shop!.markdown')).toBe('my-shop-.markdown')
+    expect(copyName('shop')).toEqual(Option.some('shop.md'))
+    expect(copyName('shop.txt')).toEqual(Option.some('shop.txt'))
+    expect(copyName('../..')).toEqual(Option.none())
+    expect(copyName('my shop!.markdown')).toEqual(
+      Option.some('my-shop-.markdown'),
+    )
   })
 
   it('takes a raw URL and a tag page as GitHub files', () => {

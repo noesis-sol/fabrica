@@ -184,9 +184,10 @@ const readFile = Effect.fnUntraced(function* (checkout: string, given: string) {
       url: Option.none(),
     } satisfies ReadSpec
   }
-  const name = copyName(NodePath.basename(place[1]))
-  if (name === '')
+  const named = copyName(NodePath.basename(place[1]))
+  if (Option.isNone(named))
     return yield* problem(`the spec ${given} has no name to keep its copy by`)
+  const name = named.value
   const path = NodePath.posix.join(specsFolder, name)
   yield* sameSource({ checkout, path, source: place[1] })
   return {
