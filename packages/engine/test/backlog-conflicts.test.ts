@@ -47,7 +47,13 @@ import {
 import { Projects, layer as projectsLayer } from '../src/projects'
 import { workGraphPath } from '../src/projects/layout'
 import { backlogHandlers, sendChange } from '../src/rpc/backlog'
-import { WorkGraph, makeWorkGraph, storeLayer } from '../src/workgraph'
+import {
+  StatusChange,
+  WorkGraph,
+  makeWorkGraph,
+  statusChangeOf,
+  storeLayer,
+} from '../src/workgraph'
 import { changeColumns } from '../src/workgraph/rows'
 
 // A sync's open merge conflicts (spec §11.4, §11.7): which side the merge kept, what `tickets.update`
@@ -208,7 +214,9 @@ describe('the open conflicts', () => {
         expect(uses.get('acceptance')).toEqual(
           Option.some({ acceptance: Option.some('It works') }),
         )
-        expect(uses.get('status')).toEqual(Option.some({ status: 'deferred' }))
+        expect(uses.get('status')).toEqual(
+          Option.some({ status: 'deferred', deferUntil: Option.none() }),
+        )
         expect(uses.get('deferUntil')).toEqual(
           Option.some({
             deferUntil: Option.some(DateTime.makeUnsafe(until)),
@@ -326,6 +334,35 @@ describe('the open conflicts', () => {
       }),
     )
 
+    it.effect(
+      'deferring by a status keeps the time the ticket holds, on which the merge had no conflict',
+      () =>
+        Effect.gen(function* () {
+          const graph = yield* WorkGraph
+          const sql = yield* SqliteClient.SqliteClient
+          const ticket = yield* taskHolding('in_progress', true)
+          yield* recordConflict(sql, {
+            ticket,
+            field: 'status',
+            ours: 'deferred',
+            theirs: 'in_progress',
+          })
+          const time = Option.some(DateTime.makeUnsafe(untilMillis))
+          const [conflict] = yield* graph.conflicts()
+          expect(conflict?.useOther).toEqual(
+            Option.some({ status: 'deferred', deferUntil: time }),
+          )
+          expect(
+            statusChangeOf({
+              id: ticket,
+              current: 'in_progress',
+              status: 'deferred',
+              deferUntil: time,
+            }),
+          ).toEqual(StatusChange.Defer({ until: time }))
+        }).pipe(Effect.provide(graphLayer)),
+    )
+
     it.effect('a status it can make is offered', () =>
       Effect.gen(function* () {
         expect(yield* offered('closed', 'status', 'closed', 'open')).toEqual(
@@ -336,7 +373,9 @@ describe('the open conflicts', () => {
         ).toEqual(Option.some({ status: 'open' }))
         expect(
           yield* offered('in_progress', 'status', 'in_progress', 'deferred'),
-        ).toEqual(Option.some({ status: 'deferred' }))
+        ).toEqual(
+          Option.some({ status: 'deferred', deferUntil: Option.none() }),
+        )
       }),
     )
 

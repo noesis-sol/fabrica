@@ -89,7 +89,13 @@ const changesFor = (
       return Option.some({ priority: fields.priority })
     case 'status':
       return fields.status === 'open' || fields.status === 'deferred'
-        ? ifItMoves(ticket, { status: fields.status })
+        ? // Named with its time, as a status alone would defer it with none, and no conflict on that.
+          ifItMoves(
+            ticket,
+            fields.status === 'deferred'
+              ? { status: fields.status, deferUntil: ticket.deferUntil }
+              : { status: fields.status },
+          )
         : Option.none()
     case 'deferUntil':
       return ifItMoves(ticket, { deferUntil: fields.deferUntil })
