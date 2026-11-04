@@ -220,7 +220,8 @@ describe('a worker ending after the probe passed', () => {
     () => {
       const marks = realpathSync(mkdtempSync(join(tmpdir(), 'fab-mended-')))
       const mended = join(marks, 'mended')
-      // The first three trip the hold, and the fourth's failure comes while it is on.
+      // The first three trip the hold, and the fourth's failure comes while it is on. Each defers once
+      // set up: with no merge to free a ticket's wait for its setup, only going back in the queue takes it.
       const fixture = project({
         ...settings,
         concurrent: 4,
@@ -231,7 +232,7 @@ describe('a worker ending after the probe passed', () => {
         Effect.gen(function* () {
           const tickets = yield* Effect.forEach(
             ['One', 'Two', 'Three', 'Four'],
-            title => Effect.map(file(title, 'finish'), ({ id }) => id),
+            title => Effect.map(file(title, 'defer'), ({ id }) => id),
           )
           const end = yield* runParked({
             fixture,
@@ -248,7 +249,7 @@ describe('a worker ending after the probe passed', () => {
           })
           expect(end).toEqual({ kind: 'READY_EMPTY', code: 0 })
           expect(
-            ofKind(yield* eventsOf(fixture), 'closed')
+            ofKind(yield* eventsOf(fixture), 'deferred')
               .map(({ ticket }) => ticket)
               .toSorted(),
           ).toEqual([...tickets].toSorted())
