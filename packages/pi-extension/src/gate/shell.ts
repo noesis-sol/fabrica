@@ -401,7 +401,10 @@ class Reader {
           if (this.index >= this.source.length)
             throw new Unparsable({ reason: "a $' doesn’t close" })
           if (this.peek() === '\\') {
-            // Only a quote and a backslash stand for themselves here: what the rest decode to is unread.
+            // A code can spell anything, an option or a command's name, and isn't decoded here; a
+            // control can't, so a word holding one is read as unknown, as the rest that aren't themselves.
+            if (/[0-7xuU]/u.test(this.peek(1)))
+              throw new Unparsable({ reason: "a character code in a $'…'" })
             if (!'\\\'"?'.includes(this.peek(1))) dynamic = true
             content += this.peek(1)
             this.index += 2

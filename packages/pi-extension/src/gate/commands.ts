@@ -54,9 +54,10 @@ const gitVariables = new Set([
   'GIT_COMMON_DIR',
   'GIT_OBJECT_DIRECTORY',
   'GIT_NAMESPACE',
+  'GIT_TEMPLATE_DIR',
 ])
 
-const shells = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh'])
+const shells = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh', 'ash', 'hush'])
 
 const removals = new Set(['rm', 'rmdir', 'unlink', 'shred', 'srm', 'trash'])
 
@@ -88,10 +89,15 @@ const copierValues = new Set([
 ])
 
 /** An option of `sed` that edits in place, its suffix attached; the options before it in a group take no value. */
-const sedInPlace = /^-[EalnrsuzZ]*[iI]/u
+const sedInPlace = /^(?:-[a-dghjkm-zA-HJ-Z]*[iI]|--in-place(?:=|$))/u
 
 /** `sed`'s options that take a script. */
 const sedScripts = new Set(['-e', '-f', '--expression', '--file'])
+
+/** Whether `text` is an option of `sed` giving a script, attached or in the next word. */
+const isSedScript = (text: string): boolean =>
+  /^--(?:expression|file)(?:=|$)/u.test(text) ||
+  Option.isSome(valuedShort(text, sedScripts))
 
 /** `sort`'s options that take a value. */
 const sortValues = new Set([
@@ -500,6 +506,8 @@ class Policy {
   cdPath = false
   /** The command line sets `cdable_vars`, so a `cd` may land where a variable names. */
   cdableVariables = false
+  /** The command line runs more than one command, so what's on disk now may be gone when one runs. */
+  several = false
 
   constructor(readonly context: CommandContext) {}
 
@@ -564,6 +572,7 @@ class Policy {
   /**
    * `ln -s`'s `made` targets with the link's name last on its line: `ln` makes each link inside it
    * where it is already a folder, so a target is read from there, or else from the folder it's made in.
+   * A folder is only known to be one where nothing else on the line can replace it first.
    */
   linkedTo(
     made: ReadonlyArray<Word>,
@@ -580,7 +589,7 @@ class Policy {
       for (const target of made) {
         if (inFolder)
           this.linked(fromLink(target, syntheticWord(link, '/_')), [from])
-        if (!inFolder || readings.some(folder => !folder))
+        if (!inFolder || this.several || readings.some(folder => !folder))
           this.linked(fromLink(target, link), [from])
       }
     }
@@ -645,6 +654,7 @@ class Policy {
         return joined(cwd, unknownFolder)
       },
       Parsed: ({ commands }) => {
+        if (commands.length > 1) this.several = true
         // Set anywhere, even after a `cd` (in a loop, it runs before the next one), they move it.
         const texts = commands.flatMap(({ words }) =>
           words.map(({ text }) => text),
@@ -873,6 +883,7 @@ class Policy {
         continue
       }
       if (!findActions.has(word.text)) continue
+      this.several = true
       const end = expression.findIndex(
         // `+` ends the command only straight after `{}`.
         ({ text }, at) =>
@@ -939,7 +950,8 @@ class Policy {
           this.linkedTo(
             all.slice(0, -1),
             last,
-            hasOption(args, '-T', '--no-target-directory')
+            // BSD's `-F` removes the folder first, so the link takes its place.
+            hasOption(args, '-T', '-F', '--no-target-directory')
               ? 'never a folder'
               : hasOption(args, '-n', '-h', '--no-dereference')
                 ? 'kept'
@@ -979,11 +991,12 @@ class Policy {
     }
     if (name === 'sed') {
       const rest = args.filter(({ text }) => !sedInPlace.test(text))
-      if (rest.length === args.length && !hasOption(args, '--in-place')) return
-      const scripted =
-        hasOption(rest, '--expression', '--file') ||
-        rest.some(({ text }) => Option.isSome(valuedShort(text, sedScripts)))
-      const all = operands(rest, sedScripts)
+      if (rest.length === args.length) return
+      const scripted = rest.some(({ text }) => isSedScript(text))
+      const all = operands(
+        rest.filter(({ text, dynamic }) => !dynamic || !isSedScript(text)),
+        sedScripts,
+      )
       for (const file of scripted ? all : all.slice(1)) this.written(file, cwd)
       return
     }
@@ -1043,7 +1056,7 @@ class Policy {
         if (
           setting !== undefined &&
           (setting.dynamic ||
-            /^(?:alias\.|core\.(?:hookspath|sshcommand|fsmonitor)=)/iu.test(
+            /^(?:alias\.|core\.(?:hookspath|sshcommand|fsmonitor)=|init\.templatedir=)/iu.test(
               setting.text,
             ))
         )
@@ -1217,6 +1230,11 @@ class Policy {
           this.ask(`${command} ${second} changes other worktrees`)
         return
       case 'init':
+        // A template's hooks land in the config and hooks every worktree shares, and git runs them.
+        if (optionValues(subArgs, ['--template'], gitInitValues).length > 0)
+          this.ask(
+            `${command} --template copies hooks git runs in every worktree`,
+          )
         for (const path of [
           ...operands(subArgs, gitInitValues),
           ...optionValues(subArgs, ['--separate-git-dir'], gitInitValues),

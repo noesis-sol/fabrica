@@ -66,6 +66,15 @@ const commands: ReadonlyArray<readonly [Expected, string]> = [
   ['allowed', 'sed -n s/a/b/p /tmp/x'],
   ['allowed', 'sed -e s/a/b/ /tmp/x'],
   ['allowed', 'sed -ei /tmp/x'],
+  ['asked', 'sed -bi s/a/b/ /tmp/x'],
+  // A suffix or a script known only when it runs is still one.
+  ['asked', 'sed --in-place="$x" s/a/b/ /tmp/x'],
+  ['asked', 'sed -i"$x" s/a/b/ /tmp/x'],
+  ['allowed', 'sed -i -e"s/$a/b/" src/a.ts'],
+  ['allowed', 'sed -i.bak -e"s/$a/b/" src/a.ts'],
+  ['allowed', 'sed -i --expression="s/$a/b/" -e s/c/d/ src/a.ts'],
+  ['allowed', "sed -i -e$'s/a/\\t/' src/a.ts"],
+  ['asked', 'sed -i -e"s/$a/b/" /tmp/x'],
   // `-t`'s value attached or in a group, up to `--`.
   ['asked', 'cp -t/tmp/x src/a.ts'],
   ['asked', 'cp -rt/tmp/x src'],
@@ -114,7 +123,12 @@ const commands: ReadonlyArray<readonly [Expected, string]> = [
   ['allowed', 'git init'],
   ['allowed', 'git init src/new'],
   ['allowed', 'git init -b main src/new'],
-  ['allowed', 'git init --template=/tmp/x src/new'],
+  // A template's hooks land where every worktree runs them.
+  ['asked', 'git init --template=/tmp/x'],
+  ['asked', 'git init --template src/t'],
+  ['asked', 'git init --template="$t"'],
+  ['asked', 'git -c init.templateDir=src/t init'],
+  ['asked', 'GIT_TEMPLATE_DIR=src/t git init'],
   ['allowed', 'git -C src init new'],
   // `sort`'s output.
   ['asked', 'sort -o /tmp/x a.ts'],
@@ -136,6 +150,8 @@ const commands: ReadonlyArray<readonly [Expected, string]> = [
   ['refused', '/bin/busybox rm -rf /tmp/x'],
   ['refused', 'toybox rm -rf /tmp/x'],
   ['refused', "busybox sh -c 'rm -rf /tmp/x'"],
+  ['refused', "busybox ash -c 'rm -rf /tmp/x'"],
+  ['refused', "ash -c 'rm -rf /tmp/x'"],
   ['asked', 'busybox cp a.ts /tmp/x'],
   ['asked', 'busybox wget example.com'],
   ['asked', 'busybox --install -s /tmp/x'],
@@ -159,6 +175,7 @@ const commands: ReadonlyArray<readonly [Expected, string]> = [
   ['allowed', "rm -rf $'src/it\\'s'"],
   // Common forms that spell only arguments stay as they were.
   ['allowed', "git add -A; git diff --stat $'a\\n'"],
+  ['allowed', "git commit -m $'a\\n\\nb'"],
   ['allowed', "grep $'\\t' /tmp/x"],
   ['allowed', "IFS=$'\\n' read -r line"],
   ['allowed', "sed -i $'s/a/\\t/' src/a.ts"],
@@ -176,6 +193,14 @@ const commands: ReadonlyArray<readonly [Expected, string]> = [
   ['asked', 'ln -s ../x src/deep/up'],
   ['allowed', 'ln -sn ../x src/deep/up'],
   ['asked', 'ln -s ../x "$d"'],
+  // A folder the line may replace first is no folder to read from: the link may take its place.
+  ['asked', 'rm -rf src; ln -s ../x src; echo y > src/z'],
+  ['asked', 'rmdir src; ln -s ../x src'],
+  ['asked', 'mv src gone && ln -sf ../x src && touch src/z'],
+  ['asked', "bash -c 'rm -rf src; ln -s ../x src'"],
+  ['asked', "bash -c 'rm -rf src'; bash -c 'ln -s ../x src'"],
+  ['asked', 'find . -exec rm -rf src \\; -exec ln -s ../x src \\;'],
+  ['asked', 'ln -sfF ../x src'],
   ['asked', 'cd "$d"; ln -s ../a.ts src'],
 ]
 
@@ -187,6 +212,16 @@ const escaped: ReadonlyArray<string> = [
   "echo x > $'\\x6fut'/x",
   "touch $'\\x6fut/x'",
   "bash -c $'rm -rf /tmp/x\\n'",
+  // An option or a primary spelled by one.
+  "sort $'-\\x6f' /tmp/x a.ts",
+  "sort $'\\x2do' /tmp/x a.ts",
+  "sed $'-\\x69' s/a/b/ /tmp/x",
+  "cp $'-\\x74' /tmp/x a.ts",
+  "cp $'-\\x74/tmp/x' a.ts",
+  "cp $'-\\u0074/tmp/x' a.ts",
+  "find . $'-fprin\\x74' /tmp/x",
+  "find /tmp $'-de\\x6cete'",
+  "find /tmp $'-de\\154ete'",
 ]
 
 describe('the gate’s forms of a write', () => {
