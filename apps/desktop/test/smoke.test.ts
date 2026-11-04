@@ -275,7 +275,10 @@ const addWslEngine = (page: Page) =>
     await page
       .getByRole('button', { name: 'In WSL2' })
       .click({ timeout: stepTimeout })
-    const check = page.getByRole('button', { name: /^Check / })
+    // In its section: SSH's form has a "Check the host", and may be up still as the click's render waits.
+    const check = page
+      .getByRole('region', { name: 'Engine in WSL2' })
+      .getByRole('button', { name: /^Check / })
     const label = await check.textContent({ timeout: stepTimeout })
     await check.click()
     await page
