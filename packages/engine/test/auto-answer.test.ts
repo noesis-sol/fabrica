@@ -21,9 +21,11 @@ import {
   AutoAnswer,
   EngineId,
   ProjectId,
+  Question,
   QuestionAnswer,
   QuestionChoices,
   QuestionOption,
+  Ticket,
   type TicketId,
 } from '@fabrica/contracts'
 
@@ -40,6 +42,7 @@ import { Wake, layerWake, noSleepCauses } from '../src/time'
 import {
   TransitionRefused,
   WorkGraph,
+  type WorkGraphShape,
   makeWorkGraph,
   storeLayer,
 } from '../src/workgraph'
@@ -342,6 +345,75 @@ describe('--auto-answer', () => {
       expect(yield* labelsOf(question)).toEqual([])
       expect(yield* Ref.get(said)).toEqual([])
     }).pipe(Effect.scoped, Effect.provide(services)),
+  )
+
+  it.effect(
+    'leaves a question filed without options to the maintainer, once a talk has drafted them too',
+    () =>
+      Effect.gen(function* () {
+        const graph = yield* WorkGraph
+        const drafted = yield* Ref.make(false)
+        /** `ticket`, a question given options once `drafted` is set, as a talk drafting them gives them. */
+        const draftedOn = (ticket: Ticket) =>
+          Effect.map(Ref.get(drafted), isDrafted =>
+            isDrafted
+              ? Ticket.make({
+                  ...ticket,
+                  question: Option.map(ticket.question, question =>
+                    Question.make({
+                      ...question,
+                      choices: Option.some(
+                        new QuestionChoices({
+                          options: [sqlite, postgres],
+                          recommended: 0,
+                        }),
+                      ),
+                    }),
+                  ),
+                })
+              : ticket,
+          )
+        const drafting: WorkGraphShape = {
+          ...graph,
+          list: filter =>
+            Effect.flatMap(graph.list(filter), tickets =>
+              Effect.forEach(tickets, draftedOn),
+            ),
+          show: id =>
+            Effect.flatMap(graph.show(id), detail =>
+              Effect.map(draftedOn(detail.ticket), ticket => ({
+                ...detail,
+                ticket,
+              })),
+            ),
+        }
+        const requests = yield* makeAttention({
+          list: Effect.succeed([project]),
+          changed: Stream.never,
+          graph: () => Effect.succeed(drafting),
+        })
+        const said = yield* Ref.make<ReadonlyArray<AutoAnswered>>([])
+        const answers = yield* makeAutoAnswers({
+          setting: AutoAnswer.cases.AtOnce.make({}),
+          project,
+          actor: engine,
+          graph: drafting,
+          attention: yield* requests.forRun,
+          wake: yield* Wake,
+          answered: answered => Ref.update(said, all => [...all, answered]),
+          woken: Effect.void,
+          guarded: Effect.orDie,
+        })
+        const { question } = yield* asked({ options: 'none' })
+        yield* answers.sweep
+
+        yield* Ref.set(drafted, true)
+        expect(yield* answers.awaited).toBe(false)
+        yield* past('1 hour')
+
+        expect(yield* answerOf(question)).toEqual(Option.none())
+        expect(yield* Ref.get(said)).toEqual([])
+      }).pipe(Effect.scoped, Effect.provide(services)),
   )
 
   it.effect('leaves a question open before the run to the maintainer', () =>

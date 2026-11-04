@@ -93,7 +93,7 @@ export const makeAutoAnswers = Effect.fn('AutoAnswers.make')(function* (input: {
   const scope = yield* Scope.fork(yield* Effect.scope)
   // Every question there now was filed before the run; one closed now and reopened later too.
   const before = yield* graph.list({ types: ['question'] })
-  /** The questions taken up, or filed before the run: each is answered once at most. */
+  /** The questions looked at, or filed before the run: each is taken up then or never, and answered once at most. */
   const seen = new Set<TicketId>(before.map(({ id }) => id))
   /** The questions waiting to be answered, each its fiber. */
   const waiting = new Map<TicketId, Fiber.Fiber<void>>()
@@ -143,9 +143,11 @@ export const makeAutoAnswers = Effect.fn('AutoAnswers.make')(function* (input: {
       Effect.gen(function* () {
         const gone = [...waiting].filter(([id]) => !toAnswer.has(id))
         for (const [id] of gone) waiting.delete(id)
-        for (const id of toAnswer) {
+        for (const { id } of open) {
           if (seen.has(id)) continue
+          // Whether it is taken is settled here: options drafted on it later leave it the maintainer's.
           seen.add(id)
+          if (!toAnswer.has(id)) continue
           const due = yield* Option.match(wait.value, {
             onNone: () => Effect.succeed(Option.none<Deadline>()),
             onSome: after => Effect.asSome(input.wake.deadline(after)),
