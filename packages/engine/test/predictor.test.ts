@@ -117,6 +117,12 @@ describe("the predictor's rules", () => {
     ['Add a test for it', true],
     ['The tests pass', true],
     ['Unittests stay', true],
+    ['Speed up the pytest suite', true],
+    ['Move the vitest config', true],
+    ['Fix go_test helpers', true],
+    ['Add e2e_tests to CI', true],
+    ['Rename loopTest', true],
+    ['Run jest once', true],
     ['Make it faster', false],
     ['The latest contest', false],
   ])('reads %s as mentioning tests: %s', (text, mentions) => {
@@ -858,6 +864,26 @@ describe('the predictor in a run', () => {
       }).pipe(Effect.scoped)
     },
   )
+
+  it.effect('asks nothing with the organ turned off in the settings', () => {
+    const fixture = project({
+      ...settings,
+      organs: { predictor: { enabled: false } },
+    })
+    return withRuns(
+      fixture,
+      Effect.gen(function* () {
+        const nothing = yield* file('Make it faster', 'finish')
+        const end = yield* runProject(configOf(fixture, options()))
+        const events = yield* eventsOf(fixture)
+        expect(end.kind).toBe('READY_EMPTY')
+        expect(ofKind(events, 'organ')).toEqual([])
+        expect(ofKind(events, 'dispatch').map(({ ticket }) => ticket)).toEqual([
+          nothing.id,
+        ])
+      }),
+    )
+  })
 
   it.effect(
     'goes on without a guess where the organ loses it, and the run ends with nothing left waiting',

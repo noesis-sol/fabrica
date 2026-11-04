@@ -67,9 +67,15 @@ export const isTestFile = (path: string): boolean => {
   )
 }
 
-/** Whether a ticket's text mentions tests. */
+/**
+ * Whether a ticket's text mentions tests: a word starting `test`, in a compound word too (`go_test`,
+ * `loopTest`), or a runner's name, but no word that only ends in it (`latest`, `contest`). Read too
+ * freely, it only lists the tests as well.
+ */
 export const mentionsTests = (text: string): boolean =>
-  /\b(?:unit)?test/iu.test(text)
+  /(?<![\p{L}\p{N}])(?:(?:unit|py|vi)?test|jest|rspec|junit|e2e)/iu.test(
+    text,
+  ) || /\p{Ll}Tests?(?![\p{Ll}])/u.test(text)
 
 /** What the predictor reads of a ticket. */
 type PredictedTicket = Pick<
