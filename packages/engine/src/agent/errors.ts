@@ -42,8 +42,10 @@ export type AgentStartFailure = Data.TaggedEnum<{
   Cancelled: {}
   /** Its session or configuration folder couldn't be made. */
   Folders: { readonly message: string }
-  /** Its container couldn't be made, or its setup failed (§12.7). */
+  /** Its container couldn't be made (§12.7). */
   Container: { readonly message: string }
+  /** A setup command of its container's devcontainer file failed: the project's setup, as §13.8's is. */
+  ContainerSetup: { readonly message: string }
   /** Pi, or its reaper, couldn't be started. */
   Spawn: { readonly reason: StartFailure }
   /** Pi exited before its handshake; the end of what it wrote on stderr. */
@@ -59,7 +61,8 @@ export class AgentStartFailed extends Data.TaggedError('AgentStartFailed')<{
   readonly reason: AgentStartFailure
 }> {
   override get message() {
-    return AgentStartFailure.$is('Container')(this.reason)
+    return AgentStartFailure.$is('Container')(this.reason) ||
+      AgentStartFailure.$is('ContainerSetup')(this.reason)
       ? `${this.ticket}: the agent didn't start: ${this.reason.message}`
       : `${this.ticket}: the agent didn't start (${this.reason._tag})`
   }

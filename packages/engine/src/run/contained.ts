@@ -24,7 +24,8 @@ import { type AgentProxy, ModelProxy } from '../proxy'
 // and the model proxy from inside, on the runtime the start chose (fab-mgi.60, .61), and what is
 // mounted beyond its own folders: the worktree's git folder, where its commits go, with its hooks and
 // configuration read-only, as the engine's own git reads those on the host; the checks' logs `check_own`
-// names; and the channel's and the proxy's sockets where a mounted socket is the way.
+// names; and the channel's and the proxy's sockets where a mounted socket is the way. And who the host's
+// git says commits, since the user's git configuration stays on the host.
 
 /** How the agent reaches its control channel: the socket, on every placement but one (fab-mgi.61). */
 export const controlTransportOf = ({
@@ -85,6 +86,13 @@ export const containedAgent = Effect.fn('Run.containedAgent')(function* ({
       message: `${worktree} isn't in a repository`,
     })
   const { commonDir } = place.value
+  const [name, email] = yield* Effect.all(
+    [
+      git.configValue({ repo: worktree, name: 'user.name' }),
+      git.configValue({ repo: worktree, name: 'user.email' }),
+    ],
+    { concurrency: 'unbounded' },
+  ).pipe(Effect.mapError(failed("the host's git identity wasn't read")))
   const hooks = NodePath.join(commonDir, 'hooks')
   const logs = NodePath.join(checkout, checksFolder)
   yield* Effect.tryPromise({
@@ -126,6 +134,7 @@ export const containedAgent = Effect.fn('Run.containedAgent')(function* ({
       container: {
         prepared,
         mounts,
+        identity: { name, email },
         relay: Option.isNone(hostAddress)
           ? Option.some({
               port: new URL(proxy.address).port,

@@ -319,10 +319,13 @@ describe('what an agent is given for its container', () => {
 
   const contained = (placement: Option.Option<RuntimePlacement>) => {
     const repo = folder('r')
-    execFileSync('git', ['init', '--quiet'], {
-      cwd: repo,
-      env: { PATH: `${gitFolder}:/usr/bin:/bin`, HOME: root },
-    })
+    const fixtureGit = (...words: ReadonlyArray<string>) =>
+      execFileSync('git', [...words], {
+        cwd: repo,
+        env: { PATH: `${gitFolder}:/usr/bin:/bin`, HOME: root },
+      })
+    fixtureGit('init', '--quiet')
+    fixtureGit('config', 'user.name', 'Ada')
     const sockets = folder('s')
     const listened: Array<string> = []
     const proxy = ModelProxy.of({
@@ -411,7 +414,7 @@ describe('what an agent is given for its container', () => {
     () =>
       Effect.gen(function* () {
         const { given, sockets, listened } = yield* contained(
-          Option.some(RuntimePlacement.PodmanMachine()),
+          Option.some(RuntimePlacement.PodmanMachine({ rootless: true })),
         )
         expect(listened).toEqual([])
         expect(given.providers[0]?.baseUrl).toBe(
@@ -436,7 +439,9 @@ describe('what an agent is given for its container', () => {
     ).toEqual(ControlTransport.Unix())
     expect(
       controlTransportOf({
-        containers: Option.some(preparedOn(RuntimePlacement.PodmanMachine())),
+        containers: Option.some(
+          preparedOn(RuntimePlacement.PodmanMachine({ rootless: true })),
+        ),
       }),
     ).toEqual(ControlTransport.Tcp({ reachedAt: '192.168.127.254' }))
   })

@@ -40,7 +40,8 @@ const LIFECYCLE_LIMIT = Duration.minutes(30)
 /** Where a runtime's containers run, which decides how they reach the host and whose files they write. */
 export type RuntimePlacement = Data.TaggedEnum<{
   DockerDesktop: {}
-  PodmanMachine: {}
+  /** Rootless by default; `podman machine set --rootful` makes its containers root's. */
+  PodmanMachine: { readonly rootless: boolean }
   RootlessLinux: { readonly runtime: ContainerRuntime }
   RootfulLinux: { readonly runtime: ContainerRuntime }
 }>
@@ -126,7 +127,7 @@ export const placementOf = ({
       if (platform === 'darwin')
         return runtime === 'docker'
           ? RuntimePlacement.DockerDesktop()
-          : RuntimePlacement.PodmanMachine()
+          : RuntimePlacement.PodmanMachine({ rootless: isRootless })
       return isRootless
         ? RuntimePlacement.RootlessLinux({ runtime })
         : RuntimePlacement.RootfulLinux({ runtime })
@@ -705,6 +706,31 @@ export const prepareContainers = Effect.fn('Container.prepare')(function* ({
   ]
   if (problems.length > 0 || Result.isFailure(read))
     return yield* refuse(...problems)
+  const source = ImageSource.$match(read.success.source, {
+    Pull: pull => ImageSource.Pull(pull),
+    Build: build =>
+      ImageSource.Build({
+        ...build,
+        args: Object.fromEntries(
+          Object.entries(build.args).map(([arg, value]) => [
+            arg,
+            substituted(value, {
+              local: checkout,
+              container: workspaceOf({
+                worktree: checkout,
+                prepared: {
+                  setup: read.success.setup,
+                  environment: host.environment,
+                },
+              }),
+              id: read.success.setup.id,
+              environment: host.environment,
+              containerEnv: {},
+            }),
+          ]),
+        ),
+      }),
+  })
   const [distribution, fetched] = yield* Effect.all(
     [
       Effect.mapError(host.distribution, why =>
@@ -712,7 +738,7 @@ export const prepareContainers = Effect.fn('Container.prepare')(function* ({
       ),
       fetchImage({
         runtime: runtimeOf(placement),
-        source: read.success.source,
+        source,
         cwd: checkout,
       }),
     ],
@@ -773,15 +799,24 @@ export const containerName = ({
  */
 export const workspaceOf = ({
   worktree,
-  setup,
+  prepared: { setup, environment },
 }: {
   readonly worktree: string
-  readonly setup: ContainerSetup
-}): string =>
-  Option.getOrElse(
-    setup.workspaceFolder,
-    () => `/workspaces/${NodePath.basename(worktree)}`,
-  )
+  readonly prepared: Pick<PreparedContainers, 'setup' | 'environment'>
+}): string => {
+  const standard = `/workspaces/${NodePath.basename(worktree)}`
+  return Option.match(setup.workspaceFolder, {
+    onNone: () => standard,
+    onSome: folder =>
+      substituted(folder, {
+        local: worktree,
+        container: standard,
+        id: setup.id,
+        environment,
+        containerEnv: {},
+      }),
+  })
+}
 
 /** A part of the distribution, where it is mounted. */
 const insideDistribution = (part: string) =>
@@ -847,7 +882,8 @@ const userArguments = ({
   return RuntimePlacement.$match(placement, {
     // virtiofs maps a file's owner to the Mac's user.
     DockerDesktop: () => named,
-    PodmanMachine: () => [...keepId, ...named],
+    // keep-id is a rootless user namespace's: a rootful machine refuses it.
+    PodmanMachine: ({ rootless }) => (rootless ? [...keepId, ...named] : named),
     RootlessLinux: ({ runtime }) =>
       runtime === 'podman'
         ? [...keepId, ...named]
@@ -993,11 +1029,48 @@ export class ContainerFailed extends Data.TaggedError('ContainerFailed')<{
   }
 }
 
+/** A setup command of the container's failed: the rest are skipped. */
+export class ContainerSetupFailed extends Data.TaggedError(
+  'ContainerSetupFailed',
+)<{
+  readonly reason: string
+}> {
+  override get message() {
+    return this.reason
+  }
+}
+
+/**
+ * The git configuration a container's agent reads in place of the user's, whose file stays on the host:
+ * who commits, so a commit's author is the same as on the host; and every folder trusted, since a
+ * mounted repository's owner may read as another user's in the container.
+ */
+export const gitConfigText = ({ name, email }: GitIdentity): string => {
+  const quoted = (value: string) =>
+    `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
+  const user = [
+    ...Option.toArray(Option.map(name, value => `\tname = ${quoted(value)}\n`)),
+    ...Option.toArray(
+      Option.map(email, value => `\temail = ${quoted(value)}\n`),
+    ),
+  ]
+  return `${user.length === 0 ? '' : `[user]\n${user.join('')}`}[safe]\n\tdirectory = *\n`
+}
+
+/** The variable naming the git configuration a container's commands read. */
+export const GIT_CONFIG_VARIABLE = 'GIT_CONFIG_GLOBAL'
+
+/** Who commits on the host, as its git says. */
+export interface GitIdentity {
+  readonly name: Option.Option<string>
+  readonly email: Option.Option<string>
+}
+
 /** A container that is running, and how a command is started in it. */
 export interface StartedContainer {
   readonly runtime: ContainerRuntime
   /** Its lifecycle commands, which run before anything else in it (fab-mgi.2.8). */
-  readonly setUp: Effect.Effect<void, ContainerFailed>
+  readonly setUp: Effect.Effect<void, ContainerSetupFailed>
   /** The CLI's arguments for the agent's Pi, given Pi's own arguments and its variables' names. */
   readonly agentArguments: (
     pi: ReadonlyArray<string>,
@@ -1019,19 +1092,22 @@ export const startContainer = Effect.fn('Container.start')(function* ({
   mounts,
   relay,
   node,
+  variables,
 }: {
   readonly prepared: PreparedContainers
   readonly name: string
   readonly worktree: string
   readonly mounts: ReadonlyArray<Mount>
   readonly relay: Option.Option<ProxyRelay>
+  /** Variables every command in it gets, over the devcontainer file's. */
+  readonly variables: Readonly<Record<string, string>>
   /** The host's Node, which runs the reaper. */
   readonly node: string
 }) {
   const runner = yield* ProcessRunner
   const runtime = runtimeOf(prepared.placement)
   const { setup } = prepared
-  const workspace = workspaceOf({ worktree, setup })
+  const workspace = workspaceOf({ worktree, prepared })
   const withVariables = (
     text: string,
     containerEnv: Readonly<Record<string, string>>,
@@ -1049,12 +1125,15 @@ export const startContainer = Effect.fn('Container.start')(function* ({
       withVariables(value, {}),
     ]),
   )
-  const remoteEnv = Object.fromEntries(
-    Object.entries(setup.remoteEnv).map(([variable, value]) => [
-      variable,
-      withVariables(value, containerEnv),
-    ]),
-  )
+  const remoteEnv = {
+    ...Object.fromEntries(
+      Object.entries(setup.remoteEnv).map(([variable, value]) => [
+        variable,
+        withVariables(value, containerEnv),
+      ]),
+    ),
+    ...variables,
+  }
   const failed = (doing: string, why: string) =>
     new ContainerFailed({ reason: `${doing}: ${why}` })
   const remove = runner.run({
@@ -1131,10 +1210,9 @@ export const startContainer = Effect.fn('Container.start')(function* ({
             })
             const result = commandSucceeded(ran)
             if (Result.isFailure(result))
-              return yield* failed(
-                `the container's setup command ${command.join(' ')} failed`,
-                result.failure,
-              )
+              return yield* new ContainerSetupFailed({
+                reason: `the container's setup command ${command.join(' ')} failed: ${result.failure}`,
+              })
           }),
         { concurrency: 'unbounded', discard: true },
       ),

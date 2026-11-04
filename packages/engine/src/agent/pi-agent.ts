@@ -11,9 +11,11 @@ import {
   Scope,
   type Stream,
 } from 'effect'
+import * as NodePath from 'node:path'
 
 import { type ProjectId, SessionId, type TicketId } from '@fabrica/contracts'
 
+import { writeFileWhole } from '../files'
 import {
   Deadlines,
   type DeadlinesShape,
@@ -29,11 +31,15 @@ import {
   connect,
 } from './connection'
 import {
+  ContainerFailed,
   DISTRIBUTION_TARGET,
+  GIT_CONFIG_VARIABLE,
+  type GitIdentity,
   type Mount,
   type PreparedContainers,
   type ProxyRelay,
   containerName,
+  gitConfigText,
   insideParts,
   samePath,
   startContainer,
@@ -77,6 +83,8 @@ export interface AgentContainer {
   readonly prepared: PreparedContainers
   readonly mounts: ReadonlyArray<Mount>
   readonly relay: Option.Option<ProxyRelay>
+  /** Who its commits are by, as on the host. */
+  readonly identity: GitIdentity
 }
 
 /** What starting a ticket's agent takes. */
@@ -350,8 +358,18 @@ export const make = Effect.fn('PiAgent.make')(function* (
   }) =>
     Effect.gen(function* () {
       if (options.container === undefined) return Option.none()
-      const { prepared, mounts, relay } = options.container
-      const { distribution, setup } = prepared
+      const { prepared, mounts, relay, identity } = options.container
+      const { distribution } = prepared
+      const gitConfig = NodePath.join(folder, 'gitconfig')
+      yield* writeFileWhole(
+        { root: folder, path: 'gitconfig' },
+        gitConfigText(identity),
+        { mode: 0o600 },
+      ).pipe(
+        Effect.mapError(
+          error => new ContainerFailed({ reason: error.message }),
+        ),
+      )
       const started = yield* startContainer({
         prepared,
         name: containerName(options),
@@ -359,7 +377,7 @@ export const make = Effect.fn('PiAgent.make')(function* (
         mounts: [
           {
             source: options.worktree,
-            target: workspaceOf({ worktree: options.worktree, setup }),
+            target: workspaceOf({ worktree: options.worktree, prepared }),
           },
           samePath(options.worktree),
           {
@@ -373,6 +391,7 @@ export const make = Effect.fn('PiAgent.make')(function* (
         ],
         relay,
         node: config.node,
+        variables: { [GIT_CONFIG_VARIABLE]: gitConfig },
       }).pipe(
         Effect.provideService(ProcessRunner, runner),
         Scope.provide(scope),
@@ -394,14 +413,24 @@ export const make = Effect.fn('PiAgent.make')(function* (
         env: { ...started.remoteEnv, ...environment },
       })
     }).pipe(
-      Effect.catchTag('ContainerFailed', error =>
-        Effect.fail(
-          new AgentStartFailed({
-            ticket: options.ticket,
-            reason: AgentStartFailure.Container({ message: error.message }),
-          }),
-        ),
-      ),
+      Effect.catchTags({
+        ContainerFailed: error =>
+          Effect.fail(
+            new AgentStartFailed({
+              ticket: options.ticket,
+              reason: AgentStartFailure.Container({ message: error.message }),
+            }),
+          ),
+        ContainerSetupFailed: error =>
+          Effect.fail(
+            new AgentStartFailed({
+              ticket: options.ticket,
+              reason: AgentStartFailure.ContainerSetup({
+                message: error.message,
+              }),
+            }),
+          ),
+      }),
     )
 
   /** Spawns Pi and its reaper in `scope`, in the agent's container where it has one, and connects to Pi. */

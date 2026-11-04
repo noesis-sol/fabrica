@@ -1,5 +1,5 @@
 import { Duration, Effect, Exit, Layer, Option, Result } from 'effect'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import {
   mkdirSync,
   mkdtempSync,
@@ -34,6 +34,7 @@ import {
   controlAddressOf,
   delegationFile,
   delegationProblem,
+  gitConfigText,
   hostAddressOf,
   placementOf,
   plainJson,
@@ -43,6 +44,7 @@ import {
   runArguments,
   samePath,
   substituted,
+  workspaceOf,
 } from '../src/agent'
 import {
   type RunnerConfig,
@@ -267,12 +269,22 @@ describe('choosing a runtime', () => {
       )
       expect(yield* choose(state, Option.some('podman'), 'darwin')).toEqual(
         RuntimeChoice.Chosen({
-          placement: RuntimePlacement.PodmanMachine(),
+          placement: RuntimePlacement.PodmanMachine({ rootless: true }),
           notices: [],
         }),
       )
     }),
   )
+
+  it('reads whether a Podman Machine is rootless', () => {
+    expect(
+      placementOf({
+        runtime: 'podman',
+        platform: 'darwin',
+        info: JSON.stringify(podmanRootful),
+      }),
+    ).toEqual(Option.some(RuntimePlacement.PodmanMachine({ rootless: false })))
+  })
 
   it('reads a daemon that answered without its server as no answer', () => {
     expect(
@@ -293,9 +305,9 @@ describe('how a container reaches the host', () => {
     expect(hostAddressOf(RuntimePlacement.DockerDesktop())).toEqual(
       Option.some('host.docker.internal'),
     )
-    expect(hostAddressOf(RuntimePlacement.PodmanMachine())).toEqual(
-      Option.some('192.168.127.254'),
-    )
+    expect(
+      hostAddressOf(RuntimePlacement.PodmanMachine({ rootless: true })),
+    ).toEqual(Option.some('192.168.127.254'))
     expect(
       hostAddressOf(RuntimePlacement.RootlessLinux({ runtime: 'docker' })),
     ).toEqual(Option.none())
@@ -305,9 +317,9 @@ describe('how a container reaches the host', () => {
   })
 
   it('reaches the control channel over TCP on Podman Machine alone', () => {
-    expect(controlAddressOf(RuntimePlacement.PodmanMachine())).toEqual(
-      Option.some('192.168.127.254'),
-    )
+    expect(
+      controlAddressOf(RuntimePlacement.PodmanMachine({ rootless: true })),
+    ).toEqual(Option.some('192.168.127.254'))
     expect(controlAddressOf(RuntimePlacement.DockerDesktop())).toEqual(
       Option.none(),
     )
@@ -533,6 +545,63 @@ describe('the image, before a first dispatch', () => {
   )
 })
 
+describe('the variables of a devcontainer file', () => {
+  it.live(
+    'stand in a build argument, as the engine allowlisted its environment',
+    () =>
+      Effect.gen(function* () {
+        const state = fixture(['docker'])
+        state.cli.answerInfo('docker', dockerRootless)
+        const file = join(state.worktree, 'devcontainer.json')
+        const text = JSON.stringify({
+          build: {
+            dockerfile: 'Dockerfile',
+            args: {
+              FROM: '${localEnv:FROM_ENGINE}',
+              UNSET: '${localEnv:SECRET:none}',
+            },
+          },
+        })
+        yield* prepareContainers({
+          container: imageContainer({
+            source: ContainerSource.cases.Devcontainer.make({
+              file: 'devcontainer.json',
+            }),
+          }),
+          host: hostOf(state.distribution, {
+            readFile: path =>
+              Effect.succeed(Option.some(path === file ? text : 'cpu')),
+          }),
+          project,
+          checkout: state.worktree,
+          cores: 1,
+        }).pipe(Effect.provide(state.runner))
+        const build =
+          state.cli.calls().find(([, subcommand]) => subcommand === 'build') ??
+          []
+        expect(build).toContain('FROM=allowed')
+        expect(build).toContain('UNSET=none')
+      }),
+  )
+
+  it('stand in the workspace folder', () => {
+    expect(
+      workspaceOf({
+        worktree: '/host/fa-1',
+        prepared: {
+          setup: {
+            ...preparedOf().setup,
+            workspaceFolder: Option.some(
+              '/work/${localWorkspaceFolderBasename}-${localEnv:WHO}',
+            ),
+          },
+          environment: { WHO: 'me' },
+        },
+      }),
+    ).toBe('/work/fa-1-me')
+  })
+})
+
 describe('a devcontainer file', () => {
   const read = (body: object | string) =>
     readDevcontainer({
@@ -735,9 +804,9 @@ describe('the run arguments', () => {
         placement: RuntimePlacement.RootlessLinux({ runtime: 'podman' }),
       }),
     ).toContain('--userns=keep-id')
-    expect(args({ placement: RuntimePlacement.PodmanMachine() })).toContain(
-      '--userns=keep-id',
-    )
+    expect(
+      args({ placement: RuntimePlacement.PodmanMachine({ rootless: true }) }),
+    ).toContain('--userns=keep-id')
     expect(
       after(
         args({
@@ -749,6 +818,12 @@ describe('the run arguments', () => {
     expect(args({ placement: RuntimePlacement.DockerDesktop() })).not.toContain(
       '--user',
     )
+  })
+
+  it('leaves keep-id out on a rootful Podman Machine, which refuses it', () => {
+    expect(
+      args({ placement: RuntimePlacement.PodmanMachine({ rootless: false }) }),
+    ).not.toContain('--userns=keep-id')
   })
 
   it('takes the devcontainer file user and init', () => {
@@ -874,6 +949,7 @@ describe('an agent in a container', () => {
       }),
       mounts: [samePath('/run/c/fa-1.sock')],
       relay: Option.none(),
+      identity: { name: Option.some('Ada'), email: Option.none() },
     },
   })
 
@@ -1040,6 +1116,7 @@ describe('an agent in a container', () => {
           const error = yield* Effect.flip(exit)
           expect(error).toBeInstanceOf(AgentStartFailed)
           expect(error.message).toContain('setup command')
+          expect(error.reason._tag).toBe('ContainerSetup')
         }),
       )
       expect(state.cli.calls().map(([, subcommand]) => subcommand)).toEqual([
@@ -1121,6 +1198,106 @@ describe('an agent in a container', () => {
       expect(readFileSync(said, 'utf8')).toBe(
         'unix:///run/user/1000/docker.sock\n',
       )
+    }),
+  )
+})
+
+describe('the git configuration of a container', () => {
+  it('holds who commits, as real git reads it, and trusts every folder', () => {
+    const repo = join(root, `git${(counter += 1)}`)
+    mkdirSync(repo)
+    const file = join(repo, 'gitconfig')
+    writeFileSync(
+      file,
+      gitConfigText({
+        name: Option.some('Ada "the \\\\ first" Lovelace'),
+        email: Option.some('ada@example.invalid'),
+      }),
+    )
+    const git = (...words: ReadonlyArray<string>) =>
+      execFileSync('git', [...words], {
+        cwd: repo,
+        encoding: 'utf8',
+        env: {
+          PATH: '/usr/bin:/bin',
+          HOME: repo,
+          GIT_CONFIG_GLOBAL: file,
+          GIT_CONFIG_NOSYSTEM: '1',
+        },
+      }).trim()
+    expect(git('config', 'user.name')).toBe('Ada "the \\\\ first" Lovelace')
+    expect(git('config', 'user.email')).toBe('ada@example.invalid')
+    expect(git('config', 'safe.directory')).toBe('*')
+  })
+
+  it('names nobody where the host has no identity', () => {
+    expect(gitConfigText({ name: Option.none(), email: Option.none() })).toBe(
+      '[safe]\n\tdirectory = *\n',
+    )
+  })
+
+  it.live('reaches every command in the container, by name', () =>
+    Effect.gen(function* () {
+      const state = fixture(['docker'])
+      const note = join(state.base, 'said')
+      yield* Effect.provide(
+        Effect.gen(function* () {
+          const agents = yield* PiAgent
+          const agent = yield* agents
+            .start({
+              ticket,
+              project,
+              worktree: state.worktree,
+              providers: [],
+              token: 't',
+              model: Option.none(),
+              tools: Option.none(),
+              resume: Option.none(),
+              env: {},
+              projectTrusted: false,
+              nice: Option.none(),
+              container: {
+                prepared: preparedOf({
+                  distribution: state.distribution,
+                  setup: {
+                    ...preparedOf().setup,
+                    lifecycle: [
+                      [['/bin/sh', '-c', `cat "$GIT_CONFIG_GLOBAL" > ${note}`]],
+                    ],
+                  },
+                }),
+                mounts: [],
+                relay: Option.none(),
+                identity: {
+                  name: Option.some('Ada'),
+                  email: Option.some('ada@example.invalid'),
+                },
+              },
+            })
+            .pipe(Effect.scoped)
+          yield* agent.close
+        }),
+        agentLayer({
+          node: process.execPath,
+          cli: 'unused',
+          extension: 'unused',
+          data: join(state.base, 'data'),
+          configRoot: join(state.base, 'agents'),
+          limits: {
+            handshake: Duration.seconds(10),
+            answer: Duration.seconds(10),
+            abort: Duration.seconds(1),
+            reap: Duration.seconds(5),
+          },
+          reaperPoll: Duration.millis(200),
+          reaperGrace: Duration.millis(500),
+        }).pipe(Layer.provideMerge(state.runner), Layer.provide(layerClock)),
+      )
+      expect(readFileSync(note, 'utf8')).toContain('name = "Ada"')
+      const execs = state.cli
+        .calls()
+        .filter(([, subcommand]) => subcommand === 'exec')
+      for (const exec of execs) expect(exec).toContain('GIT_CONFIG_GLOBAL')
     }),
   )
 })

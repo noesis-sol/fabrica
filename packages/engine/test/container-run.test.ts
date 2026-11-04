@@ -182,6 +182,53 @@ describe('a run with a container', () => {
   )
 
   it.effect(
+    'a setup command that fails is a setup failure, its ticket waiting, not a tool defect',
+    () =>
+      Effect.gen(function* () {
+        const devcontainer = JSON.stringify({
+          image: 'node:26',
+          postCreateCommand: 'exit 3',
+        })
+        const fixture = project(
+          {
+            ...settings,
+            concurrent: 1,
+            container: { devcontainer: '.devcontainer/devcontainer.json' },
+          },
+          { '.devcontainer/devcontainer.json': devcontainer },
+        )
+        yield* withRuns(
+          fixture,
+          Effect.gen(function* () {
+            yield* file('Add one', 'finish')
+            return yield* runProject({
+              ...configOf(fixture, options()),
+              containers: hostOf({
+                readFile: path =>
+                  Effect.succeed(
+                    Option.some(
+                      path.endsWith('devcontainer.json')
+                        ? devcontainer
+                        : 'cpu memory pids',
+                    ),
+                  ),
+              }),
+            })
+          }),
+        )
+        const events = yield* eventsOf(fixture)
+        const warnings = ofKind(events, 'warn').map(({ text }) => text)
+        expect(warnings.some(text => text.includes('SETUP_FAILED'))).toBe(true)
+        expect(
+          warnings.some(text =>
+            text.includes('setup command /bin/sh -c exit 3 failed'),
+          ),
+        ).toBe(true)
+        expect(JSON.stringify(events)).not.toContain('TOOL_DEFECT')
+      }),
+  )
+
+  it.effect(
     'an engine with no container facts refuses a project with a container',
     () =>
       Effect.gen(function* () {

@@ -218,6 +218,11 @@ export interface GitShape {
   readonly checkoutOf: (input: {
     readonly folder: string
   }) => Effect.Effect<Option.Option<CheckoutPlace>, CantTell>
+  /** A configuration value as git in `repo` reads it, the user's own among it; none where it isn't set. */
+  readonly configValue: (input: {
+    readonly repo: string
+    readonly name: string
+  }) => Effect.Effect<Option.Option<string>, CantTell>
   /** Where the branch `branch` is fetched from and pushed to (spec §10.3); none where it has no upstream. */
   readonly upstream: (input: {
     readonly repo: string
@@ -1156,6 +1161,26 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     )
   })
 
+  const configValue = Effect.fn('Git.configValue')(function* ({
+    repo,
+    name,
+  }: {
+    readonly repo: string
+    readonly name: string
+  }) {
+    return yield* readExit(
+      'configValue',
+      { cwd: repo, args: ['config', '--get', name] },
+      exit =>
+        exit.code === 0
+          ? Option.some(Option.some(exit.stdout.trim()))
+          : // 1: the key isn't set.
+            exit.code === 1
+            ? Option.some(Option.none<string>())
+            : Option.none(),
+    )
+  })
+
   const upstream = Effect.fn('Git.upstream')(function* ({
     repo,
     branch,
@@ -1288,6 +1313,7 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     pruneWorktrees,
     deleteBranch,
     checkoutOf,
+    configValue,
     upstream,
     fetch,
     push,

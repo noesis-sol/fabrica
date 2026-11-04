@@ -26,7 +26,7 @@ import {
   type TicketId,
 } from '@fabrica/contracts'
 
-import { PiAgent } from '../agent'
+import { AgentStartFailure, PiAgent } from '../agent'
 import { ControlRole, ControlServer, Outcome, type OwnCheck } from '../control'
 import type { CostAccount } from '../cost'
 import { workerShare } from '../engine/budget'
@@ -647,7 +647,11 @@ export const dispatchWorker = (
       Effect.succeed(WorkerEnd.NotClaimed({ reason })),
     ),
     Effect.catchTag('AgentStartFailed', error =>
-      Effect.succeed(WorkerEnd.NotStarted({ reason: error.message })),
+      Effect.succeed(
+        AgentStartFailure.$is('ContainerSetup')(error.reason)
+          ? WorkerEnd.SetupFailed({ detail: error.reason.message })
+          : WorkerEnd.NotStarted({ reason: error.message }),
+      ),
     ),
     Effect.catch(error =>
       Effect.succeed(WorkerEnd.Failed({ reason: error.message })),
