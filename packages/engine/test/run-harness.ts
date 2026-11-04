@@ -73,7 +73,11 @@ import { Held, SecretMissing, SecretName, Secrets } from '../src/secrets'
 import { Telemetry, nothingMeasured } from '../src/telemetry'
 import { layerWake, noBattery, noSleepCauses } from '../src/time'
 import { WorkGraph, makeWorkGraph, storeLayer } from '../src/workgraph'
-import { anthropicAnswer, anthropicBadKey } from './proxy-streams'
+import {
+  anthropicAnswer,
+  anthropicBadKey,
+  anthropicUsageLimit,
+} from './proxy-streams'
 
 // Whole runs for the run loop's scenarios (spec §13, H78), as run-core.test.ts runs them: the live
 // PiAgent over a scripted Pi, real git in temp folders, the live control server, merge queue, checks
@@ -100,7 +104,7 @@ vi.setConfig({ testTimeout: 60_000 })
  * session resumed with `switch_session` (a carry-over, an answer, an undefer) finishes instead of
  * hanging, deferring or asking. It keeps what it was prompted with and every call in its session folder.
  * An organ's session plays the spec breakdown from the checkout's `breakdown.json` (spec §15.5):
- * `file_root`, waiting for the environment ticket's file where `waitForEnvironment` says so, then each of
+ * `limitedFirst` having its first turn call the model and end, for a usage limit, then `file_root`, waiting for the environment ticket's file where `waitForEnvironment` says so, then each of
  * its `answers` until one is taken.
  */
 const STUB = `import { execFileSync } from 'node:child_process'
@@ -164,8 +168,13 @@ const spend = async model => {
   out({ type: 'turn_end' })
   out({ type: 'message_end', message: { role: 'assistant', provider, model: id } })
 }
+let limited = false
 const breakdown = async () => {
   const script = JSON.parse(readFileSync('breakdown.json', 'utf8'))
+  if (script.limitedFirst && !limited) {
+    limited = true
+    return spend('anthropic/claude-test')
+  }
   const filed = script.root === undefined ? undefined : await call('file_root', script.root)
   if (script.waitForEnvironment)
     await new Promise(resolve => {
@@ -432,12 +441,15 @@ type Answer =
   | 'takes'
   | 'refuses'
   | { readonly contentType: string; readonly body: string }
+/** The provider's answer: it takes the key, refuses it, or refuses the run's second call for a usage limit reset at 01:00 on TestClock. */
+type Answer = 'takes' | 'refuses' | 'limits_second'
 
 /** A loopback Anthropic answering every call as `answer` says. */
 const fakeProvider = (answer: Answer) =>
   Effect.acquireRelease(
     Effect.callback<{ readonly url: string; readonly close: () => void }>(
       resume => {
+        let calls = 0
         const server = createServer((request, response) => {
           request.resume()
           request.on('end', () => {
@@ -446,6 +458,18 @@ const fakeProvider = (answer: Answer) =>
                 answer === 'takes' ? anthropicAnswer : answer
               response.writeHead(200, { 'content-type': contentType })
               response.end(body)
+            calls += 1
+            if (answer === 'limits_second' && calls === 2) {
+              response.writeHead(429, {
+                'content-type': 'application/json',
+                'anthropic-ratelimit-unified-reset': '3600',
+              })
+              response.end(anthropicUsageLimit.body)
+            } else if (answer !== 'refuses') {
+              response.writeHead(200, {
+                'content-type': anthropicAnswer.contentType,
+              })
+              response.end(anthropicAnswer.body)
             } else {
               response.writeHead(401, { 'content-type': 'application/json' })
               response.end(anthropicBadKey)

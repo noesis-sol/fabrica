@@ -1,4 +1,4 @@
-import { Duration, Effect, Fiber, Layer, Option, Result } from 'effect'
+import { Duration, Effect, Fiber, Layer, Option, Ref, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import {
   chmodSync,
@@ -18,12 +18,14 @@ import {
   SpecSha256Key,
   type Ticket,
   TicketId,
+  RunMode as WireMode,
 } from '@fabrica/contracts'
 
 import { layer as gitLayer } from '../src/git'
 import { layer as runnerLayer } from '../src/process'
 import { makeSelfSigned } from '../src/rpc/certificate'
 import { RunMode, runProject } from '../src/run'
+import { shownMode } from '../src/run/spec-mode'
 import {
   type ReadSpec,
   SpecFetching,
@@ -31,13 +33,14 @@ import {
   commitSpec,
   copyName,
   fetchSpec,
+  filedKey,
   githubFile,
   narrowWarning,
   readSpec,
   specSource,
   treeShape,
 } from '../src/spec'
-import { WorkGraph, descendants } from '../src/workgraph'
+import { WorkGraph, type WorkGraphShape, descendants } from '../src/workgraph'
 import {
   binFolder,
   commit,
@@ -505,6 +508,22 @@ describe('A spec at a URL (§15.5, H83)', () => {
     expect(refused('https://example.com/')).toContain('names no file')
   })
 
+  it('shows a run a URL without its query and fragment, and a path as it is', () => {
+    const shown = (source: string) =>
+      shownMode(WireMode.cases.spec.make({ source, refine: false }))
+    expect(shown('https://example.com/spec.md?token=sekret#part')).toEqual(
+      WireMode.cases.spec.make({
+        source: 'https://example.com/spec.md',
+        refine: false,
+      }),
+    )
+    expect(shown('docs/what?.md')).toEqual(
+      WireMode.cases.spec.make({ source: 'docs/what?.md', refine: false }),
+    )
+    const tickets = WireMode.cases.tickets.make({})
+    expect(shownMode(tickets)).toBe(tickets)
+  })
+
   it('names a copy after the last path segment', () => {
     expect(copyName('shop')).toEqual(Option.some('shop.md'))
     expect(copyName('shop.txt')).toEqual(Option.some('shop.txt'))
@@ -690,6 +709,14 @@ const stubCalls = (folder: string, tag: string): ReadonlyArray<string> =>
     .filter(name => name.endsWith('stub.jsonl'))
     .flatMap(name => readFileSync(join(folder, name), 'utf8').split('\n'))
     .filter(line => line.includes(`"tag":"${tag}"`))
+
+/** The tickets as the work graph has them now, by title. */
+const titled = (graph: WorkGraphShape) =>
+  Effect.map(graph.list(), tickets => (title: string): Ticket => {
+    const found = tickets.find(ticket => ticket.title === title)
+    if (found === undefined) throw new Error(`no ticket ${title}`)
+    return found
+  })
 
 describe('A spec run (§15.5)', () => {
   it.effect(
@@ -952,6 +979,310 @@ describe('A spec run (§15.5)', () => {
   )
 
   it.effect(
+    'updates the open tickets for a changed spec, deferring the obsolete, refusing a closed one',
+    () =>
+      Effect.gen(function* () {
+        const fixture = project(
+          settings,
+          breakdownFile({
+            root: rootCall,
+            answers: [
+              {
+                items: [
+                  item('a'),
+                  item('b', { waitsOn: ['a'] }),
+                  item('c', { waitsOn: ['a'] }),
+                ],
+              },
+            ],
+          }),
+        )
+        const outside = join(fixture.data, '..', 'shop.md')
+        writeFileSync(outside, '# Shop\n')
+        const limited = options({
+          mode: RunMode.Spec({ source: outside }),
+          limit: Option.some(1),
+        })
+        yield* withRuns(
+          fixture,
+          Effect.gen(function* () {
+            yield* runProject(configOf(fixture, limited))
+            const graph = yield* WorkGraph
+            const first = yield* titled(graph)
+            expect(first('Do a').status).toBe('closed')
+            writeFileSync(outside, '# Shop, changed\n')
+            commit(fixture.checkout, 'an update', {
+              'breakdown.json': JSON.stringify({
+                answers: [
+                  {
+                    items: [],
+                    changes: [
+                      { ticket: first('Do a').id, description: 'stub: finish' },
+                    ],
+                  },
+                  {
+                    items: [],
+                    changes: [
+                      {
+                        ticket: first('Do b').id,
+                        description: 'stub: finish, as changed',
+                      },
+                      { ticket: first('Do c').id, obsolete: 'Not any more.' },
+                    ],
+                  },
+                ],
+              }),
+            })
+            yield* runProject(configOf(fixture, limited))
+            const after = yield* titled(graph)
+            expect(after('Do b').description).toEqual(
+              Option.some('stub: finish, as changed'),
+            )
+            expect(after('Do c').status).toBe('deferred')
+            const c = yield* graph.show(first('Do c').id)
+            expect(c.notes.map(({ body }) => body)).toContain('Not any more.')
+            expect(
+              stubCalls(fixture.data, 'answer').some(call =>
+                call.includes(
+                  `${first('Do a').id} is closed: only an open ticket changes`,
+                ),
+              ),
+            ).toBe(true)
+          }),
+        )
+      }),
+  )
+
+  it.effect(
+    'refuses an update making a cycle through what is filed, parents and waits together',
+    () =>
+      Effect.gen(function* () {
+        const fixture = project(
+          settings,
+          breakdownFile({
+            root: rootCall,
+            answers: [
+              {
+                items: [
+                  item('part', {
+                    type: 'epic',
+                    description: 'The parts of it.',
+                    files: undefined,
+                  }),
+                  item('t', { waitsOn: ['part'] }),
+                  item('free'),
+                ],
+              },
+            ],
+          }),
+        )
+        const outside = join(fixture.data, '..', 'shop.md')
+        writeFileSync(outside, '# Shop\n')
+        const mode = options({ mode: RunMode.Spec({ source: outside }) })
+        yield* withRuns(
+          fixture,
+          Effect.gen(function* () {
+            yield* runProject(configOf(fixture, mode))
+            const graph = yield* WorkGraph
+            const first = yield* titled(graph)
+            const filed = (title: string) => filedKey(first(title).id)
+            writeFileSync(outside, '# Shop, changed\n')
+            commit(fixture.checkout, 'an update', {
+              'breakdown.json': JSON.stringify({
+                answers: [
+                  {
+                    items: [
+                      item('x', {
+                        parent: filed('Do part'),
+                        waitsOn: [filed('Do t')],
+                      }),
+                    ],
+                  },
+                  { items: [item('y')] },
+                ],
+              }),
+            })
+            yield* runProject(configOf(fixture, mode))
+            const refused = stubCalls(fixture.data, 'answer').find(call =>
+              call.includes('wait on one another'),
+            )
+            expect(refused).toContain(filed('Do part'))
+            expect(refused).toContain(filed('Do t'))
+            const tickets = yield* graph.list()
+            expect(tickets.map(({ title }) => title)).not.toContain('Do x')
+            expect(tickets.map(({ title }) => title)).toContain('Do y')
+          }),
+        )
+      }),
+  )
+
+  it.effect(
+    'opens a closed epic again when an update files a ticket under it',
+    () =>
+      Effect.gen(function* () {
+        const fixture = project(
+          settings,
+          breakdownFile({
+            root: rootCall,
+            answers: [
+              {
+                items: [
+                  item('part', {
+                    type: 'epic',
+                    description: 'The parts of it.',
+                    files: undefined,
+                  }),
+                  item('one', { parent: 'part' }),
+                ],
+              },
+            ],
+          }),
+        )
+        const outside = join(fixture.data, '..', 'shop.md')
+        writeFileSync(outside, '# Shop\n')
+        const mode = options({ mode: RunMode.Spec({ source: outside }) })
+        yield* withRuns(
+          fixture,
+          Effect.gen(function* () {
+            yield* runProject(configOf(fixture, mode))
+            const graph = yield* WorkGraph
+            const first = yield* titled(graph)
+            expect(first('Do part').status).toBe('closed')
+            expect(first('The shop').status).toBe('closed')
+            writeFileSync(outside, '# Shop, changed\n')
+            commit(fixture.checkout, 'an update', {
+              'breakdown.json': JSON.stringify({
+                answers: [
+                  {
+                    items: [
+                      item('added', {
+                        parent: filedKey(first('Do part').id),
+                        description: 'stub: defer',
+                      }),
+                    ],
+                  },
+                ],
+              }),
+            })
+            yield* runProject(configOf(fixture, mode))
+            const after = yield* titled(graph)
+            expect(after('Do added').status).toBe('deferred')
+            expect(after('Do part').status).toBe('open')
+            expect(after('The shop').status).toBe('open')
+          }),
+        )
+      }),
+  )
+
+  it.effect(
+    'carries a breakdown that stopped on, under the root epic it filed',
+    () =>
+      Effect.gen(function* () {
+        const fixture = project(
+          settings,
+          breakdownFile({ root: environmentCall, answers: [] }),
+        )
+        yield* withRuns(
+          fixture,
+          Effect.gen(function* () {
+            const stopped = yield* runProject(configOf(fixture, specMode))
+            expect(stopped).toMatchObject({ kind: 'SETUP', code: 2 })
+            const graph = yield* WorkGraph
+            const [root] = yield* graph.list({ types: ['epic'] })
+            if (root === undefined) throw new Error('no root epic')
+            expect(root.metadata[SpecSha256Key]).toBeUndefined()
+
+            commit(fixture.checkout, 'carried on', {
+              'breakdown.json': JSON.stringify({
+                answers: [{ items: [item('rest')] }],
+              }),
+            })
+            const end = yield* runProject(configOf(fixture, specMode))
+            expect(end).toMatchObject({ code: 0 })
+            const epics = yield* graph.list({ types: ['epic'] })
+            expect(epics.map(({ id }) => id)).toEqual([root.id])
+            const scope = descendants(root.id, yield* graph.edges())
+            const tickets = yield* titled(graph)
+            expect(scope.has(tickets('Do rest').id)).toBe(true)
+            expect(
+              (yield* graph.show(root.id)).ticket.metadata[SpecSha256Key],
+            ).toBeDefined()
+          }),
+        )
+      }),
+  )
+
+  it.effect(
+    'waits out a usage limit, holding the run, and the breakdown carries on',
+    () =>
+      Effect.gen(function* () {
+        const fixture = project(
+          settings,
+          breakdownFile({
+            limitedFirst: true,
+            root: rootCall,
+            answers: [{ items: [item('one')] }],
+          }),
+        )
+        const end = yield* withRuns(
+          fixture,
+          Effect.gen(function* () {
+            const ended = yield* Ref.make(false)
+            const fiber = yield* runProject(configOf(fixture, specMode)).pipe(
+              Effect.ensuring(Ref.set(ended, true)),
+              Effect.forkChild,
+            )
+            while (!(yield* Ref.get(ended))) {
+              yield* TestClock.adjust(Duration.minutes(10))
+              yield* TestClock.withLive(Effect.sleep('50 millis'))
+            }
+            return yield* Fiber.join(fiber)
+          }),
+          'limits_second',
+        )
+        expect(end).toMatchObject({ kind: 'READY_EMPTY', code: 0 })
+        const events = yield* eventsOf(fixture)
+        expect(ofKind(events, 'organ')[0]).toMatchObject({
+          organ: 'breakdown',
+          outcome: 'answered',
+        })
+        expect(ofKind(events, 'dispatch')).toHaveLength(1)
+      }),
+  )
+
+  it.effect(
+    'past usage_limit_wait, the run ends as a usage limit ends it',
+    () =>
+      Effect.gen(function* () {
+        const fixture = project(
+          { ...settings, usage_limit_wait: '5m' },
+          breakdownFile({
+            limitedFirst: true,
+            root: rootCall,
+            answers: [{ items: [item('one')] }],
+          }),
+        )
+        const end = yield* withRuns(
+          fixture,
+          Effect.gen(function* () {
+            const ended = yield* Ref.make(false)
+            const fiber = yield* runProject(configOf(fixture, specMode)).pipe(
+              Effect.ensuring(Ref.set(ended, true)),
+              Effect.forkChild,
+            )
+            while (!(yield* Ref.get(ended))) {
+              yield* TestClock.adjust(Duration.minutes(1))
+              yield* TestClock.withLive(Effect.sleep('50 millis'))
+            }
+            return yield* Fiber.join(fiber)
+          }),
+          'limits_second',
+        )
+        expect(end).toMatchObject({ code: 8 })
+      }),
+  )
+
+  it.effect(
     'refuses a spec it cannot fetch at the start, a setup problem saying why',
     () =>
       Effect.gen(function* () {
@@ -1034,6 +1365,39 @@ describe("A tree's shape (§15.5)", () => {
     expect(warning).toContain("fewer than the run's 4 tickets at a time")
     expect(warning).toContain('fa-hub holds 3')
     expect(Option.isNone(narrowWarning(shape, 2))).toBe(true)
+  })
+
+  it('follows a chain through the epics tickets wait on', () => {
+    const parent = (from: string, to: string) => ({
+      from: TicketId.make(`fa-${from}`),
+      to: TicketId.make(`fa-${to}`),
+      kind: 'parent' as const,
+    })
+    const shape = treeShape(
+      [
+        ticket('e1', 'epic'),
+        ticket('e2', 'epic'),
+        ticket('e3', 'epic'),
+        ticket('e4', 'epic'),
+        ticket('a'),
+        ticket('b'),
+        ticket('c'),
+        ticket('d'),
+      ],
+      [
+        parent('e1', 'a'),
+        parent('e2', 'b'),
+        parent('e3', 'c'),
+        parent('e4', 'd'),
+        blocks('e1', 'b'),
+        blocks('e2', 'c'),
+        blocks('e3', 'd'),
+      ],
+    )
+    expect(shape.chain).toEqual(['fa-a', 'fa-b', 'fa-c', 'fa-d'])
+    expect(Option.getOrThrow(narrowWarning(shape, 1))).toContain(
+      'its longest chain is over 3',
+    )
   })
 
   it('leaves out epics and closed tickets, and warns of no tree wide enough', () => {

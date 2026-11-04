@@ -76,6 +76,7 @@ import { type RunConfig, RunMode } from './config'
 import { type RunControl, makeRunControl } from './control'
 import { RunHosting, RunHostingShape } from './hosting'
 import { runProject } from './loop'
+import { shownMode } from './spec-mode'
 import { StartChecked } from './start-checks'
 
 // The engine's runs (spec §7.3, §8.1, §13.1, §13.10, §13.12): at most one run per project, started in
@@ -384,7 +385,7 @@ export const make = Effect.gen(function* () {
           run,
           project,
           engine: engine.id,
-          mode: input.mode,
+          mode: shownMode(input.mode),
           startedAt,
           offline: flags.offline,
           autoAnswer: Option.exists(

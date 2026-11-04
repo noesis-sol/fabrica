@@ -2,6 +2,8 @@ import { Option } from 'effect'
 
 import type { Edge, Ticket, TicketId } from '@fabrica/contracts'
 
+import { descendants } from '../workgraph/tree'
+
 // A tree's shape (spec §15.5, tutti-kkb.55): how its `blocks` links let its open tickets run, by their
 // count, the longest chain of tickets each waiting on the one before, and the hubs, the tickets three
 // or more others wait on directly. Its tickets over its chain is how many run at a time on average,
@@ -66,7 +68,11 @@ const longestChain = (
   return chain
 }
 
-/** The shape of `tickets` (epics and closed tickets left out) and the `blocks` edges among them. */
+/**
+ * The shape of `tickets` (epics and closed tickets left out) and the edges among them. A ticket waiting
+ * on an open epic waits on each ticket under it, so a chain goes through epics; what an epic waits on
+ * holds none of its tickets back, as the ready rule has it.
+ */
 export const treeShape = (
   tickets: ReadonlyArray<Pick<Ticket, 'id' | 'type' | 'status'>>,
   edges: ReadonlyArray<Pick<Edge, 'from' | 'to' | 'kind'>>,
@@ -75,10 +81,26 @@ export const treeShape = (
     .filter(ticket => ticket.type !== 'epic' && ticket.status !== 'closed')
     .map(ticket => ticket.id)
   const open = new Set(ids)
+  const epics = new Set(
+    tickets
+      .filter(ticket => ticket.type === 'epic' && ticket.status !== 'closed')
+      .map(ticket => ticket.id),
+  )
+  /** The open tickets that must end before what waits on `id` starts. */
+  const waitedOn = (id: TicketId): ReadonlyArray<TicketId> =>
+    epics.has(id)
+      ? [...descendants(id, edges)].filter(under => open.has(under))
+      : open.has(id)
+        ? [id]
+        : []
   const after = new Map<TicketId, Array<TicketId>>()
   for (const { from, to, kind } of edges) {
-    if (kind !== 'blocks' || !open.has(from) || !open.has(to)) continue
-    after.set(from, [...(after.get(from) ?? []), to])
+    if (kind !== 'blocks' || !open.has(to)) continue
+    for (const waited of waitedOn(from)) {
+      const waiting = after.get(waited) ?? []
+      if (waited !== to && !waiting.includes(to))
+        after.set(waited, [...waiting, to])
+    }
   }
   const hubs = ids
     .map(id => ({ id, holds: after.get(id)?.length ?? 0 }))

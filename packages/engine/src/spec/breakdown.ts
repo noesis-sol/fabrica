@@ -5,6 +5,7 @@ import {
   BreakdownAnswer,
   BreakdownEnvironmentKey,
   BreakdownRootKey,
+  type Edge,
   type FileRootParameters,
   FiledRoot,
   SpecCommitKey,
@@ -27,6 +28,7 @@ import { type RunLog, warningLine } from '../runlog'
 import {
   TreeRefused,
   type WorkGraphShape,
+  descendants,
   fileTree,
   treeProblems,
 } from '../workgraph'
@@ -82,24 +84,76 @@ const treeLine = (ticket: Ticket, key: string): string =>
 const keyOf = (ticket: Ticket): string =>
   isEnvironment(ticket) ? BreakdownEnvironmentKey : filedKey(ticket.id)
 
-/** The item of the tree a ticket filed already is, to check what the answer adds with it. */
-const filedItem = (
-  ticket: Ticket,
-  parent: Option.Option<string>,
-): TreeItem => ({
-  key: Option.isNone(parent) ? BreakdownRootKey : keyOf(ticket),
-  type: isTreeType(ticket.type) ? ticket.type : 'task',
-  title: ticket.title,
-  description: '',
-  design: Option.none(),
-  acceptance: Option.none(),
-  priority: Option.some(ticket.priority),
-  files:
-    ticket.type === 'epic' ? Option.none() : Option.some('unknown' as const),
-  labels: Option.none(),
-  parent,
-  waitsOn: Option.none(),
-})
+/**
+ * The tree as it is filed, as items, for what the answer adds to be checked whole with it: each ticket's
+ * parent and what it waits on, so a cycle through a filed ticket is found. A closed ticket waits on
+ * nothing, and a ticket with subtickets, which only an epic holds in a tree, waits on them all the same.
+ */
+const filedItems = (
+  root: Ticket,
+  filed: ReadonlyArray<Ticket>,
+  edges: ReadonlyArray<Edge>,
+): ReadonlyArray<TreeItem> => {
+  const keys = new Map<TicketId, string>([
+    [root.id, BreakdownRootKey],
+    ...filed.map((ticket): readonly [TicketId, string] => [
+      ticket.id,
+      keyOf(ticket),
+    ]),
+  ])
+  const holders = new Set([
+    root.id,
+    ...filed.filter(({ type }) => type === 'epic').map(({ id }) => id),
+  ])
+  const item = (
+    ticket: Ticket,
+    key: string,
+    parent: Option.Option<string>,
+  ): TreeItem => ({
+    key,
+    type: isTreeType(ticket.type) ? ticket.type : 'task',
+    title: ticket.title,
+    description: '',
+    design: Option.none(),
+    acceptance: Option.none(),
+    priority: Option.some(ticket.priority),
+    files:
+      ticket.type === 'epic' ? Option.none() : Option.some('unknown' as const),
+    labels: Option.none(),
+    parent,
+    waitsOn:
+      ticket.status === 'closed'
+        ? Option.none()
+        : Option.some(
+            edges.flatMap(({ from, to, kind }) => {
+              const held =
+                (kind === 'blocks' && to === ticket.id) ||
+                (kind === 'parent' &&
+                  from === ticket.id &&
+                  !holders.has(ticket.id))
+              const waited = keys.get(kind === 'blocks' ? from : to)
+              return held && waited !== undefined ? [waited] : []
+            }),
+          ),
+  })
+  return [
+    item(root, BreakdownRootKey, Option.none()),
+    ...filed.map(ticket => {
+      const parent = edges.find(
+        ({ to, kind }) => kind === 'parent' && to === ticket.id,
+      )?.from
+      return item(
+        ticket,
+        keyOf(ticket),
+        Option.some(
+          parent !== undefined && holders.has(parent)
+            ? (keys.get(parent) ?? BreakdownRootKey)
+            : BreakdownRootKey,
+        ),
+      )
+    }),
+  ]
+}
 
 /** What is amiss with a change, which only an open ticket under the root may take. */
 const changeProblems = (
@@ -318,6 +372,31 @@ export const runBreakdown = Effect.fn('Spec.breakdown')(function* (input: {
         }),
     })
 
+  /** Opens again each closed epic of the tree with a ticket under it not closed. */
+  const reopenHolding = (rootId: TicketId) =>
+    Effect.gen(function* () {
+      const [{ ticket: rootNow }, { tickets, edges }] = yield* Effect.all(
+        [graph.show(rootId), treeUnder({ graph, root: rootId })],
+        { concurrency: 2 },
+      )
+      const all = [rootNow, ...tickets]
+      const open = all.filter(
+        ({ type, status }) => type !== 'epic' && status !== 'closed',
+      )
+      yield* Effect.forEach(
+        all.filter(
+          ({ type, status }) => type === 'epic' && status === 'closed',
+        ),
+        epic => {
+          const under = descendants(epic.id, edges)
+          return open.some(({ id }) => under.has(id))
+            ? Effect.asVoid(graph.reopen({ id: epic.id, actor }))
+            : Effect.void
+        },
+        { discard: true },
+      )
+    })
+
   /** The answer: checked whole with what is filed, refused with every reason, or filed in one go. */
   const accept = (answer: BreakdownAnswer) =>
     Effect.gen(function* () {
@@ -326,10 +405,11 @@ export const runBreakdown = Effect.fn('Spec.breakdown')(function* (input: {
         return yield* Effect.fail(
           invalid('file the root epic with file_root first'),
         )
-      const [{ ticket: rootTicket }, { tickets: tree }] = yield* Effect.all(
-        [graph.show(known.value), treeUnder({ graph, root: known.value })],
-        { concurrency: 2 },
-      )
+      const [{ ticket: rootTicket }, { tickets: tree, edges }] =
+        yield* Effect.all(
+          [graph.show(known.value), treeUnder({ graph, root: known.value })],
+          { concurrency: 2 },
+        )
       const filed = tree.filter(ticket => isTreeType(ticket.type))
       const hasEnvironment = filed.some(isEnvironment)
       // Every other ticket waits on the environment ticket, whatever the answer says of it.
@@ -346,16 +426,11 @@ export const runBreakdown = Effect.fn('Spec.breakdown')(function* (input: {
               ]),
             },
       )
-      const filedItems = [
-        filedItem(rootTicket, Option.none()),
-        ...filed.map(ticket =>
-          filedItem(ticket, Option.some(BreakdownRootKey)),
-        ),
-      ]
+      const asFiled = filedItems(rootTicket, filed, edges)
       const changes = Option.getOrElse(answer.changes, () => [])
       const updating = SpecState.$is('Changed')(state)
       const problems = [
-        ...treeProblems([...filedItems, ...items]),
+        ...treeProblems([...asFiled, ...items]),
         ...changeProblems(changes, filed),
         ...(!updating &&
         [...filed, ...items].every(({ type }) => type === 'epic')
@@ -369,26 +444,20 @@ export const runBreakdown = Effect.fn('Spec.breakdown')(function* (input: {
       ]
       yield* fileTree({
         graph,
-        items: [...filedItems, ...items],
+        items: [...asFiled, ...items],
         spec: Option.some(spec.path),
         actor,
         filed: keyed,
       })
-      // The run closes an epic whose tickets are done, as the root's only ticket may have been.
-      if (items.length > 0) {
-        const now = yield* graph.show(known.value)
-        if (now.ticket.status === 'closed')
-          yield* graph.reopen({ id: known.value, actor })
-      }
+      // The run closes an epic whose tickets are done, as the root's only ticket may have been; one
+      // with a ticket filed under it has work again. After the filing, as a failure here loses the answer.
+      if (items.length > 0) yield* reopenHolding(known.value).pipe(Effect.orDie)
       // After the filing, so a change that fails loses the answer rather than file the tree again.
       yield* Effect.forEach(changes, applyChange, { discard: true }).pipe(
         Effect.orDie,
       )
     }).pipe(
       Effect.catchTag(['TreeRefused', 'InvalidTicket', 'EdgeCycle'], error =>
-        Effect.fail(invalid(error.message)),
-      ),
-      Effect.catchTag('TransitionRefused', error =>
         Effect.fail(invalid(error.message)),
       ),
       Effect.catchTag(['StoreFailed', 'TicketNotFound'], Effect.die),

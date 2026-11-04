@@ -1,6 +1,10 @@
 import { Duration, Effect, Option, Ref, type Stream } from 'effect'
 
-import type { ProviderName, TicketId } from '@fabrica/contracts'
+import {
+  type ProviderName,
+  RunMode as RunModeWire,
+  type TicketId,
+} from '@fabrica/contracts'
 
 import { Git } from '../git'
 import type { CredentialsHoldShape, UsageHoldShape } from '../holds'
@@ -16,6 +20,7 @@ import {
   readSpec,
   rootOf,
   runBreakdown,
+  shownSource,
   specState,
 } from '../spec'
 import type { Steps } from '../view/steps'
@@ -90,9 +95,18 @@ export const specStartFields = (spec: Option.Option<SpecStarted>) =>
     }),
   })
 
+/** A run's mode as clients and the run talk are shown it: a spec's URL without what may hold a token. */
+export const shownMode = (mode: RunModeWire): RunModeWire =>
+  mode._tag === 'spec'
+    ? RunModeWire.cases.spec.make({
+        source: shownSource(mode.source),
+        refine: mode.refine,
+      })
+    : mode
+
 /** What the run asks of its spec. */
 export interface SpecMode {
-  /** The root epic, the run's scope; none until the breakdown files it. */
+  /** The root epic, the run's scope; none until the breakdown files it, or while it updates the tree. */
   readonly root: Effect.Effect<Option.Option<TicketId>>
   /** Whether the breakdown is under way, which keeps the run from ending. */
   readonly going: Effect.Effect<boolean>
@@ -175,7 +189,12 @@ export const makeSpecMode = Effect.fn('Spec.mode')(function* (input: {
       })
     }).pipe(Effect.provideService(Git, git))
   return {
-    root: Ref.get(root),
+    // An update may change or set aside any open ticket, so the run takes none until it has answered.
+    root: Effect.flatMap(Ref.get(going), updating =>
+      updating && SpecState.$is('Changed')(state)
+        ? Effect.succeedNone
+        : Ref.get(root),
+    ),
     going: Ref.get(going),
     run: SpecState.$match(state, {
       Unchanged: ({ root: epic, closed }) =>

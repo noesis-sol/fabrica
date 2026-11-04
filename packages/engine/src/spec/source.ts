@@ -138,6 +138,14 @@ export const shownUrl = (url: URL): string => {
   return bare.href
 }
 
+/** What `--spec` gave, as it is shown: a URL without its query and fragment, a path as it is. */
+export const shownSource = (given: string): string => {
+  const text = given.trim()
+  return /^[a-z][a-z0-9+.-]*:\/\//iu.test(text) && URL.canParse(text)
+    ? shownUrl(new URL(text))
+    : text
+}
+
 /** The source `--spec` gives, or the problem with it. */
 export const specSource = (
   given: string,

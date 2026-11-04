@@ -34,6 +34,7 @@ export {
   gistOf,
   githubFile,
   githubHosts,
+  shownSource,
   shownUrl,
   specMaxBytes,
   specSource,
