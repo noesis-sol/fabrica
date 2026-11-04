@@ -141,7 +141,7 @@ export interface EnvironmentHoldShape {
 
 /**
  * The run's environment hold (§14.1), its probe forked in the scope: `reopen` puts a series' tickets
- * back to wait for the probe; `probed` frees the tickets waiting for it once it passes.
+ * back to wait for the probe; `probed` frees the tickets waiting for it once it passes, and lifts it.
  */
 export const makeEnvironmentHold = Effect.fn('EnvironmentHold.make')(
   function* (input: {
@@ -152,7 +152,8 @@ export const makeEnvironmentHold = Effect.fn('EnvironmentHold.make')(
     /** The run's minimal agent. */
     readonly agent: Effect.Effect<ProbeOutcome>
     readonly reopen: (tickets: ReadonlyArray<TicketId>) => Effect.Effect<void>
-    readonly probed: Effect.Effect<void>
+    /** Frees the tickets waiting for the probe, then gives the hold's lift, as one step to a `reopen`. */
+    readonly probed: (lift: Effect.Effect<void>) => Effect.Effect<void>
     readonly probeAfter?: Duration.Duration
   }) {
     const { holds, log } = input
@@ -169,11 +170,14 @@ export const makeEnvironmentHold = Effect.fn('EnvironmentHold.make')(
           Effect.gen(function* () {
             yield* record(log, { kind: 'probed', text: 'PROBE_OK' })
             // Its tickets are freed while it still holds, so the run never sees it lifted with none.
-            yield* input.probed
-            yield* holds.lift({
-              hold: 'ENVIRONMENT',
-              why: "PROBE_OK: the probe's agent started and its model answered",
-            })
+            yield* input.probed(
+              Effect.asVoid(
+                holds.lift({
+                  hold: 'ENVIRONMENT',
+                  why: "PROBE_OK: the probe's agent started and its model answered",
+                }),
+              ),
+            )
           }),
         Failed: ({ reason }) =>
           Effect.asVoid(
@@ -201,9 +205,10 @@ export const makeEnvironmentHold = Effect.fn('EnvironmentHold.make')(
       settled: settle =>
         Effect.gen(function* () {
           const on = anyOn(yield* holds.current, 'ENVIRONMENT')
-          // While it holds, an idle ticket waits for the probe too, and nothing is counted.
+          // While it holds, a ticket idle or failing its setup waits for the probe too, and nothing is counted.
           if (on)
-            return yield* Settle.$is('Idle')(settle)
+            return yield* Settle.$is('Idle')(settle) ||
+            Settle.$is('SetupFailed')(settle)
               ? input.reopen([settle.ticket])
               : Effect.void
           const trip = yield* Ref.modify(count, current => {

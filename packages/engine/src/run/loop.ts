@@ -11,6 +11,7 @@ import {
   Ref,
   Result,
   Scope,
+  Semaphore,
   Stream,
 } from 'effect'
 
@@ -54,6 +55,7 @@ import { footprintParts } from '../footprints'
 import { Git, Worktrees, isClean, ticketBranch } from '../git'
 import {
   QUICK_SETTLE,
+  anyOn,
   heldProviders,
   makeCredentialsHold,
   makeHolds,
@@ -647,6 +649,9 @@ const runStarted = Effect.fn('Run.started')(function* (
   yield* recordUsageWindows(yield* proxy.events)
   // The tickets an environment hold put back while their worker still ran: put back as it ends.
   const toReopen = yield* Ref.make<ReadonlySet<TicketId>>(new Set())
+  // A ticket put back reads whether the hold is on and goes where that says, one step to the probe's
+  // freeing the tickets waiting for it and lifting the hold: it never waits for a probe gone by.
+  const probeStep = yield* Semaphore.make(1)
   /** When each ticket was last dispatched, in epoch ms: a quick settle is counted for the environment hold. */
   const dispatchedAt = new Map<TicketId, number>()
   const environment = yield* makeEnvironmentHold({
@@ -665,7 +670,13 @@ const runStarted = Effect.fn('Run.started')(function* (
       Effect.provideService(ModelProxy, proxy),
     ),
     reopen: tickets => Effect.forEach(tickets, reopened, { discard: true }),
-    probed: Effect.suspend(() => probeFreed),
+    probed: lift =>
+      probeStep.withPermit(
+        Effect.andThen(
+          Effect.suspend(() => probeFreed),
+          lift,
+        ),
+      ),
   })
   /** The run's model on `provider`, for a hold's probe where the refused call named none of it. */
   const modelFor = (provider: ProviderName) =>
@@ -988,31 +999,51 @@ const runStarted = Effect.fn('Run.started')(function* (
 
   /**
    * An environment hold puts the ticket back to wait for its probe (§14.1): one set aside for failing at
-   * once is undeferred, its worktree and session kept; one whose worker still runs is put back as it ends.
+   * once is undeferred, its worktree and session kept; one whose worker still runs is put back as it ends,
+   * and goes straight back in the queue where the probe passed meanwhile, set aside or with its setup
+   * failed. Moved before it is undeferred: a look reads a ticket set aside and open as back in the queue.
    */
   const reopened = (ticket: TicketId): Effect.Effect<void> =>
-    Effect.gen(function* () {
-      const taken = (yield* state.current).tickets.get(ticket)
-      if (taken === undefined) return
-      if (factsOf(taken.phase).takesSlot || factsOf(taken.phase).handBack) {
-        yield* Ref.update(toReopen, kept => new Set([...kept, ticket]))
-        return
-      }
-      if (taken.phase._tag !== 'set_aside') return
-      yield* tracked(graph.undefer({ id: ticket, actor }))
-      const detail = `the environment hold put it back: it waits for the probe (it was set aside ${taken.phase.reason})`
-      yield* state.move({
-        ticket,
-        to: Phase.cases.waiting.make({ for: WaitFor.cases.probe.make({}) }),
-        cause: detail,
-      })
-      yield* record(log, {
-        kind: 'reopened',
-        ticket,
-        detail,
-        text: `  ${ticket} back in the queue for the probe: ${detail}`,
-      })
-    })
+    probeStep.withPermit(
+      Effect.gen(function* () {
+        const taken = (yield* state.current).tickets.get(ticket)
+        if (taken === undefined) return
+        if (factsOf(taken.phase).takesSlot || factsOf(taken.phase).handBack) {
+          yield* Ref.update(toReopen, kept => new Set([...kept, ticket]))
+          return
+        }
+        const on = anyOn(yield* holds.current, 'ENVIRONMENT')
+        const passed = 'the environment probe passed as its worker ended'
+        if (
+          taken.phase._tag === 'waiting' &&
+          taken.phase.for._tag === 'setup'
+        ) {
+          if (!on)
+            yield* state.move({
+              ticket,
+              to: Phase.cases.queued.make({}),
+              cause: `${passed}: its setup runs again`,
+            })
+          return
+        }
+        if (taken.phase._tag !== 'set_aside') return
+        const detail = `${on ? 'the environment hold put it back: it waits for the probe' : passed} (it was set aside ${taken.phase.reason})`
+        yield* state.move({
+          ticket,
+          to: on
+            ? Phase.cases.waiting.make({ for: WaitFor.cases.probe.make({}) })
+            : Phase.cases.queued.make({}),
+          cause: detail,
+        })
+        yield* tracked(graph.undefer({ id: ticket, actor }))
+        yield* record(log, {
+          kind: 'reopened',
+          ticket,
+          detail,
+          text: `  ${ticket} back in the queue${on ? ' for the probe' : ''}: ${detail}`,
+        })
+      }),
+    )
 
   /**
    * `PROBE_OK` frees the tickets waiting for the probe and those whose setup failed (§14.1, §13.8),
@@ -1076,7 +1107,10 @@ const runStarted = Effect.fn('Run.started')(function* (
       )
     })
 
-  /** Puts the ticket back for the probe where an environment hold asked for it while its worker ran. */
+  /**
+   * Puts the ticket back for the probe where an environment hold asked for it while its worker ran;
+   * whether it did.
+   */
   const reopenedOnceEnded = (ticket: TicketId) =>
     Effect.gen(function* () {
       const reopen = yield* Ref.modify(toReopen, kept => [
@@ -1084,7 +1118,12 @@ const runStarted = Effect.fn('Run.started')(function* (
         new Set([...kept].filter(id => id !== ticket)),
       ])
       if (reopen) yield* reopened(ticket)
+      return reopen
     })
+
+  // The tickets whose worker's end has begun and whose wake no look has taken: however it moves them,
+  // that wake is on its way, and the look it brings decides.
+  const workersEnding = new Set<TicketId>()
 
   /**
    * Moves the ticket as its worker's end asks (§13.5), then frees its slot; a finish, verified or
@@ -1097,6 +1136,7 @@ const runStarted = Effect.fn('Run.started')(function* (
     finished = 'finished',
   ) =>
     Effect.gen(function* () {
+      workersEnding.add(ticket)
       const title = titleOf(yield* state.current, ticket)
       // Counted while it still holds its slot, so a hold it trips is on before the run can see it ended.
       yield* countedFor(ticket, end)
@@ -1267,10 +1307,11 @@ const runStarted = Effect.fn('Run.started')(function* (
           ),
         Failed: ({ reason }) => notStarted(ticket, session, reason),
       })
-      yield* reopenedOnceEnded(ticket)
+      const reopen = yield* reopenedOnceEnded(ticket)
       // A ticket released back to the queue moves the ready set: it may be ready already (§13.5).
       yield* wakes.wake(
-        WorkerEnd.$is('WaitsFor')(end) ||
+        reopen ||
+          WorkerEnd.$is('WaitsFor')(end) ||
           WorkerEnd.$is('SetupFailed')(end) ||
           WorkerEnd.$is('NotClaimed')(end) ||
           // `--auto-answer` may have answered it already (§15.2).
@@ -1902,6 +1943,12 @@ const runStarted = Effect.fn('Run.started')(function* (
   const look = (reasons: ReadonlyArray<WakeReason>) =>
     Effect.gen(function* () {
       heard = reasons.findLast(WakeReason.$is('HoldsChanged'))?.holds ?? heard
+      for (const reason of reasons)
+        if (
+          WakeReason.$is('Settled')(reason) ||
+          WakeReason.$is('Requeued')(reason)
+        )
+          workersEnding.delete(reason.ticket)
       yield* Effect.forEach(reasons, drainSaid, { discard: true })
       const starting = reasons.some(reason => WakeReason.$is('Started')(reason))
       if (readsReady(reasons)) {
@@ -1983,7 +2030,8 @@ const runStarted = Effect.fn('Run.started')(function* (
       // Dispatched tickets leave the ready set the look keeps: they are the run's now.
       ready = ready.filter(ticket => !dispatched.has(ticket.id))
       const after = yield* state.current
-      if (inProgress(after).length > 0) return Option.none<Ending>()
+      if (inProgress(after).length > 0 || workersEnding.size > 0)
+        return Option.none<Ending>()
       // Nothing running: what a merge's list found missing stops the run; a check under way, or one that
       // ended during this look, wakes it again (§17).
       const gateNow = yield* requirements.gate

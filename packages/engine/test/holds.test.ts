@@ -347,10 +347,14 @@ const environmentHold = (answer: ProbeOutcome) =>
       sleep: Effect.sleep,
       agent: Effect.die('the minimal agent is the probe override'),
       reopen: tickets => Ref.update(reopened, kept => [...kept, ...tickets]),
-      probed: Effect.andThen(
-        Ref.update(freed, n => n + 1),
-        Deferred.succeed(freedOnce, undefined),
-      ),
+      probed: lift =>
+        Effect.andThen(
+          Effect.andThen(
+            Ref.update(freed, n => n + 1),
+            Deferred.succeed(freedOnce, undefined),
+          ),
+          lift,
+        ),
     }).pipe(
       Effect.provideService(EnvironmentProbe, {
         probe: () =>

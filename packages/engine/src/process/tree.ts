@@ -94,7 +94,7 @@ export const treeOf = ({
   return [...found.values()].filter(row => !row.zombie)
 }
 
-/** What ending a tree needs from its host: the process table, and the deadlines its grace counts on. */
+/** What ending a tree needs from its host: the process table, and the deadlines its grace and polls count on. */
 export interface TreeHost {
   readonly listProcesses: Effect.Effect<
     Option.Option<ReadonlyArray<ProcessRow>>
@@ -171,7 +171,7 @@ export const endTree = Effect.fn('ProcessTree.end')(function* ({
         treeOf({ rows: rows.value, pids, groups }).length === 0
       )
         return
-      yield* Effect.sleep(POLL)
+      yield* host.deadlines.sleep(POLL)
     }
   })
   const terminated = yield* signalTree('SIGTERM')
