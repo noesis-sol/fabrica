@@ -6,6 +6,7 @@ import {
   Option,
   Redacted,
   type Scope,
+  Stream,
 } from 'effect'
 import { TestClock } from 'effect/testing'
 import { execFileSync } from 'node:child_process'
@@ -32,6 +33,7 @@ import {
 } from '@fabrica/contracts'
 
 import { layer as agentLayer } from '../src/agent'
+import { make as makeAttention } from '../src/attention'
 import { layer as checksLayer } from '../src/checks'
 import {
   Attention,
@@ -459,10 +461,22 @@ const routesAt = (url: string): ReadonlyArray<ProviderRoute> => [
   },
 ]
 
-const attentionLayer = Layer.succeed(Attention)(
-  Attention.of({
-    permission: () =>
-      Effect.succeed(PermissionDecision.cases.allow_run.make({})),
+/** Every permission allowed, and `--auto-answer` answering through the attention requests, on the run's work graph. */
+const attentionLayer = Layer.effect(
+  Attention,
+  Effect.gen(function* () {
+    const graph = yield* WorkGraph
+    const requests = yield* makeAttention({
+      list: Effect.succeed([]),
+      changed: Stream.never,
+      graph: () => Effect.succeed(graph),
+    })
+    const side = yield* requests.forRun
+    return Attention.of({
+      ...side,
+      permission: () =>
+        Effect.succeed(PermissionDecision.cases.allow_run.make({})),
+    })
   }),
 )
 

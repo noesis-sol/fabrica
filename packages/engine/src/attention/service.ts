@@ -40,11 +40,21 @@ import {
   streamItem,
 } from '@fabrica/contracts'
 
-import type { AttentionShape, PermissionRequest } from '../control/ports'
+import type {
+  AttentionShape,
+  AutoAnswered,
+  PermissionRequest,
+} from '../control/ports'
 import { type KeyedFeed, makeKeyedFeed } from '../keyed-feed'
 import { Projects } from '../projects/service'
-import type { WorkGraphShape } from '../workgraph'
+import type { TicketDetail, WorkGraphShape } from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
+import {
+  autoAnswerText,
+  autoAnswerer,
+  autoAnsweredLabel,
+  optionToAnswer,
+} from './auto-answer'
 import { isConsequential } from './consequential'
 import { withAnswer } from './design'
 
@@ -64,7 +74,8 @@ import { withAnswer } from './design'
 // tool with the same input is allowed for the rest of the run, the requests it matches meanwhile
 // with it), or refuse with a note. Any question's answer can be revised: the new answer replaces the
 // old in the designs and on the question, and what the old one led to is undone where it can be
-// (tickets closed or deferred on it reopened or undeferred), and listed where it can't.
+// (tickets closed or deferred on it reopened or undeferred), and listed where it can't. A run's
+// `--auto-answer` gives its answers here too (`auto-answer.ts`), as the engine's change, labelled.
 
 /** The projects, as the attention requests read them. */
 export interface AttentionProjects {
@@ -129,6 +140,14 @@ type ClientName = Answered['by']
 
 /** Every answer a client gives is the maintainer's (§11.2). */
 const maintainer = Actor.cases.maintainer.make({})
+
+/** Who an answer is recorded as having come from, and the words a blocked ticket's design says it in. */
+interface Answerer {
+  readonly actor: Actor
+  readonly words: string
+}
+
+const byMaintainer: Answerer = { actor: maintainer, words: 'The maintainer' }
 
 /** A change's actor, said as who answered. */
 const actorName = (actor: Option.Option<Actor>): ClientName =>
@@ -554,6 +573,7 @@ export const make = (
       question: Ticket,
       blocks: ReadonlyArray<TicketId>,
       answer: string,
+      answerer: Answerer,
     ) =>
       Effect.forEach(blocks, id =>
         Effect.gen(function* () {
@@ -566,10 +586,11 @@ export const make = (
                   question: question.id,
                   title: question.title,
                   answer,
+                  by: answerer.words,
                 }),
               ),
             },
-            actor: maintainer,
+            actor: answerer.actor,
           })
           return { id, design: ticket.design }
         }),
@@ -581,15 +602,69 @@ export const make = (
         readonly id: TicketId
         readonly design: Option.Option<string>
       }>,
+      actor: Actor,
     ) =>
       Effect.forEach(
         designs,
         ({ id, design }) =>
-          Effect.ignore(
-            graph.update({ id, changes: { design }, actor: maintainer }),
-          ),
+          Effect.ignore(graph.update({ id, changes: { design }, actor })),
         { discard: true },
       )
+
+    /** Gives the open question its answer: in the designs first, so the tickets it readies carry it as they become ready. */
+    const giveAnswer = (input: {
+      readonly ref: AttentionRef
+      readonly graph: WorkGraphShape
+      readonly detail: TicketDetail
+      readonly text: string
+      readonly by: ClientName
+      readonly answerer: Answerer
+    }) =>
+      Effect.gen(function* () {
+        const { ref, graph, answerer } = input
+        const key = attentionKey(ref)
+        const question = input.detail.ticket
+        const { blocks } = linksOf(question.id, input.detail.edges)
+        const designs = yield* writeDesigns(
+          graph,
+          question,
+          blocks,
+          input.text,
+          answerer,
+        )
+        const answered = new Answered({
+          by: input.by,
+          at: yield* DateTime.now,
+        })
+        answers.set(key, answered)
+        yield* graph
+          .answer({
+            id: question.id,
+            answer: input.text,
+            actor: answerer.actor,
+          })
+          .pipe(
+            Effect.tapError(() =>
+              Effect.andThen(
+                putDesignsBack(graph, designs, answerer.actor),
+                Effect.sync(() => answers.delete(key)),
+              ),
+            ),
+            Effect.catchTag('TransitionRefused', () =>
+              Effect.fail(
+                new AlreadyAnswered({
+                  by: actorName(Option.none()),
+                  at: answered.at,
+                }),
+              ),
+            ),
+            Effect.catchTag(['NotAQuestion', 'TicketNotFound'], () =>
+              Effect.fail(new AttentionNotFound({ ref })),
+            ),
+            Effect.catchTag(['InvalidTicket', 'StoreFailed'], Effect.die),
+          )
+        return answered
+      })
 
     const answerQuestion = Effect.fn('Attention.answerQuestion')(function* (
       input: {
@@ -615,7 +690,9 @@ export const make = (
         const history = yield* Effect.orDie(graph.history(question.id))
         const answered = lastOf(history, 'answered')
         return yield* new AlreadyAnswered({
-          by: actorName(Option.flatMap(answered, ({ actor }) => actor)),
+          by: detail.labels.includes(autoAnsweredLabel)
+            ? autoAnswerer
+            : actorName(Option.flatMap(answered, ({ actor }) => actor)),
           at: Option.match(answered, {
             onNone: () => question.updatedAt,
             onSome: ({ at }) => at,
@@ -623,36 +700,68 @@ export const make = (
         })
       }
       const text = yield* answerText(question, input.answer)
-      const { blocks } = linksOf(question.id, detail.edges)
-      // The designs first, so the tickets the answer readies carry it as they become ready.
-      const designs = yield* writeDesigns(graph, question, blocks, text)
-      const answered = new Answered({ by, at: yield* DateTime.now })
-      answers.set(key, answered)
-      yield* graph
-        .answer({ id: question.id, answer: text, actor: maintainer })
-        .pipe(
-          Effect.tapError(() =>
-            Effect.andThen(
-              putDesignsBack(graph, designs),
-              Effect.sync(() => answers.delete(key)),
-            ),
-          ),
-          Effect.catchTag('TransitionRefused', () =>
-            Effect.fail(
-              new AlreadyAnswered({
-                by: actorName(Option.none()),
-                at: answered.at,
-              }),
-            ),
-          ),
-          Effect.catchTag(['NotAQuestion', 'TicketNotFound'], () =>
-            Effect.fail(new AttentionNotFound({ ref })),
-          ),
-          Effect.orDie,
-        )
+      const answered = yield* giveAnswer({
+        ref,
+        graph,
+        detail,
+        text,
+        by,
+        answerer: byMaintainer,
+      })
       yield* sync(input.project, graph)
       return answered
     })
+
+    const autoAnswer = Effect.fn('Attention.autoAnswer')(
+      function* (input: {
+        readonly project: ProjectId
+        readonly ticket: TicketId
+        readonly actor: Actor
+      }) {
+        const ref = AttentionRef.cases.question.make({
+          project: input.project,
+          ticket: input.ticket,
+        })
+        const graph = yield* graphFor(ref)
+        const detail = yield* questionOf(ref, graph, input.ticket)
+        const question = detail.ticket
+        const option = optionToAnswer(question)
+        if (
+          Option.isNone(option) ||
+          (question.status !== 'open' && question.status !== 'in_progress')
+        )
+          return Option.none<AutoAnswered>()
+        yield* giveAnswer({
+          ref,
+          graph,
+          detail,
+          text: autoAnswerText(option.value.label),
+          by: autoAnswerer,
+          answerer: { actor: input.actor, words: autoAnswerer },
+        })
+        yield* Effect.orDie(
+          graph.label({
+            id: question.id,
+            label: autoAnsweredLabel,
+            actor: input.actor,
+          }),
+        )
+        yield* sync(input.project, graph)
+        const links = linksOf(question.id, detail.edges)
+        return Option.some<AutoAnswered>({
+          ticket:
+            links.blocks[0] ??
+            Option.getOrElse(links.askedFrom, () => question.id),
+          question: question.id,
+          title: question.title,
+          option: option.value.label,
+        })
+      },
+      // Another's answer came first, or the ticket has gone: nothing of it left to answer.
+      Effect.catchTag(['AlreadyAnswered', 'AttentionNotFound'], () =>
+        Effect.succeed(Option.none<AutoAnswered>()),
+      ),
+    )
 
     /** Allows every waiting request of the same run its new rule takes, with the answer that made it. */
     const allowMatching = (
@@ -791,6 +900,7 @@ export const make = (
       Ref.make<ReadonlyArray<Rule>>([]),
       (rules): AttentionShape => ({
         permission: request => ask(request, rules),
+        autoAnswer: input => answerLock.withPermit(autoAnswer(input)),
       }),
     )
 
@@ -883,12 +993,20 @@ export const make = (
           undone.push(`${ticket.id} (${ticket.title}) undeferred`)
         }
       }
-      yield* writeDesigns(graph, question, links.blocks, text)
+      yield* writeDesigns(graph, question, links.blocks, text, byMaintainer)
       const answered = new Answered({ by: input.by, at: yield* DateTime.now })
       answers.set(attentionKey(ref), answered)
       yield* Effect.orDie(graph.reopen({ id: question.id, actor: maintainer }))
       yield* Effect.orDie(
         graph.answer({ id: question.id, answer: text, actor: maintainer }),
+      )
+      // The answer is the maintainer's now.
+      yield* Effect.orDie(
+        graph.unlabel({
+          id: question.id,
+          label: autoAnsweredLabel,
+          actor: maintainer,
+        }),
       )
       yield* sync(input.project, graph)
       return new Revised({ answered, undone, kept })

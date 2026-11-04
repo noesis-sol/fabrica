@@ -397,6 +397,7 @@ const attentionLayer = Layer.succeed(Attention)(
   Attention.of({
     permission: () =>
       Effect.succeed(PermissionDecision.cases.allow_run.make({})),
+    autoAnswer: () => Effect.succeedNone,
   }),
 )
 

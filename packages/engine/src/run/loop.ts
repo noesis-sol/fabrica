@@ -37,7 +37,13 @@ import {
 } from '@fabrica/contracts'
 
 import { PiAgent } from '../agent'
+import {
+  type AutoAnswers,
+  autoAnswerFields,
+  makeAutoAnswers,
+} from '../attention/auto-answer'
 import { Checks } from '../checks'
+import { Attention } from '../control/ports'
 import {
   type CostAccount,
   countProxyCalls,
@@ -538,6 +544,7 @@ const runStarted = Effect.fn('Run.started')(function* (
       onSome: choice => ({ model: `${choice.provider}/${choice.model}` }),
     }),
     permissions: project.permissions,
+    ...autoAnswerFields(started.settings.engine.auto_answer),
   })
   // While the run goes, its host is kept from idle sleep, its battery watched and its sleeps recorded
   // from the Wake that counts its limits, all ending with the run's scope (§7.7, §15.6).
@@ -722,6 +729,29 @@ const runStarted = Effect.fn('Run.started')(function* (
     detail: string,
     ticket = Option.none<TicketId>(),
   ) => wakes.wake(WakeReason.Stopped({ kind, ticket, detail }))
+
+  // The run's questions answered for the maintainer where its settings say so (§15.2).
+  const autoAnswers = yield* makeAutoAnswers({
+    setting: started.settings.engine.auto_answer,
+    project: config.project,
+    actor,
+    graph,
+    attention: yield* Attention,
+    wake,
+    answered: ({ ticket, question, title, option }) =>
+      record(log, {
+        kind: 'auto_answered',
+        ticket,
+        question,
+        title,
+        option,
+        text: `  ${question} answered by --auto-answer with its recommended option: ${option}`,
+      }),
+    woken: wakes.wake(WakeReason.TicketsChanged()),
+    guarded: Effect.catchCause(
+      onPanic(detail => stop('PANIC', `--auto-answer: ${detail}`)),
+    ),
+  })
 
   /** A fiber that wakes the run, forked with it: where it dies the run stops, not waiting on it for good. */
   const watched = (what: string) => (watcher: Effect.Effect<void>) =>
@@ -1207,7 +1237,9 @@ const runStarted = Effect.fn('Run.started')(function* (
       yield* wakes.wake(
         WorkerEnd.$is('WaitsFor')(end) ||
           WorkerEnd.$is('SetupFailed')(end) ||
-          WorkerEnd.$is('NotClaimed')(end)
+          WorkerEnd.$is('NotClaimed')(end) ||
+          // `--auto-answer` may have answered it already (§15.2).
+          WorkerEnd.$is('Asked')(end)
           ? WakeReason.Requeued({ ticket })
           : WakeReason.Settled({ ticket }),
       )
@@ -1836,6 +1868,7 @@ const runStarted = Effect.fn('Run.started')(function* (
       yield* Effect.forEach(reasons, drainSaid, { discard: true })
       const starting = reasons.some(reason => WakeReason.$is('Started')(reason))
       if (readsReady(reasons)) {
+        yield* autoAnswers.sweep
         yield* handMerged
         if (reasons.some(reason => WakeReason.$is('TicketsChanged')(reason)))
           yield* undeferred
@@ -1913,6 +1946,9 @@ const runStarted = Effect.fn('Run.started')(function* (
       // A hold that can lift keeps the run, unless it drains: the tickets it holds back are to come.
       // Read after the state: a ticket's turn counts toward a hold before it leaves its slot.
       if (keepsRun({ holds: yield* holds.current, heard }) && !draining)
+        return Option.none<Ending>()
+      // A question it will answer keeps the run too, unless it drains: what it frees is to come (§15.2).
+      if ((yield* autoAnswers.awaited) && !draining)
         return Option.none<Ending>()
       const limitReached = Option.exists(
         limit,
@@ -2022,6 +2058,7 @@ const runStarted = Effect.fn('Run.started')(function* (
       merges,
       log,
       cost,
+      autoAnswers,
       afterFullCheck: pushes.after_run,
     })
   // A defect in the end goes through the end again as what it is: the steps it had taken are done, and
@@ -2042,7 +2079,7 @@ const runStarted = Effect.fn('Run.started')(function* (
 })
 
 /**
- * The end, in order (§13.9): no further dispatch, every ticket's supervision stopped first, then
+ * The end, in order (§13.9): no further dispatch or answer, every ticket's supervision stopped first, then
  * every worker interrupted at once (their sessions closing side by side, the end waiting for the
  * slowest), the merge queue stopped, the end's steps, the end line and what is left, each ticket's
  * `ticket_end`, and the `end` record with its exit code and what its workers spent.
@@ -2056,11 +2093,13 @@ const endRun = Effect.fn('Run.end')(function* (input: {
   readonly merges: MergeQueueShape
   readonly log: RunLog['Service']
   readonly cost: CostAccount
+  readonly autoAnswers: AutoAnswers
   /** What follows the full check's pass: `push: after_run` pushes Base (§10.3). */
   readonly afterFullCheck: Effect.Effect<void>
 }) {
   const { ending, state, log } = input
   yield* state.end
+  yield* input.autoAnswers.stop
   yield* input.supervision.stop
   yield* FiberSet.clear(input.workers)
   yield* Scope.close(input.mergeScope, Exit.void)

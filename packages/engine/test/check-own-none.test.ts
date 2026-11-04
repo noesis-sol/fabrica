@@ -146,6 +146,7 @@ const services = () => {
         Layer.succeed(Attention)({
           permission: () =>
             Effect.succeed(PermissionDecision.cases.allow_run.make({})),
+          autoAnswer: () => Effect.succeedNone,
         }),
       ),
     ),

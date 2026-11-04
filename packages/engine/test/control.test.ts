@@ -169,6 +169,7 @@ const attentionLayer = Layer.effect(
           Queue.offer(asked, request),
           PermissionDecision.cases.allow_run.make({}),
         ),
+      autoAnswer: () => Effect.succeedNone,
     }),
   ),
 )

@@ -14,10 +14,11 @@ const answerBlock = (answered: {
   readonly question: TicketId
   readonly title: string
   readonly answer: string
+  readonly by: string
 }): string =>
   [
     opening(answered.question),
-    `The maintainer answered ${answered.question} (${answered.title}): ${answered.answer}`,
+    `${answered.by} answered ${answered.question} (${answered.title}): ${answered.answer}`,
     closing(answered.question),
   ].join('\n')
 
@@ -28,6 +29,8 @@ export const withAnswer = (
     readonly question: TicketId
     readonly title: string
     readonly answer: string
+    /** Who answered, as the block's first words. */
+    readonly by: string
   },
 ): string => {
   const block = answerBlock(answered)

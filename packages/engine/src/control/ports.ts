@@ -1,6 +1,7 @@
 import { Context, Effect, Layer, type Option } from 'effect'
 
 import type {
+  Actor,
   PermissionDecision,
   PermissionShown,
   ProjectId,
@@ -34,7 +35,18 @@ export interface PermissionRequest {
   readonly why: string
 }
 
-/** The attention service's side the control server calls (§15.1). */
+/** A question `--auto-answer` answered (§15.2). */
+export interface AutoAnswered {
+  /** The ticket waiting on it: the one it blocks or was asked from, or the question where it has neither. */
+  readonly ticket: TicketId
+  readonly question: TicketId
+  /** The question's title. */
+  readonly title: string
+  /** The label of the option chosen. */
+  readonly option: string
+}
+
+/** The attention service's side a run calls: its control server, and `--auto-answer` (§15.1, §15.2). */
 export interface AttentionShape {
   /**
    * Opens a permission request and waits for its decision. Interrupted (the agent's session closed
@@ -43,6 +55,15 @@ export interface AttentionShape {
   readonly permission: (
     request: PermissionRequest,
   ) => Effect.Effect<PermissionDecision>
+  /**
+   * Answers the question with its recommended option, as `--auto-answer`: none where it isn't one it
+   * takes now, the maintainer having answered it first or made it theirs. The first answer wins.
+   */
+  readonly autoAnswer: (input: {
+    readonly project: ProjectId
+    readonly ticket: TicketId
+    readonly actor: Actor
+  }) => Effect.Effect<Option.Option<AutoAnswered>>
 }
 
 export class Attention extends Context.Service<Attention, AttentionShape>()(
