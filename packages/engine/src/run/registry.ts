@@ -372,8 +372,8 @@ export const make = Effect.gen(function* () {
           Effect.orDie,
         )
         const viewScope = yield* Scope.fork(runsScope)
-        // The run's row is said idle and its review requests closed once, as it ends; the view's word
-        // on them, held by the same lock, comes before that or not at all.
+        // The run's row is said idle and its word on its review requests taken back once, as it ends;
+        // the view's word on them, held by the same lock, comes before that or not at all.
         const rowLock = yield* Semaphore.make(1)
         const over = yield* Ref.make(false)
         const view = yield* makeRunView({
@@ -466,7 +466,8 @@ export const make = Effect.gen(function* () {
         ).pipe(Layer.provide(layerRunLog({ root: record.path, run })))
 
         const finished = Effect.gen(function* () {
-          // Before the next run can start, so its row isn't set idle under it, nor its requests closed.
+          // Before the next run can start, so its row isn't set idle under it, nor its word taken back.
+          // The tickets it set aside keep their requests, read now from what outlasts it.
           yield* rowLock.withPermit(
             Effect.gen(function* () {
               yield* Ref.set(over, true)

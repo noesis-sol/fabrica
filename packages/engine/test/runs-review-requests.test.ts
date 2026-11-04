@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, Queue, Stream } from 'effect'
+import { Effect, Fiber, Layer, Option, Queue, Stream } from 'effect'
 import { RpcClient, RpcSerialization } from 'effect/rpc'
 import { writeFileSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
@@ -30,7 +30,7 @@ import {
 
 // A going run's set-aside tickets as attention requests (spec §15.1, §18.3), over RPC on a scripted
 // agent: a ticket its worker defers is listed for review, with its reason; it leaves the list as it goes
-// back in the queue, and with the run as it ends.
+// back in the queue, and stays past the run's end.
 
 let places: ScriptedPlaces
 
@@ -196,29 +196,47 @@ describe("a going run's set-aside tickets", () => {
       }),
   )
 
-  it.live('leave the list as the run ends', () =>
-    Effect.gen(function* () {
-      const { client, project, data } = yield* newEngine
-      const requests = yield* followRequests(client, project)
-      const aside = yield* file(
-        client,
-        project,
-        'Aside',
-        `defer ${NodePath.join(data, 'never')}`,
-      )
-      yield* file(client, project, 'Holder', 'hang')
-      yield* client['run.start']({
-        project,
-        mode: RunMode.cases.tickets.make({}),
-        flags: noFlags,
-      })
-      yield* requests.until(list => list.some(isReviewOf(aside)))
+  it.live(
+    'stay on the list as the run ends, with their reason, until undeferred',
+    () =>
+      Effect.gen(function* () {
+        const { client, project, data } = yield* newEngine
+        const requests = yield* followRequests(client, project)
+        const aside = yield* file(
+          client,
+          project,
+          'Aside',
+          `defer ${NodePath.join(data, 'never')}`,
+        )
+        yield* file(client, project, 'Holder', 'hang')
+        const { run } = yield* client['run.start']({
+          project,
+          mode: RunMode.cases.tickets.make({}),
+          flags: noFlags,
+        })
+        yield* requests.until(list => list.some(isReviewOf(aside)))
 
-      yield* client['run.stop']({ project })
-      yield* requests.until(list => !list.some(isReviewOf(aside)))
-      expect(
-        yield* client['attention.list']({ project: Option.some(project) }),
-      ).toEqual([])
-    }),
+        // Its records' stream ends once the run is gone.
+        const ended = yield* client['run.watchEvents']({
+          project,
+          run: Option.some(run),
+          resume: Option.none(),
+        }).pipe(Stream.runDrain, Effect.forkScoped)
+        yield* client['run.stop']({ project })
+        yield* Fiber.join(ended)
+        expect(
+          (yield* client['attention.list']({
+            project: Option.some(project),
+          })).find(isReviewOf(aside)),
+        ).toMatchObject({ title: 'Aside', reason: 'DEFERRED' })
+
+        // With no run going, the work graph's change closes it.
+        yield* client['tickets.update']({
+          project,
+          ticket: aside,
+          changes: { status: 'open' },
+        })
+        yield* requests.until(list => !list.some(isReviewOf(aside)))
+      }),
   )
 })

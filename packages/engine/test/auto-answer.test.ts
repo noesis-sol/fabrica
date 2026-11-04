@@ -127,6 +127,7 @@ const started = (setting: AutoAnswer) =>
       list: Effect.succeed([project]),
       changed: Stream.never,
       graph: () => Effect.succeed(graph),
+      events: () => Effect.succeed([]),
     })
     const said = yield* Ref.make<ReadonlyArray<AutoAnswered>>([])
     const wakes = yield* Queue.unbounded<void>()
@@ -292,6 +293,7 @@ describe('--auto-answer', () => {
           list: Effect.succeed([project]),
           changed: Stream.never,
           // Closed by a hand outside the attention requests, just as the answer is given.
+          events: () => Effect.succeed([]),
           graph: () =>
             Effect.succeed({
               ...graph,
@@ -390,6 +392,7 @@ describe('--auto-answer', () => {
         const requests = yield* makeAttention({
           list: Effect.succeed([project]),
           changed: Stream.never,
+          events: () => Effect.succeed([]),
           graph: () => Effect.succeed(drafting),
         })
         const said = yield* Ref.make<ReadonlyArray<AutoAnswered>>([])

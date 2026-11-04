@@ -75,6 +75,7 @@ const attentionOn = Effect.gen(function* () {
       id === project || id === other
         ? Effect.succeed(graph)
         : Effect.fail(new ProjectNotFound({ project: id })),
+    events: () => Effect.succeed([]),
   })
 })
 

@@ -28,6 +28,7 @@ import {
   needsYouOf,
   projectView,
   reviewsOf,
+  same,
 } from './project'
 import { type Steps, makeSteps } from './steps'
 
@@ -347,15 +348,16 @@ export const makeRunView = Effect.fn('RunView.make')(function* (options: {
   const feed = yield* makeViewFeed(projectView(yield* inputs, Option.none()))
   // What waits on the maintainer, told as its count changes.
   const told = yield* Ref.make(0)
-  // The tickets set aside, told as the rows change: a part that says what it said keeps its identity.
-  const rowsTold = yield* Ref.make((yield* feed.current).tickets)
+  // The tickets set aside, told as they change: each telling has the attention service read again.
+  const reviewsTold = yield* Ref.make(reviewsOf(yield* feed.current))
   const tell = Effect.gen(function* () {
     const view = yield* feed.current
     const count = needsYouOf(view)
     if ((yield* Ref.getAndSet(told, count)) !== count)
       yield* options.needsYou(count)
-    if ((yield* Ref.getAndSet(rowsTold, view.tickets)) !== view.tickets)
-      yield* options.reviews(reviewsOf(view))
+    const reviews = reviewsOf(view)
+    if (!same(yield* Ref.getAndSet(reviewsTold, reviews), reviews))
+      yield* options.reviews(reviews)
   })
   yield* tell
   yield* Effect.forkIn(

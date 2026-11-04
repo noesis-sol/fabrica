@@ -472,6 +472,7 @@ const attentionLayer = Layer.effect(
       list: Effect.succeed([]),
       changed: Stream.never,
       graph: () => Effect.succeed(graph),
+      events: () => Effect.succeed([]),
     })
     const side = yield* requests.forRun
     return Attention.of({

@@ -33,6 +33,7 @@ import {
   type Resume,
   type ReviewRequest,
   Revised,
+  type RunEvent,
   type Ticket,
   type TicketEvent,
   type TicketId,
@@ -47,6 +48,7 @@ import type {
 } from '../control/ports'
 import { type KeyedFeed, makeKeyedFeed } from '../keyed-feed'
 import { Projects } from '../projects/service'
+import { readEvents } from '../runlog'
 import type { TicketDetail, WorkGraphShape } from '../workgraph'
 import { drawBase36 } from '../workgraph/ids'
 import {
@@ -57,14 +59,16 @@ import {
 } from './auto-answer'
 import { isConsequential } from './consequential'
 import { withAnswer } from './design'
+import { makeSetAsides } from './set-aside'
 
 // The attention requests (spec §15.1, §15.2, §8.5): what waits on the maintainer, across the engine's
 // projects. Questions (from workers, organs, talks or the maintainer) and maintainer tasks are read
 // from each project's work graph, followed as it changes; permission requests come from the gate,
 // through each run's side of the service, and live as long as their agent waits; review requests are
-// the tickets a going run has set aside (§18.3), which the run's registry entry says as they change,
-// and none once the run ends. Every client lists the same requests and watches them change. The first
-// answer wins: answers are taken one at a time, and a later one is told who answered and when.
+// the tickets a run has set aside (§18.3): those a going run's registry entry says as they change, and
+// those the work graph and the event stream say an ended one left (`set-aside.ts`), until each is
+// undeferred, closed or taken up. Every client lists the same requests and watches them change. The
+// first answer wins: answers are taken one at a time, and a later one is told who answered and when.
 //
 // A question's answer is written into the design of each ticket it blocks, then recorded on the
 // question, closing it as `answered`, as the maintainer's change: the tickets it blocks become ready,
@@ -87,6 +91,10 @@ export interface AttentionProjects {
   readonly graph: (
     project: ProjectId,
   ) => Effect.Effect<WorkGraphShape, ProjectNotFound>
+  /** The records of the project's event stream; none, said, where they can't be read. */
+  readonly events: (
+    project: ProjectId,
+  ) => Effect.Effect<ReadonlyArray<RunEvent>>
 }
 
 export interface AttentionRequestsShape {
@@ -114,7 +122,11 @@ export interface AttentionRequestsShape {
     readonly answer: QuestionAnswer
     readonly by: ClientName
   }) => Effect.Effect<Revised, AttentionNotFound | InvalidAnswer>
-  /** Brings the project's review requests to `open`: the tickets its run has set aside now (§18.3). */
+  /**
+   * Says the tickets the project's going run has set aside now, as `open` (§18.3); none as it ends. Its
+   * word on a ticket holds while it goes; those it no longer says stay open while the work graph says a
+   * run set them aside.
+   */
   readonly reviews: (input: {
     readonly project: ProjectId
     readonly open: ReadonlyArray<ReviewRequest>
@@ -228,9 +240,9 @@ const linksOf = (question: TicketId, edges: ReadonlyArray<Edge>) => ({
   ),
 })
 
-/** Whether the request is read from its project's work graph. */
-const fromWorkGraph = (request: AttentionRequest): boolean =>
-  request._tag === 'question' || request._tag === 'task'
+/** Whether a sync brings the request up to date: all but the gate's, which live with their agents. */
+const synced = (request: AttentionRequest): boolean =>
+  request._tag !== 'permission'
 
 /** A work graph's questions and maintainer tasks, as requests. */
 const requestsOf = (
@@ -323,6 +335,9 @@ export const make = (
       new Map(),
     )
     const following = yield* Ref.make(false)
+    /** The tickets each project's going run has set aside, as it last said. */
+    const told = new Map<ProjectId, ReadonlyArray<ReviewRequest>>()
+    const setAsides = makeSetAsides(projects.events)
 
     function feedOf(items: ReadonlyArray<AttentionRequest>) {
       return makeKeyedFeed<AttentionRequest, string, AttentionItem>({
@@ -415,17 +430,36 @@ export const make = (
         yield* Effect.forEach(now, put, { discard: true })
       })
 
-    /** Brings the project's questions and tasks up to its work graph. */
+    /** Brings the project's questions, tasks and review requests up to its work graph and its run. */
     const sync = (project: ProjectId, graph: WorkGraphShape) =>
       syncLock.withPermit(
-        Effect.flatMap(requestsOf(project, graph), now =>
-          bringTo(project, fromWorkGraph, now),
-        ),
+        Effect.gen(function* () {
+          const [asked, left] = yield* Effect.all(
+            [
+              requestsOf(project, graph),
+              Effect.orDie(setAsides.of(project, graph)),
+            ],
+            { concurrency: 'unbounded' },
+          )
+          const ofRun = told.get(project) ?? []
+          const said = new Set(ofRun.map(({ ticket }) => ticket))
+          yield* bringTo(project, synced, [
+            ...asked,
+            ...ofRun,
+            ...left.filter(({ ticket }) => !said.has(ticket)),
+          ])
+        }),
       )
 
-    /** Drops a project's questions and tasks: it is gone. */
+    /** Drops a project's questions, tasks and review requests: it is gone. */
     const forgetRequests = (project: ProjectId) =>
-      bringTo(project, fromWorkGraph, [])
+      syncLock.withPermit(
+        Effect.gen(function* () {
+          told.delete(project)
+          yield* setAsides.forget(project)
+          yield* bringTo(project, synced, [])
+        }),
+      )
 
     /** Follows the project's work graph: its requests now, and again on each change. */
     const follow = (project: ProjectId) =>
@@ -489,6 +523,27 @@ export const make = (
         yield* followLock.withPermit(follow(project))
         yield* sync(project, graph)
       })
+
+    const unread = (project: ProjectId, why: string) =>
+      Effect.logWarning(
+        `the review requests of ${project} couldn't be brought up to date: ${why}`,
+      )
+
+    /**
+     * Takes the run's word and brings the requests to it. A run's end waits on this and goes on whatever
+     * it finds: what can't be read now is left as it was, for the next read.
+     */
+    const reviews = (input: {
+      readonly project: ProjectId
+      readonly open: ReadonlyArray<ReviewRequest>
+    }) =>
+      Effect.gen(function* () {
+        told.set(input.project, input.open)
+        yield* sync(input.project, yield* projects.graph(input.project))
+      }).pipe(
+        Effect.catch(error => unread(input.project, error.message)),
+        Effect.catchDefect(defect => unread(input.project, String(defect))),
+      )
 
     const list = Effect.fn('Attention.list')(function* (
       project: Option.Option<ProjectId>,
@@ -1017,8 +1072,7 @@ export const make = (
       watch,
       answer,
       revise: input => answerLock.withPermit(revise(input)),
-      reviews: ({ project, open }) =>
-        bringTo(project, request => request._tag === 'review', open),
+      reviews,
       forRun,
     } satisfies AttentionRequestsShape
   })
@@ -1033,6 +1087,21 @@ export const daemonProjects = Effect.map(
       projects
         .workGraph(project)
         .pipe(Effect.catchTag('WorkGraphUnopened', Effect.die)),
+    events: project =>
+      projects.find(project).pipe(
+        Effect.flatMap(({ path }) =>
+          readEvents({ root: path, run: Option.none() }),
+        ),
+        Effect.map(({ events }) => events),
+        Effect.catch(error =>
+          Effect.as(
+            Effect.logWarning(
+              `the event stream of ${project} couldn't be read: ${error.message}`,
+            ),
+            [],
+          ),
+        ),
+      ),
   }),
 )
 

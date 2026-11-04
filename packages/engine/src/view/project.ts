@@ -86,7 +86,7 @@ export interface ViewInputs {
 const unknownFacts: TicketFacts = { type: 'task', priority: 2, solo: false }
 
 /** Whether two values say the same, as they cross. */
-const same = (a: unknown, b: unknown): boolean =>
+export const same = (a: unknown, b: unknown): boolean =>
   JSON.stringify(a) === JSON.stringify(b)
 
 /** `next`, or `before` where it says the same. */

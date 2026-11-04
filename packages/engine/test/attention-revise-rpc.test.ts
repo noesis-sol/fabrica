@@ -48,6 +48,7 @@ const clients = Effect.gen(function* () {
       id === project
         ? Effect.succeed(graph)
         : Effect.fail(new ProjectNotFound({ project: id })),
+    events: () => Effect.succeed([]),
   })
   const handlers = attentionHandlers.pipe(
     Layer.provide(Layer.succeed(AttentionRequests)(attention)),

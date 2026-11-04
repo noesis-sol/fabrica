@@ -1,5 +1,5 @@
-// The attention requests (spec §15.1, §15.2, §8.5): questions, permission requests and maintainer
-// tasks, listed together for every client, and their answers.
+// The attention requests (spec §15.1, §15.2, §8.5): questions, permission requests, maintainer
+// tasks and tickets set aside, listed together for every client, and their answers.
 export {
   type AutoAnswers,
   autoAnswerFields,
