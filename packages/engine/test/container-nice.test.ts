@@ -19,6 +19,7 @@ import {
   RuntimePlacement,
   layer as agentLayer,
 } from '../src/agent'
+import { AgentOwner } from '../src/agent/errors'
 import {
   containedNice,
   hostHolders,
@@ -217,7 +218,7 @@ describe('an agent in a container', () => {
         const agents = yield* PiAgent
         const agent = yield* agents
           .start({
-            ticket: TicketId.make('fa-1'),
+            owner: AgentOwner.Ticket({ ticket: TicketId.make('fa-1') }),
             project: ProjectId.make('p1'),
             worktree,
             providers: [],

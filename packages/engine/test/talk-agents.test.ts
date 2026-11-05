@@ -225,6 +225,7 @@ const recordingProxy = (held: Ref.Ref<ReadonlyArray<Caller>>) =>
           ),
           () => Ref.update(held, all => all.filter(other => other !== caller)),
         ),
+      forgetRun: () => Effect.void,
       listenOn: () => Effect.die('unused'),
       events: Effect.die('unused'),
       windows: Effect.succeed([]),

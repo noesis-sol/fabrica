@@ -158,7 +158,7 @@ describe('Pi on a local model', () => {
         )
         const agent = yield* Effect.flatMap(Agent.PiAgent, agents =>
           agents.start({
-            ticket: own,
+            owner: Agent.AgentOwner.Ticket({ ticket: own }),
             project: ProjectId.make('p1'),
             worktree,
             providers: [
