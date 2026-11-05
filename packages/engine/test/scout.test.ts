@@ -81,11 +81,14 @@ const onOneLine = (text: string) => !/\p{Cc}/u.test(text)
 describe("the scout's question", () => {
   it.effect('asks a read-only session on no ticket, in its core share', () =>
     Effect.gen(function* () {
-      const asked: Array<OrganSessionQuestion<unknown>> = []
+      const asked: Array<
+        Pick<OrganSessionQuestion<unknown>, 'organ' | 'cores' | 'ticket'>
+      > = []
       const organs: Pick<OrganRuntime, 'session'> = {
         session: <A>(question: OrganSessionQuestion<A>) =>
           Effect.sync(() => {
-            asked.push(question)
+            const { organ, cores, ticket } = question
+            asked.push({ organ, cores, ticket })
             return OrganOutcome.Disabled()
           }),
       }
