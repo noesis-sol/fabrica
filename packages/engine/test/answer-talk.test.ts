@@ -154,6 +154,7 @@ const oneProject = (graph: WorkGraphShape) =>
       setSettings: () => unused,
       workGraph: id => ours(id, graph),
       onBase: () => unused,
+      ticketsSync: () => unused,
       watchStatus: () => Stream.die('not asked of the projects by talks'),
     })
   })

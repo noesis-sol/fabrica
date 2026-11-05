@@ -47,6 +47,11 @@ const fieldsChangedBy = (change: TicketChange): ReadonlyArray<string> =>
     answered: () => ['question', 'status', 'resolution'],
     deleted: () => [],
     merge_conflict: ({ field }) => [field],
+    edge_dropped: () => [],
+    blocks_cycle: () => [],
+    quarantined: () => [],
+    ref_remote_named: () => [],
+    export_blocked: () => [],
   })
 
 /** `changes` to a status or a time to defer until, where `tickets.update` would make them of `ticket`. */

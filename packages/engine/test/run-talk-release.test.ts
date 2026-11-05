@@ -128,6 +128,7 @@ const talkIn = Effect.fn(function* (scope: Scope.Scope) {
     setSettings: () => unused,
     workGraph: () => unused,
     onBase: () => unused,
+    ticketsSync: () => unused,
     watchStatus: () => Stream.die('not asked of it by these tools'),
   }
   const mode = runMode({ runs, attention, projects })

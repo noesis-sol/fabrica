@@ -570,6 +570,7 @@ describe('the Talks service on PiAgent', () => {
       setSettings: () => unused,
       workGraph: () => unused,
       onBase: () => unused,
+      ticketsSync: () => unused,
       watchStatus: () => Stream.die('not asked of the projects by talks'),
     })
   }

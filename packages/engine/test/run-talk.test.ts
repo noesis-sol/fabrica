@@ -947,6 +947,7 @@ describe('answers through the talk', () => {
       setSettings: () => unused,
       workGraph: () => unused,
       onBase: () => unused,
+      ticketsSync: () => unused,
       watchStatus: () => Stream.die('not asked of it by these tools'),
     }
     const mode = runMode({ runs, attention, projects })
