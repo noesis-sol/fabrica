@@ -331,6 +331,44 @@ describe('the check suites proposed', () => {
     ])
   })
 
+  const integration = fullSuite(
+    'integration',
+    'pytest -m "smoke or integration"',
+    { runs_fast_suites: ['smoke'] },
+  )
+  const everyTest = fullSuite('every test', 'pytest', {
+    runs_fast_suites: ['quick', 'smoke'],
+  })
+  it.each([
+    ['narrower first', [integration, everyTest]],
+    ['widest first', [everyTest, integration]],
+  ])(
+    'keeps the suite running the whole fast tier, listed %s',
+    (_order, full) => {
+      const proposals = proposalsFrom({
+        fast: [
+          fastSuite('quick', 'pytest -m quick'),
+          fastSuite('smoke', 'pytest -m smoke'),
+        ],
+        full,
+      })
+      expect(proposals.checkFull).toEqual(Option.some('pytest'))
+      expect(proposals.leftOut).toEqual([
+        {
+          what: 'the full suite integration',
+          reason:
+            'every test already runs the fast suite smoke, and no test runs twice',
+        },
+      ])
+    },
+  )
+
+  it('tells the scout no two full suites may run the same tests, which no answer can show', () => {
+    expect(scoutQuestion(1).instructions).toContain(
+      'No two full suites may run the same tests',
+    )
+  })
+
   it('never repeats a command named in both tiers', () => {
     const proposals = proposalsFrom({
       fast: [fastSuite('tests', 'pnpm test')],

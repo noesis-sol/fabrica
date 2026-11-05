@@ -85,7 +85,7 @@ export type ScoutAnswer = typeof ScoutAnswer.Type
 const instructions = `You are the scout of a project being set up. With read-only tools you read its repository: manifests, task runners, scripts, test configuration, CI workflows, the README. You run nothing and change nothing. You propose how its work is checked and set up, for its maintainer to tick, and end by calling answer. Propose only what the repository shows.
 
 - fast: the suites that check a change quickly enough to run on every merge (type checks, lint, unit tests), each its own entry, none repeated.
-- full: the suites that run only once at the end of a run. In runs_fast_suites name each fast suite whose tests it already runs, some or all of them, exactly as fast names it, as a slow mode of the same runner runs the quick tests but no linter; else leave it empty. Set own_runner where it is the project's own runner of every suite, a script or a target of its own. Never write a command that runs a fast suite and then a full one: no test runs twice.
+- full: the suites that run only once at the end of a run. In runs_fast_suites name each fast suite whose tests it already runs, some or all of them, exactly as fast names it, as a slow mode of the same runner runs the quick tests but no linter; else leave it empty. Set own_runner where it is the project's own runner of every suite, a script or a target of its own. Never write a command that runs a fast suite and then a full one: no test runs twice. No two full suites may run the same tests: where one runs tests another also runs, list only the one that runs more.
 - own: the project's command for checking one change alone, where it has one; else null.
 - setup: the command that makes a fresh checkout ready to work in, as a lockfile's exact install; else null.
 - stack: the languages, runners and frameworks it uses, a short name each.
@@ -230,41 +230,49 @@ export const proposalsOf = (answer: ScoutAnswer): ScoutProposals => {
   )
   // What a full suite says it runs counts by command: two fast suites of one command are one's tests.
   const commandNamed = (name: string) => fastCommandOf.get(name) ?? name
-  const tier =
+  // The suite running most of the fast tier is asked first, so one narrower listed before it can't take
+  // its place: a tie keeps the order the answer gave.
+  const fastRunBy = (suite: (typeof full)[number]) =>
+    new Set(suite.runs_fast_suites.map(name => commandNamed(writtenOut(name))))
+      .size
+  const keptSuites =
     runner === undefined
-      ? full.filter(suite => {
-          // A fast suite's command listed again, where another full suite says it runs those tests.
-          const coverer = full.find(
-            other =>
-              other !== suite &&
-              other.command !== suite.command &&
-              other.runs_fast_suites.some(
-                name => fastCommandOf.get(writtenOut(name)) === suite.command,
-              ),
-          )
-          if (coverer !== undefined) {
-            leave(
-              `the full suite ${suite.name}`,
-              `${coverer.name} already runs its tests, and no test runs twice`,
+      ? full
+          .toSorted((a, b) => fastRunBy(b) - fastRunBy(a))
+          .filter(suite => {
+            // A fast suite's command listed again, where another full suite says it runs those tests.
+            const coverer = full.find(
+              other =>
+                other !== suite &&
+                other.command !== suite.command &&
+                other.runs_fast_suites.some(
+                  name => fastCommandOf.get(writtenOut(name)) === suite.command,
+                ),
             )
-            return false
-          }
-          const names = suite.runs_fast_suites.map(writtenOut)
-          const earlier = names.flatMap(name => {
-            const by = runBy.get(commandNamed(name))
-            return by === undefined ? [] : [{ name, by }]
-          })[0]
-          if (earlier !== undefined) {
-            leave(
-              `the full suite ${suite.name}`,
-              `${earlier.by} already runs the fast suite ${earlier.name}, and no test runs twice`,
-            )
-            return false
-          }
-          for (const name of names) runBy.set(commandNamed(name), suite.name)
-          return true
-        })
+            if (coverer !== undefined) {
+              leave(
+                `the full suite ${suite.name}`,
+                `${coverer.name} already runs its tests, and no test runs twice`,
+              )
+              return false
+            }
+            const names = suite.runs_fast_suites.map(writtenOut)
+            const earlier = names.flatMap(name => {
+              const by = runBy.get(commandNamed(name))
+              return by === undefined ? [] : [{ name, by }]
+            })[0]
+            if (earlier !== undefined) {
+              leave(
+                `the full suite ${suite.name}`,
+                `${earlier.by} already runs the fast suite ${earlier.name}, and no test runs twice`,
+              )
+              return false
+            }
+            for (const name of names) runBy.set(commandNamed(name), suite.name)
+            return true
+          })
       : [runner]
+  const tier = full.filter(suite => keptSuites.includes(suite))
   if (runner !== undefined)
     for (const suite of full.filter(other => other !== runner))
       leave(
