@@ -422,7 +422,14 @@ const partsOf = (
 }
 
 /** The share of a part's pixels that may differ from the handoff's. */
-const tolerance = 0.05
+// The handoff's references are drawn on a Mac. Linux's text is told to draw as near to them as it can
+// (`rasterSwitches`), and differs still in its glyphs' edges, in every theme and part: a little more room
+// there, the Mac's own limit the strict one, its CI jobs holding every part to it.
+const tolerance = process.platform === 'linux' ? 0.07 : 0.05
+const rasterSwitches =
+  process.platform === 'linux'
+    ? ['--disable-lcd-text', '--font-render-hinting=none']
+    : []
 
 /**
  * Differences beyond the tolerance, filed as tickets, by theme and measure or part (`classic history`):
@@ -580,12 +587,10 @@ beforeAll(async () => {
   // One pixel to a CSS pixel and sRGB whatever the screen, as the handoff's references are drawn.
   // Unsandboxed: Ubuntu's AppArmor refuses Chromium's sandbox to a process without privileges, and
   // the window loads nothing but the scene, from memory.
-  // No scrollbars: a host without overlay scrollbars (Linux, Windows, a Mac with no trackpad) would draw
-  // one in a panel that overflows, taking its width from the text the handoff's reference compares.
   const launched = await launchElectron([
     '--force-device-scale-factor=1',
     '--force-color-profile=srgb',
-    '--hide-scrollbars',
+    ...rasterSwitches,
     '--no-sandbox',
     `${uiRoot}test/fixtures/look-window.cjs`,
   ])
@@ -633,6 +638,9 @@ const capture = async (
     size,
   )
   await page.goto(`${origin}/${pagePath}?theme=${theme}`)
+  // No scrollbars: a host without overlay scrollbars (Linux, Windows, a Mac with no trackpad) would draw
+  // one in a panel that overflows, taking its width from the text the handoff's reference compares.
+  await page.addStyleTag({ content: '::-webkit-scrollbar { display: none }' })
   await page.waitForSelector('[data-history-line]')
   await page.evaluate(() => document.fonts.ready.then(() => undefined))
   const boxes = await page.evaluate(
