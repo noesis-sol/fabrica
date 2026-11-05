@@ -264,7 +264,8 @@ describe('one engine per data folder', () => {
       }),
   )
 
-  // Sixteen Nodes, each importing Effect: 11 s of the default 15 at a load of 105 (fab-i1w).
+  // Sixteen Nodes, each importing Effect: 11 s of the default 15 at a load of 105 (fab-i1w), and 20 to over
+  // 30 s on an Intel Mac runner.
   it.effect(
     'of two engines taking the lock at once, exactly one gets it',
     () =>
@@ -284,7 +285,7 @@ describe('one engine per data folder', () => {
           )
         }
       }),
-    30_000,
+    60_000,
   )
 
   it.effect('replaces the socket an engine that died left behind', () =>
