@@ -149,6 +149,8 @@ const loadedTalk = Effect.fn(function* (
       permissions: 'workspace',
       worktree: folder,
       home: Option.none(),
+      cdPath: false,
+      cdableVariables: false,
     })(pi),
   )
   yield* Effect.addFinalizer(() =>

@@ -229,6 +229,8 @@ describe('path confinement through links', () => {
         const findings = commandFindings(command, {
           worktree,
           home: Option.none(),
+          cdPath: false,
+          cdableVariables: false,
         })
         expect(outcome(findings), reasons(findings)).toBe(expected)
       }),
@@ -237,7 +239,12 @@ describe('path confinement through links', () => {
   it.effect('names where a path through a link lands', () =>
     Effect.gen(function* () {
       const { worktree, outside } = yield* scene
-      const context = { worktree, home: Option.none<string>() }
+      const context = {
+        worktree,
+        home: Option.none<string>(),
+        cdPath: false,
+        cdableVariables: false,
+      }
       expect(reasons(commandFindings('rm out/x', context))).toBe(
         `removes outside the worktree: ${join(outside, 'x')}`,
       )
@@ -250,7 +257,12 @@ describe('path confinement through links', () => {
   it.effect('reads a tool’s write through a link, as Pi resolves it', () =>
     Effect.gen(function* () {
       const { worktree, outside } = yield* scene
-      const context = { worktree, home: Option.none<string>() }
+      const context = {
+        worktree,
+        home: Option.none<string>(),
+        cdPath: false,
+        cdableVariables: false,
+      }
       const written = (path: string) =>
         analyze('write', { path, content: 'x' }, context).findings
       expect(reasons(written('out/new'))).toBe(
@@ -272,7 +284,12 @@ describe('path confinement through links', () => {
   it.effect('reads a tool’s path as the plain text Pi opens', () =>
     Effect.gen(function* () {
       const { worktree, outside } = yield* scene
-      const context = { worktree, home: Option.none<string>() }
+      const context = {
+        worktree,
+        home: Option.none<string>(),
+        cdPath: false,
+        cdableVariables: false,
+      }
       const written = (path: string) =>
         analyze('write', { path, content: 'x' }, context).findings
       for (const name of [
@@ -305,7 +322,12 @@ describe('path confinement through links', () => {
       const { base, worktree, outside } = yield* scene
       const named = join(base, 'named')
       symlinkSync(worktree, named)
-      const context = { worktree: named, home: Option.none<string>() }
+      const context = {
+        worktree: named,
+        home: Option.none<string>(),
+        cdPath: false,
+        cdableVariables: false,
+      }
       expect(outcome(commandFindings('rm -rf src/a.ts', context))).toBe(
         'allowed',
       )
@@ -333,7 +355,12 @@ describe('path confinement through links', () => {
       const { worktree, base } = yield* scene
       const linked = join(base, 'home')
       symlinkSync(worktree, linked)
-      const context = { worktree, home: Option.some(linked) }
+      const context = {
+        worktree,
+        home: Option.some(linked),
+        cdPath: false,
+        cdableVariables: false,
+      }
       expect(outcome(commandFindings('rm -rf ~/x', context))).toBe('allowed')
       expect(outcome(commandFindings('rm -rf ~/out/x', context))).toBe(
         'refused',
@@ -352,6 +379,8 @@ describe('path confinement through links', () => {
         const findings = commandFindings(command, {
           worktree,
           home: Option.none(),
+          cdPath: false,
+          cdableVariables: false,
         })
         expect(outcome(findings), command).toBe('asked')
         expect(reasons(findings)).toContain(
@@ -362,7 +391,12 @@ describe('path confinement through links', () => {
   )
 
   it('reads what doesn’t exist as written', () => {
-    const context = { worktree: '/work/fa-1', home: Option.none<string>() }
+    const context = {
+      worktree: '/work/fa-1',
+      home: Option.none<string>(),
+      cdPath: false,
+      cdableVariables: false,
+    }
     expect(outcome(commandFindings('rm -rf a/b/../c', context))).toBe('allowed')
     expect(outcome(commandFindings('rm -rf a/../../c', context))).toBe(
       'refused',

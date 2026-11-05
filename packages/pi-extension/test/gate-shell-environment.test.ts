@@ -68,7 +68,8 @@ const lines: ReadonlyArray<
   ['asked', "declare $'CD\\x50ATH'=..; cd x; rm -rf y", {}],
   ['refused', "rm -rf $'\\x2e\\x2e/x'", {}],
   ['refused', "cd $'\\056\\056'; rm -rf x", {}],
-  ['allowed', "rm -rf $'\\x2e/x\\0/../../..'", {}],
+  // Decoded, this stays in the worktree; a character code still asks, as it can spell anything.
+  ['asked', "rm -rf $'\\x2e/x\\0/../../..'", {}],
   // `\x{…}` and `$"…"` may spell a name or a path as well.
   ['asked', "export $'HO\\x{4d}E'=/; rm -rf ~/work/fa-1/build", {}],
   ['asked', "declare $'CD\\x{50}ATH'=..; cd x; rm -rf y", {}],

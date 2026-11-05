@@ -287,6 +287,8 @@ describe('the gate’s forms of a write', () => {
         const findings = commandFindings(command, {
           worktree,
           home: Option.none(),
+          cdPath: false,
+          cdableVariables: false,
         })
         expect(outcome(findings), reasons(findings)).toBe(expected)
       }),
@@ -299,6 +301,8 @@ describe('the gate’s forms of a write', () => {
         const findings = commandFindings(command, {
           worktree,
           home: Option.none(),
+          cdPath: false,
+          cdableVariables: false,
         })
         expect(outcome(findings)).not.toBe('allowed')
       }),
@@ -307,7 +311,12 @@ describe('the gate’s forms of a write', () => {
   it.effect('reads the rest of a line a character code is on', () =>
     Effect.gen(function* () {
       const { worktree } = yield* scene
-      const context = { worktree, home: Option.none<string>() }
+      const context = {
+        worktree,
+        home: Option.none<string>(),
+        cdPath: false,
+        cdableVariables: false,
+      }
       const code = "$'\\x41'"
       for (const command of [
         `rm -rf /tmp/x ${code}`,
@@ -333,7 +342,12 @@ describe('the gate’s forms of a write', () => {
   it.effect('asks about a tool’s file URL it can’t read', () =>
     Effect.gen(function* () {
       const { worktree } = yield* scene
-      const context = { worktree, home: Option.none<string>() }
+      const context = {
+        worktree,
+        home: Option.none<string>(),
+        cdPath: false,
+        cdableVariables: false,
+      }
       for (const tool of ['write', 'edit'])
         for (const path of [
           'file://host/x',

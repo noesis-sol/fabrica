@@ -72,6 +72,8 @@ const sectionFor = (arrange: (rules: string, key: string) => Promise<void>) =>
       permissions: 'workspace',
       worktree: root,
       home: Option.none(),
+      cdPath: false,
+      cdableVariables: false,
     }
     const handlers: Partial<Handlers> = {}
     function on<Event extends keyof Handlers>(
