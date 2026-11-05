@@ -101,7 +101,14 @@ const onAssignee = decodeConflict({
 const facts = (
   conflicts: ReadonlyArray<TicketConflict>,
   project: EngineProject = scoped,
-): Backlog.Facts => ({ project, ready: [], waiting: [], edges: [], conflicts })
+): Backlog.Facts => ({
+  project,
+  ready: [],
+  waiting: [],
+  edges: [],
+  drafted: [],
+  conflicts,
+})
 
 const ticket = TicketId.make('fa-2')
 const clickTitle = Backlog.Message.ClickedUseOtherValue({

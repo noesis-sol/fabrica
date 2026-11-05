@@ -116,6 +116,7 @@ const shownWith = (
           waiting: [],
           edges: [],
           drafted,
+          conflicts: [],
         },
       }),
     ),
