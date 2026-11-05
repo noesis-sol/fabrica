@@ -63,11 +63,18 @@ export const appEnv = (options: {
   Effect.promise(async () => {
     const { tools, home, host } = options
     if (!posix) {
+      // Made, as every Windows profile has them: Electron hangs at its start where APPDATA's folder isn't.
+      const roaming = NodePath.join(home, 'AppData', 'Roaming')
+      const local = NodePath.join(home, 'AppData', 'Local')
+      await Promise.all([
+        mkdir(roaming, { recursive: true }),
+        mkdir(local, { recursive: true }),
+      ])
       return {
         ...host,
         USERPROFILE: home,
-        APPDATA: NodePath.join(home, 'AppData', 'Roaming'),
-        LOCALAPPDATA: NodePath.join(home, 'AppData', 'Local'),
+        APPDATA: roaming,
+        LOCALAPPDATA: local,
         TEMP: home,
         TMP: home,
       }
