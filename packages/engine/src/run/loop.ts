@@ -2055,9 +2055,18 @@ const runStarted = Effect.fn('Run.started')(function* (
       ],
       { concurrency: 'unbounded' },
     )
+    const root = yield* spec.root
     const scope = RunMode.$match(config.options.mode, {
       Tickets: () => Option.none<ReadonlySet<TicketId>>(),
       Ticket: ({ ticket }) => Option.some(descendants(ticket, edges)),
+      // Under its root epic, nothing until the breakdown files it (§15.5).
+      Spec: () =>
+        Option.some(
+          Option.match(root, {
+            onNone: (): ReadonlySet<TicketId> => new Set(),
+            onSome: epic => descendants(epic, edges),
+          }),
+        ),
     })
     const waiting = new Set(
       open

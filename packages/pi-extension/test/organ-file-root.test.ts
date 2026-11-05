@@ -9,7 +9,7 @@ import {
 } from '@fabrica/contracts'
 import { tempFolder } from '@fabrica/testkit'
 
-import type { ExtensionEnvironment } from '../src/environment'
+import { ControlEndpoint, type ExtensionEnvironment } from '../src/environment'
 import { makeExtension } from '../src/extension'
 import type { PiApi, PiTool } from '../src/pi'
 import { WorkerToolNames } from '../src/tools'
@@ -44,9 +44,10 @@ const loaded = Effect.fn(function* (organFilesRoot: boolean) {
   const calls: Array<Call> = []
   const socket = yield* serve(folder, answers(calls, { dirty: false }))
   const environment: ExtensionEnvironment = {
-    control: Option.some({ socket, token }),
+    control: Option.some({ endpoint: ControlEndpoint.Unix({ socket }), token }),
     role: 'organ',
     answerTool: Option.some(given),
+    talkTools: [],
     organFilesRoot,
     projectTrusted: false,
     configFolder: Option.none(),

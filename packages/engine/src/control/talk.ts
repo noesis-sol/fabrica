@@ -62,6 +62,7 @@ export const openTalkControl = Effect.fn('Control.openTalk')(function* ({
     ask_and_wait: notATalks('ask_and_wait'),
     verdict: notATalks('verdict'),
     answer: notATalks('answer'),
+    file_root: notATalks('file_root'),
     talk_tool: ({ tool, input }) =>
       call({ tool, input }).pipe(
         Effect.tapDefect(defect =>

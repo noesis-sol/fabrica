@@ -440,9 +440,8 @@ const run = RunId.make('run-1')
 type Answer =
   | 'takes'
   | 'refuses'
+  | 'limits_second'
   | { readonly contentType: string; readonly body: string }
-/** The provider's answer: it takes the key, refuses it, or refuses the run's second call for a usage limit reset at 01:00 on TestClock. */
-type Answer = 'takes' | 'refuses' | 'limits_second'
 
 /** A loopback Anthropic answering every call as `answer` says. */
 const fakeProvider = (answer: Answer) =>
@@ -453,11 +452,6 @@ const fakeProvider = (answer: Answer) =>
         const server = createServer((request, response) => {
           request.resume()
           request.on('end', () => {
-            if (answer === 'takes' || typeof answer === 'object') {
-              const { contentType, body } =
-                answer === 'takes' ? anthropicAnswer : answer
-              response.writeHead(200, { 'content-type': contentType })
-              response.end(body)
             calls += 1
             if (answer === 'limits_second' && calls === 2) {
               response.writeHead(429, {
@@ -466,10 +460,10 @@ const fakeProvider = (answer: Answer) =>
               })
               response.end(anthropicUsageLimit.body)
             } else if (answer !== 'refuses') {
-              response.writeHead(200, {
-                'content-type': anthropicAnswer.contentType,
-              })
-              response.end(anthropicAnswer.body)
+              const { contentType, body } =
+                typeof answer === 'object' ? answer : anthropicAnswer
+              response.writeHead(200, { 'content-type': contentType })
+              response.end(body)
             } else {
               response.writeHead(401, { 'content-type': 'application/json' })
               response.end(anthropicBadKey)

@@ -314,7 +314,10 @@ describe("the gate's decisions per ticket", () => {
   it.effect("an organ's session counts under no ticket", () =>
     Effect.gen(function* () {
       const client = yield* gateClient(
-        ControlRole.Organ({ answer: () => Effect.void }),
+        ControlRole.Organ({
+          answer: () => Effect.void,
+          fileRoot: Option.none(),
+        }),
       )
       yield* client.report_gate_decision({
         toolCall: toolCall('call-1'),
