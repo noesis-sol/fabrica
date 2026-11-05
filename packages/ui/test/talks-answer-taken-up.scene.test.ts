@@ -162,6 +162,7 @@ const { transcripts } = makeSubscriptions({
 const question = Schema.decodeUnknownSync(Schema.toCodecJson(AttentionRequest))(
   {
     _tag: 'question',
+    drafted: false,
     project: auth,
     ticket: 'fa-q1',
     title: 'Which store keeps the sessions?',
