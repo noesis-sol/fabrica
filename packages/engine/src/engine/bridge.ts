@@ -124,35 +124,93 @@ export const reachEngine = Effect.fn('Bridge.reachEngine')(function* <E>(
 })
 
 /**
+ * What runs a command with every descriptor above stderr closed, by bash, as `sh` can't name one above 9.
+ * Node leaves open whatever its process holds that isn't close-on-exec, and Electron's main holds much: in
+ * an AppImage, files in its mount and its runtime's keep-alive pipe, so an engine that outlives the app
+ * keeps the app's process waiting on them and its image mounted for as long as the engine runs. Linux's
+ * alone: it reads `/proc`.
+ */
+export const closingInherited =
+  'for f in /proc/$$/fd/*; do n=${f##*/}; if [ "$n" -gt 2 ]; then eval "exec $n>&-"; fi; done; exec "$@"'
+
+type DetachedCommand = Data.TaggedEnum<{
+  Direct: { readonly file: string; readonly args: ReadonlyArray<string> }
+  ClosingInherited: {
+    readonly file: string
+    readonly args: ReadonlyArray<string>
+  }
+}>
+const DetachedCommand = Data.taggedEnum<DetachedCommand>()
+
+/** How `startDetached` runs `command`: on Linux first through bash, which `direct` does without. */
+export const detachedCommand = (options: {
+  readonly platform: NodeJS.Platform
+  readonly command: string
+  readonly args: ReadonlyArray<string>
+}): DetachedCommand =>
+  options.platform === 'linux'
+    ? DetachedCommand.ClosingInherited({
+        file: 'bash',
+        args: [
+          '-c',
+          closingInherited,
+          'bash',
+          options.command,
+          ...options.args,
+        ],
+      })
+    : DetachedCommand.Direct({ file: options.command, args: options.args })
+
+/**
  * Starts `command` with `args`, detached from this process and its terminal, its output nowhere, in
- * `env`: the engine's own environment, from which it builds every command's (§20.2).
+ * `env`: the engine's own environment, from which it builds every command's (§20.2). A host with no bash
+ * starts it with what it inherits.
  */
 export const startDetached = (options: {
   readonly command: string
   readonly args: ReadonlyArray<string>
   readonly env: Readonly<Record<string, string | undefined>>
-}): Effect.Effect<void, EngineStartFailed> =>
-  Effect.callback<void, EngineStartFailed>(resume => {
-    const child = spawn(options.command, [...options.args], {
-      detached: true,
-      stdio: 'ignore',
-      env: options.env,
-    })
-    child.once('error', error =>
-      resume(
-        Effect.fail(
-          new EngineStartFailed({
-            command: options.command,
-            reason: error.message,
-          }),
+}): Effect.Effect<void, EngineStartFailed> => {
+  const start = (
+    planned: DetachedCommand,
+  ): Effect.Effect<void, EngineStartFailed> =>
+    Effect.callback<void, EngineStartFailed>(resume => {
+      const child = spawn(planned.file, [...planned.args], {
+        detached: true,
+        stdio: 'ignore',
+        env: options.env,
+      })
+      child.once('error', (error: NodeJS.ErrnoException) =>
+        resume(
+          DetachedCommand.$is('ClosingInherited')(planned) &&
+            error.code === 'ENOENT'
+            ? start(
+                DetachedCommand.Direct({
+                  file: options.command,
+                  args: options.args,
+                }),
+              )
+            : Effect.fail(
+                new EngineStartFailed({
+                  command: options.command,
+                  reason: error.message,
+                }),
+              ),
         ),
-      ),
-    )
-    child.once('spawn', () => {
-      child.unref()
-      resume(Effect.void)
+      )
+      child.once('spawn', () => {
+        child.unref()
+        resume(Effect.void)
+      })
     })
-  })
+  return start(
+    detachedCommand({
+      platform: process.platform,
+      command: options.command,
+      args: options.args,
+    }),
+  )
+}
 
 /** Copies bytes between the socket and the bridge's input and output until the connection closes. */
 const copyBothWays = (
