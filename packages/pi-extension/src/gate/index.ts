@@ -36,11 +36,13 @@ export type GateDecision = Data.TaggedEnum<{
 }>
 export const GateDecision = Data.taggedEnum<GateDecision>()
 
-/** What the gate decides with: the project's level, the worktree, and the home folder where known. */
+/** What the gate decides with: the project's level, the worktree, the home folder where known, and how the agent's shell searches for a `cd` target. */
 export interface GateFacts {
   readonly permissions: Permissions
   readonly worktree: string
   readonly home: Option.Option<string>
+  readonly cdPath: boolean
+  readonly cdableVariables: boolean
 }
 
 /** What the gate needs of the engine (§12.2): the merge queue, the maintainer's answers, its log. */

@@ -82,6 +82,8 @@ describe("git config's writes", () => {
           commandFindings(command, {
             worktree,
             home: Option.some('/home/agent'),
+            cdPath: false,
+            cdableVariables: false,
           }),
         ),
       ).toBe(expected)

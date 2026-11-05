@@ -68,6 +68,8 @@ describe('the folders a command may run in', () => {
           commandFindings(command, {
             worktree,
             home: Option.some('/home/agent'),
+            cdPath: false,
+            cdableVariables: false,
           }),
         ),
       ).toBe(expected)
@@ -77,6 +79,8 @@ describe('the folders a command may run in', () => {
     const findings = commandFindings(`${'cd {a,b}; '.repeat(30)}rm -rf x`, {
       worktree,
       home: Option.some('/home/agent'),
+      cdPath: false,
+      cdableVariables: false,
     })
     expect(outcome(findings)).toBe('asked')
   })
@@ -85,6 +89,8 @@ describe('the folders a command may run in', () => {
     const findings = commandFindings(`git ${'-C {a,b} '.repeat(30)}status`, {
       worktree,
       home: Option.some('/home/agent'),
+      cdPath: false,
+      cdableVariables: false,
     })
     expect(outcome(findings)).toBe('asked')
   })
@@ -95,6 +101,8 @@ describe('the folders a command may run in', () => {
         commandFindings('rm -rf {~bob/x,/tmp/x}', {
           worktree,
           home: Option.some('/home/agent'),
+          cdPath: false,
+          cdableVariables: false,
         }),
       ),
     ).toBe('refused')

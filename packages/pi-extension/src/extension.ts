@@ -98,6 +98,8 @@ export const makeExtension =
       permissions: environment.permissions,
       worktree: environment.worktree,
       home: environment.home,
+      cdPath: environment.cdPath,
+      cdableVariables: environment.cdableVariables,
     })
     pi.on('tool_call', async event => {
       if (own.has(event.toolName)) return undefined

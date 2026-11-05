@@ -17,7 +17,8 @@ import {
 
 // What the extension reads from its agent's environment, which the engine sets at spawn (spec §12.1,
 // §12.2, §12.6, §13.6, §15.4, §16, §20.2): the control socket's path and token, the agent's role, an organ's answer tool, a talk's tools, whether the user
-// trusts the project, the level the gate enforces, Pi's configuration folder and the home folder; and
+// trusts the project, the level the gate enforces, Pi's configuration folder, the home folder and how
+// the agent's shell searches for a `cd` target; and
 // the worktree, the folder Pi runs in. Read once, where the extension loads, and passed on.
 
 /** Pi's variable naming its configuration folder, where the engine writes `models.json` (§12.9). */
@@ -55,6 +56,10 @@ export interface ExtensionEnvironment {
   readonly worktree: string
   /** The home folder, for paths under `~`. */
   readonly home: Option.Option<string>
+  /** `CDPATH` is set, so the agent's shell searches its folders for a relative `cd` target. */
+  readonly cdPath: boolean
+  /** `BASHOPTS` turns `cdable_vars` on, so the agent's shell may take a `cd` target as a variable's name. */
+  readonly cdableVariables: boolean
 }
 
 const given = (value: string | undefined): Option.Option<string> =>
@@ -104,4 +109,8 @@ export const readEnvironment = (
   ),
   worktree: cwd,
   home: given(variables['HOME']),
+  cdPath: Option.isSome(given(variables['CDPATH'])),
+  cdableVariables: (variables['BASHOPTS'] ?? '')
+    .split(':')
+    .includes('cdable_vars'),
 })

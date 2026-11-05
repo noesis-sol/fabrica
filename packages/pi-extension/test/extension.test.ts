@@ -132,6 +132,8 @@ const loaded = Effect.fn(function* (
     permissions: 'workspace',
     worktree: folder,
     home: Option.none(),
+    cdPath: false,
+    cdableVariables: false,
   }
   const fake = fakePi()
   yield* Effect.promise(() => makeExtension(environment)(fake.pi))
@@ -543,6 +545,8 @@ describe('the first-party extension', () => {
       permissions: 'full',
       worktree: '/work/fa-1',
       home: Option.some('/home/agent'),
+      cdPath: false,
+      cdableVariables: false,
     })
     expect(
       readEnvironment(
@@ -562,6 +566,8 @@ describe('the first-party extension', () => {
       permissions: 'workspace',
       worktree: '/work/fa-1',
       home: Option.none(),
+      cdPath: false,
+      cdableVariables: false,
     })
   })
 })

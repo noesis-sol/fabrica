@@ -1,6 +1,7 @@
 import { Data, Option } from 'effect'
 import { basename } from 'node:path'
 
+import { Expansion, expandBraces } from './braces'
 import {
   Confinement,
   type LastLink,
@@ -36,10 +37,14 @@ export type Finding = Data.TaggedEnum<{
 }>
 export const Finding = Data.taggedEnum<Finding>()
 
-/** The facts commands are read with: the worktree, and the home folder where known. */
+/** The facts commands are read with: the worktree, the home folder where known, and how the agent's shell searches for a `cd` target. */
 export interface CommandContext {
   readonly worktree: string
   readonly home: Option.Option<string>
+  /** The agent's environment sets `CDPATH`, so a `cd` may land under one of its folders. */
+  readonly cdPath: boolean
+  /** The agent's environment turns `cdable_vars` on (through `BASHOPTS`), so a `cd` may land where a variable names. */
+  readonly cdableVariables: boolean
 }
 
 /** How deep `bash -c` and `eval` are followed before the gate asks instead. */
@@ -221,6 +226,42 @@ const unreadPush = /\bgit\b[\s\S]*\b(?:push|send-pack|http-push|dcommit)\b/u
 const unreadSudo = /(?:^|[^\w-])(?:sudo|doas|pkexec|run0)\b/u
 
 const assignment = /^([A-Za-z_][A-Za-z0-9_]*)\+?=/u
+
+/** Builtins that set the variables their operands name. */
+const setters = new Set([
+  'declare',
+  'typeset',
+  'local',
+  'export',
+  'readonly',
+  'unset',
+  'read',
+  'mapfile',
+  'readarray',
+  'getopts',
+  'let',
+  'shopt',
+])
+
+/** A word that may name a variable known only when it runs: dynamic before its `=`, or dynamic without one. */
+const dynamicName = ({ text, dynamic }: Word): boolean => {
+  if (!dynamic) return false
+  const equals = text.indexOf('=')
+  return equals === -1 || /[$`<>]/u.test(text.slice(0, equals))
+}
+
+/** Builtins whose `-n` makes a name refer to another variable, which assigning to it sets. */
+const namerefs = new Set(['declare', 'typeset', 'local'])
+
+/** `word`'s text and each of its brace alternatives, its escapes dropped: every way the shell may spell it. */
+const spellings = (word: Word): ReadonlyArray<string> =>
+  Expansion.$match(expandBraces(word.pattern), {
+    Refused: () => [word.text],
+    Expanded: ({ alternatives }) => [
+      word.text,
+      ...alternatives.map(alternative => alternative.replace(/\\(.)/gsu, '$1')),
+    ],
+  })
 
 /** A word made by the gate, standing for a path. */
 const syntheticWord = (word: Word, suffix: string): Word => ({
@@ -577,17 +618,37 @@ const searched = (target: string): boolean =>
   !target.startsWith('~') &&
   !/^\.\.?(?:\/|$)/u.test(target)
 
+/** What the command line may set, anywhere in it, that moves where `cd` and `~` land. */
+interface Moved {
+  /** `CDPATH`, so a `cd` may land under one of its folders. */
+  readonly cdPath: boolean
+  /** `cdable_vars`, so a `cd` may land where a variable names. */
+  readonly cdableVariables: boolean
+  /** `HOME`, so `~`, `$HOME` and a bare `cd` land where the gate can't tell. */
+  readonly home: boolean
+}
+
+const sameMoved = (one: Moved, other: Moved): boolean =>
+  one.cdPath === other.cdPath &&
+  one.cdableVariables === other.cdableVariables &&
+  one.home === other.home
+
 /** Reads a command line's findings, the folders each command may run in followed through `cd`. */
 class Policy {
   readonly findings: Array<Finding> = []
-  /** The command line sets `CDPATH`, so a `cd` may land under one of its folders. */
-  cdPath = false
-  /** The command line sets `cdable_vars`, so a `cd` may land where a variable names. */
-  cdableVariables = false
   /** The command line runs more than one command, so what's on disk now may be gone when one runs. */
   several = false
 
-  constructor(readonly context: CommandContext) {}
+  constructor(
+    readonly context: CommandContext,
+    /** What the command line sets, as read so far: it only grows. */
+    public moved: Moved,
+  ) {}
+
+  /** The home folder, unknown once the command line may set `HOME`. */
+  get home(): Option.Option<string> {
+    return this.moved.home ? Option.none() : this.context.home
+  }
 
   ask(reason: string): void {
     this.findings.push(Finding.Ask({ reason }))
@@ -598,7 +659,7 @@ class Policy {
   }
 
   paths(cwd: Option.Option<string>): PathContext {
-    return { worktree: this.context.worktree, home: this.context.home, cwd }
+    return { worktree: this.context.worktree, home: this.home, cwd }
   }
 
   /** Where `word` lands, read from each of `cwd`: outside where it is from any. */
@@ -701,16 +762,15 @@ class Policy {
   /** The folders `cd` or `pushd` with `args` may land in from `cwd`. */
   changeFolder(name: string, args: ReadonlyArray<Word>, cwd: Folders): Folders {
     const target = operands(args)[0]
-    if (target === undefined)
-      return name === 'cd' ? [this.context.home] : unknownFolder
+    if (target === undefined) return name === 'cd' ? [this.home] : unknownFolder
     if (
       target.text === '-' ||
       (name === 'pushd' && /^\+\d+$/u.test(target.text))
     )
       return unknownFolder
     const landed = this.folder(target, cwd)
-    return this.cdableVariables ||
-      (this.cdPath && (target.dynamic || searched(target.text)))
+    return this.moved.cdableVariables ||
+      (this.moved.cdPath && (target.dynamic || searched(target.text)))
       ? joined(landed, unknownFolder)
       : landed
   }
@@ -721,7 +781,7 @@ class Policy {
       this.ask('runs shells nested deeper than the gate follows')
       return joined(cwd, unknownFolder)
     }
-    return Script.$match(parseScript(source, this.context.home), {
+    return Script.$match(parseScript(source, this.home), {
       Unparsable: ({ reason }) => {
         // What can't be read may still push or run as another user: their words alone refuse it.
         if (unreadPush.test(source))
@@ -731,25 +791,63 @@ class Policy {
         this.ask(`the gate can’t read the command: ${reason}`)
         return joined(cwd, unknownFolder)
       },
-      Parsed: ({ commands, codes }) => {
+      Parsed: ({ commands, unnamed, codes }) => {
         if (codes)
           this.ask(
             "a $'…' character code can spell anything, and the gate doesn’t decode it",
           )
         if (commands.length > 1) this.several = true
         // Set anywhere, even after a `cd` (in a loop, it runs before the next one), they move it.
-        const texts = commands.flatMap(({ words }) =>
-          words.map(({ text }) => text),
-        )
-        if (texts.some(text => text.includes('CDPATH'))) this.cdPath = true
-        if (texts.some(text => text.includes('cdable_vars')))
-          this.cdableVariables = true
+        const texts = [
+          ...commands.flatMap(({ words, writes }) => [...words, ...writes]),
+          ...unnamed,
+        ].flatMap(spellings)
+        const named = (name: string) => texts.some(text => text.includes(name))
+        // `${!v:=x}` assigns to the variable `v` names, in the bash versions that take it.
+        const indirect = texts.some(text => /\$\{![^}]*=/u.test(text))
+        this.moved = {
+          cdPath: this.moved.cdPath || indirect || named('CDPATH'),
+          cdableVariables:
+            this.moved.cdableVariables || indirect || named('cdable_vars'),
+          home: this.moved.home || indirect || named('HOME'),
+        }
         return commands.reduce(
           (folders, command) => this.command(command, folders, depth),
           cwd,
         )
       },
     })
+  }
+
+  /**
+   * A command that may set a variable whose name is known only when it runs (`declare "${v}PATH=.."`,
+   * `read "$v"`, `printf -v "$v"`), which may be any of those that move `cd` and `~`; a nameref
+   * (`declare -n r`), which makes every assignment to its name one to another variable, is asked about.
+   */
+  setsUnnamed(first: Word, args: ReadonlyArray<Word>): void {
+    const names = spellings(first).map(text => basename(text))
+    const options = [first, ...args].flatMap(spellings)
+    const option = (pattern: RegExp) => options.some(text => pattern.test(text))
+    const dynamicOperand = args.some(dynamicName)
+    const nameref =
+      names.some(name => namerefs.has(name)) &&
+      (dynamicOperand || option(/^-[A-Za-z]*n/u))
+    if (nameref)
+      this.ask(
+        `${first.text} may make a name refer to another variable, which the gate can’t follow`,
+      )
+    if (
+      nameref ||
+      (dynamicOperand &&
+        names.some(
+          name =>
+            setters.has(name) ||
+            (name === 'printf' &&
+              (option(/^-v/u) || args[0]?.dynamic === true)) ||
+            (shells.has(name) && option(/^[-+]O/u)),
+        ))
+    )
+      this.moved = { cdPath: true, cdableVariables: true, home: true }
   }
 
   /** A simple command's findings, run from `cwd`; the folders it may leave the shell in. */
@@ -778,6 +876,7 @@ class Policy {
     }
     const name = basename(first.text)
     const args = rest.slice(1)
+    this.setsUnnamed(first, args)
 
     if (refusedUsers.has(name)) {
       this.refuse(`${name}: commands never run as another user`)
@@ -1439,7 +1538,17 @@ export const commandFindings = (
   context: CommandContext,
 ): ReadonlyArray<Finding> => {
   const worktree = realFolder(context.worktree)
-  const policy = new Policy({ ...context, worktree })
-  policy.script(source, [Option.some(worktree)], 0)
-  return policy.findings
+  // What a nested script sets (`eval`, `bash -c`) is read only once the gate reaches it, after the
+  // commands before it: the line is read again from the start, knowing it, until nothing new is set.
+  let moved: Moved = {
+    cdPath: context.cdPath,
+    cdableVariables: context.cdableVariables,
+    home: false,
+  }
+  for (;;) {
+    const policy = new Policy({ ...context, worktree }, moved)
+    policy.script(source, [Option.some(worktree)], 0)
+    if (sameMoved(policy.moved, moved)) return policy.findings
+    moved = policy.moved
+  }
 }

@@ -109,6 +109,8 @@ const gate = Effect.fn(function* (
     permissions,
     worktree,
     home: Option.some(home),
+    cdPath: false,
+    cdableVariables: false,
   })({ toolCallId: 'call-1', tool, input }).pipe(
     Effect.provideService(GateEngine, fake.shape),
   )
@@ -483,6 +485,8 @@ describe('a gate that fails', () => {
           permissions: 'full',
           worktree,
           home: Option.none(),
+          cdPath: false,
+          cdableVariables: false,
         })(pi),
       )
       const result = yield* Effect.promise(async () =>
