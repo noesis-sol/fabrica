@@ -577,10 +577,12 @@ export const runStartChecks = Effect.fn('Run.startChecks')(function* (input: {
   return StartChecked.Ready({
     started: {
       base: checkout.success.value.base,
-      baseCommit: Option.match(spec, {
-        onNone: () => checkout.success.value.commit,
-        onSome: ({ spec: { commit } }) => commit,
-      }),
+      // Base's head as the run starts: the spec's commit only where this start made it, as an unchanged
+      // spec's can be far behind, and the run's merged diff starts here.
+      baseCommit: Option.getOrElse(
+        Option.flatMap(spec, started => started.spec.made),
+        () => checkout.success.value.commit,
+      ),
       settings: settings.success.value,
       requirements: requirements.success.value.list,
       containers: containers.success.value,

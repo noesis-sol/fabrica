@@ -944,6 +944,61 @@ describe('A spec run (§15.5)', () => {
   )
 
   it.effect(
+    "starts its merged diff at Base's head on a carry-on, and at the spec's commit only where it made one",
+    () =>
+      Effect.gen(function* () {
+        const fixture = project(
+          settings,
+          breakdownFile({
+            root: rootCall,
+            answers: [{ items: [item('one')] }],
+          }),
+        )
+        const outside = join(fixture.data, '..', 'shop.md')
+        writeFileSync(outside, '# Shop\n')
+        const mode = options({ mode: RunMode.Spec({ source: outside }) })
+        const specPath = '.fabrica/specs/shop.md'
+        const specCommit = () =>
+          git(fixture.checkout, 'log', '-1', '--format=%H', '--', specPath)
+        const lastStart = Effect.map(eventsOf(fixture), events => {
+          const start = ofKind(events, 'start').at(-1)
+          if (start === undefined) throw new Error('no start record')
+          return start.commit
+        })
+        yield* withRuns(
+          fixture,
+          Effect.gen(function* () {
+            yield* runProject(configOf(fixture, mode))
+            expect(yield* lastStart).toBe(specCommit())
+
+            commit(fixture.checkout, 'Base moves on', { 'moved.txt': 'on\n' })
+            const head = git(fixture.checkout, 'rev-parse', 'HEAD')
+            expect(specCommit()).not.toBe(head)
+            yield* runProject(configOf(fixture, mode))
+            expect(yield* lastStart).toBe(head)
+
+            writeFileSync(outside, '# Shop, changed\n')
+            commit(fixture.checkout, 'an update', {
+              'breakdown.json': JSON.stringify({
+                answers: [{ items: [item('added')] }],
+              }),
+            })
+            yield* runProject(configOf(fixture, mode))
+            expect(yield* lastStart).toBe(
+              git(
+                fixture.checkout,
+                'log',
+                '--format=%H',
+                '-1',
+                '--grep=update spec',
+              ),
+            )
+          }),
+        )
+      }),
+  )
+
+  it.effect(
     'carries on by SHA-256: no breakdown for the same text, an update for a changed one',
     () =>
       Effect.gen(function* () {

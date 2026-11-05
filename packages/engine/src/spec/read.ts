@@ -41,6 +41,8 @@ export interface ReadSpec {
 export interface CommittedSpec extends Omit<ReadSpec, 'text'> {
   /** The commit that committed this version of it. */
   readonly commit: CommitHash
+  /** The commit this start made of it, Base's head now; none where nothing was committed. */
+  readonly made: Option.Option<CommitHash>
 }
 
 /** A spec that can't be run, saying why: a line of the start checks' report. */
@@ -235,7 +237,11 @@ export const commitSpec = Effect.fn('Spec.commit')(function* (input: {
     { concurrency: 2 },
   )
   if (Option.contains(held, text) && Option.isSome(last))
-    return { ...rest, commit: last.value.commit } satisfies CommittedSpec
+    return {
+      ...rest,
+      commit: last.value.commit,
+      made: Option.none(),
+    } satisfies CommittedSpec
   yield* writeFileWhole({ root: checkout, path: spec.path }, text)
   const made = yield* git.commitFile({
     repo: checkout,
@@ -255,5 +261,5 @@ export const commitSpec = Effect.fn('Spec.commit')(function* (input: {
   )
   if (Option.isNone(commit))
     return yield* problem(`git commits nothing of the spec ${spec.path}`)
-  return { ...rest, commit: commit.value } satisfies CommittedSpec
+  return { ...rest, commit: commit.value, made } satisfies CommittedSpec
 })
