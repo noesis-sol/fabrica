@@ -297,6 +297,40 @@ describe('the check suites proposed', () => {
     ])
   })
 
+  it('counts two fast suites of one command as one, whichever a full suite names', () => {
+    const proposals = proposalsFrom({
+      fast: [fastSuite('a', 'pytest'), fastSuite('b', 'pytest')],
+      full: [
+        fullSuite('x', 'pytest --all', { runs_fast_suites: ['a'] }),
+        fullSuite('y', 'pytest --more', { runs_fast_suites: ['b'] }),
+      ],
+    })
+    expect(proposals.checkFull).toEqual(Option.some('pytest --all'))
+    expect(proposals.leftOut).toEqual([
+      {
+        what: 'the full suite y',
+        reason: 'x already runs the fast suite b, and no test runs twice',
+      },
+    ])
+  })
+
+  it('keeps one of two full suites of a fast command, and cites only the one kept', () => {
+    const proposals = proposalsFrom({
+      fast: [fastSuite('q', 'pytest')],
+      full: [
+        fullSuite('x', 'pytest', { runs_fast_suites: ['q'] }),
+        fullSuite('y', 'pytest', { runs_fast_suites: ['q'] }),
+      ],
+    })
+    expect(proposals.checkFull).toEqual(Option.some('pytest'))
+    expect(proposals.leftOut).toEqual([
+      {
+        what: 'the full suite y',
+        reason: 'x already runs the fast suite q, and no test runs twice',
+      },
+    ])
+  })
+
   it('never repeats a command named in both tiers', () => {
     const proposals = proposalsFrom({
       fast: [fastSuite('tests', 'pnpm test')],

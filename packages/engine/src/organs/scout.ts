@@ -228,6 +228,8 @@ export const proposalsOf = (answer: ScoutAnswer): ScoutProposals => {
   const fastCommandOf = new Map(
     answer.fast.map(suite => [writtenOut(suite.name), suite.command]),
   )
+  // What a full suite says it runs counts by command: two fast suites of one command are one's tests.
+  const commandNamed = (name: string) => fastCommandOf.get(name) ?? name
   const tier =
     runner === undefined
       ? full.filter(suite => {
@@ -235,6 +237,7 @@ export const proposalsOf = (answer: ScoutAnswer): ScoutProposals => {
           const coverer = full.find(
             other =>
               other !== suite &&
+              other.command !== suite.command &&
               other.runs_fast_suites.some(
                 name => fastCommandOf.get(writtenOut(name)) === suite.command,
               ),
@@ -248,7 +251,7 @@ export const proposalsOf = (answer: ScoutAnswer): ScoutProposals => {
           }
           const names = suite.runs_fast_suites.map(writtenOut)
           const earlier = names.flatMap(name => {
-            const by = runBy.get(name)
+            const by = runBy.get(commandNamed(name))
             return by === undefined ? [] : [{ name, by }]
           })[0]
           if (earlier !== undefined) {
@@ -258,7 +261,7 @@ export const proposalsOf = (answer: ScoutAnswer): ScoutProposals => {
             )
             return false
           }
-          for (const name of names) runBy.set(name, suite.name)
+          for (const name of names) runBy.set(commandNamed(name), suite.name)
           return true
         })
       : [runner]
@@ -271,7 +274,7 @@ export const proposalsOf = (answer: ScoutAnswer): ScoutProposals => {
   // By command: a suite named again under another name runs the same tests. A refused one's name counts.
   const alreadyRun = new Set(
     answer.fast
-      .filter(suite => runBy.has(writtenOut(suite.name)))
+      .filter(suite => runBy.has(suite.command))
       .map(suite => suite.command),
   )
   const fullCommands =
