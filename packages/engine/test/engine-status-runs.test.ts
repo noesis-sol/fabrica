@@ -18,6 +18,7 @@ import {
 } from '@fabrica/contracts'
 
 import { pathsIn, startEngine } from '../src/engine'
+import { layerHostFrom } from '../src/host'
 import {
   type ScriptedPlaces,
   engineGit,
@@ -54,6 +55,13 @@ const newEngine = Effect.gen(function* () {
   yield* startEngine({
     paths,
     host,
+    // 8 cores, whatever runs the test: its machine budget, half of them, holds the three workers below.
+    facts: layerHostFrom({
+      availableParallelism: () => 8,
+      totalmem: () => 16 * 1024 ** 3,
+      loadavg: () => [0, 0, 0],
+      homedir: () => data,
+    }),
     release: '1.2.3',
     git: engineGit(places),
     runs: scriptedHosting(places, paths.data),

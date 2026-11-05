@@ -124,7 +124,7 @@ const fixture = (clis: ReadonlyArray<string> = ['docker', 'podman']) => {
   })
   const runnerConfig: RunnerConfig = {
     hostEnvironment: {
-      PATH: `${cli.bin}:/usr/bin:/bin`,
+      PATH: cli.bin,
       HOME: base,
       LANG: 'C',
       DOCKER_HOST: 'unix:///run/user/1000/docker.sock',
@@ -1404,7 +1404,7 @@ describe('the container reaper', () => {
           containerReaperArguments({ runtime: 'docker', name: 'the-name' }),
           {
             stdio: ['pipe', 'ignore', 'inherit'],
-            env: { PATH: `${state.cli.bin}:/usr/bin:/bin` },
+            env: { PATH: state.cli.bin },
           },
         )
         yield* Effect.callback<void>(resume => {

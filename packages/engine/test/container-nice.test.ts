@@ -197,7 +197,7 @@ describe('an agent in a container', () => {
       }
       const runner = runnerLayer({
         hostEnvironment: {
-          PATH: `${cli.bin}:/usr/bin:/bin`,
+          PATH: cli.bin,
           HOME: base,
           LANG: 'C',
         },

@@ -232,7 +232,11 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.os == 'macos' && secrets.APPLE_APP_PASSWORD || '' }}
           WIN_CSC_LINK: ${{ matrix.os == 'windows' && secrets.WINDOWS_CERTIFICATE || '' }}
           WIN_CSC_KEY_PASSWORD: ${{ matrix.os == 'windows' && secrets.WINDOWS_CERTIFICATE_PASSWORD || '' }}
-        run: mise exec -- pnpm --filter @fabrica/desktop run package "--$ARCH"
+        # electron-builder reads an empty CSC_LINK as a path, the working folder, and stops: "not a file".
+        run: |
+          if [ -z "$CSC_LINK" ]; then unset CSC_LINK CSC_KEY_PASSWORD; fi
+          if [ -z "$WIN_CSC_LINK" ]; then unset WIN_CSC_LINK WIN_CSC_KEY_PASSWORD; fi
+          mise exec -- pnpm --filter @fabrica/desktop run package "--$ARCH"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

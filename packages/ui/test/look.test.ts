@@ -580,9 +580,12 @@ beforeAll(async () => {
   // One pixel to a CSS pixel and sRGB whatever the screen, as the handoff's references are drawn.
   // Unsandboxed: Ubuntu's AppArmor refuses Chromium's sandbox to a process without privileges, and
   // the window loads nothing but the scene, from memory.
+  // No scrollbars: a host without overlay scrollbars (Linux, Windows, a Mac with no trackpad) would draw
+  // one in a panel that overflows, taking its width from the text the handoff's reference compares.
   const launched = await launchElectron([
     '--force-device-scale-factor=1',
     '--force-color-profile=srgb',
+    '--hide-scrollbars',
     '--no-sandbox',
     `${uiRoot}test/fixtures/look-window.cjs`,
   ])

@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  existsSync,
   linkSync,
   mkdirSync,
   readFileSync,
@@ -79,7 +80,7 @@ export const writeStubScript = (path: string) => {
 }
 
 export interface StubCli {
-  /** The folder to put on the PATH. */
+  /** The folder that is the whole PATH: the stubs and the tools their script runs. */
   readonly bin: string
   /** What `info` answers for `cli`. */
   readonly answerInfo: (cli: string, info: unknown) => void
@@ -97,7 +98,22 @@ export interface StubCli {
   readonly reset: () => void
 }
 
-/** The CLIs named, in a new folder under `base`, with `distribution` the folder `/opt/fabrica` maps to. */
+/** The tools the script runs: it keeps no other folder on the PATH, where a real docker or podman may be. */
+const scriptTools = ['basename', 'cat', 'dirname', 'sh', 'tr']
+
+/** Where `tool` is among the system's own folders, as the script's few tools are on every host. */
+const systemTool = (tool: string): string => {
+  const found = ['/usr/bin', '/bin']
+    .map(folder => join(folder, tool))
+    .find(path => existsSync(path))
+  if (found === undefined) throw new Error(`no ${tool} in /usr/bin or /bin`)
+  return found
+}
+
+/**
+ * The CLIs named and the script's tools, in a new folder under `base` that is the whole PATH, with
+ * `distribution` the folder `/opt/fabrica` maps to.
+ */
 export const installStub = ({
   script,
   base,
@@ -112,6 +128,7 @@ export const installStub = ({
   const bin = join(base, 'bin')
   mkdirSync(bin, { recursive: true })
   for (const cli of clis) linkSync(script, join(bin, cli))
+  for (const tool of scriptTools) symlinkSync(systemTool(tool), join(bin, tool))
   const at = (name: string) => join(dirname(bin), name)
   const refused = new Set<string>()
   writeFileSync(at('distribution-root'), distribution)

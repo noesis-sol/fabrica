@@ -60,7 +60,7 @@ const fixture = (clis: ReadonlyArray<string> = ['docker', 'podman']) => {
   })
   const runner = runnerLayer({
     hostEnvironment: {
-      PATH: `${cli.bin}:/usr/bin:/bin`,
+      PATH: cli.bin,
       HOME: base,
       LANG: 'C',
     },

@@ -197,7 +197,12 @@ export const stopEngine = (
  */
 export const toolbox: Layer.Layer<Toolbox, unknown> = posix
   ? layerToolbox({
-      tools: ['git', 'sh'],
+      // An AppImage's AppRun is a bash script, whose `unshare -Ur true` decides whether the sandbox can run.
+      tools: [
+        'git',
+        'sh',
+        ...(process.platform === 'linux' ? ['bash', 'true', 'unshare'] : []),
+      ],
       stubs: {
         // Not found, as `security find-generic-password` says of an item it hasn't.
         security: shStub('exit 44'),
