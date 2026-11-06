@@ -256,6 +256,9 @@ class Reader {
     let skip: number | 'rest' = 0
     /** Here-documents opened before this list began: bash reads their bodies from lines the gate reads as its own. */
     const pendingOutside = this.pending.length
+    /** How many `case`s this list is inside, and whether it is at one's patterns, up to their `)`. */
+    let cases = 0
+    let patterns = false
     /** A `[[ … ]]` test's parenthesis ended the words before it: what follows is still the test. */
     let testing = false
     const finish = () => {
@@ -293,6 +296,16 @@ class Reader {
         this.index++
         finish()
         this.hereDocuments()
+        continue
+      }
+      if (patterns && char === ')') {
+        this.index++
+        patterns = false
+        finish()
+        continue
+      }
+      if (patterns && (char === '(' || char === '|')) {
+        this.index++
         continue
       }
       if (end !== undefined && char === end) {
@@ -346,6 +359,13 @@ class Reader {
         continue
       }
       if (char === ';' || char === '&' || char === '|' || char === ')') {
+        // `;;`, `;&` and `;;&` end a `case`'s branch: its next patterns follow.
+        if (
+          cases > 0 &&
+          char === ';' &&
+          (this.peek(1) === ';' || this.peek(1) === '&')
+        )
+          patterns = true
         this.index++
         finish()
         continue
@@ -368,6 +388,20 @@ class Reader {
         this.unnamed.push(word.word)
         skip--
         continue
+      }
+      if (cases > 0 && word.plain && word.word.text === 'esac') {
+        cases--
+        patterns = false
+        finish()
+        continue
+      }
+      if (patterns) {
+        this.unnamed.push(word.word)
+        continue
+      }
+      if (words.length === 0 && word.plain && word.word.text === 'case') {
+        cases++
+        patterns = true
       }
       if (words.length === 0 && word.plain && word.word.text === 'coproc')
         this.doubts.add(doubtOfCoproc)

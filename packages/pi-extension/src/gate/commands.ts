@@ -871,9 +871,13 @@ class Policy {
     let index = 0
     for (; index < words.length; index++) {
       const word = words[index]
-      const name =
-        word === undefined ? undefined : assignment.exec(word.text)?.[1]
+      // By its escaped form, as a quoted `a[1]=2` is no assignment; one whose subscript is known only when it
+      // runs may run what's in it, so it stands as a command known only then.
+      const matched =
+        word === undefined ? undefined : assignment.exec(word.pattern)
+      const name = matched?.[1]
       if (word === undefined || name === undefined) break
+      if (word.dynamic && word.pattern.startsWith(`${name}[`)) break
       if (gitVariables.has(name))
         this.ask(`sets ${name}, pointing git elsewhere`)
     }
@@ -912,7 +916,6 @@ class Policy {
       !/^\[\[?$/u.test(first.text)
     ) {
       this.ask(`the command ${first.text} is spelled by a glob`)
-      return cwd
     }
     const name = basename(first.text)
     const args = rest.slice(1)

@@ -251,6 +251,53 @@ const lines: ReadonlyArray<readonly [Expected, string]> = [
   ['asked', "a[']' <<2]=1\ngit push origin main"],
   ['asked', 'time a[1 <<2]=1\ngit push origin main'],
   ['asked', 'time -p a[1 <<2]=1\ngit push origin main'],
+  // A subscript known only when it runs may run what's in it.
+  ['asked', "x='b[$(git push origin main)]'; a[$x]=1"],
+  ['asked', "x='b[$(git push origin main)]'; a[$x]+=1"],
+  ['asked', "read x <<< 'b[$(git push origin main)]'; a[$x]=1"],
+  ['asked', 'a[$i]=3'],
+  // A quoted name is no assignment.
+  ['refused', '"a[1]=2"/../git push origin main'],
+  ['refused', '"a[1]=2"/../rm -rf /etc/x'],
+  ['refused', '"a[1]=2"/../sudo ls'],
+  // A name with a glob in it is still read as far as it can be.
+  ['refused', '/usr/*/git push origin main'],
+  ['refused', './*/git push origin main'],
+  ['refused', '/usr/*/sudo ls'],
+  ['refused', '/usr/*/rm -rf /etc/x'],
+  ['refused', "/usr/*/bash -c 'git push origin main'"],
+  ['refused', 'time /usr/*/git push origin main'],
+  ['refused', 'env /usr/*/git push origin main'],
+  // A `case`'s patterns are patterns, and its branches commands.
+  ['allowed', 'case "$1" in a) echo a;; *) echo b;; esac'],
+  ['allowed', 'case "$f" in\n  *.ts) echo ts ;;\n  *) echo other ;;\nesac'],
+  [
+    'allowed',
+    'case $1 in\n  -h|--help) ls ;;\n  -*) echo bad ;;\n  *) echo ok ;;\nesac',
+  ],
+  ['allowed', 'case $1 in *.ts|*.js) echo code;; *) echo other;; esac'],
+  ['allowed', 'case $1 in (a) echo a;; (*) echo b;; esac'],
+  [
+    'allowed',
+    'while [ $# -gt 0 ]; do case $1 in -v) v=1;; *) break;; esac; shift; done',
+  ],
+  // Bash 3.2 ends a substitution at a `case` pattern's `)`, so this one asks though its commands are read.
+  ['asked', 'x=$(case $1 in a) echo a;; *) echo b;; esac)'],
+  ['refused', 'case x in x) git push origin main;; esac'],
+  ['refused', 'case x in\n  x) git push origin main ;;\nesac'],
+  ['refused', 'case x in a) :;; x) git push origin main;; esac'],
+  ['refused', 'case x in a) :;& x) git push origin main;; esac'],
+  ['refused', 'case x in a) :;;& x) git push origin main;; esac'],
+  ['refused', 'case x in x) git push origin main; esac'],
+  ['refused', 'case x in x) :;; esac; git push origin main'],
+  ['refused', 'case x in x) case y in y) git push origin main;; esac;; esac'],
+  [
+    'refused',
+    'case x in x) case y in y) :;; esac; git push origin main;; esac',
+  ],
+  ['refused', 'case $(git push origin main) in x) :;; esac'],
+  ['refused', 'case x in $(git push origin main)) :;; esac'],
+  ['refused', 'x=$(case y in y) git push origin main;; esac)'],
 ]
 
 describe('a line the gate doubts', () => {
