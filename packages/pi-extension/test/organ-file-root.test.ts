@@ -49,6 +49,8 @@ const loaded = Effect.fn(function* (organFilesRoot: boolean) {
     answerTool: Option.some(given),
     talkTools: [],
     organFilesRoot,
+    cdPath: false,
+    cdableVariables: false,
     projectTrusted: false,
     configFolder: Option.none(),
     permissions: 'workspace',
