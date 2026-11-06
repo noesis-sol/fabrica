@@ -144,6 +144,8 @@ const doubtOfSubstitutionEnd =
   'a substitution bash 3.2, macOS’s, would end elsewhere than the gate reads it, for a quote, comment or ) in it'
 const doubtOfCoproc =
   'coproc, which runs what follows it in a way the gate doesn’t follow'
+const doubtOfCase =
+  'a case the gate can’t follow: what it took for patterns ended without their )'
 const doubtOfContinuedDollar =
   'a line continued right after a $, which changes how what follows is quoted'
 const doubtOfLocale =
@@ -259,6 +261,8 @@ class Reader {
     /** How many `case`s this list is inside, and whether it is at one's patterns, up to their `)`. */
     let cases = 0
     let patterns = false
+    /** Words read as patterns since the last `)`: only a `|` or a `)` may follow them, or this misreads it. */
+    let patternWords = false
     /** A `[[ … ]]` test's parenthesis ended the words before it: what follows is still the test. */
     let testing = false
     const finish = () => {
@@ -291,6 +295,7 @@ class Reader {
         continue
       }
       if (char === '\n') {
+        if (patterns && patternWords) this.doubts.add(doubtOfCase)
         if (end !== undefined && pendingOutside > 0)
           this.doubts.add(doubtOfHereDocument)
         this.index++
@@ -301,14 +306,18 @@ class Reader {
       if (patterns && char === ')') {
         this.index++
         patterns = false
+        patternWords = false
         finish()
         continue
       }
+      if (patterns && patternWords && (char === ';' || char === '&'))
+        this.doubts.add(doubtOfCase)
       if (patterns && (char === '(' || char === '|')) {
         this.index++
         continue
       }
       if (end !== undefined && char === end) {
+        if (patterns && patternWords) this.doubts.add(doubtOfCase)
         this.index++
         finish()
         if (this.pending.length > pendingOutside)
@@ -375,6 +384,14 @@ class Reader {
       // A backtick closing nothing here, where one closes further out: the reader would never pass it.
       if (this.index === start)
         throw new Unparsable({ reason: `a ${char} the reader can’t place` })
+      // Ahead of what skips a word: `case x in esac` has no patterns, and the line goes on after it.
+      if (cases > 0 && word.plain && word.word.text === 'esac') {
+        cases--
+        patterns = false
+        patternWords = false
+        finish()
+        continue
+      }
       if (skip === 'rest') {
         // `for x do …` and `for x { …; }`: with no `in`, the loop's body starts on the same line.
         if (word.plain && (word.word.text === 'do' || word.word.text === '{')) {
@@ -389,14 +406,9 @@ class Reader {
         skip--
         continue
       }
-      if (cases > 0 && word.plain && word.word.text === 'esac') {
-        cases--
-        patterns = false
-        finish()
-        continue
-      }
       if (patterns) {
         this.unnamed.push(word.word)
+        patternWords = true
         continue
       }
       if (words.length === 0 && word.plain && word.word.text === 'case') {
@@ -420,6 +432,7 @@ class Reader {
         this.doubts.add(doubtOfSubscript)
       words.push(word.word)
     }
+    if (patterns && patternWords) this.doubts.add(doubtOfCase)
     if (end !== undefined)
       throw new Unparsable({
         reason: `a ${end === ')' ? '(' : '`'} doesn't close`,

@@ -298,6 +298,26 @@ const lines: ReadonlyArray<readonly [Expected, string]> = [
   ['refused', 'case $(git push origin main) in x) :;; esac'],
   ['refused', 'case x in $(git push origin main)) :;; esac'],
   ['refused', 'x=$(case y in y) git push origin main;; esac)'],
+  // A `case` with no patterns, and the line going on after it.
+  ['refused', 'case x in esac; git push origin main'],
+  ['refused', 'case x in esac\ngit push origin main'],
+  ['refused', 'case x in esac && git push origin main'],
+  ['refused', 'case x in esac | git push origin main'],
+  ['refused', 'case x in esac & git push origin main'],
+  ['refused', 'case x in esac > f; git push origin main'],
+  ['refused', 'case $x in esac; git push origin main'],
+  ['refused', 'if :; then case x in esac; fi; git push origin main'],
+  ['refused', '{ case x in esac; }; git push origin main'],
+  ['refused', 'f() { case x in esac; }; git push origin main'],
+  ['refused', 'case x in x) case y in esac; git push origin main;; esac'],
+  ['refused', 'case x in x) :;; esac\ncase y in esac\ngit push origin main'],
+  ['refused', 'while :; do case x in esac; git push origin main; break; done'],
+  ['refused', 'case x in esac; rm -rf /etc/x'],
+  ['refused', 'case x in esac; sudo ls'],
+  // Words taken for patterns that no `)` ends: the reader has lost its place, and says so.
+  ['asked', 'case x in\n  y; ls\nesac'],
+  ['asked', 'case x in\n  y\n  ls\nesac'],
+  ['asked', 'case x in x) :;; y'],
 ]
 
 describe('a line the gate doubts', () => {
