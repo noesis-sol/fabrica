@@ -66,6 +66,9 @@ const gitVariables = new Set([
 
 const shells = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh', 'ash', 'hush'])
 
+/** Shells whose grammar is further from bash's than the POSIX shell's. */
+const otherGrammars = new Set(['zsh', 'ksh'])
+
 const removals = new Set(['rm', 'rmdir', 'unlink', 'shred', 'srm', 'trash'])
 
 /** Commands writing each of their operands, with the options that take a value. */
@@ -791,11 +794,8 @@ class Policy {
         this.ask(`the gate can’t read the command: ${reason}`)
         return joined(cwd, unknownFolder)
       },
-      Parsed: ({ commands, unnamed, codes }) => {
-        if (codes)
-          this.ask(
-            "a $'…' character code can spell anything, so the gate asks whatever it reads it as",
-          )
+      Parsed: ({ commands, unnamed, doubts }) => {
+        for (const doubt of doubts) this.ask(doubt)
         if (commands.length > 1) this.several = true
         // Set anywhere, even after a `cd` (in a loop, it runs before the next one), they move it.
         const texts = [
@@ -874,6 +874,23 @@ class Policy {
       this.ask(`the command ${first.text} is known only when it runs`)
       return cwd
     }
+    // A name spelled by brace expansion: bash runs the first alternative, the others its first arguments.
+    const alternatives = spellings(first).slice(1)
+    if (alternatives.length > 1) {
+      this.ask(`the command ${first.text} is spelled by brace expansion`)
+      return this.words(
+        [
+          ...alternatives.map(text => ({
+            text,
+            pattern: text.replace(/[\\{},]/gu, '\\$&'),
+            dynamic: false,
+          })),
+          ...rest.slice(1),
+        ],
+        cwd,
+        depth,
+      )
+    }
     const name = basename(first.text)
     const args = rest.slice(1)
     this.setsUnnamed(first, args)
@@ -908,7 +925,16 @@ class Policy {
       if (source === undefined) return cwd
       if (source.dynamic)
         this.ask(`${name} -c runs a script known only when it runs`)
-      else this.script(source.text, cwd, depth + 1)
+      else {
+        // The gate reads a script as bash does, and the others read some otherwise.
+        if (otherGrammars.has(name))
+          this.ask(`${name} reads its script by rules the gate doesn’t know`)
+        else if (name !== 'bash' && /\$['"]/u.test(source.text))
+          this.ask(
+            `${name} may not know $'…' or $"…", so the gate can’t tell where they end`,
+          )
+        this.script(source.text, cwd, depth + 1)
+      }
       return cwd
     }
     if (name === 'eval') {

@@ -1,0 +1,3 @@
+- The gate asks about a line it may read otherwise than bash, and still reads what it can, so a refusal stays one: a
+  line continued right after a `$`, a backtick substitution, a here-document left open in a substitution, and a
+  comment in a substitution holding a quote or parenthesis. Each of these could hide a `git push` from it.

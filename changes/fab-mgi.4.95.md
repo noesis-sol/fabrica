@@ -1,0 +1,1 @@
+- An unclosed `$(` inside backticks no longer runs the gate out of memory: it asks.

@@ -1,0 +1,1 @@
+- Backtick substitutions ask, as bash unescapes them before reading them, so `\$HOME` inside one is the home folder.

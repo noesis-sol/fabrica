@@ -26,8 +26,12 @@ export interface SimpleCommand {
 export type Script = Data.TaggedEnum<{
   Parsed: {
     readonly commands: ReadonlyArray<SimpleCommand>
-    /** A `$'…'` holds a character code or a `\c`, which can spell an option or a name anywhere: decoded, and still asked of. */
-    readonly codes: boolean
+    /**
+     * Why the line is read with doubt: forms bash may read otherwise than the gate does, so anything in
+     * them, or after them, may be something else. What the reader made of it still counts, so a refusal
+     * stays one, and each of these asks.
+     */
+    readonly doubts: ReadonlyArray<string>
     /** The words that name no command: a function's name, a loop's variable and list, a case's subject, a read redirection's file, a here-document's assigning expansions. */
     readonly unnamed: ReadonlyArray<Word>
   }
@@ -121,6 +125,25 @@ interface HereDocument {
 /** In an expanding here-document's body, the expansions that may assign: `${X:=y}`, `$((X=1))`. */
 const assigningExpansion = /\$(?:\{[^}]*|\(\([^)]*)=[^}\n]*/gu
 
+const doubtOfCode =
+  "a $'…' character code can spell anything, so the gate asks whatever it reads it as"
+const doubtOfBacktick =
+  'a backtick substitution: bash finds its end and unescapes it before reading it, so its quotes and comments may hide commands'
+const doubtOfComment =
+  'a comment inside a substitution holding a quote or a parenthesis, which versions of bash read as part of it'
+const doubtOfHereDocument =
+  'a here-document opened in a substitution and not closed in it, so the lines after it may be commands'
+const doubtOfContinuedDollar =
+  'a line continued right after a $, which changes how what follows is quoted'
+const doubtOfLocale =
+  'a backslash right after a non-ASCII character: in a locale like Shift-JIS it is part of that character and escapes nothing'
+
+/** A `$` then a line continuation: bash joins them into `$'` or `$(`, the gate's reader doesn't. */
+const continuedDollar = /\$\\\n/u
+
+/** A byte of a multibyte character can be a backslash's: which, the locale decides, and the line can set it. */
+const joinableBackslash = /[^\0-\x7f]\\/u
+
 /** Reads `source` from the start; `home` stands for `$HOME`. */
 class Reader {
   index = 0
@@ -129,8 +152,8 @@ class Reader {
   readonly pending: Array<HereDocument> = []
   /** How many backtick substitutions the reader is inside, where a backtick closes one. */
   backticks = 0
-  /** A `$'…'` held a character code. */
-  codes = false
+  /** The line's doubts (`Script`), each said once. */
+  readonly doubts = new Set<string>()
 
   constructor(
     readonly source: string,
@@ -168,8 +191,14 @@ class Reader {
         continue
       }
       if (char === '#') {
+        const start = this.index
         while (this.index < this.source.length && this.peek() !== '\n')
           this.index++
+        if (
+          end !== undefined &&
+          /['"\\()`]/u.test(this.source.slice(start, this.index))
+        )
+          this.doubts.add(doubtOfComment)
         continue
       }
       if (char === '\n') {
@@ -181,6 +210,7 @@ class Reader {
       if (end !== undefined && char === end) {
         this.index++
         finish()
+        if (this.pending.length > 0) this.doubts.add(doubtOfHereDocument)
         return
       }
       if ((char === '<' || char === '>') && this.peek(1) === '(') {
@@ -231,7 +261,11 @@ class Reader {
         finish()
         continue
       }
+      const start = this.index
       const word = this.word()
+      // A backtick closing nothing here, where one closes further out: the reader would never pass it.
+      if (this.index === start)
+        throw new Unparsable({ reason: `a ${char} the reader can’t place` })
       if (skip === 'rest') {
         this.unnamed.push(word.word)
         continue
@@ -258,12 +292,14 @@ class Reader {
   redirect(operator: string, length: number, writes: Array<Word>): void {
     this.index += length
     while (this.peek() === ' ' || this.peek() === '\t') this.index++
+    const start = this.index
     const target = this.word()
     if (operator === '<<' || operator === '<<-') {
       this.pending.push({
         delimiter: target.word.text,
         stripTabs: operator === '<<-',
-        expands: target.plain,
+        // Only a quote or an escape in the delimiter keeps the body from expanding: `<<$E` doesn't.
+        expands: !/['"\\]/u.test(this.source.slice(start, this.index)),
       })
       return
     }
@@ -297,7 +333,8 @@ class Reader {
           break
         }
       }
-      const body = this.source.slice(start, this.index)
+      // Bash joins continued lines in a body that expands before it reads what is there.
+      const body = this.source.slice(start, this.index).replaceAll('\\\n', '')
       if (document.expands && (body.includes('$(') || body.includes('`')))
         throw new Unparsable({
           reason: 'a here-document runs commands of its own',
@@ -335,6 +372,7 @@ class Reader {
         this.index += 2
         this.expansion('}')
       } else if (char === '`') {
+        this.doubts.add(doubtOfBacktick)
         this.index++
         this.backticks++
         this.list('`')
@@ -412,7 +450,7 @@ class Reader {
       }
     }
     // `\c` at the end of the string stands for itself; a backslash after it takes a second one along, as
-    // bash 5 reads it. Bash 3.2 reads both apart, so any `\c` asks (`codes`) either way.
+    // bash 5 reads it. Bash 3.2 reads both apart, so any `\c` is doubted either way.
     if (next === 'c' && this.index + 2 < close) {
       const control = this.peek(2)
       this.index += control === '\\' && this.peek(3) === '\\' ? 4 : 3
@@ -477,6 +515,7 @@ class Reader {
       }
     }
     const backtick = (): void => {
+      this.doubts.add(doubtOfBacktick)
       const start = this.index
       this.index++
       this.backticks++
@@ -513,7 +552,7 @@ class Reader {
           // versions of bash read apart: a backslash after it starts another escape in 3.2, macOS's, and at
           // the end of the string 3.2 leaves a lone backslash, which escapes what follows in an `eval`.
           if (this.peek() === '\\' && /[0-7xuUc]/u.test(this.peek(1)))
-            this.codes = true
+            this.doubts.add(doubtOfCode)
           let decoded = this.peek()
           if (decoded === '\\') decoded = this.ansiEscape(close)
           else this.index++
@@ -561,6 +600,8 @@ export const parseScript = (
   home: Option.Option<string>,
 ): Script => {
   const reader = new Reader(source, home)
+  if (continuedDollar.test(source)) reader.doubts.add(doubtOfContinuedDollar)
+  if (joinableBackslash.test(source)) reader.doubts.add(doubtOfLocale)
   try {
     reader.list(undefined)
     reader.hereDocuments()
@@ -572,6 +613,6 @@ export const parseScript = (
   return Script.Parsed({
     commands: reader.commands,
     unnamed: reader.unnamed,
-    codes: reader.codes,
+    doubts: [...reader.doubts],
   })
 }
