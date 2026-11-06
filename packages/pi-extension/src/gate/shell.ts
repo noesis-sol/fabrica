@@ -32,6 +32,8 @@ export type Script = Data.TaggedEnum<{
      * stays one, and each of these asks.
      */
     readonly doubts: ReadonlyArray<string>
+    /** A `$'…'` or `$"…"` was read: a POSIX shell that doesn't know them finds their end elsewhere. */
+    readonly dollarQuotes: boolean
     /** The words that name no command: a function's name, a loop's variable and list, a case's subject, a read redirection's file, a here-document's assigning expansions. */
     readonly unnamed: ReadonlyArray<Word>
   }
@@ -133,6 +135,14 @@ const doubtOfComment =
   'a comment inside a substitution holding a quote or a parenthesis, which versions of bash read as part of it'
 const doubtOfHereDocument =
   'a here-document opened in a substitution and not closed in it, so the lines after it may be commands'
+const doubtOfContinuedDocument =
+  'a line continued in a here-document or its delimiter, which bash joins before it looks for the end'
+const doubtOfDocumentClose =
+  'a here-document in a substitution with a ) of its own, where versions of bash end the substitution'
+const doubtOfArithmetic =
+  'a $(( … )) that closes early, which bash reads as a command substitution'
+const doubtOfSubscript =
+  'a << or $[ in arithmetic, which opens no here-document though the gate would read one'
 const doubtOfContinuedDollar =
   'a line continued right after a $, which changes how what follows is quoted'
 const doubtOfLocale =
@@ -141,8 +151,28 @@ const doubtOfLocale =
 /** A `$` then a line continuation: bash joins them into `$'` or `$(`, the gate's reader doesn't. */
 const continuedDollar = /\$\\\n/u
 
-/** A byte of a multibyte character can be a backslash's: which, the locale decides, and the line can set it. */
-const joinableBackslash = /[^\0-\x7f]\\/u
+/**
+ * Whether `body` holds a `)` no `(` opened, outside its quotes: what bash 3.2, which finds a substitution's
+ * end without knowing here-documents, takes as the end of the one the body is in.
+ */
+const closesEarly = (body: string): boolean => {
+  let depth = 0
+  let quote = ''
+  for (let at = 0; at < body.length; at++) {
+    const char = body.charAt(at)
+    if (quote !== '') {
+      if (char === '\\' && quote === '"') at++
+      else if (char === quote) quote = ''
+    } else if (char === '\\') at++
+    else if (char === "'" || char === '"') quote = char
+    else if (char === '(') depth++
+    else if (char === ')') {
+      depth--
+      if (depth < 0) return true
+    }
+  }
+  return false
+}
 
 /** Reads `source` from the start; `home` stands for `$HOME`. */
 class Reader {
@@ -152,6 +182,10 @@ class Reader {
   readonly pending: Array<HereDocument> = []
   /** How many backtick substitutions the reader is inside, where a backtick closes one. */
   backticks = 0
+  /** How many command substitutions, or process substitutions, the reader is inside. */
+  substitutions = 0
+  /** A `$'…'` or `$"…"` was read. */
+  dollarQuotes = false
   /** The line's doubts (`Script`), each said once. */
   readonly doubts = new Set<string>()
 
@@ -170,6 +204,8 @@ class Reader {
     let writes: Array<Word> = []
     /** Words that name no command: a function's name, a loop's variable and list, a case's subject. */
     let skip: number | 'rest' = 0
+    /** Here-documents opened before this list began: bash reads their bodies from lines the gate reads as its own. */
+    const pendingOutside = this.pending.length
     /** A `[[ … ]]` test's parenthesis ended the words before it: what follows is still the test. */
     let testing = false
     const finish = () => {
@@ -195,13 +231,15 @@ class Reader {
         while (this.index < this.source.length && this.peek() !== '\n')
           this.index++
         if (
-          end !== undefined &&
+          this.substitutions > 0 &&
           /['"\\()`]/u.test(this.source.slice(start, this.index))
         )
           this.doubts.add(doubtOfComment)
         continue
       }
       if (char === '\n') {
+        if (end !== undefined && pendingOutside > 0)
+          this.doubts.add(doubtOfHereDocument)
         this.index++
         finish()
         this.hereDocuments()
@@ -210,13 +248,14 @@ class Reader {
       if (end !== undefined && char === end) {
         this.index++
         finish()
-        if (this.pending.length > 0) this.doubts.add(doubtOfHereDocument)
+        if (this.pending.length > pendingOutside)
+          this.doubts.add(doubtOfHereDocument)
         return
       }
       if ((char === '<' || char === '>') && this.peek(1) === '(') {
         const start = this.index
         this.index += 2
-        this.list(')')
+        this.substitution(')')
         const written = this.source.slice(start, this.index)
         words.push({ text: written, pattern: written, dynamic: true })
         continue
@@ -224,6 +263,15 @@ class Reader {
       redirection.lastIndex = this.index
       const redirect = redirection.exec(this.source)
       if (redirect !== null) {
+        // A `<<` in an array's subscript (`a[1<<2]=1`) shifts: it opens no here-document.
+        const against = /[^\s;&|]*$/u.exec(
+          this.source.slice(0, this.index),
+        )?.[0]
+        if (
+          against !== undefined &&
+          against.lastIndexOf('[') > against.lastIndexOf(']')
+        )
+          this.doubts.add(doubtOfSubscript)
         this.redirect(
           redirect[1] ?? redirect[2] ?? '',
           redirect[0].length,
@@ -267,6 +315,11 @@ class Reader {
       if (this.index === start)
         throw new Unparsable({ reason: `a ${char} the reader can’t place` })
       if (skip === 'rest') {
+        // `for x do …` and `for x { …; }`: with no `in`, the loop's body starts on the same line.
+        if (word.plain && (word.word.text === 'do' || word.word.text === '{')) {
+          skip = 0
+          continue
+        }
         this.unnamed.push(word.word)
         continue
       }
@@ -295,11 +348,13 @@ class Reader {
     const start = this.index
     const target = this.word()
     if (operator === '<<' || operator === '<<-') {
+      const written = this.source.slice(start, this.index)
+      if (written.includes('\\\n')) this.doubts.add(doubtOfContinuedDocument)
       this.pending.push({
         delimiter: target.word.text,
         stripTabs: operator === '<<-',
         // Only a quote or an escape in the delimiter keeps the body from expanding: `<<$E` doesn't.
-        expands: !/['"\\]/u.test(this.source.slice(start, this.index)),
+        expands: !/['"\\]/u.test(written),
       })
       return
     }
@@ -333,8 +388,13 @@ class Reader {
           break
         }
       }
-      // Bash joins continued lines in a body that expands before it reads what is there.
-      const body = this.source.slice(start, this.index).replaceAll('\\\n', '')
+      const raw = this.source.slice(start, this.index)
+      // Bash joins continued lines in a body that expands, its last line's with the delimiter too.
+      if (document.expands && raw.includes('\\\n'))
+        this.doubts.add(doubtOfContinuedDocument)
+      if (this.substitutions > 0 && closesEarly(raw))
+        this.doubts.add(doubtOfDocumentClose)
+      const body = raw.replaceAll('\\\n', '')
       if (document.expands && (body.includes('$(') || body.includes('`')))
         throw new Unparsable({
           reason: 'a here-document runs commands of its own',
@@ -367,7 +427,7 @@ class Reader {
         this.expansion('))')
       } else if (char === '$' && next === '(') {
         this.index += 2
-        this.list(')')
+        this.substitution(')')
       } else if (char === '$' && next === '{') {
         this.index += 2
         this.expansion('}')
@@ -388,6 +448,8 @@ class Reader {
           this.index += 2
           return
         }
+        // A `)` closing what `$((` opened, alone: bash reads the whole as a command substitution.
+        if (depth === 0) this.doubts.add(doubtOfArithmetic)
         depth--
         this.index++
       } else this.index++
@@ -395,6 +457,19 @@ class Reader {
     throw new Unparsable({
       reason: `a ${close === '}' ? '${' : '$(('} doesn’t close`,
     })
+  }
+
+  /** The list of a command substitution or a process substitution, up to `close`. */
+  substitution(close: ')'): void {
+    this.substitutions++
+    this.list(close)
+    this.substitutions--
+  }
+
+  /** The backslash at the reader may be a byte of the character before it, in a locale the line can set. */
+  noteAfterWide(): void {
+    if (this.source.charCodeAt(this.index - 1) > 0x7f)
+      this.doubts.add(doubtOfLocale)
   }
 
   /**
@@ -492,8 +567,13 @@ class Reader {
       } else if (next === '(') {
         const start = this.index
         this.index += 2
-        this.list(')')
+        this.substitution(')')
         variable(this.source.slice(start, this.index), '')
+      } else if (next === '[') {
+        // `$[…]`, old arithmetic: a `<<` in it opens no here-document, as the reader would have it.
+        this.doubts.add(doubtOfSubscript)
+        literal('$', false)
+        this.index++
       } else if (next === '{') {
         const start = this.index
         this.index += 2
@@ -529,6 +609,14 @@ class Reader {
       if (breaking.has(char) || (char === '`' && this.backticks > 0)) break
       if (char === '\\') {
         plain = false
+        this.noteAfterWide()
+        // In a substitution, bash 3.2 takes a `#` after an escaped blank as a comment's start.
+        if (
+          this.substitutions > 0 &&
+          (this.peek(1) === ' ' || this.peek(1) === '\t') &&
+          this.peek(2) === '#'
+        )
+          this.doubts.add(doubtOfComment)
         if (this.peek(1) === '\n') this.index += 2
         else {
           literal(this.peek(1), true)
@@ -542,6 +630,7 @@ class Reader {
         this.index = close + 1
       } else if (char === '$' && this.peek(1) === "'") {
         plain = false
+        this.dollarQuotes = true
         this.index += 2
         let content = ''
         /** A NUL ends the string bash makes, the rest of the quote read and dropped. */
@@ -554,8 +643,10 @@ class Reader {
           if (this.peek() === '\\' && /[0-7xuUc]/u.test(this.peek(1)))
             this.doubts.add(doubtOfCode)
           let decoded = this.peek()
-          if (decoded === '\\') decoded = this.ansiEscape(close)
-          else this.index++
+          if (decoded === '\\') {
+            this.noteAfterWide()
+            decoded = this.ansiEscape(close)
+          } else this.index++
           if (decoded === String.fromCharCode(0)) ended = true
           if (!ended) content += decoded
         }
@@ -564,6 +655,7 @@ class Reader {
       } else if (char === '$' && this.peek(1) === '"') {
         // A locale's translation, its `$` dropped: the string is read as double-quoted.
         plain = false
+        this.dollarQuotes = true
         this.index++
       } else if (char === '"') {
         plain = false
@@ -573,6 +665,7 @@ class Reader {
             throw new Unparsable({ reason: 'a " doesn’t close' })
           const inner = this.peek()
           if (inner === '\\' && '$`"\\\n'.includes(this.peek(1))) {
+            this.noteAfterWide()
             if (this.peek(1) !== '\n') literal(this.peek(1), true)
             this.index += 2
           } else if (inner === '$') dollar()
@@ -601,7 +694,6 @@ export const parseScript = (
 ): Script => {
   const reader = new Reader(source, home)
   if (continuedDollar.test(source)) reader.doubts.add(doubtOfContinuedDollar)
-  if (joinableBackslash.test(source)) reader.doubts.add(doubtOfLocale)
   try {
     reader.list(undefined)
     reader.hereDocuments()
@@ -614,5 +706,6 @@ export const parseScript = (
     commands: reader.commands,
     unnamed: reader.unnamed,
     doubts: [...reader.doubts],
+    dollarQuotes: reader.dollarQuotes,
   })
 }

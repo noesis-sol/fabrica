@@ -66,6 +66,16 @@ const gitVariables = new Set([
 
 const shells = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh', 'ash', 'hush'])
 
+/** Whether `source`, read as bash reads it, holds a `$'…'` or `$"…"`. */
+const holdsDollarQuotes = (
+  source: string,
+  home: Option.Option<string>,
+): boolean =>
+  Script.$match(parseScript(source, home), {
+    Parsed: ({ dollarQuotes }) => dollarQuotes,
+    Unparsable: () => false,
+  })
+
 /** Shells whose grammar is further from bash's than the POSIX shell's. */
 const otherGrammars = new Set(['zsh', 'ksh'])
 
@@ -876,6 +886,11 @@ class Policy {
     }
     // A name spelled by brace expansion: bash runs the first alternative, the others its first arguments.
     const alternatives = spellings(first).slice(1)
+    // Past what the gate expands, it has only the raw word to go by.
+    if (alternatives.length === 0 && /(?:^|[^\\])\{/u.test(first.pattern)) {
+      this.ask(`the command ${first.text} is spelled by brace expansion`)
+      return cwd
+    }
     if (alternatives.length > 1) {
       this.ask(`the command ${first.text} is spelled by brace expansion`)
       return this.words(
@@ -929,7 +944,7 @@ class Policy {
         // The gate reads a script as bash does, and the others read some otherwise.
         if (otherGrammars.has(name))
           this.ask(`${name} reads its script by rules the gate doesn’t know`)
-        else if (name !== 'bash' && /\$['"]/u.test(source.text))
+        else if (name !== 'bash' && holdsDollarQuotes(source.text, this.home))
           this.ask(
             `${name} may not know $'…' or $"…", so the gate can’t tell where they end`,
           )

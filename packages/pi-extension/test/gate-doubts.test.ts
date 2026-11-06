@@ -92,6 +92,69 @@ const lines: ReadonlyArray<readonly [Expected, string]> = [
   ['refused', 'FOO=1 {sudo,true} ls'],
   ['allowed', '{ ls; }'],
   ['allowed', 'ls {src,test}'],
+  // A continuation in a here-document's delimiter or its body, which bash joins first.
+  ['asked', 'cat <<E\\\nF\n$(git push origin main)\nEF'],
+  ['asked', 'cat <<\\\nE\n$(git push origin main)\nE'],
+  ['asked', 'cat <<E\\\n\n$(git push origin main)\nE'],
+  ['asked', 'cat <<EF\nE\\\nF\ngit push origin main\nEF'],
+  ['asked', 'cat <<EF\nE\\\nF\ngit push origin main'],
+  ['asked', 'cat <<-EF\n\tE\\\nF\ngit push origin main\nEF'],
+  // An outer here-document, then a line break inside a substitution: bash reads its body from there.
+  ['asked', 'cat <<E $(echo a\ngit push origin main\nE\n)\nb\nE'],
+  ['asked', 'cat <<E && echo $(\ngit push origin main\nE\n)\nb\nE'],
+  ['asked', 'cat <<E; echo $(echo a\ngit push origin main\nE\n)\nb\nE'],
+  ['asked', 'cat <<E <(\ngit push origin main\nE\n)\nb\nE'],
+  ['asked', 'echo <<E $(echo a; \ngit push origin main\nE\n)'],
+  // With no line break in the substitution, it takes nothing of the body.
+  ['allowed', 'cat <<E $(echo a)\nhello\nE'],
+  // A here-document's body with a `)` of its own, where bash 3.2 ends the substitution.
+  ['asked', 'echo $(cat <<E\n)\ngit push origin main\nE\n)'],
+  ['asked', "echo $(cat <<'E'\n)\ngit push origin main\nE\n)"],
+  ['asked', 'x=$(cat <<E\n);git push origin main\nE\n)'],
+  ['asked', 'echo <(cat <<E\n)\ngit push origin main\nE\n)'],
+  // Parentheses that balance, as a commit message's do, end nothing.
+  [
+    'allowed',
+    'git commit -m "$(cat <<\'EOF\'\nfix(gate): read it (again)\nEOF\n)"',
+  ],
+  // A `#` after an escaped blank in a substitution, a comment on bash 3.2.
+  ['asked', "echo $(echo \\ #'\n);git push origin main #'\n)"],
+  ['asked', "echo $(echo a\\ #'\n);git push origin main\n#'\n)"],
+  // A `$((` that closes early is a command substitution to bash.
+  ['asked', 'echo $((echo a);git push origin main;(echo b))'],
+  ['asked', 'echo $((:);git push origin main;(:))'],
+  ['asked', 'echo "$((echo a);git push origin main;(echo b))"'],
+  ['asked', 'echo $((git push origin main);(echo b))'],
+  ['asked', 'echo $((git push origin main) ) ; ((1))'],
+  ['asked', 'echo ${x:-$((echo a);git push origin main;(echo b))}'],
+  ['allowed', 'echo $((1 + (2 * 3)))'],
+  // `for` or `select` with no `in`: its body starts on the same line.
+  ['refused', 'set -- 1; for x do git push origin main; done'],
+  ['refused', 'set -- 1; for x do git push origin main\ndone'],
+  ['refused', 'set -- 1; for x do { git push origin main; }; done'],
+  ['refused', 'for x { git push origin main; }'],
+  ['refused', 'select x do git push origin main; break; done <<< 1'],
+  ['refused', 'f() { for x do git push origin main; done; }; f 1'],
+  ['refused', 'for x in a b; do git push origin main; done'],
+  ['allowed', 'for x in a b; do ls "$x"; done'],
+  // A `<<` in `$[…]` or a subscript shifts, and opens no here-document.
+  ['asked', 'a[1<<2]=1\ngit push origin main'],
+  ['asked', 'echo $[1<<2]\ngit push origin main'],
+  ['asked', 'echo $[<<E]\ngit push origin main'],
+  ['allowed', 'cat<<E\nhello\nE'],
+  // A name past what the gate expands.
+  ['asked', '{git,push,origin,main,z{0,1}{0,1}{0,1}{0,1}{0,1}{0,1}{0,1}{0,1}}'],
+  // What these rules mustn't catch: a backslash after a wide character means nothing in single quotes, and in
+  // double quotes only before what it escapes there.
+  ['allowed', "sed 's/é\\//x/' a.ts"],
+  ['allowed', "grep -rn '§\\.\\|§ 12' docs/"],
+  ['allowed', 'grep -n "→\\s" a.md'],
+  ['allowed', 'echo "日本語\\n"'],
+  // A comment with an apostrophe in a plain subshell, read alike by every bash.
+  ['allowed', "( # don't touch the lockfile\n ls\n)"],
+  // A `$'` that is no quote to bash: the `$` ends a pattern.
+  ['allowed', 'sh -c "grep \'^foo$\' a.txt"'],
+  ['allowed', 'sh -c \'grep "foo$" a.txt\''],
 ]
 
 describe('a line the gate doubts', () => {
