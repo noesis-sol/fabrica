@@ -26,7 +26,7 @@ export interface SimpleCommand {
 export type Script = Data.TaggedEnum<{
   Parsed: {
     readonly commands: ReadonlyArray<SimpleCommand>
-    /** A `$'…'` holds a character code, which can spell an option or a name anywhere, and isn't decoded. */
+    /** A `$'…'` holds a character code, which can spell an option or a name anywhere: decoded, and still asked of. */
     readonly codes: boolean
     /** The words that name no command: a function's name, a loop's variable and list, a case's subject, a read redirection's file, a here-document's assigning expansions. */
     readonly unnamed: ReadonlyArray<Word>
@@ -359,8 +359,21 @@ class Reader {
     })
   }
 
-  /** The escape at the reader's backslash inside `$'…'`, read past and decoded as bash decodes it. */
-  ansiEscape(): string {
+  /**
+   * Where the `$'…'` the reader is inside closes, as bash finds it: a backslash skips the next character,
+   * and only then is what lies between decoded, so no escape's reading can move the end of the string.
+   */
+  ansiClose(): number {
+    let at = this.index
+    while (at < this.source.length && this.source.charAt(at) !== "'")
+      at += this.source.charAt(at) === '\\' ? 2 : 1
+    if (at >= this.source.length)
+      throw new Unparsable({ reason: "a $' doesn’t close" })
+    return at
+  }
+
+  /** The escape at the reader's backslash inside `$'…'`, read past and decoded as bash decodes it, up to `close`. */
+  ansiEscape(close: number): string {
     const next = this.peek(1)
     const simple = ansiEscapes.get(next)
     if (simple !== undefined) {
@@ -398,9 +411,10 @@ class Reader {
         return code <= 0x10ffff ? String.fromCodePoint(code) : ''
       }
     }
-    if (next === 'c' && this.index + 2 < this.source.length) {
+    // `\c` at the end of the string stands for itself; a backslash after it takes a second one along.
+    if (next === 'c' && this.index + 2 < close) {
       const control = this.peek(2)
-      this.index += 3
+      this.index += control === '\\' && this.peek(3) === '\\' ? 4 : 3
       return String.fromCharCode(control.toUpperCase().charCodeAt(0) & 0x1f)
     }
     // Any other escape is kept as written, its backslash too.
@@ -492,19 +506,18 @@ class Reader {
         let content = ''
         /** A NUL ends the string bash makes, the rest of the quote read and dropped. */
         let ended = false
-        while (this.peek() !== "'") {
-          if (this.index >= this.source.length)
-            throw new Unparsable({ reason: "a $' doesn’t close" })
+        const close = this.ansiClose()
+        while (this.index < close) {
           // A character code asks, whatever it decodes to: it can spell anything.
           if (this.peek() === '\\' && /[0-7xuU]/u.test(this.peek(1)))
             this.codes = true
           let decoded = this.peek()
-          if (decoded === '\\') decoded = this.ansiEscape()
+          if (decoded === '\\') decoded = this.ansiEscape(close)
           else this.index++
           if (decoded === String.fromCharCode(0)) ended = true
           if (!ended) content += decoded
         }
-        this.index++
+        this.index = close + 1
         literal(content, true)
       } else if (char === '$' && this.peek(1) === '"') {
         // A locale's translation, its `$` dropped: the string is read as double-quoted.

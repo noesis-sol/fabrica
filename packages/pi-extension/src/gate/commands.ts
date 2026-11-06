@@ -794,7 +794,7 @@ class Policy {
       Parsed: ({ commands, unnamed, codes }) => {
         if (codes)
           this.ask(
-            "a $'…' character code can spell anything, and the gate doesn’t decode it",
+            "a $'…' character code can spell anything, so the gate asks whatever it reads it as",
           )
         if (commands.length > 1) this.several = true
         // Set anywhere, even after a `cd` (in a loop, it runs before the next one), they move it.
