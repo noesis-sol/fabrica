@@ -155,6 +155,55 @@ const lines: ReadonlyArray<readonly [Expected, string]> = [
   // A `$'` that is no quote to bash: the `$` ends a pattern.
   ['allowed', 'sh -c "grep \'^foo$\' a.txt"'],
   ['allowed', 'sh -c \'grep "foo$" a.txt\''],
+  // A continued line inside a reserved word leaves it reserved.
+  ['refused', 'i\\\nf git push origin main; then :; fi'],
+  ['refused', 'if :; t\\\nhen git push origin main; fi'],
+  ['refused', 'if false; then :; e\\\nlse git push origin main; fi'],
+  ['refused', 'w\\\nhile git push origin main; do break; done'],
+  ['refused', 'for x in a; d\\\no git push origin main; done'],
+  ['refused', '!\\\n git push origin main'],
+  ['refused', 'f\\\nunction f { git push origin main; }; f'],
+  ['refused', 'set -- 1; for x do\\\n git push origin main; done'],
+  // Bash 3.2's end of a substitution, by a quote the body leaves open, a comment, `$'…'` or a backtick.
+  ['asked', "echo $(cat <<E\n'\nE\n'); git push origin main #'\n)"],
+  ['asked', "echo $(cat <<E\nit's\nE\n'); git push origin main #'\n)"],
+  ['asked', 'echo $(cat <<E\n"\nE\n"); git push origin main #"\n)'],
+  ['asked', "echo $(cat <<E\n# it's\n)\ngit push origin main\nE\n)"],
+  ['asked', "echo $(cat <<E\na # it's\n)\ngit push origin main\nE\n)"],
+  ['asked', "x=$(cat <<'E'\n#(\n);git push origin main\nE\n)"],
+  ['asked', "echo $(cat <<E\n$'\\''\n)\ngit push origin main\nE\n)"],
+  ['asked', "echo $(cat <<'E'\n`'`\n)\ngit push origin main\nE\n)"],
+  // Where it ends where the reader does, nothing asks, as commit messages need.
+  [
+    'allowed',
+    "git commit -m \"$(cat <<'EOF'\nit's what we want, and that's all\nEOF\n)\"",
+  ],
+  ['allowed', "git commit -m \"$(cat <<'EOF'\nit's\nEOF\n)\""],
+  ['allowed', 'git commit -m "$(cat <<\'EOF\'\n# heading\nEOF\n)"'],
+  [
+    'allowed',
+    "x=$(\n  # the head's commit, as it's what we want\n  git rev-parse HEAD\n)",
+  ],
+  // An array's subscript still open, by a blank or a separator in it.
+  ['asked', 'a[1 <<2]=1\ngit push origin main'],
+  ['asked', 'a[ 1<<2 ]=1\ngit push origin main'],
+  ['asked', 'a[1|1<<2]=1\ngit push origin main'],
+  ['asked', 'a[1&&1<<2]=1\ngit push origin main'],
+  ['asked', 'x=1 a[1 <<2]=1\ngit push origin main'],
+  ['allowed', 'a[1]=2'],
+  ['allowed', 'grep a[b] notes.txt'],
+  // A wide character's backslash in an expansion and a here-document in a substitution.
+  [
+    'asked',
+    'export LC_ALL=ja_JP.SJIS\necho ${x:-あ\\}; git push origin main #}',
+  ],
+  [
+    'asked',
+    'export LC_ALL=ja_JP.SJIS\necho $(cat <<E\nあ\\)\ngit push origin main\nE\n)',
+  ],
+  // Coproc, on the bash that has it.
+  ['refused', 'coproc git push origin main'],
+  ['asked', 'coproc x { git push origin main; }'],
 ]
 
 describe('a line the gate doubts', () => {

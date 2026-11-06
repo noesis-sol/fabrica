@@ -47,6 +47,7 @@ class Unparsable extends Data.TaggedError('Unparsable')<{
 
 /** Words that open or close the shell's compound commands, skipped where a command's name would be. */
 const reserved: ReadonlySet<string> = new Set([
+  'coproc',
   '!',
   '{',
   '}',
@@ -131,18 +132,18 @@ const doubtOfCode =
   "a $'…' character code can spell anything, so the gate asks whatever it reads it as"
 const doubtOfBacktick =
   'a backtick substitution: bash finds its end and unescapes it before reading it, so its quotes and comments may hide commands'
-const doubtOfComment =
-  'a comment inside a substitution holding a quote or a parenthesis, which versions of bash read as part of it'
 const doubtOfHereDocument =
   'a here-document opened in a substitution and not closed in it, so the lines after it may be commands'
 const doubtOfContinuedDocument =
   'a line continued in a here-document or its delimiter, which bash joins before it looks for the end'
-const doubtOfDocumentClose =
-  'a here-document in a substitution with a ) of its own, where versions of bash end the substitution'
 const doubtOfArithmetic =
   'a $(( … )) that closes early, which bash reads as a command substitution'
 const doubtOfSubscript =
   'a << or $[ in arithmetic, which opens no here-document though the gate would read one'
+const doubtOfSubstitutionEnd =
+  'a substitution bash 3.2, macOS’s, would end elsewhere than the gate reads it, for a quote, comment or ) in it'
+const doubtOfCoproc =
+  'coproc, which runs what follows it in a way the gate doesn’t follow'
 const doubtOfContinuedDollar =
   'a line continued right after a $, which changes how what follows is quoted'
 const doubtOfLocale =
@@ -152,26 +153,75 @@ const doubtOfLocale =
 const continuedDollar = /\$\\\n/u
 
 /**
- * Whether `body` holds a `)` no `(` opened, outside its quotes: what bash 3.2, which finds a substitution's
- * end without knowing here-documents, takes as the end of the one the body is in.
+ * Where a grouping ends as bash 3.2 finds it, which is macOS's bash and so Pi's there; -1 where it doesn't.
+ * That bash matches the text of a `$(…)` without reading it as commands: it knows quotes, a comment after a
+ * blank or line break, `$'…'`, backticks and nested `$(`, `${` and `$[`, and no here-documents, so its end can differ from
+ * the reader's. A line where they differ has commands one reads and the other doesn't.
  */
-const closesEarly = (body: string): boolean => {
-  let depth = 0
-  let quote = ''
-  for (let at = 0; at < body.length; at++) {
-    const char = body.charAt(at)
-    if (quote !== '') {
-      if (char === '\\' && quote === '"') at++
-      else if (char === quote) quote = ''
-    } else if (char === '\\') at++
-    else if (char === "'" || char === '"') quote = char
-    else if (char === '(') depth++
-    else if (char === ')') {
-      depth--
-      if (depth < 0) return true
+const matchedEnd = (options: {
+  readonly source: string
+  readonly from: number
+  readonly open: string
+  readonly close: string
+  /** Inside a command substitution, where a comment hides what it holds. */
+  readonly commands?: boolean
+  /** A `$'…'`, where a backslash escapes. */
+  readonly escapes?: boolean
+}): number => {
+  const { source, from, open, close } = options
+  const commands = options.commands === true
+  let count = 1
+  let dollar = false
+  let comment = false
+  for (let at = from; at < source.length; at++) {
+    const char = source.charAt(at)
+    if (comment) {
+      if (char === '\n') comment = false
+      continue
     }
+    const previous = at === from ? '' : source.charAt(at - 1)
+    if (
+      commands &&
+      char === '#' &&
+      at !== from &&
+      (previous === '\n' || previous === ' ' || previous === '\t')
+    ) {
+      comment = true
+      continue
+    }
+    if (char === '\\' && (open !== "'" || options.escapes === true)) {
+      at++
+      dollar = false
+      continue
+    }
+    if (char === close) count--
+    else if (open !== close && char === open && !dollar) count++
+    if (count === 0) return at + 1
+    if (open === "'") continue
+    if (open !== close && (char === "'" || char === '"' || char === '`')) {
+      const ends = matchedEnd({
+        source,
+        from: at + 1,
+        open: char,
+        close: char,
+        escapes: dollar && char === "'",
+      })
+      if (ends === -1) return -1
+      at = ends - 1
+    } else if (dollar && (char === '(' || char === '{' || char === '[')) {
+      const ends = matchedEnd({
+        source,
+        from: at + 1,
+        open: char,
+        close: char === '(' ? ')' : char === '{' ? '}' : ']',
+        commands: char === '(',
+      })
+      if (ends === -1) return -1
+      at = ends - 1
+    }
+    dollar = char === '$'
   }
-  return false
+  return -1
 }
 
 /** Reads `source` from the start; `home` stands for `$HOME`. */
@@ -227,14 +277,8 @@ class Reader {
         continue
       }
       if (char === '#') {
-        const start = this.index
         while (this.index < this.source.length && this.peek() !== '\n')
           this.index++
-        if (
-          this.substitutions > 0 &&
-          /['"\\()`]/u.test(this.source.slice(start, this.index))
-        )
-          this.doubts.add(doubtOfComment)
         continue
       }
       if (char === '\n') {
@@ -263,15 +307,6 @@ class Reader {
       redirection.lastIndex = this.index
       const redirect = redirection.exec(this.source)
       if (redirect !== null) {
-        // A `<<` in an array's subscript (`a[1<<2]=1`) shifts: it opens no here-document.
-        const against = /[^\s;&|]*$/u.exec(
-          this.source.slice(0, this.index),
-        )?.[0]
-        if (
-          against !== undefined &&
-          against.lastIndexOf('[') > against.lastIndexOf(']')
-        )
-          this.doubts.add(doubtOfSubscript)
         this.redirect(
           redirect[1] ?? redirect[2] ?? '',
           redirect[0].length,
@@ -328,10 +363,18 @@ class Reader {
         skip--
         continue
       }
+      if (words.length === 0 && word.plain && word.word.text === 'coproc')
+        this.doubts.add(doubtOfCoproc)
       if (words.length === 0 && word.plain && reserved.has(word.word.text)) {
         skip = skipped.get(word.word.text) ?? 0
         continue
       }
+      // An array's subscript still open: what follows, a `<<` or a `|` among it, isn't the shell's.
+      if (
+        words.every(({ text }) => /^\w+=/u.test(text)) &&
+        /^[A-Za-z_]\w*\[[^\]]*$/u.test(word.word.text)
+      )
+        this.doubts.add(doubtOfSubscript)
       words.push(word.word)
     }
     if (end !== undefined)
@@ -392,8 +435,8 @@ class Reader {
       // Bash joins continued lines in a body that expands, its last line's with the delimiter too.
       if (document.expands && raw.includes('\\\n'))
         this.doubts.add(doubtOfContinuedDocument)
-      if (this.substitutions > 0 && closesEarly(raw))
-        this.doubts.add(doubtOfDocumentClose)
+      if (this.substitutions > 0 && /[^\0-\x7f]\\/u.test(raw))
+        this.doubts.add(doubtOfLocale)
       const body = raw.replaceAll('\\\n', '')
       if (document.expands && (body.includes('$(') || body.includes('`')))
         throw new Unparsable({
@@ -417,8 +460,10 @@ class Reader {
     while (this.index < this.source.length) {
       const char = this.peek()
       const next = this.peek(1)
-      if (char === '\\') this.index += 2
-      else if (char === '"' || char === "'")
+      if (char === '\\') {
+        this.noteAfterWide()
+        this.index += 2
+      } else if (char === '"' || char === "'")
         throw new Unparsable({
           reason: `a quote inside ${close === '}' ? '${…}' : '$((…))'}, which shells read differently`,
         })
@@ -461,9 +506,25 @@ class Reader {
 
   /** The list of a command substitution or a process substitution, up to `close`. */
   substitution(close: ')'): void {
+    const start = this.index
+    // A `#` right after the `$(` is no comment to bash 3.2: what it holds counts there, wherever it ends.
+    if (
+      this.peek() === '#' &&
+      /^[^\n]*['"\\()`]/u.test(this.source.slice(start))
+    )
+      this.doubts.add(doubtOfSubstitutionEnd)
     this.substitutions++
     this.list(close)
     this.substitutions--
+    const ends = matchedEnd({
+      source: this.source,
+      from: start,
+      open: '(',
+      close,
+      commands: true,
+    })
+    if (ends !== -1 && ends !== this.index)
+      this.doubts.add(doubtOfSubstitutionEnd)
   }
 
   /** The backslash at the reader may be a byte of the character before it, in a locale the line can set. */
@@ -608,17 +669,11 @@ class Reader {
       const char = this.peek()
       if (breaking.has(char) || (char === '`' && this.backticks > 0)) break
       if (char === '\\') {
-        plain = false
         this.noteAfterWide()
-        // In a substitution, bash 3.2 takes a `#` after an escaped blank as a comment's start.
-        if (
-          this.substitutions > 0 &&
-          (this.peek(1) === ' ' || this.peek(1) === '\t') &&
-          this.peek(2) === '#'
-        )
-          this.doubts.add(doubtOfComment)
+        // A continued line is nothing: `i\<newline>f` is the word `if`, reserved as it is.
         if (this.peek(1) === '\n') this.index += 2
         else {
+          plain = false
           literal(this.peek(1), true)
           this.index += 2
         }
