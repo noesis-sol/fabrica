@@ -9,7 +9,8 @@
 - The gate decodes ANSI-C quoting as bash does (`\x2e`, `\x{2e}`, `\056`, `\u…`, `\cx`, a NUL ending the string) and
   reads `$"…"` as a double-quoted string, so
   `$'HO\x4dE'=/` sets `HOME` and `rm -rf $'\x2e\x2e/x'` removes outside the worktree in the gate's reading too.
-  A character code still asks, whatever it decodes to, and the string ends where bash ends it, so `\c` before a
+  A character code still asks, whatever it decodes to, as does a backslash after `\c`, which versions of bash read
+  apart, and the string ends where bash ends it, so `\c` before a
   closing quote hides nothing after it.
 - An assignment in a redirection's word or an expanding here-document's body (`: <<< ${CDPATH:=..}`) moves `cd` and
   `~` as one in a command's word does, and a `shopt`, `bash -O` or `${!v:=x}` known only when it runs may be any of

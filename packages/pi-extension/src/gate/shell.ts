@@ -411,7 +411,8 @@ class Reader {
         return code <= 0x10ffff ? String.fromCodePoint(code) : ''
       }
     }
-    // `\c` at the end of the string stands for itself; a backslash after it takes a second one along.
+    // `\c` at the end of the string stands for itself; a backslash after it takes a second one along, as
+    // bash 5 reads it. Bash 3.2 reads that apart, so the string asks (`codes`) either way.
     if (next === 'c' && this.index + 2 < close) {
       const control = this.peek(2)
       this.index += control === '\\' && this.peek(3) === '\\' ? 4 : 3
@@ -508,8 +509,14 @@ class Reader {
         let ended = false
         const close = this.ansiClose()
         while (this.index < close) {
-          // A character code asks, whatever it decodes to: it can spell anything.
-          if (this.peek() === '\\' && /[0-7xuU]/u.test(this.peek(1)))
+          // A character code asks, whatever it decodes to: it can spell anything. So does a backslash after
+          // `\c`, which versions of bash read apart: 5 takes `\c\\` whole, and 3.2, macOS's, keeps the second
+          // backslash to start another escape, so `\c\\x2f` holds a `/` there.
+          if (
+            this.peek() === '\\' &&
+            (/[0-7xuU]/u.test(this.peek(1)) ||
+              (this.peek(1) === 'c' && this.peek(2) === '\\'))
+          )
             this.codes = true
           let decoded = this.peek()
           if (decoded === '\\') decoded = this.ansiEscape(close)

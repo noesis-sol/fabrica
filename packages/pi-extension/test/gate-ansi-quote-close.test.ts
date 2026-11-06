@@ -44,7 +44,11 @@ const lines: ReadonlyArray<readonly [Expected, string]> = [
   // An escaped quote stays inside the string, and what is inside isn't a command.
   ['allowed', "echo $'it\\'s; rm -rf /etc/passwd'"],
   ['allowed', "echo $'\\cA; rm -rf /etc/passwd'"],
-  ['allowed', "echo $'\\c\\'; rm -rf /etc/passwd'"],
+  // A backslash after `\c`, which bash 3.2 and 5 read apart: it asks, on either reading.
+  ['asked', "echo $'\\c\\'; rm -rf /etc/passwd'"],
+  ['asked', "rm -rf $'\\c\\\\x2f../../x'"],
+  ['asked', "mkdir $'\\c\\\\x2f'; rm -rf $'\\c\\\\x2f../../x'"],
+  ['asked', "cd $'\\c\\\\x2f../..'; rm -rf x"],
 ]
 
 describe("where a $'…' closes", () => {
