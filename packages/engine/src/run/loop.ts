@@ -2124,8 +2124,17 @@ const runStarted = Effect.fn('Run.started')(function* (
   // The holds as the run started, and as its last wake for them gave them.
   const holdsAtStart = yield* holds.current
   let heard = holdsAtStart
+  /** Whether the last look found the breakdown under way, to tell when it has ended. */
+  let breakdownSeen = false
+
   const look = (reasons: ReadonlyArray<WakeReason>) =>
     Effect.gen(function* () {
+      // Read before the ready tickets: a breakdown that ends during this look has filed what the look
+      // didn't read, so only one that had ended when it began lets it end the run. One that has just
+      // ended has its tickets read, whether or not the wake that says so has come.
+      const breakingDown = yield* spec.going
+      const breakdownEnded = breakdownSeen && !breakingDown
+      breakdownSeen = breakingDown
       heard = reasons.findLast(WakeReason.$is('HoldsChanged'))?.holds ?? heard
       for (const reason of reasons)
         if (
@@ -2137,7 +2146,7 @@ const runStarted = Effect.fn('Run.started')(function* (
       // What woke it may have freed a slot, which another run waits on.
       yield* machine.moved
       const starting = reasons.some(reason => WakeReason.$is('Started')(reason))
-      if (readsReady(reasons)) {
+      if (readsReady(reasons) || breakdownEnded) {
         yield* autoAnswers.sweep
         yield* handMerged
         if (reasons.some(reason => WakeReason.$is('TicketsChanged')(reason)))
@@ -2267,7 +2276,7 @@ const runStarted = Effect.fn('Run.started')(function* (
       // So does a guess on its way: the ticket waiting for it is to come (§16).
       if ((yield* predictor.asking) && !draining) return yield* goesOn
       // A breakdown under way keeps it too, unless it drains: the rest of its tree is to come (§15.5).
-      if ((yield* spec.going) && !draining) return yield* goesOn
+      if (breakingDown && !draining) return yield* goesOn
       // A budget spent is a limit reached (§13.11, §14.4): whatever is still ready waits for another run.
       const limitReached =
         Option.exists(limit, most => after.dispatched >= most) ||
