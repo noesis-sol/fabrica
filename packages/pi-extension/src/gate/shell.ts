@@ -155,7 +155,7 @@ const continuedDollar = /\$\\\n/u
 /**
  * Where a grouping ends as bash 3.2 finds it, which is macOS's bash and so Pi's there; -1 where it doesn't.
  * That bash matches the text of a `$(…)` without reading it as commands: it knows quotes, a comment after a
- * blank or line break, `$'…'`, backticks and nested `$(`, `${` and `$[`, and no here-documents, so its end can differ from
+ * blank or line break, `$'…'`, backticks and nested `$(`, not `${` or `$[`, and no here-documents, so its end can differ from
  * the reader's. A line where they differ has commands one reads and the other doesn't.
  */
 const matchedEnd = (options: {
@@ -208,13 +208,13 @@ const matchedEnd = (options: {
       })
       if (ends === -1) return -1
       at = ends - 1
-    } else if (dollar && (char === '(' || char === '{' || char === '[')) {
+    } else if (dollar && char === '(') {
       const ends = matchedEnd({
         source,
         from: at + 1,
-        open: char,
-        close: char === '(' ? ')' : char === '{' ? '}' : ']',
-        commands: char === '(',
+        open: '(',
+        close: ')',
+        commands: true,
       })
       if (ends === -1) return -1
       at = ends - 1
@@ -279,6 +279,12 @@ class Reader {
       if (char === '#') {
         while (this.index < this.source.length && this.peek() !== '\n')
           this.index++
+        // Bash 3.2 joins a continued line first, so in a substitution the comment runs on over the next.
+        if (
+          this.substitutions > 0 &&
+          this.source.charAt(this.index - 1) === '\\'
+        )
+          this.doubts.add(doubtOfSubstitutionEnd)
         continue
       }
       if (char === '\n') {
@@ -371,8 +377,11 @@ class Reader {
       }
       // An array's subscript still open: what follows, a `<<` or a `|` among it, isn't the shell's.
       if (
-        words.every(({ text }) => /^\w+=/u.test(text)) &&
-        /^[A-Za-z_]\w*\[[^\]]*$/u.test(word.word.text)
+        words.every(({ text }) =>
+          /^(?:\w+(?:\[.*\])?\+?=|time$|-p$)/u.test(text),
+        ) &&
+        /^[A-Za-z_]\w*\[/u.test(word.word.text) &&
+        !/\]\+?=/u.test(word.word.text)
       )
         this.doubts.add(doubtOfSubscript)
       words.push(word.word)
@@ -433,7 +442,8 @@ class Reader {
       }
       const raw = this.source.slice(start, this.index)
       // Bash joins continued lines in a body that expands, its last line's with the delimiter too.
-      if (document.expands && raw.includes('\\\n'))
+      // Bash 3.2 does so in a substitution even where the delimiter is quoted.
+      if ((document.expands || this.substitutions > 0) && raw.includes('\\\n'))
         this.doubts.add(doubtOfContinuedDocument)
       if (this.substitutions > 0 && /[^\0-\x7f]\\/u.test(raw))
         this.doubts.add(doubtOfLocale)

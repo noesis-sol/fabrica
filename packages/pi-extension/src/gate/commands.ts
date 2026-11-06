@@ -238,7 +238,7 @@ const harmlessTargets = /^\/dev\/(?:null|stdout|stderr|tty|fd\/\d+)$/u
 const unreadPush = /\bgit\b[\s\S]*\b(?:push|send-pack|http-push|dcommit)\b/u
 const unreadSudo = /(?:^|[^\w-])(?:sudo|doas|pkexec|run0)\b/u
 
-const assignment = /^([A-Za-z_][A-Za-z0-9_]*)\+?=/u
+const assignment = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[.*\])?\+?=/su
 
 /** Builtins that set the variables their operands name. */
 const setters = new Set([
@@ -906,8 +906,18 @@ class Policy {
         depth,
       )
     }
+    // A glob: which command it is depends on what's in the folder.
+    if (
+      /(?:^|[^\\])[*?[]/u.test(first.pattern) &&
+      !/^\[\[?$/u.test(first.text)
+    ) {
+      this.ask(`the command ${first.text} is spelled by a glob`)
+      return cwd
+    }
     const name = basename(first.text)
     const args = rest.slice(1)
+    // `time ! x`: the `!` a wrapper leaves is the shell's, and `x` runs.
+    if (name === '!') return this.words(args, cwd, depth)
     this.setsUnnamed(first, args)
 
     if (refusedUsers.has(name)) {
@@ -957,7 +967,13 @@ class Policy {
         this.ask('eval runs a command known only when it runs')
         return cwd
       }
-      return this.script(args.map(({ text }) => text).join(' '), cwd, depth + 1)
+      // `eval -- x`: bash's builtins take the end of options.
+      const script = args[0]?.text === '--' ? args.slice(1) : args
+      return this.script(
+        script.map(({ text }) => text).join(' '),
+        cwd,
+        depth + 1,
+      )
     }
     if (name === 'find') {
       this.find(args, cwd, depth)

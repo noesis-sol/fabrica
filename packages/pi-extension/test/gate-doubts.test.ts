@@ -204,6 +204,53 @@ const lines: ReadonlyArray<readonly [Expected, string]> = [
   // Coproc, on the bash that has it.
   ['refused', 'coproc git push origin main'],
   ['asked', 'coproc x { git push origin main; }'],
+  // A comment continued in a substitution runs on over the next line on bash 3.2 (family L).
+  ['asked', "echo $(echo a # x\\\n'\ngit push origin main\n#'\n)"],
+  ['asked', "x=$(echo a # it's\\\n'\ngit push origin main\n#'\n)"],
+  ['asked', "echo $(\n# x\\\n'\ngit push origin main\n#'\n)"],
+  ['asked', 'echo "$(echo a # x\\\n\'\ngit push origin main\n#\'\n)"'],
+  // A body continued in a substitution, even with its delimiter quoted, joins first there (family M).
+  ['asked', "echo $(cat <<'EF'\nE\\\nF\ngit push origin main\nEF\n)"],
+  ['asked', 'echo $(cat <<\\EF\nE\\\nF\ngit push origin main\nEF\n)'],
+  ['asked', 'echo $(cat <<"EF"\nE\\\nF\ngit push origin main\nEF\n)'],
+  // Bash 3.2's matcher doesn't nest `${` in a substitution (family N).
+  ['asked', 'echo $(echo ${x:-)\ngit push origin main\n}\n)'],
+  ['asked', 'echo $(echo ${x)\ngit push origin main\n}\n)'],
+  ['asked', 'x=$(echo ${x:-);git push origin main\n}\n)'],
+  ['allowed', 'echo $(echo ${x:-y})'],
+  // A subscripted assignment before a command is no command's name.
+  ['refused', 'a[1]=2 git push origin main'],
+  ['refused', 'a[1]+=2 git push origin main'],
+  ['refused', "a['x y']=2 git push origin main"],
+  ['refused', 'x=1 a[1]=2 git push origin main'],
+  ['refused', 'a[1]=2 x=1 git push origin main'],
+  ['refused', 'time a[1]=2 git push origin main'],
+  ['refused', "a[1]=2 bash -c 'git push origin main'"],
+  ['refused', 'a[1]=2 rm -rf /etc/x'],
+  ['refused', 'a[1]=2 sudo ls'],
+  ['allowed', 'a[1]=2 ls'],
+  // The end of options after `eval`.
+  ['refused', "eval -- 'git push origin main'"],
+  ['refused', "command eval -- 'git push origin main'"],
+  ['refused', 'eval -- rm -rf /etc/x'],
+  // A `!` after `time`.
+  ['refused', 'time ! git push origin main'],
+  ['refused', 'time ! rm -rf /etc/x'],
+  ['refused', '! time ! git push origin main'],
+  // A command's name spelled by a glob: which one depends on the folder.
+  ['asked', '>git; g?t push origin main'],
+  ['asked', '>git; gi[t] push origin main'],
+  ['asked', '>git; g* push origin main'],
+  ['asked', '>git; [g]it push origin main'],
+  ['allowed', '[ -f notes.txt ]'],
+  ['allowed', '[[ -f notes.txt ]]'],
+  ['allowed', "'ls' src"],
+  // Subscripts the open `name[` shape missed.
+  ['asked', 'a[b[1] <<2]=1\ngit push origin main'],
+  ['asked', 'a["]" <<2]=1\ngit push origin main'],
+  ['asked', "a[']' <<2]=1\ngit push origin main"],
+  ['asked', 'time a[1 <<2]=1\ngit push origin main'],
+  ['asked', 'time -p a[1 <<2]=1\ngit push origin main'],
 ]
 
 describe('a line the gate doubts', () => {
