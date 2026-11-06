@@ -2102,6 +2102,21 @@ const runStarted = Effect.fn('Run.started')(function* (
     Effect.as(control.setAsking(false), Option.none<Ending>()),
   )
 
+  /** Whether questions wait on an answer: the run is then asking for it, and says which as they change. */
+  const asksForAnswers = Effect.gen(function* () {
+    const waiting = yield* questionsWaiting
+    if (waiting.length === 0) return false
+    yield* control.setAsking(true)
+    if (waiting.join() !== saidWaiting.join()) {
+      saidWaiting = waiting
+      yield* record(log, {
+        kind: 'info',
+        text: `QUESTIONS_WAITING: nothing is ready but the questions ${waiting.join(', ')}: answer them in the answer talk, or with \`fabrica answer\`, and the run takes up what they free`,
+      })
+    }
+    return true
+  })
+
   /** A drain asked or taken back, as its record says it (§13.10). */
   const drainSaid = (reason: WakeReason) =>
     WakeReason.$is('Drain')(reason)
@@ -2276,27 +2291,17 @@ const runStarted = Effect.fn('Run.started')(function* (
       // So does a guess on its way: the ticket waiting for it is to come (§16).
       if ((yield* predictor.asking) && !draining) return yield* goesOn
       // A breakdown under way keeps it too, unless it drains: the rest of its tree is to come (§15.5).
-      if (breakingDown && !draining) return yield* goesOn
+      // Its questions are asked meanwhile: the answer talk opens as soon as one is open (§15.3).
+      if (breakingDown && !draining)
+        return (yield* asksForAnswers) ? Option.none<Ending>() : yield* goesOn
       // A budget spent is a limit reached (§13.11, §14.4): whatever is still ready waits for another run.
       const limitReached =
         Option.exists(limit, most => after.dispatched >= most) ||
         anyOn(yield* holds.current, 'BUDGET')
       // Nothing ready but questions: the run asks for the answer talk rather than end, and takes up
       // what each answer frees as it wakes on it (§13.1, §15.3). A drain or a limit still ends it.
-      if (!limitReached && !draining) {
-        const waiting = yield* questionsWaiting
-        if (waiting.length > 0) {
-          yield* control.setAsking(true)
-          if (waiting.join() !== saidWaiting.join()) {
-            saidWaiting = waiting
-            yield* record(log, {
-              kind: 'info',
-              text: `QUESTIONS_WAITING: nothing is ready but the questions ${waiting.join(', ')}: answer them in the answer talk, or with \`fabrica answer\`, and the run takes up what they free`,
-            })
-          }
-          return Option.none<Ending>()
-        }
-      }
+      if (!limitReached && !draining && (yield* asksForAnswers))
+        return Option.none<Ending>()
       yield* control.setAsking(false)
       return Option.some(
         Ending.Done({

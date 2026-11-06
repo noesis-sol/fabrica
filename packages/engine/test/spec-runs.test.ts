@@ -1,4 +1,14 @@
-import { Duration, Effect, Fiber, Layer, Option, Ref, Result } from 'effect'
+import {
+  Deferred,
+  Duration,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Ref,
+  Result,
+  Stream,
+} from 'effect'
 import { TestClock } from 'effect/testing'
 import {
   chmodSync,
@@ -13,6 +23,9 @@ import { join } from 'node:path'
 
 import { beforeAll, describe, expect, it } from '@effect/vitest'
 import {
+  AttentionAnswer,
+  ProjectId,
+  QuestionAnswer,
   SpecCommitKey,
   SpecEnvironmentKey,
   SpecSha256Key,
@@ -21,10 +34,11 @@ import {
   RunMode as WireMode,
 } from '@fabrica/contracts'
 
+import { AttentionRequests, make as makeAttention } from '../src/attention'
 import { layer as gitLayer } from '../src/git'
 import { layer as runnerLayer } from '../src/process'
 import { makeSelfSigned } from '../src/rpc/certificate'
-import { RunMode, runProject } from '../src/run'
+import { RunMode, makeRunControl, runProject } from '../src/run'
 import { shownMode } from '../src/run/spec-mode'
 import {
   type ReadSpec,
@@ -995,6 +1009,78 @@ describe('A spec run (§15.5)', () => {
             )
           }),
         )
+      }),
+  )
+
+  it.effect(
+    'asks for an answer as soon as a question is open, while the breakdown goes on (§15.3)',
+    () =>
+      Effect.gen(function* () {
+        const fixture = project(
+          settings,
+          breakdownFile({
+            root: {
+              root: rootCall.root,
+              environment: {
+                ...environmentCall.environment,
+                description: 'stub: ask',
+              },
+            },
+            waitForEnvironment: true,
+            answers: [{ items: [item('one')] }],
+          }),
+        )
+        const made = yield* makeRunControl
+        const asking = yield* Deferred.make<void>()
+        const control = {
+          ...made,
+          setAsking: (now: boolean) =>
+            Effect.andThen(
+              made.setAsking(now),
+              now ? Deferred.succeed(asking, undefined) : Effect.void,
+            ),
+        }
+        const end = yield* withRuns(
+          fixture,
+          Effect.gen(function* () {
+            const running = yield* Effect.forkScoped(
+              runProject(configOf(fixture, specMode), control),
+            )
+            yield* Deferred.await(asking)
+            expect(yield* control.state).toBe('asking')
+            // The breakdown is still under way: it waits for the environment ticket this question holds.
+            const events = yield* eventsOf(fixture)
+            expect(ofKind(events, 'organ')).toEqual([])
+            const [question] = ofKind(events, 'asked')
+            if (question === undefined)
+              return yield* Effect.die('nothing was asked')
+            const graph = yield* WorkGraph
+            yield* Effect.flatMap(AttentionRequests, attention =>
+              attention.answer({
+                answer: AttentionAnswer.cases.question.make({
+                  project: ProjectId.make('p1'),
+                  ticket: question.question,
+                  answer: QuestionAnswer.cases.option.make({ index: 1 }),
+                }),
+                by: 'the test',
+              }),
+            ).pipe(
+              Effect.provide(
+                Layer.effect(
+                  AttentionRequests,
+                  makeAttention({
+                    list: Effect.succeed([ProjectId.make('p1')]),
+                    changed: Stream.never,
+                    graph: () => Effect.succeed(graph),
+                    events: () => Effect.succeed([]),
+                  }),
+                ),
+              ),
+            )
+            return yield* Fiber.join(running)
+          }),
+        )
+        expect(end).toMatchObject({ kind: 'READY_EMPTY', code: 0 })
       }),
   )
 
