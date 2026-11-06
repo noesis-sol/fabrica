@@ -26,7 +26,7 @@ export interface SimpleCommand {
 export type Script = Data.TaggedEnum<{
   Parsed: {
     readonly commands: ReadonlyArray<SimpleCommand>
-    /** A `$'…'` holds a character code, which can spell an option or a name anywhere: decoded, and still asked of. */
+    /** A `$'…'` holds a character code or a `\c`, which can spell an option or a name anywhere: decoded, and still asked of. */
     readonly codes: boolean
     /** The words that name no command: a function's name, a loop's variable and list, a case's subject, a read redirection's file, a here-document's assigning expansions. */
     readonly unnamed: ReadonlyArray<Word>
@@ -412,7 +412,7 @@ class Reader {
       }
     }
     // `\c` at the end of the string stands for itself; a backslash after it takes a second one along, as
-    // bash 5 reads it. Bash 3.2 reads that apart, so the string asks (`codes`) either way.
+    // bash 5 reads it. Bash 3.2 reads both apart, so any `\c` asks (`codes`) either way.
     if (next === 'c' && this.index + 2 < close) {
       const control = this.peek(2)
       this.index += control === '\\' && this.peek(3) === '\\' ? 4 : 3
@@ -509,14 +509,10 @@ class Reader {
         let ended = false
         const close = this.ansiClose()
         while (this.index < close) {
-          // A character code asks, whatever it decodes to: it can spell anything. So does a backslash after
-          // `\c`, which versions of bash read apart: 5 takes `\c\\` whole, and 3.2, macOS's, keeps the second
-          // backslash to start another escape, so `\c\\x2f` holds a `/` there.
-          if (
-            this.peek() === '\\' &&
-            (/[0-7xuU]/u.test(this.peek(1)) ||
-              (this.peek(1) === 'c' && this.peek(2) === '\\'))
-          )
+          // A character code asks, whatever it decodes to: it can spell anything. So does any `\c`, which
+          // versions of bash read apart: a backslash after it starts another escape in 3.2, macOS's, and at
+          // the end of the string 3.2 leaves a lone backslash, which escapes what follows in an `eval`.
+          if (this.peek() === '\\' && /[0-7xuUc]/u.test(this.peek(1)))
             this.codes = true
           let decoded = this.peek()
           if (decoded === '\\') decoded = this.ansiEscape(close)

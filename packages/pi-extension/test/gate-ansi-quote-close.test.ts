@@ -43,7 +43,17 @@ const lines: ReadonlyArray<readonly [Expected, string]> = [
   ['refused', "bash -c \"echo \\$'\\c'; rm -rf /etc/passwd #'\""],
   // An escaped quote stays inside the string, and what is inside isn't a command.
   ['allowed', "echo $'it\\'s; rm -rf /etc/passwd'"],
-  ['allowed', "echo $'\\cA; rm -rf /etc/passwd'"],
+  // Any `\c` asks, as versions of bash read it apart.
+  ['asked', "echo $'\\cA; rm -rf /etc/passwd'"],
+  // At the end of the string bash 3.2 leaves a lone backslash, which escapes what follows in an `eval`.
+  ['asked', "eval $'g\\c'it push origin main"],
+  ['asked', "bash -c $'g\\c'it\\ push"],
+  ['asked', "eval $'su\\c'do rm -rf x"],
+  ['asked', "eval rm -rf $'..\\c'"],
+  ['asked', "eval $'rm -rf ..\\c'"],
+  ['asked', "bash -c $'rm -rf ..\\c'"],
+  ['asked', "eval $'rm -rf ..\\c'/x"],
+  ['asked', "eval $'cd ..\\c'; rm -rf x"],
   // A backslash after `\c`, which bash 3.2 and 5 read apart: it asks, on either reading.
   ['asked', "echo $'\\c\\'; rm -rf /etc/passwd'"],
   ['asked', "rm -rf $'\\c\\\\x2f../../x'"],
