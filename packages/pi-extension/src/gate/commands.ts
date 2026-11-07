@@ -21,6 +21,7 @@ import {
   type SimpleCommand,
   type Word,
   arithmeticReads,
+  countsOnly,
   parseScript,
   readsNothing,
   rereadsEither,
@@ -73,7 +74,18 @@ const gitVariables = new Set([
   'GIT_CONFIG_PARAMETERS',
 ])
 
-const shells = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh', 'ash', 'hush'])
+const shells = new Set([
+  'bash',
+  'sh',
+  'zsh',
+  'dash',
+  'ksh',
+  'ash',
+  'hush',
+  'csh',
+  'tcsh',
+  'fish',
+])
 
 /** Whether `source`, read as bash reads it, holds a `$'…'` or `$"…"`. */
 const holdsDollarQuotes = (
@@ -86,7 +98,10 @@ const holdsDollarQuotes = (
   })
 
 /** Shells whose grammar is further from bash's than the POSIX shell's. */
-const otherGrammars = new Set(['zsh', 'ksh'])
+const otherGrammars = new Set(['zsh', 'ksh', 'csh', 'tcsh', 'fish'])
+
+/** Shells that read a file from the home folder whatever they are asked to run. */
+const homeReaders = new Set(['zsh', 'csh', 'tcsh'])
 
 const removals = new Set(['rm', 'rmdir', 'unlink', 'shred', 'srm', 'trash'])
 
@@ -276,8 +291,14 @@ const dynamicName = ({ text, dynamic }: Word): boolean => {
 interface ShellArguments {
   /** The file it runs, first past its options. */
   readonly file: Option.Option<Word>
+  /** `-c`'s script, first past its options. */
+  readonly source: Option.Option<Word>
+  /** `-c` was given. */
+  readonly commanded: boolean
   /** `-s`: it runs its input, whatever operands follow. */
   readonly input: boolean
+  /** `-i`, `-l` or `--login`: it runs files from the home folder first. */
+  readonly home: boolean
   /** `--rcfile` or `--init-file`: it runs a file before anything else. */
   readonly startup: boolean
 }
@@ -285,9 +306,14 @@ interface ShellArguments {
 const shellArguments = (args: ReadonlyArray<Word>): ShellArguments => {
   let input = false
   let startup = false
-  const ended = (file: Word | undefined): ShellArguments => ({
-    file: Option.fromUndefinedOr(file),
+  let home = false
+  let commanded = false
+  const ended = (operand: Word | undefined): ShellArguments => ({
+    file: commanded ? Option.none() : Option.fromUndefinedOr(operand),
+    source: commanded ? Option.fromUndefinedOr(operand) : Option.none(),
+    commanded,
     input,
+    home,
     startup,
   })
   for (let index = 0; index < args.length; index++) {
@@ -299,11 +325,16 @@ const shellArguments = (args: ReadonlyArray<Word>): ShellArguments => {
     if (/^--(?:rcfile|init-file)(?:=|$)/u.test(text)) {
       startup = true
       if (!text.includes('=')) index++
-    } else if (text.startsWith('--')) continue
+    } else if (text === '--login') home = true
+    else if (text.startsWith('--')) continue
     else if (/^[-+]./u.test(text)) {
-      if (text.startsWith('-') && text.includes('c')) return ended(undefined)
-      if (text.startsWith('-') && text.includes('s')) input = true
-      if (/[oO]$/u.test(text)) index++
+      if (text.startsWith('-')) {
+        commanded ||= text.includes('c')
+        input ||= text.includes('s')
+        home ||= /[il]/u.test(text)
+      }
+      // Each takes the next word.
+      index += text.replaceAll(/[^oO]/gu, '').length
     } else return ended(word)
   }
   return ended(undefined)
@@ -313,8 +344,8 @@ const shellArguments = (args: ReadonlyArray<Word>): ShellArguments => {
 const textRunners: ReadonlyMap<string, RegExp> = new Map([
   ['alias', /=/u],
   ['bind', /^-[A-Za-z]*x/u],
-  ['compgen', /^-[A-Za-z]*[CF]/u],
-  ['complete', /^-[A-Za-z]*[CF]/u],
+  ['compgen', /^-[A-Za-z]*[CFW]/u],
+  ['complete', /^-[A-Za-z]*[CFW]/u],
   ['enable', /^-[A-Za-z]*f/u],
   ['fc', /^/u],
   ['hash', /^-[A-Za-z]*p/u],
@@ -324,7 +355,34 @@ const textRunners: ReadonlyMap<string, RegExp> = new Map([
 
 /** Variables and settings whose text bash runs or reads as commands. */
 const runsVariable =
-  /^(?:BASH_ENV|ENV|PS[0124]|PROMPT_COMMAND|BASH_ALIASES|expand_aliases)(?:\[.*\])?(?:\+?=.*)?$/su
+  /^(?:-[A-Za-z]*v)?(?:\$\{)?(?:BASH_ENV|ENV|ZDOTDIR|PS[0124]|PROMPT_COMMAND|BASH_ALIASES|BASH_CMDS|expand_aliases)(?:\[.*\])?(?:\+?:?=.*)?\}?$/su
+
+/** Variables bash evaluates as arithmetic when they're assigned: a number given them needs no asking. */
+const evaluatedVariable =
+  /^(?:-[A-Za-z]*v)?(?:\$\{)?(?:OPTIND|HISTCMD)(?:\+?:?=(?!\d+$).*)?\}?$/su
+
+/** A word setting `PATH`, attached to `printf -v` or in an expansion too. */
+const setsPathWord = /^(?:-[A-Za-z]*v)?(?:\$\{)?PATH(?:\+?:?=.*)?\}?$/su
+
+/** Where a script given to a shell or `source` isn't a file a line could have reviewed: what's read there is the line's. */
+const deviceFolder = /^(?:\/private)?\/(?:dev|proc)(?:\/|$)/u
+
+/** Builtins that read a name's subscript, as arithmetic. */
+const subscriptReaders = new Set([
+  'declare',
+  'typeset',
+  'local',
+  'readonly',
+  'export',
+  'read',
+  'unset',
+  'getopts',
+  'mapfile',
+  'readarray',
+  'wait',
+  'test',
+  '[',
+])
 
 /** Builtins that set a variable from what they read, which the gate can't see. */
 const readers = new Set(['read', 'mapfile', 'readarray', 'getopts'])
@@ -342,7 +400,14 @@ const assignedValue = /^[A-Za-z_]\w*(?:\[.*\])?\+?=(.*)$/su
 
 /** A value only arithmetic made, or the shell's own count: a number, whatever the line holds. */
 const numericValue =
-  /^(?:\$\(\((?:(?!\$\(|`).)*\)\)|\$[#?$!]|\$(?:RANDOM|SECONDS|LINENO)|\$\{#\w+(?:\[[@*]\])?\})$/su
+  /^(?:\$\(\((?:(?!\$\(|`|\)\)).)*\)\)|\$[#?$!]|\$(?:RANDOM|SECONDS|LINENO)|\$\{#\w+(?:\[[@*]\])?\}|\$\{!\w+\[[@*]\]\}|\$\{BASH_VERSINFO\[\d\]\})$/su
+
+const numeric = (text: string): boolean =>
+  numericValue.test(text) || countsOnly(text)
+
+/** A word holding, as text, what an expansion would run. */
+const holdsSubstitution = ({ text, dynamic }: Word): boolean =>
+  !dynamic && /\$\((?!\()|`/u.test(text)
 
 /** What can make a variable's text an expression holding a subscript: `[`, or an expansion or substitution. */
 const expressionText = /[[$`]/u
@@ -352,7 +417,7 @@ const unvouchedValue = ({ text, dynamic }: Word): boolean => {
   if (/\$\{\w+:?=/u.test(text)) return true
   const value = assignedValue.exec(text)?.[1]
   if (value === undefined) return false
-  return dynamic ? !numericValue.test(value) : expressionText.test(value)
+  return dynamic ? !numeric(value) : expressionText.test(value)
 }
 
 /** Builtins whose `-n` makes a name refer to another variable, which assigning to it sets. */
@@ -764,6 +829,12 @@ class Policy {
   unvouched = false
   /** The line sets `PATH`, where a shell or `source` looks for a script named without a folder. */
   setsPath = false
+  /** The line makes a link, through which what it writes may be what it runs under another name. */
+  madeLink = false
+  /** The line runs a shell that reads files from the home folder first. */
+  readsHome = false
+  /** Where each word landed, as `landings` read it. */
+  readonly landed = new Map<string, ReadonlySet<string>>()
 
   constructor(
     readonly context: CommandContext,
@@ -799,10 +870,14 @@ class Policy {
     )
   }
 
-  /** `word` is written; `content` where what's written can then be run, as `chmod`'s or `mkdir`'s can't. */
-  written(word: Word, cwd: Folders, content = true): void {
+  /**
+   * `word` is written; `content` where what's written can then be run, as `chmod`'s or `mkdir`'s can't.
+   * `own` is the command it's the redirection of, which truncates it before running what it names.
+   */
+  written(word: Word, cwd: Folders, content = true, own?: SimpleCommand): void {
     if (!word.dynamic && harmlessTargets.test(word.text)) return
-    if (content) this.writes.push({ word, cwd, command: this.current })
+    if (content && (word.dynamic || word.text !== ''))
+      this.writes.push({ word, cwd, command: own })
     Confinement.$match(this.place(word, cwd), {
       Inside: () => undefined,
       Outside: ({ path }) => this.ask(`writes outside the worktree: ${path}`),
@@ -825,6 +900,7 @@ class Policy {
 
   /** `ln -s`: a link made here isn't on disk yet for the rest of the line to be read through, so one out of the worktree asks. */
   linked(word: Word, cwd: Folders): void {
+    this.madeLink = true
     Confinement.$match(this.place(word, cwd), {
       Inside: () => undefined,
       Outside: ({ path }) => this.ask(`links to ${path}, outside the worktree`),
@@ -903,64 +979,103 @@ class Policy {
       : landed
   }
 
-  /** Where `word` may land from each of `cwd`, none where the gate can't tell. */
-  landings(word: Word, cwd: Folders): Folders {
-    if (word.dynamic || /(?:^|[^\\])[*?[]/u.test(word.pattern))
-      return unknownFolder
-    return cwd.flatMap(from =>
-      Locations.$match(locations(word.pattern, this.paths(from)), {
-        Refused: () => unknownFolder,
-        Located: ({ places }) =>
-          places.map(place =>
-            Place.$match(place, {
-              At: ({ path }) => Option.some(path),
-              Unknown: () => Option.none<string>(),
-            }),
-          ),
-      }),
-    )
-  }
-
-  /** Whether `run` may be what `write` wrote: `broad` where a write the gate can't place counts. */
-  mayHaveWritten(run: LineFile, write: LineFile, broad: boolean): boolean {
-    if (run.command === write.command) return false
-    const ran = this.landings(run.word, run.cwd)
-    const wrote = this.landings(write.word, write.cwd)
-    if ([...ran, ...wrote].some(Option.isNone)) return broad
-    return ran.some(one =>
-      wrote.some(
-        other =>
-          Option.isSome(one) &&
-          Option.isSome(other) &&
-          (one.value === other.value ||
-            one.value.startsWith(`${other.value}/`)),
-      ),
-    )
+  /** Where `file` may land, each path in one spelling: a volume may fold case and normalize names. Empty where the gate can't tell. */
+  landings({ word, cwd }: LineFile): ReadonlySet<string> {
+    const key = `${word.pattern}\0${cwd.map(folderKey).join('\0')}`
+    const known = this.landed.get(key)
+    if (known !== undefined) return known
+    const paths = new Set<string>()
+    const placed =
+      !word.dynamic &&
+      !/(?:^|[^\\])[*?[]/u.test(word.pattern) &&
+      cwd.every(from =>
+        Locations.$match(locations(word.pattern, this.paths(from)), {
+          Refused: () => false,
+          Located: ({ places }) =>
+            places.every(place =>
+              Place.$match(place, {
+                At: ({ path }) => {
+                  paths.add(path.normalize('NFC').toLowerCase())
+                  return true
+                },
+                Unknown: () => false,
+              }),
+            ),
+        }),
+      )
+    const found = placed ? paths : new Set<string>()
+    this.landed.set(key, found)
+    return found
   }
 
   /** What only the whole line tells, once it has all been read. */
   finished(): void {
+    const scattered = this.writes.filter(
+      write => this.landings(write).size === 0,
+    )
+    /** Each path written, with the commands' redirections that wrote it. */
+    const wrote = new Map<string, Array<SimpleCommand | undefined>>()
+    for (const write of this.writes)
+      for (const path of this.landings(write))
+        wrote.set(path, [...(wrote.get(path) ?? []), write.command])
+    /** Whether `run` may be what the line wrote: `broad` where a write the gate can't place counts. */
+    const mayHaveWritten = (run: LineFile, broad: boolean): boolean => {
+      const other = (command: SimpleCommand | undefined) =>
+        command === undefined || command !== run.command
+      if (broad && scattered.some(({ command }) => other(command))) return true
+      const paths = this.landings(run)
+      if (paths.size === 0) return broad && this.writes.length > 0
+      // A name without a folder is found on the PATH: a written folder holds it only by the name itself.
+      if (!run.word.text.includes('/'))
+        return [...paths].some(path => wrote.get(path)?.some(other) === true)
+      return [...paths].some(path => {
+        for (
+          let at = path;
+          at.length > 1;
+          at = at.slice(0, Math.max(at.lastIndexOf('/'), 1))
+        )
+          if (wrote.get(at)?.some(other) === true) return true
+        return wrote.get('/')?.some(other) === true
+      })
+    }
     const searched = this.scripts.find(({ word }) => !word.text.includes('/'))
     if (this.setsPath && searched !== undefined)
       this.ask(
         `runs the script ${searched.word.text} from a PATH this line sets`,
       )
-    for (const script of this.scripts)
-      if (this.writes.some(write => this.mayHaveWritten(script, write, true))) {
-        this.ask(
-          `runs the script ${script.word.text}, which this line may have written`,
-        )
-        break
-      }
-    for (const command of this.named)
-      if (
-        this.writes.some(write =>
-          this.mayHaveWritten(command, write, command.word.text.includes('/')),
-        )
-      ) {
-        this.ask(`runs ${command.word.text}, which this line may have written`)
-        break
-      }
+    const script = this.scripts.find(file => mayHaveWritten(file, true))
+    if (script !== undefined)
+      this.ask(
+        `runs the script ${script.word.text}, which this line may have written`,
+      )
+    if (this.madeLink && this.scripts.length > 0)
+      this.ask(
+        'runs a script on a line that makes a link, through which it may have been written',
+      )
+    const seen = new Set<string>()
+    const command = this.named.find(file => {
+      const key = `${file.word.pattern}\0${file.cwd.map(folderKey).join('\0')}`
+      const first = !seen.has(key)
+      seen.add(key)
+      return first && mayHaveWritten(file, file.word.text.includes('/'))
+    })
+    if (command !== undefined)
+      this.ask(`runs ${command.word.text}, which this line may have written`)
+    const other = this.named.find(
+      ({ word, command: by }) =>
+        !word.text.includes('/') &&
+        this.writes.some(
+          write => write.command === undefined || write.command !== by,
+        ),
+    )
+    if (this.setsPath && other !== undefined)
+      this.ask(
+        `runs ${other.word.text} from a PATH this line sets, on a line that writes files`,
+      )
+    if (this.readsHome && this.moved.home)
+      this.ask(
+        'runs a shell that reads files from a home folder this line sets',
+      )
     if (this.rereads.output)
       this.ask(
         'arithmetic reads a substitution’s output or a parameter as an expression, where a subscript runs commands',
@@ -975,8 +1090,10 @@ class Policy {
   runsScript(name: string, word: Word, cwd: Folders): void {
     Confinement.$match(this.place(word, cwd), {
       Inside: () => undefined,
-      Outside: ({ path }) =>
-        this.ask(`${name} runs ${path}, outside the worktree`),
+      Outside: ({ path }) => {
+        if (deviceFolder.test(path))
+          this.ask(`${name} runs ${path}, which the line itself may feed`)
+      },
       Unknown: ({ reason }) =>
         this.ask(
           `${name} runs a script the gate can’t place, ${word.text}: ${reason}`,
@@ -998,19 +1115,39 @@ class Policy {
       this.rereads = rereadsEither(this.rereads, arithmeticReads(text))
     }
     if (name === 'let') args.forEach(({ text }) => reads(text))
-    // `[[`'s numeric tests evaluate both sides; `[` and `test` take only numbers.
-    if (name === '[[')
-      args.forEach(({ text }, index) => {
-        if (/^-(?:eq|ne|lt|le|gt|ge)$/u.test(text)) {
-          reads(args[index - 1]?.text ?? '')
-          reads(args[index + 1]?.text ?? '')
-        }
-      })
+    // `[` and `test` take only numbers, but their `-v` reads a name's subscript.
     if (
-      integerSetters.has(name) &&
-      args.some(({ text }) => /^-[A-Za-z]*i/u.test(text))
+      name !== 'test' && name !== '['
+        ? subscriptReaders.has(name)
+        : hasOption(args, '-v')
+    )
+      for (const { text } of args) {
+        const subscript = /\[(.*)\]/su.exec(text)?.[1]
+        if (subscript !== undefined) reads(subscript)
+        if (name === 'test' || name === '[') reads(text)
+      }
+    if (name === 'printf' && args[0]?.text.startsWith('-v') === true)
+      reads(
+        /\[(.*)\]/su.exec(`${args[0].text} ${args[1]?.text ?? ''}`)?.[1] ?? '',
+      )
+    if (
+      (name === 'unset' || name === 'wait') &&
+      args.some(({ dynamic }) => dynamic)
     )
       reads('x')
+    if (integerSetters.has(name)) {
+      if (args.some(({ text }) => /^-[A-Za-z]*i/u.test(text))) reads('x')
+      const compound = args.some(({ text }) => /^-[A-Za-z]*[aA]/u.test(text))
+      // Bash reads such a value as an array's, expanding what's in it.
+      if (
+        args.some(
+          word =>
+            holdsSubstitution(word) ||
+            (compound && word.dynamic && assignedValue.test(word.text)),
+        )
+      )
+        this.ask(`${name} expands the text of what it assigns`)
+    }
     if (
       readers.has(name) ||
       name === '.' ||
@@ -1039,10 +1176,18 @@ class Policy {
       Parsed: ({ commands, unnamed, doubts, rereads }) => {
         for (const doubt of doubts) this.ask(doubt)
         this.rereads = rereadsEither(this.rereads, rereads)
+        const allWords = commands.flatMap(({ words, writes }) => [
+          ...words,
+          ...writes,
+        ])
         if (
-          commands.some(({ words }) => words.some(unvouchedValue)) ||
+          allWords.some(
+            word => unvouchedValue(word) || holdsSubstitution(word),
+          ) ||
           unnamed.some(
-            ({ text, dynamic }) => dynamic || expressionText.test(text),
+            ({ text, dynamic }) =>
+              (dynamic && !numeric(text)) ||
+              (!dynamic && expressionText.test(text)),
           )
         )
           this.unvouched = true
@@ -1053,11 +1198,12 @@ class Policy {
           ...unnamed,
         ].flatMap(spellings)
         const named = (name: string) => texts.some(text => text.includes(name))
-        const running = texts.find(text => runsVariable.test(text))
+        const running = texts.find(
+          text => runsVariable.test(text) || evaluatedVariable.test(text),
+        )
         if (running !== undefined)
           this.ask(`${running} sets what bash runs or reads as commands`)
-        if (texts.some(text => /^PATH(?:\+?=.*)?$/su.test(text)))
-          this.setsPath = true
+        if (texts.some(text => setsPathWord.test(text))) this.setsPath = true
         // `${!v:=x}` assigns to the variable `v` names, in the bash versions that take it.
         const indirect = texts.some(text => /\$\{![^}]*=/u.test(text))
         this.moved = {
@@ -1119,9 +1265,13 @@ class Policy {
 
   /** A simple command's findings, run from `cwd`; the folders it may leave the shell in. */
   command(command: SimpleCommand, cwd: Folders, depth: number): Folders {
+    const outer = this.current
     this.current = command
-    for (const target of command.writes) this.written(target, cwd)
-    return this.words(command.words, cwd, depth)
+    for (const target of command.writes)
+      this.written(target, cwd, true, command)
+    const folders = this.words(command.words, cwd, depth)
+    this.current = outer
+    return folders
   }
 
   /** A command's words: wrappers seen through, then the command itself. */
@@ -1202,7 +1352,19 @@ class Policy {
       return cwd
     }
     if (shells.has(name)) {
-      const { file, input, startup } = shellArguments(args)
+      const {
+        file,
+        source: named,
+        commanded,
+        input,
+        home,
+        startup,
+      } = shellArguments(args)
+      if (home || homeReaders.has(name)) this.readsHome = true
+      if (!commanded && Option.isNone(file))
+        this.ask(
+          `${name} runs a script from its input, which the gate can’t read`,
+        )
       if (input)
         this.ask(
           `${name} -s runs a script from its input, which the gate can’t read`,
@@ -1213,28 +1375,26 @@ class Policy {
       const flag = args.findIndex(
         ({ text, dynamic }) => !dynamic && /^-[A-Za-z]*c[A-Za-z]*$/u.test(text),
       )
-      if (flag === -1) {
-        if (operands(args).length === 0)
-          this.ask(
-            `${name} runs a script from its input, which the gate can’t read`,
-          )
-        return cwd
-      }
-      const source = args
-        .slice(flag + 1)
-        .find(({ text }) => !text.startsWith('-'))
-      if (source === undefined) return cwd
-      if (source.dynamic)
-        this.ask(`${name} -c runs a script known only when it runs`)
-      else {
-        // The gate reads a script as bash does, and the others read some otherwise.
-        if (otherGrammars.has(name))
-          this.ask(`${name} reads its script by rules the gate doesn’t know`)
-        else if (name !== 'bash' && holdsDollarQuotes(source.text, this.home))
-          this.ask(
-            `${name} may not know $'…' or $"…", so the gate can’t tell where they end`,
-          )
-        this.script(source.text, cwd, depth + 1)
+      if (flag === -1) return cwd
+      // What the shell reads as its script, and the first word that doesn't look like an option, should they differ.
+      const sources = new Set([
+        args.slice(flag + 1).find(({ text }) => !text.startsWith('-')),
+        Option.getOrUndefined(named),
+      ])
+      for (const source of sources) {
+        if (source === undefined) continue
+        if (source.dynamic)
+          this.ask(`${name} -c runs a script known only when it runs`)
+        else {
+          // The gate reads a script as bash does, and the others read some otherwise.
+          if (otherGrammars.has(name))
+            this.ask(`${name} reads its script by rules the gate doesn’t know`)
+          else if (name !== 'bash' && holdsDollarQuotes(source.text, this.home))
+            this.ask(
+              `${name} may not know $'…' or $"…", so the gate can’t tell where they end`,
+            )
+          this.script(source.text, cwd, depth + 1)
+        }
       }
       return cwd
     }
@@ -1341,9 +1501,23 @@ class Policy {
             '--arg-file',
           ]),
         )
-        return command.length === 0
-          ? command
-          : [...command, { text: '<input>', pattern: '<input>', dynamic: true }]
+        // A placeholder stands for the input, as the word after the command does.
+        const placeholder = args.flatMap(({ text }, index) => {
+          const attached = /^-[IJ](.+)$/u.exec(text)?.[1]
+          if (attached !== undefined) return [attached]
+          if (text === '-I' || text === '-J')
+            return [args[index + 1]?.text ?? '']
+          if (text === '-i' || text === '--replace') return ['{}']
+          return []
+        })
+        const placed = command.map(word =>
+          placeholder.some(held => held !== '' && word.text.includes(held))
+            ? { ...word, dynamic: true }
+            : word,
+        )
+        return placed.length === 0
+          ? placed
+          : [...placed, { text: '<input>', pattern: '<input>', dynamic: true }]
       }
       default:
         return undefined

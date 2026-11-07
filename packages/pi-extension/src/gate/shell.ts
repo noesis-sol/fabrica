@@ -33,10 +33,25 @@ export interface Rereads {
 
 export const readsNothing: Rereads = { named: false, output: false }
 
+/**
+ * A substitution whose output is a number whatever went into it, its last command being one of these: what the
+ * commands before it print goes no further, and they are read as any others are.
+ */
+const countingSubstitution =
+  /\$\((?:[^()`]*\|\s*)?(?:(?:wc\s|seq\s|grep -c\s|sysctl -n hw\.|getconf\s|git rev-list --count\s)[^()`|;&]*|date \+%s\s*|nproc\s*)\)/u
+
+/** Whether `text` is such a substitution, whole. */
+export const countsOnly = (text: string): boolean => {
+  const found = countingSubstitution.exec(text)
+  return found?.index === 0 && found[0].length === text.length
+}
+
 /** What `expression`, evaluated as arithmetic, reads: a digit's `0x1f` or `16#ff` names nothing. */
 export const arithmeticReads = (expression: string): Rereads => ({
   named: /(?:^|[^\w#])[A-Za-z_]/u.test(expression),
-  output: /\$\(|`|\$\{?[1-9@*]/u.test(expression),
+  output: /\$\(|`|\$\{?[0-9@*]|\$\{!/u.test(
+    expression.replace(new RegExp(countingSubstitution, 'gu'), '0'),
+  ),
 })
 
 export const rereadsEither = (one: Rereads, other: Rereads): Rereads => ({
@@ -173,6 +188,8 @@ const doubtOfContinuedDollar =
   'a line continued right after a $, which changes how what follows is quoted'
 const doubtOfQuotedAssignment =
   'a quoted word that looks like an assignment, which bash runs as a command'
+const doubtOfFunctionExpansion =
+  'a ${ … } running commands in the shell, which only newer bash does'
 const doubtOfPromptExpansion =
   'a ${…@P} expansion, which runs what the text it reads holds'
 const doubtOfLocale =
@@ -187,10 +204,17 @@ const assignmentStart = /^[A-Za-z_]\w*(?:\[.*\])?\+?=/su
 /** A word naming a subscripted variable, whose subscript bash evaluates: `a[x]=1`, `read a[x]`. */
 const subscripted = /^[A-Za-z_]\w*\[(.*)\](?:\+?=.*)?$/su
 
+/** Text of an expanding here-document where bash evaluates a part as arithmetic. */
+const documentArithmetic = /\$\[|\$\{[^\n]*(?:\[|!|:[^-=+?])/u
+
+/** `[[`'s operators that evaluate what's beside them. */
+const testArithmetic = /(?:^|\s)-(?:eq|ne|lt|le|gt|ge|v)\s/u
+
 /** A parameter expansion's text, where bash evaluates a part as arithmetic or reads a name's text as a variable. */
 const expansionSubscript = /^[#!]?[A-Za-z_]\w*\[(.*?)\]/su
 const expansionIndirect = /^![A-Za-z_]\w*(?![@*\w])/u
-const expansionSlice = /^[A-Za-z_@*][\w@*]*(?:\[.*?\])?:(?![-=+?])(.*)$/su
+const expansionSlice =
+  /^[A-Za-z_0-9@*#$?!-][\w@*]*(?:\[.*?\])?:(?![-=+?])(.*)$/su
 
 /**
  * Where a grouping ends as bash 3.2 finds it, which is macOS's bash and so Pi's there; -1 where it doesn't.
@@ -279,6 +303,8 @@ class Reader {
   /** The line's doubts (`Script`), each said once. */
   readonly doubts = new Set<string>()
   rereads = readsNothing
+  /** Up to where a `((` already read goes: what's nested in it is part of what was read. */
+  arithmeticEnd = 0
 
   constructor(
     readonly source: string,
@@ -287,6 +313,36 @@ class Reader {
 
   peek(offset = 0): string {
     return this.source[this.index + offset] ?? ''
+  }
+
+  /** The `((` at the reader is evaluated as arithmetic, up to the `))` that closes it. */
+  noteDoubleParenthesis(): void {
+    if (this.index < this.arithmeticEnd) return
+    let depth = 0
+    let at = this.index
+    for (; at < this.source.length; at++) {
+      const char = this.source.charAt(at)
+      if (char === '(') depth++
+      else if (char === ')' && --depth === 0) break
+    }
+    this.arithmeticEnd = at
+    this.noteArithmetic(this.source.slice(this.index + 2, at))
+  }
+
+  /** The `[[` the reader has just passed evaluates what's beside its numeric tests, wherever in the test. */
+  noteTest(): void {
+    const close = this.source.indexOf(']]', this.index)
+    const test = this.source.slice(
+      this.index,
+      close === -1 ? this.source.length : close,
+    )
+    if (testArithmetic.test(test)) this.noteArithmetic(test)
+  }
+
+  /** `${` at the reader, its `{` next but one: followed by a blank or `|`, newer bash runs it as commands. */
+  noteOpenedExpansion(): void {
+    if (/[ \t\n|]/u.test(this.peek(2)))
+      this.doubts.add(doubtOfFunctionExpansion)
   }
 
   /** `expression` is evaluated as arithmetic. */
@@ -399,15 +455,7 @@ class Reader {
       }
       if (char === '(') {
         // `((…))`, a `for`'s too: read as commands below, and evaluated by bash.
-        if (this.peek(1) === '(') {
-          const close = this.source.indexOf('))', this.index)
-          this.noteArithmetic(
-            this.source.slice(
-              this.index + 2,
-              close === -1 ? this.source.length : close,
-            ),
-          )
-        }
+        if (this.peek(1) === '(') this.noteDoubleParenthesis()
         // Among a command's words, or against a word, it is no subshell: an extended glob (`@(out)`,
         // zsh's `(out)/x`), which matches what the gate would read as a command. A function's `()`,
         // an array's `=(`, `time (…)` and a `[[ … ]]` test aside.
@@ -504,8 +552,11 @@ class Reader {
         )
       )
         this.doubts.add(doubtOfQuotedAssignment)
-      const subscript = subscripted.exec(word.word.text)?.[1]
-      if (subscript !== undefined) this.noteArithmetic(subscript)
+      if (words.every(({ text }) => assignmentStart.test(text))) {
+        const subscript = subscripted.exec(word.word.text)?.[1]
+        if (subscript !== undefined) this.noteArithmetic(subscript)
+      }
+      if (word.plain && word.word.text === '[[') this.noteTest()
       words.push(word.word)
     }
     if (patterns && patternWords) this.doubts.add(doubtOfCase)
@@ -578,8 +629,7 @@ class Reader {
       if (document.expands) {
         for (const [text] of body.matchAll(assigningExpansion))
           this.unnamed.push({ text, pattern: text, dynamic: false })
-        for (const [, text] of body.matchAll(/\$\{([^}]*)\}/gu))
-          this.noteExpansion(text ?? '')
+        if (documentArithmetic.test(body)) this.noteArithmetic('x')
       }
       if (!found) break
     }
@@ -619,6 +669,7 @@ class Reader {
         this.index += 2
         this.substitution(')')
       } else if (char === '$' && next === '{') {
+        this.noteOpenedExpansion()
         this.index += 2
         this.expansion('}')
       } else if (char === '`') {
@@ -783,6 +834,7 @@ class Reader {
         literal('$', false)
         this.index++
       } else if (next === '{') {
+        this.noteOpenedExpansion()
         const start = this.index
         this.index += 2
         this.expansion('}')

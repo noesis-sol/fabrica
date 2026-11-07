@@ -16,7 +16,7 @@ import { type Finding, commandFindings } from '../src/gate/commands'
 const push = 'git push origin main'
 
 const context = {
-  worktree: '/home/agent/work/fa-1',
+  worktree: '/work/fa-1',
   home: Option.none<string>(),
   cdPath: false,
   cdableVariables: false,
@@ -131,6 +131,94 @@ const hidden: ReadonlyArray<string> = [
   // A name bash reads through.
   `read 'a[$(${push})]' <<< 1`,
   `declare 'a[$(${push})]=1'`,
+  `a=(1); x='a[$(${push})]'; unset "$x"`,
+  // A shell's input, past options that take a value.
+  `bash -euo pipefail <<'E'\n${push}\nE`,
+  `echo '${push}' | bash -eo pipefail`,
+  `bash -O extglob <<< '${push}'`,
+  `sh -o errexit <<< '${push}'`,
+  `bash - <<< '${push}'`,
+  `echo '${push}' | sh -`,
+  `echo ${push} | bash +e`,
+  // A shell's script, past the same.
+  `bash -c -o pipefail '${push}'`,
+  `bash -ceo pipefail '${push}'`,
+  `bash -c -O extglob '${push}'`,
+  `bash -c +x '${push}'`,
+  // Spelled another way, on a volume that folds case or normalizes names.
+  `${written}bash S`,
+  `${written}chmod +x s; ./S`,
+  `mkdir D; echo '${push}' > D/s; bash d/s`,
+  // Through a link.
+  `ln -s s t; echo '${push}' > t; bash s`,
+  `ln -s . e; echo '${push}' > e/s; bash s`,
+  // One command writing and running.
+  `find . -maxdepth 0 -exec tee s ';' -exec bash s ';' <<< '${push}'`,
+  `find . -maxdepth 0 -exec sh -c "echo '${push}' > s" ';' -exec bash s ';'`,
+  `${written}xargs -I{} bash {} <<< s`,
+  `${written}xargs -J% bash % <<< s`,
+  // A name on a PATH the line sets, a home folder the line sets.
+  `mkdir b; echo '${push}' > b/foo; chmod +x b/foo; PATH=b:$PATH foo`,
+  `echo '${push}' > .bashrc; HOME=. bash -ic true`,
+  `echo '${push}' > .bashrc; export HOME=.; bash -ic true`,
+  // Names attached, or assigned in an expansion.
+  `printf -vPATH %s "/dev:$PATH"; . stdin <<< '${push}'`,
+  `printf -vPS4 '$(${push})'; set -x; :`,
+  `${written}set -a; : \${BASH_ENV:=s}; bash -c true`,
+  // Text builtins expand.
+  `compgen -W '$(${push})'`,
+  `declare -a 'a=($(${push}))'`,
+  `a='($(${push}))'; declare -a b=$a`,
+  `read a <<< '($(${push}))'; declare -a b=$a`,
+  // Text the line holds, reaching arithmetic by a way the gate doesn't name.
+  `a=('1+b[$(${push})]'); echo $((a))`,
+  `: '1+b[$(${push})]'; echo $((_))`,
+  `bash -c 'echo $(($0))' '1+b[$(${push})]'`,
+  `[[ '1+b[$(${push})]' =~ .* ]]; echo $((BASH_REMATCH))`,
+  `set -- '1+b[$(${push})]'; for v; do echo $((v)); done`,
+  `set -- '1+b[$(${push})]'; echo $(( \${!#} ))`,
+  `touch '1+b[$(${push})]'; for f in *; do echo $((f)); done`,
+  // Arithmetic the first reading missed.
+  `${held}(( ((1)) + x ))`,
+  `${held}[[ ( x -eq 0 ) ]]`,
+  `${held}[[ a && x -eq 0 ]]`,
+  `${held}set -- abc; echo \${1:x}`,
+  `${held}cat <<E\n$[x]\nE`,
+  `${held}cat <<E\n\${z:-\${a[x]}}\nE`,
+  `set -- '+b[$(${push})]'; x=$((1))$1"))"; echo $((x))`,
+  // Evaluated when they're assigned.
+  `OPTIND='1+b[$(${push})]'`,
+  `read OPTIND <<< '1+b[$(${push})]'`,
+  `HISTCMD='1+b[$(${push})]'`,
+  // Other shells, whose grammar the gate doesn't know.
+  `csh -c '${push}'`,
+  `echo '${push}' | csh`,
+]
+
+/** Lines that may push on some bash, which only running them tells: checked below on the bash at hand. */
+const onSomeBash: ReadonlyArray<string> = [
+  `x='$(${push})'; echo \${x@A}`,
+  `x='$(${push})'; echo \${x@E}`,
+  `x='$(${push})'; echo \${x@P}`,
+  `echo \${ ${push}; }`,
+  `echo \${| ${push}; }`,
+  `EPOCHSECONDS='1+b[$(${push})]'`,
+  `SRANDOM='1+b[$(${push})]'`,
+  `BASHPID='1+b[$(${push})]'`,
+  `COMP_LINE='1+b[$(${push})]'`,
+  `BASH_ARGV0='1+b[$(${push})]'; echo $(($0))`,
+  `BASH_COMPAT=3.2; x='1+b[$(${push})]'; [[ $x -eq 0 ]]`,
+  `shopt -s compat31; x='1+b[$(${push})]'; echo $x`,
+  `x='a[$(${push})]'; wait -p "$x"`,
+  `x='a[$(${push})]'; [[ -v $x ]]`,
+  `x='a[$(${push})]'; test -v "$x"`,
+  `declare 'a=($(${push}))'`,
+  `declare 'a[0]=$(${push})'`,
+  `printf -v'a[$(${push})]' %s 1`,
+  `read -ra'a[$(${push})]' <<< 1`,
+  `mapfile -C '${push} #' -c1 a <<< x`,
+  `set -o history; history -s '${push}'; fc -s git`,
+  `${written}chmod +x s; BASH_CMDS[ls]=./s; ls`,
 ]
 
 /** Lines bash runs alike on what the gate reads, or that nothing on the line could change. */
@@ -169,9 +257,30 @@ const lines: ReadonlyArray<readonly [Expected, string]> = [
   ['allowed', `x='b[$(${push})]'; echo "$x"`],
   ['allowed', `x='b[$(${push})]'; [ "$x" -eq 0 ]`],
   ['allowed', `x='b[$(${push})]'; test "$x" -eq 0`],
-  // A known cost: bash can't be told a count from an expression.
-  ['asked', 'n=$(wc -l < notes.txt); echo $((n + 1))'],
-  ['asked', 'echo $(( $(wc -l < notes.txt) + 1 ))'],
+  // A substitution that can only print a number.
+  ['allowed', 'n=$(wc -l < notes.txt); echo $((n + 1))'],
+  ['allowed', 'echo $(( $(wc -l < notes.txt) + 1 ))'],
+  ['allowed', 'n=$(grep foo a | wc -l); (( n > 3 ))'],
+  ['allowed', 'start=$(date +%s); ls; echo $(( $(date +%s) - start ))'],
+  ['allowed', 'for i in $(seq 1 3); do echo $((i * 2)); done'],
+  ['allowed', 'echo $(($(nproc) / 2))'],
+  ['allowed', 'cores=$(sysctl -n hw.ncpu); echo $((cores / 2))'],
+  ['allowed', 'arr=(a b c); for i in "${!arr[@]}"; do echo "${arr[i]}"; done'],
+  ['allowed', 'v=${BASH_VERSINFO[0]}; (( v >= 4 ))'],
+  // Any other: bash can't be told a count from an expression, and a file's text may be one.
+  ['asked', 'x=$(cat notes.txt); echo $((x + 1))'],
+  ['asked', 'read -r x < notes.txt; echo $((x + 1))'],
+  ['asked', 'n=$(echo 5 | cat); (( n > 3 ))'],
+  // Words shaped like a subscript, to commands that don't evaluate them.
+  ['allowed', `awk 'a[$1]' a.txt`],
+  ['allowed', 'echo "foo[$1]"'],
+  ['allowed', 'grep "x[$1]" notes.txt'],
+  // A script outside the worktree: nothing on the line can have written it, and writing it would have asked.
+  ['allowed', 'source /etc/profile'],
+  ['allowed', '. /opt/homebrew/opt/nvm/nvm.sh'],
+  ['allowed', 'zsh /tmp/merge-all.sh a b'],
+  // A placeholder's `>` before a line break names no file.
+  ['allowed', 'bd show <issue-id>\nls'],
   // What can be read beside these still counts.
   ['refused', `${held}echo $((x)); ${push}`],
   ['refused', `bash /dev/stdin <<< x; ${push}`],
@@ -201,41 +310,51 @@ describe('gate: scripts it can’t see and text arithmetic re-reads', () => {
   })
 
   // Against the bash the gate's commands would run on: macOS's 3.2 on a Mac, a current one on Linux.
-  it.effect('whatever pushes on the real bash isn’t allowed', () =>
-    Effect.gen(function* () {
-      const base = yield* tempFolder('gate-unseen')
-      const bin = join(base, 'bin')
-      mkdirSync(bin)
-      writeFileSync(
-        join(bin, 'git'),
-        '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$MARK"\n',
-        { mode: 0o755 },
-      )
-      const pushes = (line: string): boolean => {
-        const folder = mkdtempSync(join(base, 'run-'))
-        const mark = join(folder, '.mark')
-        spawnSync('/bin/bash', ['-c', line], {
-          cwd: folder,
-          env: {
-            PATH: `${bin}:/usr/bin:/bin`,
-            MARK: mark,
-            HOME: folder,
-          },
-          stdio: 'ignore',
-          timeout: 30_000,
-        })
-        return existsSync(mark)
-      }
-      // The stub is on the PATH, and the forms this ticket is about push on this bash.
-      expect(pushes(push)).toBe(true)
-      expect(pushes(`${held}echo $((x))`)).toBe(true)
-      expect(pushes(`bash /dev/stdin <<< '${push}'`)).toBe(true)
-      expect(pushes('ls')).toBe(false)
-      const looser = hidden.filter(
-        line =>
-          pushes(line) && outcome(commandFindings(line, context)) === 'allowed',
-      )
-      expect(looser).toEqual([])
-    }).pipe(Effect.scoped),
+  it.effect(
+    'whatever pushes on the real bash isn’t allowed',
+    () =>
+      Effect.gen(function* () {
+        const base = yield* tempFolder('gate-unseen')
+        const bin = join(base, 'bin')
+        mkdirSync(bin)
+        writeFileSync(
+          join(bin, 'git'),
+          '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$MARK"\n',
+          { mode: 0o755 },
+        )
+        const pushes = (line: string): boolean => {
+          const folder = mkdtempSync(join(base, 'run-'))
+          const mark = join(folder, '.mark')
+          spawnSync('/bin/bash', ['-c', line], {
+            cwd: folder,
+            env: {
+              PATH: `${bin}:/usr/bin:/bin`,
+              MARK: mark,
+              HOME: folder,
+            },
+            stdio: 'ignore',
+            timeout: 5_000,
+          })
+          return existsSync(mark)
+        }
+        // The stub is on the PATH, and the forms this ticket is about push on this bash.
+        expect(pushes(push)).toBe(true)
+        expect(pushes(`${held}echo $((x))`)).toBe(true)
+        expect(pushes(`bash /dev/stdin <<< '${push}'`)).toBe(true)
+        expect(pushes('ls')).toBe(false)
+        // A login shell's profile would put the real git ahead of the stub.
+        expect(
+          [...hidden, ...onSomeBash].filter(line =>
+            /\s-\w*l\b|--login/u.test(line),
+          ),
+        ).toEqual([])
+        const looser = [...hidden, ...onSomeBash].filter(
+          line =>
+            pushes(line) &&
+            outcome(commandFindings(line, context)) === 'allowed',
+        )
+        expect(looser).toEqual([])
+      }).pipe(Effect.scoped),
+    60_000,
   )
 })
