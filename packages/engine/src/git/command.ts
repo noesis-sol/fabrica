@@ -37,12 +37,16 @@ const READ_ENVIRONMENT: Readonly<Record<string, string>> = {
  * would run the worker's commands outside the gate. So no hook of a repository runs for the engine,
  * git-lfs's `pre-push` among them (§10.3); a remote's own hooks are the remote's, and run still.
  */
-const PINNED_CONFIGURATION: ReadonlyArray<string> = [
-  '-c',
-  'core.fsmonitor=false',
-  '-c',
-  'core.hooksPath=/dev/null',
+const PINNED_SETTINGS: ReadonlyArray<readonly [string, string]> = [
+  ['core.fsmonitor', 'false'],
+  ['core.hooksPath', '/dev/null'],
+  // Reading a signature runs what `gpg.program` names.
+  ['log.showSignature', 'false'],
 ]
+
+const PINNED_CONFIGURATION: ReadonlyArray<string> = PINNED_SETTINGS.flatMap(
+  ([key, value]) => ['-c', `${key}=${value}`],
+)
 
 /**
  * What network commands (clone, fetch, push) run with where the host's git configuration names no ssh
@@ -154,6 +158,26 @@ export const makeCommands = ({
       }),
     )
   }
+
+  /**
+   * Whether `git-lfs` is on the PATH, asked of it by its own name. `git lfs` runs it where it is, ahead of any
+   * alias, but where it isn't falls back on the repository's aliases and autocorrection, which would run what a
+   * worker configured (spec §20.2), so it's only run once this says so.
+   */
+  const lfsInstalled: Effect.Effect<boolean> = Effect.map(
+    runner.run({
+      command: 'git-lfs',
+      args: ['version'],
+      cwd: '/',
+      env: GIT_ENVIRONMENT,
+      timeLimit: config.timeLimit,
+    }),
+    outcome =>
+      !(
+        CommandOutcome.$is('FailedToStart')(outcome) &&
+        StartFailure.$is('NotOnPath')(outcome.reason)
+      ),
+  )
 
   /** A command that writes: run once. */
   const write = (command: GitCommand) => runIn(GIT_ENVIRONMENT, command)
@@ -276,7 +300,16 @@ export const makeCommands = ({
   const queryOutcome = (command: GitCommand) =>
     invoke(READ_ENVIRONMENT, command)
 
-  return { write, network, query, queryOutcome, piped, read, unexpected }
+  return {
+    write,
+    network,
+    lfsInstalled,
+    query,
+    queryOutcome,
+    piped,
+    read,
+    unexpected,
+  }
 }
 
 export type Commands = ReturnType<typeof makeCommands>

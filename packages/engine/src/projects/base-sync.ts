@@ -188,19 +188,16 @@ const uploadPointers = Effect.fnUntraced(function* ({
   base,
   remote,
   commit,
-  tracking,
 }: {
   readonly checkout: string
   readonly base: string
   readonly remote: string
   readonly commit: CommitHash
-  readonly tracking: string
 }) {
   const git = yield* Git
   // An upstream in the same repository already has the objects.
   if (remote === '.') return Option.none<string>()
-  const since = yield* git.commitHash({ repo: checkout, revision: tracking })
-  const holds = yield* git.holdsLfsPointers({ repo: checkout, commit, since })
+  const holds = yield* git.holdsLfsPointers({ repo: checkout, commit, remote })
   if (!holds) return Option.none<string>()
   const commands = yield* git.lfsTransferCommands({ repo: checkout })
   if (commands.length > 0)
@@ -248,7 +245,6 @@ export const pushBase = Effect.fn('BaseSync.push')(function* ({
       base,
       remote,
       commit: commit.value,
-      tracking,
     })
     if (Option.isSome(uploadFailed))
       return BasePushed.NotPushed({ reason: uploadFailed.value })

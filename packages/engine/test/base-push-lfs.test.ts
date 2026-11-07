@@ -91,7 +91,7 @@ beforeAll(() => {
   mkdirSync(stubs)
   writeFileSync(
     join(stubs, 'git-lfs'),
-    `#!/bin/sh\nprintf '%s\\n' "$*" >> '${root}/asked'\nif [ -e '${root}/fails' ]; then echo 'no route to the store' >&2; exit 2; fi\n`,
+    `#!/bin/sh\nif [ "$1" = version ]; then exit 0; fi\nprintf '%s\\n' "$*" >> '${root}/asked'\ngit config --list > '${root}/settings'\nif [ -e '${root}/fails' ]; then echo 'no route to the store' >&2; exit 2; fi\n`,
   )
   chmodSync(join(stubs, 'git-lfs'), 0o755)
 })
@@ -189,6 +189,167 @@ describe('pushing a Base with git-lfs files', () => {
       const pushed = yield* pushBase({ checkout, base: 'main' })
       expect(pushed._tag).toBe('Pushed')
       expect(asked()).toEqual([`push -- origin ${head}`])
+    }).pipe(Effect.provide(withStub)),
+  )
+
+  it.effect('uploads when a pointer already on the remote changes', () =>
+    Effect.gen(function* () {
+      forgetStub()
+      const { checkout } = project()
+      commitFile(checkout, 'image.bin', pointer)
+      git(checkout, 'push', '--quiet')
+      const head = commitFile(
+        checkout,
+        'image.bin',
+        pointer.replaceAll(oid, () => 'b'.repeat(64)),
+      )
+      const pushed = yield* pushBase({ checkout, base: 'main' })
+      expect(pushed._tag).toBe('Pushed')
+      expect(asked()).toEqual([`push -- origin ${head}`])
+    }).pipe(Effect.provide(withStub)),
+  )
+
+  it.effect(
+    'uploads when a binary already on the remote becomes a pointer',
+    () =>
+      Effect.gen(function* () {
+        forgetStub()
+        const { checkout } = project()
+        commitFile(checkout, 'image.bin', 'raw\0bytes\n')
+        git(checkout, 'push', '--quiet')
+        const head = commitFile(checkout, 'image.bin', pointer)
+        const pushed = yield* pushBase({ checkout, base: 'main' })
+        expect(pushed._tag).toBe('Pushed')
+        expect(asked()).toEqual([`push -- origin ${head}`])
+      }).pipe(Effect.provide(withStub)),
+  )
+
+  it.effect.each(['*.bin filter=lfs -diff\n', '*.bin binary filter=lfs\n'])(
+    'sees a pointer under the attributes %s',
+    attributes =>
+      Effect.gen(function* () {
+        forgetStub()
+        const { checkout } = project()
+        commitFile(checkout, '.gitattributes', attributes)
+        const head = commitFile(checkout, 'image.bin', pointer)
+        const pushed = yield* pushBase({ checkout, base: 'main' })
+        expect(pushed._tag).toBe('Pushed')
+        expect(asked()).toEqual([`push -- origin ${head}`])
+      }).pipe(Effect.provide(withStub)),
+  )
+
+  it.effect('sees a pointer whatever settings make its file binary', () =>
+    Effect.gen(function* () {
+      forgetStub()
+      const { checkout } = project()
+      git(checkout, 'config', 'core.bigFileThreshold', '1')
+      git(checkout, 'config', 'diff.lfs.binary', 'true')
+      const head = commitFile(checkout, 'image.bin', pointer)
+      const pushed = yield* pushBase({ checkout, base: 'main' })
+      expect(pushed._tag).toBe('Pushed')
+      expect(asked()).toEqual([`push -- origin ${head}`])
+    }).pipe(Effect.provide(withStub)),
+  )
+
+  it.effect('sees a pointer behind a replaced commit', () =>
+    Effect.gen(function* () {
+      forgetStub()
+      const { checkout, first } = project()
+      const head = commitFile(checkout, 'image.bin', pointer)
+      git(checkout, 'replace', head, first)
+      yield* pushBase({ checkout, base: 'main' })
+      expect(asked()).toEqual([`push -- origin ${head}`])
+    }).pipe(Effect.provide(withStub)),
+  )
+
+  it.effect('gives git-lfs the settings the engine’s git is pinned to', () =>
+    Effect.gen(function* () {
+      forgetStub()
+      const { checkout } = project()
+      commitFile(checkout, 'image.bin', pointer)
+      const pushed = yield* pushBase({ checkout, base: 'main' })
+      expect(pushed._tag).toBe('Pushed')
+      const settings = readFileSync(join(root, 'settings'), 'utf8')
+      expect(settings).toContain('core.fsmonitor=false')
+      expect(settings).toContain('core.hookspath=/dev/null')
+      expect(settings).toContain('lfs.allowincompletepush=false')
+    }).pipe(Effect.provide(withStub)),
+  )
+
+  it.effect('runs no alias where the host has no git-lfs', () =>
+    Effect.gen(function* () {
+      const { remote, checkout, first } = project()
+      const mark = join(freshFolder('mark'), 'ran')
+      commitFile(checkout, 'image.bin', pointer)
+      git(checkout, 'config', 'alias.lfs', `!touch '${mark}'`)
+      git(checkout, 'config', 'help.autocorrect', 'immediate')
+      git(checkout, 'config', 'alias.lfx', `!touch '${mark}'`)
+      const pushed = yield* pushBase({ checkout, base: 'main' })
+      expect(reasonOf(pushed)).toContain("git-lfs isn't installed")
+      expect(existsSync(mark)).toBe(false)
+      expect(git(remote, 'rev-parse', 'main')).toBe(first)
+    }).pipe(Effect.provide(withoutLfs)),
+  )
+
+  it.effect('runs no signature program reading the range', () =>
+    Effect.gen(function* () {
+      forgetStub()
+      const { checkout } = project()
+      const mark = join(freshFolder('mark'), 'ran')
+      const gpg = join(freshFolder('gpg'), 'gpg')
+      writeFileSync(gpg, `#!/bin/sh\n: > '${mark}'\nexit 1\n`, { mode: 0o755 })
+      commitFile(checkout, 'image.bin', pointer)
+      const signed = git(checkout, 'cat-file', 'commit', 'HEAD').replace(
+        /\n\n/u,
+        () =>
+          '\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n x\n -----END PGP SIGNATURE-----\n\n',
+      )
+      const forged = join(freshFolder('forged'), 'commit')
+      writeFileSync(forged, `${signed}\n`)
+      const hash = git(checkout, 'hash-object', '-t', 'commit', '-w', forged)
+      git(checkout, 'reset', '--quiet', '--soft', hash)
+      git(checkout, 'config', 'log.showSignature', 'true')
+      git(checkout, 'config', 'gpg.program', gpg)
+      const pushed = yield* pushBase({ checkout, base: 'main' })
+      expect(pushed._tag).toBe('Pushed')
+      expect(existsSync(mark)).toBe(false)
+    }).pipe(Effect.provide(withStub)),
+  )
+
+  it.effect.each([
+    'LFS.CustomTransfer.Mine.PATH',
+    'lfs.customTransfer.mine.path',
+    'lfs.https://example.invalid/.standalonetransferagent',
+    'x.lfs.customtransfer.mine.path',
+    'lfs.customtransfer.mine.args',
+  ])('refuses %s in the repository’s configuration', key =>
+    Effect.gen(function* () {
+      forgetStub()
+      const { remote, checkout, first } = project()
+      commitFile(checkout, 'image.bin', pointer)
+      git(checkout, 'config', key, '/planted/agent')
+      const pushed = yield* pushBase({ checkout, base: 'main' })
+      expect(pushed._tag).toBe('NotPushed')
+      expect(reasonOf(pushed)).toContain('makes git-lfs run a command')
+      expect(asked()).toEqual([])
+      expect(git(remote, 'rev-parse', 'main')).toBe(first)
+    }).pipe(Effect.provide(withStub)),
+  )
+
+  it.effect('keeps a transfer command the host’s own configuration names', () =>
+    Effect.gen(function* () {
+      forgetStub()
+      const { checkout } = project()
+      commitFile(checkout, 'image.bin', pointer)
+      const hostConfig = join(home, '.gitconfig')
+      const before = readFileSync(hostConfig, 'utf8')
+      writeFileSync(
+        hostConfig,
+        `${before}[lfs "customtransfer.host"]\n\tpath = /host/agent\n`,
+      )
+      const pushed = yield* pushBase({ checkout, base: 'main' })
+      writeFileSync(hostConfig, before)
+      expect(pushed._tag).toBe('Pushed')
     }).pipe(Effect.provide(withStub)),
   )
 
