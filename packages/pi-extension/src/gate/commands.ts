@@ -332,11 +332,10 @@ const shellArguments = (args: ReadonlyArray<Word>): ShellArguments => {
     } else if (/^--?login$/u.test(text)) home = true
     else if (text.startsWith('--') || bashLongOptions.test(text)) continue
     else if (/^[-+]./u.test(text)) {
-      if (text.startsWith('-')) {
-        commanded ||= text.includes('c')
-        input ||= text.includes('s')
-        home ||= /[il]/u.test(text)
-      }
+      // `+c` and `+s` run a command string or the input as `-c` and `-s` do.
+      commanded ||= text.includes('c')
+      input ||= text.includes('s')
+      if (text.startsWith('-')) home ||= /[il]/u.test(text)
       // Each takes the next word.
       index += text.replaceAll(/[^oO]/gu, '').length
     } else return ended(word)
@@ -1157,7 +1156,9 @@ class Policy {
       if (
         this.setterWords.some(
           word =>
-            word === name || (word.startsWith('-') && word.endsWith(name)),
+            word === name ||
+            word.startsWith(`${name}[`) ||
+            (word.startsWith('-') && word.endsWith(name)),
         )
       )
         return name
@@ -1626,7 +1627,7 @@ class Policy {
         if (word === undefined) break
         if (word.text === '--') return args.slice(index + 1)
         if (!word.dynamic && word.text.startsWith('-') && word.text !== '-') {
-          if (takesNextWord(word.text, values)) index++
+          if (values.has(word.text)) index++
           continue
         }
         if (skipped === positionals) break
@@ -1644,17 +1645,17 @@ class Policy {
           this.ask('env -C runs a command in another folder')
           return []
         }
-        // A bare `-`, and an entry with a name no assignment can have, which `env` takes all the same.
+        // The command is the first word that isn't surely a literal assignment: a `-` resets the
+        // environment and an entry env keeps, but a brace, glob or dynamic word may spell the command.
         const command = after(new Set(['-u', '--unset']))
-        const first = command.findIndex(
-          ({ text, dynamic }) =>
-            text !== '-' && (dynamic || !text.includes('=')),
+        const start = command.findIndex(
+          word =>
+            word.text !== '-' &&
+            (word.dynamic ||
+              /(?:^|[^\\])[*?[{]/u.test(word.pattern) ||
+              !word.text.includes('=')),
         )
-        const entries = first === -1 ? command : command.slice(0, first)
-        return [
-          ...entries.filter(({ pattern }) => assignment.test(pattern)),
-          ...(first === -1 ? [] : command.slice(first)),
-        ]
+        return start === -1 ? [] : command.slice(start)
       }
       case 'command':
       case 'builtin': {
@@ -1670,9 +1671,8 @@ class Policy {
       case 'time':
       case 'chronic':
       case 'unbuffer':
-        return after(new Set())
       case 'caffeinate':
-        return after(new Set(['-t', '-w']))
+        return after(new Set())
       case 'nice':
         return after(new Set(['-n', '--adjustment']))
       case 'ionice':
@@ -1694,9 +1694,6 @@ class Policy {
         const command = after(
           new Set([
             '-I',
-            '-J',
-            '-R',
-            '-S',
             '-n',
             '-P',
             '-L',
@@ -1713,9 +1710,9 @@ class Policy {
         // A placeholder stands for the input, as the word after the command does: what's read as written still
         // counts, and where it's the command, or goes to a shell, what runs is the input's.
         const placeholder = args.flatMap(({ text }, index) => {
-          const attached = /^-[IJ](.+)$/u.exec(text)?.[1]
+          const attached = /^-[A-Za-z0-9]*[IJ](.+)$/u.exec(text)?.[1]
           if (attached !== undefined) return [attached]
-          if (text === '-I' || text === '-J')
+          if (/^-[A-Za-z0-9]*[IJ]$/u.test(text))
             return [args[index + 1]?.text ?? '']
           if (text === '-i' || text === '--replace') return ['{}']
           return []

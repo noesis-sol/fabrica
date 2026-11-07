@@ -51,17 +51,13 @@ const countingCommands: ReadonlySet<string> = new Set([
  * a variable or a glob here; `wc <` prints none.
  */
 const countingSubstitution =
-  /\$\((?:[^()`;&\n|]*\|(?!\|)\s*)*(?:wc\s[^()`|;&\n]*<[^()`|;&\n]*|(?:wc\s|grep -c\s|sysctl -n hw\.|getconf\s|git rev-list --count\s)[^()`|;&\n$*?[]*|date \+%s\s*|nproc(?:\s+2>\/dev\/null)?\s*|seq(?:\s+-?\d+(?:\.\d+)?)+\s*)(?:\|\s*(?:tr -d\s[^()`|;&\n]*|xargs\s*)|\|\|\s*true\s*)?\)/u
+  /\$\(\s*(?:[^()`;&\n|]*\|(?!\|))*\s*(?:wc\s[^()`|;&\n]*<[^()`|;&\n]*|(?:wc\s|grep -c\s|sysctl -n hw\.|getconf\s|git rev-list --count\s)[^()`|;&\n$*?[]*|date \+%s\s*|nproc(?:\s+2>\/dev\/null)?\s*|seq(?:\s+-?\d+(?:\.\d+)?)+\s*)(?:\|\s*(?:tr -d\s[^()`|;&\n]*|xargs\s*)|\|\|\s*true\s*)?\)/u
 
 /** Whether `text` is such a substitution, whole. */
 export const countsOnly = (text: string): boolean => {
   const found = countingSubstitution.exec(text)
   return found?.index === 0 && found[0].length === text.length
 }
-
-/** Whether `text` holds a substitution that may print anything. */
-const holdsRunning = (text: string): boolean =>
-  /\$\(|`/u.test(text.replace(new RegExp(countingSubstitution, 'gu'), '0'))
 
 /** What `expression`, evaluated as arithmetic, reads: a digit's `0x1f` or `16#ff` names nothing. */
 export const arithmeticReads = (expression: string): Rereads => {
@@ -241,7 +237,7 @@ const subscripted = /^[A-Za-z_]\w*\[(.*)\](?:\+?=.*)?$/su
 const documentArithmetic = /\$\[|\$\{[^\n]*(?:\[|!|:[^-=+?])/u
 
 /** `[[`'s operators that evaluate what's beside them, and the one that reads a name's subscript. */
-const testNumeric = /(\S+)\s+-(?:eq|ne|lt|le|gt|ge)\s+(\S+)/gu
+const testNumeric = /(?:^|\s)-(?:eq|ne|lt|le|gt|ge)(?:\s|$)/u
 const testName = /(?:^|\s)-v\s+(\S+)/gu
 
 /** A parameter expansion's text, where bash evaluates a part as arithmetic or reads a name's text as a variable. */
@@ -394,14 +390,8 @@ class Reader {
     }
     this.testEnd = at
     const test = this.source.slice(this.index, at).replaceAll('\\\n', '')
-    let numeric = false
-    for (const [, left, right] of test.matchAll(testNumeric)) {
-      numeric = true
-      this.noteArithmetic(left ?? '')
-      this.noteArithmetic(right ?? '')
-    }
-    // What's beside the test's operators may be several words here: only a substitution matters.
-    if (numeric && holdsRunning(test)) this.noteArithmetic('$1')
+    // Either side of a numeric operator may be several words, so the whole test is read where one is present.
+    if (testNumeric.test(test)) this.noteArithmetic(test)
     for (const [, name] of test.matchAll(testName))
       this.noteArithmetic(name ?? '')
   }
@@ -676,7 +666,9 @@ class Reader {
       const element = /^\[(.+)\]\+?=/su.exec(word.word.text)?.[1]
       if (element !== undefined) this.noteArithmetic(element)
       if (word.plain && word.word.text === '[[') this.noteTest()
-      assignmentsOnly &&= assignmentStart.test(word.word.text)
+      assignmentsOnly &&=
+        /^(?:time|-p)$/u.test(word.word.text) ||
+        assignmentStart.test(word.word.text)
       words.push(word.word)
     }
     if (patterns && patternWords) this.doubts.add(doubtOfCase)

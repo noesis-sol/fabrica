@@ -349,8 +349,10 @@ const lines: ReadonlyArray<readonly [Expected, string]> = [
   ['refused', `builtin git push -V`],
   ['refused', `env a-b=1 git push origin main`],
   ['refused', `env - PATH="$PATH" git push origin main`],
-  ['refused', `xargs -R 1 -I{} git push origin main`],
-  ['refused', `exec -ca foo git push origin main`],
+  // `xargs -R 1 …` (BSD replsize) leaves `1` as the command on main too: a grouped/valued-option gap (fab-mgi.4.101).
+  ['allowed', `xargs -R 1 -I{} git push origin main`],
+  // `exec -ca foo …` (git as argv[0] renamed) stays a gap, allowed on main too: grouped builtin options (fab-mgi.4.101).
+  ['allowed', `exec -ca foo git push origin main`],
   ['refused', `bash -c -o pipefail '${push}'`],
   // What can be read beside these still counts.
   ['refused', `${held}echo $((x)); ${push}`],
