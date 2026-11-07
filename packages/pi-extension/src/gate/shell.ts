@@ -23,6 +23,27 @@ export interface SimpleCommand {
   readonly writes: ReadonlyArray<Word>
 }
 
+/** What an arithmetic expression, or anything bash evaluates as one, reads. */
+export interface Rereads {
+  /** A variable, whose text bash evaluates in turn. */
+  readonly named: boolean
+  /** A substitution's output or a positional parameter, read as the expression's own text. */
+  readonly output: boolean
+}
+
+export const readsNothing: Rereads = { named: false, output: false }
+
+/** What `expression`, evaluated as arithmetic, reads: a digit's `0x1f` or `16#ff` names nothing. */
+export const arithmeticReads = (expression: string): Rereads => ({
+  named: /(?:^|[^\w#])[A-Za-z_]/u.test(expression),
+  output: /\$\(|`|\$\{?[1-9@*]/u.test(expression),
+})
+
+export const rereadsEither = (one: Rereads, other: Rereads): Rereads => ({
+  named: one.named || other.named,
+  output: one.output || other.output,
+})
+
 export type Script = Data.TaggedEnum<{
   Parsed: {
     readonly commands: ReadonlyArray<SimpleCommand>
@@ -36,6 +57,8 @@ export type Script = Data.TaggedEnum<{
     readonly dollarQuotes: boolean
     /** The words that name no command: a function's name, a loop's variable and list, a case's subject, a read redirection's file, a here-document's assigning expansions. */
     readonly unnamed: ReadonlyArray<Word>
+    /** What the line's arithmetic reads again as an expression, where a subscript in that text runs commands. */
+    readonly rereads: Rereads
   }
   Unparsable: { readonly reason: string }
 }>
@@ -148,11 +171,26 @@ const doubtOfCase =
   'a case the gate can’t follow: what it took for patterns ended without their )'
 const doubtOfContinuedDollar =
   'a line continued right after a $, which changes how what follows is quoted'
+const doubtOfQuotedAssignment =
+  'a quoted word that looks like an assignment, which bash runs as a command'
+const doubtOfPromptExpansion =
+  'a ${…@P} expansion, which runs what the text it reads holds'
 const doubtOfLocale =
   'a backslash right after a non-ASCII character: in a locale like Shift-JIS it is part of that character and escapes nothing'
 
 /** A `$` then a line continuation: bash joins them into `$'` or `$(`, the gate's reader doesn't. */
 const continuedDollar = /\$\\\n/u
+
+/** An assignment's start, in a word as written or as read. */
+const assignmentStart = /^[A-Za-z_]\w*(?:\[.*\])?\+?=/su
+
+/** A word naming a subscripted variable, whose subscript bash evaluates: `a[x]=1`, `read a[x]`. */
+const subscripted = /^[A-Za-z_]\w*\[(.*)\](?:\+?=.*)?$/su
+
+/** A parameter expansion's text, where bash evaluates a part as arithmetic or reads a name's text as a variable. */
+const expansionSubscript = /^[#!]?[A-Za-z_]\w*\[(.*?)\]/su
+const expansionIndirect = /^![A-Za-z_]\w*(?![@*\w])/u
+const expansionSlice = /^[A-Za-z_@*][\w@*]*(?:\[.*?\])?:(?![-=+?])(.*)$/su
 
 /**
  * Where a grouping ends as bash 3.2 finds it, which is macOS's bash and so Pi's there; -1 where it doesn't.
@@ -240,6 +278,7 @@ class Reader {
   dollarQuotes = false
   /** The line's doubts (`Script`), each said once. */
   readonly doubts = new Set<string>()
+  rereads = readsNothing
 
   constructor(
     readonly source: string,
@@ -248,6 +287,22 @@ class Reader {
 
   peek(offset = 0): string {
     return this.source[this.index + offset] ?? ''
+  }
+
+  /** `expression` is evaluated as arithmetic. */
+  noteArithmetic(expression: string): void {
+    this.rereads = rereadsEither(this.rereads, arithmeticReads(expression))
+  }
+
+  /** `${` `text` `}`: its subscript and slice are arithmetic, and `${!x}` reads `x`'s text as a variable. */
+  noteExpansion(text: string): void {
+    if (text.endsWith('@P')) this.doubts.add(doubtOfPromptExpansion)
+    const subscript = expansionSubscript.exec(text)?.[1]
+    if (subscript !== undefined && subscript !== '@' && subscript !== '*')
+      this.noteArithmetic(subscript)
+    if (expansionIndirect.test(text)) this.noteArithmetic('x')
+    const slice = expansionSlice.exec(text)?.[1]
+    if (slice !== undefined) this.noteArithmetic(slice)
   }
 
   /** Reads commands until `end` (a closing parenthesis or backtick) or the end of the source. */
@@ -343,6 +398,16 @@ class Reader {
         continue
       }
       if (char === '(') {
+        // `((…))`, a `for`'s too: read as commands below, and evaluated by bash.
+        if (this.peek(1) === '(') {
+          const close = this.source.indexOf('))', this.index)
+          this.noteArithmetic(
+            this.source.slice(
+              this.index + 2,
+              close === -1 ? this.source.length : close,
+            ),
+          )
+        }
         // Among a command's words, or against a word, it is no subshell: an extended glob (`@(out)`,
         // zsh's `(out)/x`), which matches what the gate would read as a command. A function's `()`,
         // an array's `=(`, `time (…)` and a `[[ … ]]` test aside.
@@ -430,6 +495,17 @@ class Reader {
         !/\]\+?=/u.test(word.word.text)
       )
         this.doubts.add(doubtOfSubscript)
+      // Where it would name the command: quoted, bash takes it for no assignment.
+      if (
+        words.every(({ text }) => assignmentStart.test(text)) &&
+        assignmentStart.test(word.word.text) &&
+        !assignmentStart.test(
+          this.source.slice(start, this.index).replaceAll('\\\n', ''),
+        )
+      )
+        this.doubts.add(doubtOfQuotedAssignment)
+      const subscript = subscripted.exec(word.word.text)?.[1]
+      if (subscript !== undefined) this.noteArithmetic(subscript)
       words.push(word.word)
     }
     if (patterns && patternWords) this.doubts.add(doubtOfCase)
@@ -499,9 +575,12 @@ class Reader {
         throw new Unparsable({
           reason: 'a here-document runs commands of its own',
         })
-      if (document.expands)
+      if (document.expands) {
         for (const [text] of body.matchAll(assigningExpansion))
           this.unnamed.push({ text, pattern: text, dynamic: false })
+        for (const [, text] of body.matchAll(/\$\{([^}]*)\}/gu))
+          this.noteExpansion(text ?? '')
+      }
       if (!found) break
     }
   }
@@ -513,6 +592,15 @@ class Reader {
    * `${…}`; others take them as literal), so a quote there is unparsable rather than guessed at.
    */
   expansion(close: '}' | '))'): void {
+    const start = this.index
+    const read = () => {
+      const text = this.source.slice(
+        start,
+        this.index - (close === '}' ? 1 : 2),
+      )
+      if (close === '}') this.noteExpansion(text)
+      else this.noteArithmetic(text)
+    }
     let depth = 0
     while (this.index < this.source.length) {
       const char = this.peek()
@@ -541,6 +629,7 @@ class Reader {
         this.backticks--
       } else if (close === '}' && char === '}') {
         this.index++
+        read()
         return
       } else if (close === '))' && char === '(') {
         depth++
@@ -548,6 +637,7 @@ class Reader {
       } else if (close === '))' && char === ')') {
         if (depth === 0 && next === ')') {
           this.index += 2
+          read()
           return
         }
         // A `)` closing what `$((` opened, alone: bash reads the whole as a command substitution.
@@ -819,5 +909,6 @@ export const parseScript = (
     unnamed: reader.unnamed,
     doubts: [...reader.doubts],
     dollarQuotes: reader.dollarQuotes,
+    rereads: reader.rereads,
   })
 }
