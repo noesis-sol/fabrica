@@ -77,6 +77,8 @@ export const defaultConfig: GitConfig = {
 export interface GitCommand {
   readonly cwd: string
   readonly args: ReadonlyArray<string>
+  /** Its time limit, where it isn't the configured one. */
+  readonly timeLimit?: Duration.Input
 }
 
 /** A git command that ran to an exit code. */
@@ -115,7 +117,7 @@ export const makeCommands = ({
    */
   const invoke = (
     environment: Readonly<Record<string, string>>,
-    { cwd, args }: GitCommand,
+    { cwd, args, timeLimit }: GitCommand,
     network = false,
   ): Effect.Effect<CommandOutcome> =>
     runner.run({
@@ -124,7 +126,7 @@ export const makeCommands = ({
       cwd,
       env: environment,
       network,
-      timeLimit: config.timeLimit,
+      timeLimit: timeLimit ?? config.timeLimit,
     })
 
   const runIn = (
@@ -144,7 +146,7 @@ export const makeCommands = ({
           }),
         TimedOut: () =>
           failed(
-            `timed out after ${Duration.format(Duration.fromInputUnsafe(config.timeLimit))}`,
+            `timed out after ${Duration.format(Duration.fromInputUnsafe(command.timeLimit ?? config.timeLimit))}`,
           ),
         Cut: ({ stream, limit }) =>
           failed(`its ${stream} passed ${limit} bytes`),

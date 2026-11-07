@@ -13,6 +13,7 @@ import {
   FetchOutcome,
   Git,
   type GitFailed,
+  LfsUpload,
   PushOutcome,
   trackingName,
 } from '../git'
@@ -181,6 +182,43 @@ export const syncBase = Effect.fn('BaseSync.sync')(function* ({
   )
 })
 
+/** Uploads the git-lfs objects of the commits a push would bring `remote`; why not, where they couldn't be. */
+const uploadPointers = Effect.fnUntraced(function* ({
+  checkout,
+  base,
+  remote,
+  commit,
+  tracking,
+}: {
+  readonly checkout: string
+  readonly base: string
+  readonly remote: string
+  readonly commit: CommitHash
+  readonly tracking: string
+}) {
+  const git = yield* Git
+  // An upstream in the same repository already has the objects.
+  if (remote === '.') return Option.none<string>()
+  const since = yield* git.commitHash({ repo: checkout, revision: tracking })
+  const holds = yield* git.holdsLfsPointers({ repo: checkout, commit, since })
+  if (!holds) return Option.none<string>()
+  const commands = yield* git.lfsTransferCommands({ repo: checkout })
+  if (commands.length > 0)
+    return Option.some(
+      `${base} holds git-lfs files, and the repository's configuration makes git-lfs run a command (${commands.join(', ')}), which the engine doesn't run: unset it, or push by hand`,
+    )
+  const uploaded = yield* git.uploadLfs({ repo: checkout, remote, commit })
+  return LfsUpload.$match(uploaded, {
+    Uploaded: () => Option.none<string>(),
+    NotInstalled: () =>
+      Option.some(
+        `${base} holds git-lfs files, and git-lfs isn't installed here to upload them: install it, or push by hand`,
+      ),
+    Failed: ({ message }) =>
+      Option.some(`git-lfs couldn't upload ${base}'s files: ${message}`),
+  })
+})
+
 /** Pushes Base, checked out in `checkout`, to its upstream: its commit as read now, never forced. */
 export const pushBase = Effect.fn('BaseSync.push')(function* ({
   checkout,
@@ -201,19 +239,19 @@ export const pushBase = Effect.fn('BaseSync.push')(function* ({
     if (Option.isNone(found)) return BasePushed.NoUpstream()
     if (Option.isNone(commit))
       return BasePushed.NotPushed({ reason: `${base} has no commit` })
-    // git-lfs uploads in its pre-push hook, which the engine's git doesn't run (§10.3, §20.2): a push
-    // would land pointers whose objects the remote doesn't have.
-    const lfs = yield* git.lfsFiles({
-      repo: checkout,
-      revision: `refs/heads/${base}`,
-    })
-    if (lfs.length > 0) {
-      return BasePushed.NotPushed({
-        reason: `${base} has ${lfs.length} files under git-lfs (${lfs[0]} first), whose objects the engine's push doesn't upload: push it by hand`,
-      })
-    }
     const { remote, ref, tracking } = found.value
     const upstream = trackingName(tracking)
+    // git-lfs uploads in its pre-push hook, which the engine's git doesn't run (§10.3, §20.2), so the
+    // engine uploads first: the ref would land pointing at objects the remote doesn't have.
+    const uploadFailed = yield* uploadPointers({
+      checkout,
+      base,
+      remote,
+      commit: commit.value,
+      tracking,
+    })
+    if (Option.isSome(uploadFailed))
+      return BasePushed.NotPushed({ reason: uploadFailed.value })
     const pushed = yield* git.push({
       repo: checkout,
       remote,

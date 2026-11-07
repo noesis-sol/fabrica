@@ -31,7 +31,7 @@ import {
   listProcesses,
   layer as runnerLayer,
 } from '../src/process'
-import { BasePushed, pushBase } from '../src/projects/base-sync'
+import { pushBase } from '../src/projects/base-sync'
 
 // The engine's own git runs no fsmonitor and no hook a repository's configuration names (spec §12.6,
 // §20.2), against real git in temp folders: wherever a worker put them (its worktree's configuration,
@@ -278,34 +278,6 @@ describe('the engine’s git', () => {
 
         expect(() => git(clone, 'push', 'origin', 'main:plain')).toThrow()
       }).pipe(Effect.provide(services)),
-  )
-
-  it.effect('leaves a Base with files under git-lfs unpushed, saying so', () =>
-    Effect.gen(function* () {
-      const given = yield* Git
-      const remote = freshFolder('remote')
-      git(remote, 'init', '--quiet', '--bare', '--initial-branch=main')
-      const checkout = freshFolder('lfs')
-      git(checkout, 'init', '--quiet', '--initial-branch=main')
-      const first = commit(checkout, 'one')
-      git(checkout, 'remote', 'add', 'origin', remote)
-      git(checkout, 'push', '--quiet', '--set-upstream', 'origin', 'main')
-
-      writeFileSync(
-        join(checkout, '.gitattributes'),
-        '*.bin filter=lfs diff=lfs merge=lfs -text\n',
-      )
-      commit(checkout, 'image.bin')
-      expect(
-        yield* given.lfsFiles({ repo: checkout, revision: 'refs/heads/main' }),
-      ).toEqual(['image.bin'])
-      const pushed = yield* pushBase({ checkout, base: 'main' })
-      expect(pushed._tag).toBe('NotPushed')
-      expect(BasePushed.$is('NotPushed')(pushed) && pushed.reason).toContain(
-        'git-lfs (image.bin first)',
-      )
-      expect(git(remote, 'rev-parse', 'main')).toBe(first)
-    }).pipe(Effect.provide(services)),
   )
 
   it.effect('pushes a Base with no file under git-lfs', () =>

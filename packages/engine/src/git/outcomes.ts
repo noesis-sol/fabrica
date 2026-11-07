@@ -84,3 +84,14 @@ export type PushOutcome = Data.TaggedEnum<{
   Failed: { readonly message: string }
 }>
 export const PushOutcome = Data.taggedEnum<PushOutcome>()
+
+/** How uploading a commit's git-lfs objects went. */
+export type LfsUpload = Data.TaggedEnum<{
+  /** The remote holds them all now. */
+  Uploaded: {}
+  /** The host has no git-lfs. */
+  NotInstalled: {}
+  /** They couldn't all be uploaded: `message` is git-lfs's. */
+  Failed: { readonly message: string }
+}>
+export const LfsUpload = Data.taggedEnum<LfsUpload>()

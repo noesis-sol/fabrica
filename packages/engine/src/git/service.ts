@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option } from 'effect'
+import { Context, Duration, Effect, Layer, Option } from 'effect'
 import { existsSync } from 'node:fs'
 import { copyFile, mkdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
@@ -20,6 +20,7 @@ import {
   FastForwardOutcome,
   FetchOutcome,
   GitVersion,
+  LfsUpload,
   PushOutcome,
   RebaseOutcome,
 } from './outcomes'
@@ -140,13 +141,20 @@ export interface GitShape {
     readonly revision: string
   }) => Effect.Effect<ReadonlyArray<string>, CantTell>
   /**
-   * The files of `revision` that git-lfs holds (`filter=lfs`), by the attributes as `unionMerged` reads
-   * them: their objects reach a remote only through git-lfs's own `pre-push` hook, which the engine's
-   * git doesn't run (spec §10.3).
+   * Whether a commit in `commit`, past `since`, adds or drops a git-lfs pointer, whatever the attributes say
+   * now: a pushed ref holds every commit's, so its objects must reach the remote (spec §10.3).
    */
-  readonly lfsFiles: (input: {
+  readonly holdsLfsPointers: (input: {
     readonly repo: string
-    readonly revision: string
+    readonly commit: CommitHash
+    readonly since: Option.Option<CommitHash>
+  }) => Effect.Effect<boolean, CantTell>
+  /**
+   * The settings in the repository's own configuration, its worktrees' included, that make git-lfs run a
+   * command (`lfs.customtransfer.<name>.path`): a worker can write those (spec §20.2). The host's are its own.
+   */
+  readonly lfsTransferCommands: (input: {
+    readonly repo: string
   }) => Effect.Effect<ReadonlyArray<string>, CantTell>
   /** The repository's worktrees, its main one first. */
   readonly worktrees: (input: {
@@ -283,6 +291,15 @@ export interface GitShape {
     readonly ref: string
   }) => Effect.Effect<PushOutcome, GitFailed>
   /**
+   * Uploads the git-lfs objects `commit` reaches that `remote` hasn't, with the host's git credentials: what
+   * git-lfs's `pre-push` hook would, which the engine's git doesn't run (spec §10.3).
+   */
+  readonly uploadLfs: (input: {
+    readonly repo: string
+    readonly remote: string
+    readonly commit: CommitHash
+  }) => Effect.Effect<LfsUpload, GitFailed>
+  /**
    * Clones `url` into the new folder `into`, with the host's git credentials (spec §10.1): its git
    * configuration, credential helpers, keys and ssh-agent.
    */
@@ -320,6 +337,17 @@ const argumentBatches = (
   }
   return batches
 }
+
+/** The first line of a git-lfs pointer, either spec's: `-G`'s regular expression is extended. */
+const lfsPointerLine =
+  '^version https://(git-lfs\\.github\\.com|hawser\\.github\\.com)/spec/v1'
+
+/** The settings that make git-lfs run a command, as `git config --get-regexp` names them. */
+const lfsTransferSetting =
+  '^lfs\\.(customtransfer\\..*\\.path|standalonetransferagent)$'
+
+/** An upload takes as long as the objects do, far past a git command's usual limit. */
+const LFS_UPLOAD_LIMIT = Duration.hours(1)
 
 export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
   const runner = yield* ProcessRunner
@@ -813,19 +841,108 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     })
   })
 
-  const lfsFiles = Effect.fn('Git.lfsFiles')(function* ({
+  const holdsLfsPointers = Effect.fn('Git.holdsLfsPointers')(function* ({
     repo,
-    revision,
+    commit,
+    since,
   }: {
     readonly repo: string
-    readonly revision: string
+    readonly commit: CommitHash
+    readonly since: Option.Option<CommitHash>
   }) {
-    return yield* filesWith('lfsFiles', {
-      repo,
-      revision,
-      attribute: 'filter',
-      value: 'lfs',
+    return yield* readExit(
+      'holdsLfsPointers',
+      {
+        cwd: repo,
+        args: [
+          'log',
+          '-m',
+          '-1',
+          '--format=%H',
+          // A worker's configuration can name a diff driver's command.
+          '--no-textconv',
+          '--no-ext-diff',
+          `-G${lfsPointerLine}`,
+          '--end-of-options',
+          commit,
+          ...Option.match(since, {
+            onNone: () => [],
+            onSome: from => [`^${from}`],
+          }),
+        ],
+      },
+      exit =>
+        exit.code === 0
+          ? Option.some(exit.stdout.trim() !== '')
+          : Option.none(),
+    )
+  })
+
+  const lfsTransferCommands = Effect.fn('Git.lfsTransferCommands')(function* ({
+    repo,
+  }: {
+    readonly repo: string
+  }) {
+    return yield* readExit(
+      'lfsTransferCommands',
+      {
+        cwd: repo,
+        args: [
+          'config',
+          '--show-scope',
+          '--name-only',
+          '--get-regexp',
+          lfsTransferSetting,
+        ],
+      },
+      exit =>
+        exit.code === 0
+          ? Option.some(
+              exit.stdout
+                .split('\n')
+                .flatMap(
+                  line => /^(?:local|worktree)\t(.+)$/u.exec(line)?.[1] ?? [],
+                ),
+            )
+          : // 1: none is set.
+            exit.code === 1
+            ? Option.some([])
+            : Option.none(),
+    )
+  })
+
+  const uploadLfs = Effect.fn('Git.uploadLfs')(function* ({
+    repo,
+    remote,
+    commit,
+  }: {
+    readonly repo: string
+    readonly remote: string
+    readonly commit: CommitHash
+  }) {
+    const exit = yield* network({
+      cwd: repo,
+      // A worker's configuration can't let the ref land with an object left behind.
+      args: [
+        '-c',
+        'lfs.allowincompletepush=false',
+        'lfs',
+        'push',
+        '--',
+        remote,
+        commit,
+      ],
+      timeLimit: LFS_UPLOAD_LIMIT,
     })
+    if (exit.code === 0) return LfsUpload.Uploaded()
+    return exit.stderr.includes("'lfs' is not a git command")
+      ? LfsUpload.NotInstalled()
+      : LfsUpload.Failed({
+          message:
+            exit.stderr.trim() ||
+            exit.stdout.trim() ||
+            `git lfs push exited ${exit.code}`,
+        })
   })
 
   const worktrees = Effect.fn('Git.worktrees')(function* ({
@@ -1477,7 +1594,9 @@ export const make = Effect.fn('Git.make')(function* (config: GitConfig) {
     trackedFiles,
     fileAt,
     unionMerged,
-    lfsFiles,
+    holdsLfsPointers,
+    lfsTransferCommands,
+    uploadLfs,
     worktrees,
     rebase,
     abortRebase,
