@@ -125,7 +125,8 @@ const services = (path: () => string) =>
   )
 
 const withStub = services(() => `${stubs}:${gitFolder}:/usr/bin:/bin`)
-const withoutLfs = services(() => `${gitFolder}:/usr/bin:/bin`)
+// Git's own folder alone: a runner's /usr/bin has the real git-lfs.
+const withoutLfs = services(() => gitFolder)
 
 const asked = (): ReadonlyArray<string> =>
   existsSync(join(root, 'asked'))
