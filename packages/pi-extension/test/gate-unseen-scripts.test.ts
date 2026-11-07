@@ -190,7 +190,48 @@ const hidden: ReadonlyArray<string> = [
   `OPTIND='1+b[$(${push})]'`,
   `read OPTIND <<< '1+b[$(${push})]'`,
   `HISTCMD='1+b[$(${push})]'`,
+  // A command whose option a wrapper took for its own.
+  `command printf -v x %s 'b[$(${push})]'; echo $((x))`,
+  // Bash's one-dash long options, which aren't letters.
+  `bash -norc <<< '${push}'`,
+  `bash -norc /dev/stdin <<< '${push}'`,
+  `${written}bash -noediting s x`,
+  `bash -rcfile /dev/stdin -i <<< '${push}'`,
+  // A redirection isn't only its own program's under find.
+  `find . -maxdepth 0 -exec echo '${push}' ';' -exec bash s ';' > s`,
+  // Run by name through a link.
+  `ln -s s t; echo '${push}' > t; chmod +x t; ./s`,
+  // Spellings lower case alone doesn't fold.
+  `${written}bash ſ`,
+  `echo '${push}' > ß; bash ss`,
+  // A glob over a device.
+  `bash /d[e]v/stdin <<< '${push}'`,
+  `bash /*/stdin <<< '${push}'`,
+  // Assigned by an expansion in the middle of a word.
+  `${written}set -a; : x\${BASH_ENV:=s}; bash -c true`,
+  // Wrappers' words the gate took for the command.
+  `env 'BASH_FUNC_x%%=() { ${push}; }' bash -c x`,
+  // Text no assignment shows.
+  `: "$(printf '1+b\\x5b\\x24\\x28${push}\\x29]')"; echo $((_))`,
+  `set -- "$(printf '1+b\\x5b\\x24\\x28${push}\\x29]')"; for v; do echo $((v)); done`,
+  `a=(0 "$(printf '1+b\\x5b\\x24\\x28${push}\\x29]')"); echo $((a[1]))`,
+  `set -- 'a[$(${push})]'; echo \${!1}`,
+  `x='a[$(${push})]'; echo \${!x[0]}`,
+  `for PS4 in '$(${push})'; do set -x; :; done`,
+  // A test's arithmetic, wherever the gate's reading of it would have stopped.
+  `${held}[[ "]]" && 1 -eq x ]]`,
+  `${held}[[ a[1]] && 1 -eq x ]]`,
+  `${held}[[ 1 -e\\\nq x ]]`,
+  `[[ '1+b[$(${push})]' -eq 1 ]]`,
+  `[[ $(printf 'b\\x5b\\x24\\x28${push}\\x29]+'; :| wc -l) -eq 0 ]]`,
+  `${held}a=(0 [x]=1)`,
+  // Numbers that weren't.
+  `x=$(printf 'b\\x5b\\x24\\x28${push}\\x29]+'; echo | wc -l); echo $((x))`,
+  `x=$(wc -l </dev/null\nprintf '+b\\x5b\\x24\\x28${push}\\x29]'); echo $((x))`,
+  `wc() { printf 'b\\x5b\\x24\\x28${push}\\x29]'; }; x=$(wc -l f); echo $((x))`,
+  `x=$(seq -f 'b\\x5b\\x24\\x28${push}\\x29]+%g' 1); echo $((x))`,
   // Other shells, whose grammar the gate doesn't know.
+  `zsh --emulate sh <<< '${push}'`,
   `csh -c '${push}'`,
   `echo '${push}' | csh`,
 ]
@@ -204,6 +245,8 @@ const onSomeBash: ReadonlyArray<string> = [
   `echo \${| ${push}; }`,
   `EPOCHSECONDS='1+b[$(${push})]'`,
   `SRANDOM='1+b[$(${push})]'`,
+  `b='$(${push})'; declare "a=($b)"`,
+  `read -aPS4 <<< '$(${push})'; set -x; :`,
   `BASHPID='1+b[$(${push})]'`,
   `COMP_LINE='1+b[$(${push})]'`,
   `BASH_ARGV0='1+b[$(${push})]'; echo $(($0))`,
@@ -281,6 +324,34 @@ const lines: ReadonlyArray<readonly [Expected, string]> = [
   ['allowed', 'zsh /tmp/merge-all.sh a b'],
   // A placeholder's `>` before a line break names no file.
   ['allowed', 'bd show <issue-id>\nls'],
+  // Arithmetic reads only the variables it names.
+  ['allowed', 'b=$(git branch --show-current); i=0; i=$((i+1)); echo $b $i'],
+  ['allowed', 'count=0; while read -r l; do count=$((count+1)); done < a.txt'],
+  ['allowed', 'out=$(pnpm test 2>&1); rc=$?; (( rc == 0 ))'],
+  ['allowed', 'for f in $(git ls-files); do n=$((n+1)); done'],
+  ['allowed', 'case "$1" in a) i=$((i+1));; esac'],
+  ['allowed', 'y=1; x=y; echo $((x))'],
+  ['allowed', 'declare -A m; m[a]=1; echo ${m[a]}'],
+  ['allowed', 'export ENV=staging'],
+  ['allowed', 'ENV=production pnpm build'],
+  ['allowed', "export PS1='$ '"],
+  ['allowed', "PS4='+ ${LINENO}: ' bash -x scripts/x.sh"],
+  ['allowed', 'export PATH="$PWD/bin:$PATH"; pnpm test > t.log'],
+  ['allowed', 'compgen -W "a b" -- a'],
+  ['allowed', 'command -v git'],
+  ['allowed', 'SECONDS=0'],
+  ['allowed', 'OPTIND=1'],
+  // What it reads from a placeholder's command is still read.
+  ['refused', "ls | xargs -I{} sh -c 'cd {} && git push'"],
+  ['refused', 'xargs -Igit git push origin main'],
+  ['refused', 'xargs -I{} rm -rf /etc/{}'],
+  ['refused', `command git push -v origin main`],
+  ['refused', `builtin git push -V`],
+  ['refused', `env a-b=1 git push origin main`],
+  ['refused', `env - PATH="$PATH" git push origin main`],
+  ['refused', `xargs -R 1 -I{} git push origin main`],
+  ['refused', `exec -ca foo git push origin main`],
+  ['refused', `bash -c -o pipefail '${push}'`],
   // What can be read beside these still counts.
   ['refused', `${held}echo $((x)); ${push}`],
   ['refused', `bash /dev/stdin <<< x; ${push}`],
@@ -345,7 +416,7 @@ describe('gate: scripts it can’t see and text arithmetic re-reads', () => {
         // A login shell's profile would put the real git ahead of the stub.
         expect(
           [...hidden, ...onSomeBash].filter(line =>
-            /\s-\w*l\b|--login/u.test(line),
+            /\bsh\s+(?:-\w+\s+)*-\w*l\b|--login/u.test(line),
           ),
         ).toEqual([])
         const looser = [...hidden, ...onSomeBash].filter(

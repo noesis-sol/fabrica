@@ -303,6 +303,10 @@ interface ShellArguments {
   readonly startup: boolean
 }
 
+/** Bash's long options, which it takes with one dash too: no letter groups, whatever letters they hold. */
+const bashLongOptions =
+  /^-(?:norc|noprofile|noediting|posix|restricted|verbose|debugger|help|version|dump-\S+|wordexp)$/u
+
 const shellArguments = (args: ReadonlyArray<Word>): ShellArguments => {
   let input = false
   let startup = false
@@ -322,11 +326,11 @@ const shellArguments = (args: ReadonlyArray<Word>): ShellArguments => {
     const { text, dynamic } = word
     if (dynamic) return ended(word)
     if (text === '--' || text === '-') return ended(args[index + 1])
-    if (/^--(?:rcfile|init-file)(?:=|$)/u.test(text)) {
+    if (/^--?(?:rcfile|init-file)(?:=|$)/u.test(text)) {
       startup = true
       if (!text.includes('=')) index++
-    } else if (text === '--login') home = true
-    else if (text.startsWith('--')) continue
+    } else if (/^--?login$/u.test(text)) home = true
+    else if (text.startsWith('--') || bashLongOptions.test(text)) continue
     else if (/^[-+]./u.test(text)) {
       if (text.startsWith('-')) {
         commanded ||= text.includes('c')
@@ -344,8 +348,8 @@ const shellArguments = (args: ReadonlyArray<Word>): ShellArguments => {
 const textRunners: ReadonlyMap<string, RegExp> = new Map([
   ['alias', /=/u],
   ['bind', /^-[A-Za-z]*x/u],
-  ['compgen', /^-[A-Za-z]*[CFW]/u],
-  ['complete', /^-[A-Za-z]*[CFW]/u],
+  ['compgen', /^-[A-Za-z]*[CF]/u],
+  ['complete', /^-[A-Za-z]*[CF]/u],
   ['enable', /^-[A-Za-z]*f/u],
   ['fc', /^/u],
   ['hash', /^-[A-Za-z]*p/u],
@@ -353,16 +357,80 @@ const textRunners: ReadonlyMap<string, RegExp> = new Map([
   ['readarray', /^-[A-Za-z]*C/u],
 ])
 
-/** Variables and settings whose text bash runs or reads as commands. */
+/** Variables and settings whose text bash runs or reads as commands, `printf -v`'s and `read -a`'s spelling too. */
 const runsVariable =
-  /^(?:-[A-Za-z]*v)?(?:\$\{)?(?:BASH_ENV|ENV|ZDOTDIR|PS[0124]|PROMPT_COMMAND|BASH_ALIASES|BASH_CMDS|expand_aliases)(?:\[.*\])?(?:\+?:?=.*)?\}?$/su
+  /^(?:-[A-Za-z]*)?(?:\$\{)?(?:BASH_ENV|ZDOTDIR|PROMPT_COMMAND|BASH_ALIASES|BASH_CMDS|BASH_FUNC_[^=]*|expand_aliases)(?:\[.*\])?(?:\+?:?=.*)?\}?$/su
+
+/** The same, assigned by an expansion anywhere in a word. */
+const assignsRunning =
+  /\$\{(?:BASH_ENV|ENV|ZDOTDIR|PS[0124]|PROMPT_COMMAND|PATH)\+?:?=/u
+
+/** A prompt, which bash expands: its text matters only where that can run something. */
+const promptVariable = /^(?:-[A-Za-z]*)?PS[0124](?:\+?=(.*))?$/su
+
+/** `ENV`, which only an interactive POSIX shell reads. */
+const envVariable = /^(?:-[A-Za-z]*)?ENV(?:\+?=.*)?$/su
 
 /** Variables bash evaluates as arithmetic when they're assigned: a number given them needs no asking. */
 const evaluatedVariable =
-  /^(?:-[A-Za-z]*v)?(?:\$\{)?(?:OPTIND|HISTCMD)(?:\+?:?=(?!\d+$).*)?\}?$/su
+  /^(?:-[A-Za-z]*)?(?:\$\{)?(?:OPTIND|HISTCMD|SRANDOM|RANDOM|SECONDS|LINENO|BASHPID|EPOCHSECONDS|EPOCHREALTIME)(?:\+?:?=(?!\d+$).*)?\}?$/su
 
-/** A word setting `PATH`, attached to `printf -v` or in an expansion too. */
-const setsPathWord = /^(?:-[A-Za-z]*v)?(?:\$\{)?PATH(?:\+?:?=.*)?\}?$/su
+/** A word setting `PATH`, attached to `printf -v` too. */
+const setsPathWord = /^(?:-[A-Za-z]*)?PATH(?:\+?=.*)?$/su
+
+/** Variables bash itself gives the text of what it just read, which no assignment on the line shows. */
+const specialVariables: ReadonlySet<string> = new Set([
+  '_',
+  'BASH_REMATCH',
+  'BASH_ARGV',
+  'BASH_ARGC',
+  'BASH_COMMAND',
+  'BASH_SOURCE',
+  'FUNCNAME',
+  'COPROC',
+  'MAPFILE',
+  'OPTARG',
+  'REPLY',
+  'COMP_WORDS',
+])
+
+/** Builtins, which no `PATH` changes. */
+const builtins: ReadonlySet<string> = new Set([
+  ':',
+  '[',
+  '[[',
+  'alias',
+  'command',
+  'declare',
+  'echo',
+  'eval',
+  'exec',
+  'exit',
+  'export',
+  'false',
+  'getopts',
+  'hash',
+  'let',
+  'local',
+  'printf',
+  'read',
+  'readonly',
+  'return',
+  'set',
+  'shift',
+  'shopt',
+  'source',
+  '.',
+  'test',
+  'trap',
+  'true',
+  'type',
+  'typeset',
+  'ulimit',
+  'umask',
+  'unset',
+  'wait',
+])
 
 /** Where a script given to a shell or `source` isn't a file a line could have reviewed: what's read there is the line's. */
 const deviceFolder = /^(?:\/private)?\/(?:dev|proc)(?:\/|$)/u
@@ -409,16 +477,49 @@ const numeric = (text: string): boolean =>
 const holdsSubstitution = ({ text, dynamic }: Word): boolean =>
   !dynamic && /\$\((?!\()|`/u.test(text)
 
-/** What can make a variable's text an expression holding a subscript: `[`, or an expansion or substitution. */
-const expressionText = /[[$`]/u
+/** What can make a variable's text an expression holding a subscript: `[`, an expansion or substitution, a glob. */
+const expressionText = /[[$`*?]/u
 
-/** Whether `word` assigns a variable a value the gate can't vouch for: known only when it runs, or with text that could be a subscript. */
-const unvouchedValue = ({ text, dynamic }: Word): boolean => {
-  if (/\$\{\w+:?=/u.test(text)) return true
-  const value = assignedValue.exec(text)?.[1]
-  if (value === undefined) return false
-  return dynamic ? !numeric(value) : expressionText.test(value)
+/** A value a variable gets on the line, as arithmetic reading the variable would take it. */
+interface VariableValue {
+  readonly name: string
+  /** Known only when it runs, or with text that could hold a subscript. */
+  readonly unvouched: boolean
+  /** The variables its text names, which bash evaluates in turn. */
+  readonly names: ReadonlyArray<string>
+  /** An array's keys: numbers, but for an associative array's. */
+  readonly keys?: boolean
 }
+
+/** The value `word`, text known or not, gives `name`. */
+const variableValue = (
+  name: string,
+  value: string,
+  dynamic: boolean,
+): VariableValue => ({
+  name,
+  unvouched: dynamic ? !numeric(value) : expressionText.test(value),
+  names: dynamic ? [] : arithmeticReads(value).names,
+  keys: value.startsWith('${!'),
+})
+
+/** What `word` gives variables: as an assignment, wherever it stands, or by an assigning expansion in it. */
+const variableValues = (word: Word): ReadonlyArray<VariableValue> =>
+  spellings(word).flatMap(text => {
+    const assigned = /^([A-Za-z_]\w*)(?:\[.*\])?\+?=(.*)$/su.exec(text)
+    return [
+      ...(assigned === null
+        ? []
+        : [variableValue(assigned[1] ?? '', assigned[2] ?? '', word.dynamic)]),
+      ...[...text.matchAll(/\$\{(\w+)(?:\[[^\]]*\])?:?=/gu)].map(
+        ([, name]) => ({
+          name: name ?? '',
+          unvouched: true,
+          names: [],
+        }),
+      ),
+    ]
+  })
 
 /** Builtins whose `-n` makes a name refer to another variable, which assigning to it sets. */
 const namerefs = new Set(['declare', 'typeset', 'local'])
@@ -825,8 +926,16 @@ class Policy {
   readonly named: Array<LineFile> = []
   /** What the line's arithmetic reads again. */
   rereads: Rereads = readsNothing
-  /** The line gives a variable text the gate can't vouch for, so arithmetic reading one may run it. */
-  unvouched = false
+  /** What the line gives its variables. */
+  readonly values: Array<VariableValue> = []
+  /** The arguments of builtins that set variables from what they read, which the gate can't see. */
+  readonly setterWords: Array<string> = []
+  /** Something on the line sets variables the gate can't name. */
+  anyVariable = false
+  /** The line makes an associative array, whose keys are text. */
+  associative = false
+  /** The line sets `ENV`. */
+  setsEnv = false
   /** The line sets `PATH`, where a shell or `source` looks for a script named without a folder. */
   setsPath = false
   /** The line makes a link, through which what it writes may be what it runs under another name. */
@@ -995,7 +1104,14 @@ class Policy {
             places.every(place =>
               Place.$match(place, {
                 At: ({ path }) => {
-                  paths.add(path.normalize('NFC').toLowerCase())
+                  // By way of upper case, for what a volume folds that lower case keeps: ß, ﬁ, ſ, ς.
+                  paths.add(
+                    path
+                      .normalize('NFC')
+                      .toLowerCase()
+                      .toUpperCase()
+                      .toLowerCase(),
+                  )
                   return true
                 },
                 Unknown: () => false,
@@ -1010,6 +1126,53 @@ class Policy {
 
   /** What only the whole line tells, once it has all been read. */
   finished(): void {
+    if (this.writes.length > 0) this.writtenRun()
+    if (this.readsHome && this.setsEnv)
+      this.ask('runs an interactive shell, which reads the ENV this line sets')
+    if (this.readsHome && this.moved.home)
+      this.ask(
+        'runs a shell that reads files from a home folder this line sets',
+      )
+    const searched = this.scripts.find(({ word }) => !word.text.includes('/'))
+    if (this.setsPath && searched !== undefined)
+      this.ask(
+        `runs the script ${searched.word.text} from a PATH this line sets`,
+      )
+    if (this.rereads.output)
+      this.ask(
+        'arithmetic reads a substitution’s output or a parameter as an expression, where a subscript runs commands',
+      )
+    const unvouched = this.unvouchedRead()
+    if (unvouched !== undefined)
+      this.ask(
+        `arithmetic reads ${unvouched} as an expression, where a subscript runs commands, and the gate can’t vouch for its value`,
+      )
+  }
+
+  /** The first variable arithmetic reads whose value the gate can't vouch for, following what its value names. */
+  unvouchedRead(): string | undefined {
+    const read = new Set(this.rereads.names)
+    for (const name of read) {
+      if (this.anyVariable || specialVariables.has(name)) return name
+      if (
+        this.setterWords.some(
+          word =>
+            word === name || (word.startsWith('-') && word.endsWith(name)),
+        )
+      )
+        return name
+      for (const value of this.values)
+        if (value.name === name) {
+          if (value.unvouched || (value.keys === true && this.associative))
+            return name
+          for (const named of value.names) read.add(named)
+        }
+    }
+    return undefined
+  }
+
+  /** Whether the line runs what it wrote. */
+  writtenRun(): void {
     const scattered = this.writes.filter(
       write => this.landings(write).size === 0,
     )
@@ -1038,19 +1201,18 @@ class Policy {
         return wrote.get('/')?.some(other) === true
       })
     }
-    const searched = this.scripts.find(({ word }) => !word.text.includes('/'))
-    if (this.setsPath && searched !== undefined)
-      this.ask(
-        `runs the script ${searched.word.text} from a PATH this line sets`,
-      )
     const script = this.scripts.find(file => mayHaveWritten(file, true))
     if (script !== undefined)
       this.ask(
         `runs the script ${script.word.text}, which this line may have written`,
       )
-    if (this.madeLink && this.scripts.length > 0)
+    if (
+      this.madeLink &&
+      (this.scripts.length > 0 ||
+        this.named.some(({ word }) => word.text.includes('/')))
+    )
       this.ask(
-        'runs a script on a line that makes a link, through which it may have been written',
+        'runs a file on a line that makes a link, through which it may have been written',
       )
     const seen = new Set<string>()
     const command = this.named.find(file => {
@@ -1064,6 +1226,7 @@ class Policy {
     const other = this.named.find(
       ({ word, command: by }) =>
         !word.text.includes('/') &&
+        !builtins.has(word.text) &&
         this.writes.some(
           write => write.command === undefined || write.command !== by,
         ),
@@ -1072,18 +1235,6 @@ class Policy {
       this.ask(
         `runs ${other.word.text} from a PATH this line sets, on a line that writes files`,
       )
-    if (this.readsHome && this.moved.home)
-      this.ask(
-        'runs a shell that reads files from a home folder this line sets',
-      )
-    if (this.rereads.output)
-      this.ask(
-        'arithmetic reads a substitution’s output or a parameter as an expression, where a subscript runs commands',
-      )
-    else if (this.rereads.named && this.unvouched)
-      this.ask(
-        'arithmetic reads a variable’s text as an expression, where a subscript runs commands, and this line gives one a value the gate can’t vouch for',
-      )
   }
 
   /** `name` runs the script `word`, which the gate can't read: one the line can't have written, in the worktree, is left to run. */
@@ -1091,7 +1242,8 @@ class Policy {
     Confinement.$match(this.place(word, cwd), {
       Inside: () => undefined,
       Outside: ({ path }) => {
-        if (deviceFolder.test(path))
+        // A glob's path is as spelled: it may land there all the same.
+        if (deviceFolder.test(path) || /(?:^|[^\\])[*?[]/u.test(word.pattern))
           this.ask(`${name} runs ${path}, which the line itself may feed`)
       },
       Unknown: ({ reason }) =>
@@ -1111,6 +1263,13 @@ class Policy {
       args.some(({ text, dynamic }) => dynamic || given.test(text))
     )
       this.ask(`${name} runs text it is given`)
+    // `-W` expands its words: plain ones can't run anything.
+    if (
+      (name === 'compgen' || name === 'complete') &&
+      args.some(({ text }) => /^-[A-Za-z]*W/u.test(text)) &&
+      args.some(({ text, dynamic }) => dynamic || /[$`]/u.test(text))
+    )
+      this.ask(`${name} -W expands text it is given`)
     const reads = (text: string) => {
       this.rereads = rereadsEither(this.rereads, arithmeticReads(text))
     }
@@ -1130,31 +1289,34 @@ class Policy {
       reads(
         /\[(.*)\]/su.exec(`${args[0].text} ${args[1]?.text ?? ''}`)?.[1] ?? '',
       )
-    if (
-      (name === 'unset' || name === 'wait') &&
-      args.some(({ dynamic }) => dynamic)
-    )
-      reads('x')
+    if (name === 'unset' || name === 'wait')
+      for (const { text, dynamic } of args) if (dynamic) reads(text)
     if (integerSetters.has(name)) {
-      if (args.some(({ text }) => /^-[A-Za-z]*i/u.test(text))) reads('x')
+      // Each of its names evaluates what it's given.
+      if (args.some(({ text }) => /^-[A-Za-z]*i/u.test(text)))
+        for (const { text } of args)
+          reads(/^[A-Za-z_]\w*/u.exec(text)?.[0] ?? '')
       const compound = args.some(({ text }) => /^-[A-Za-z]*[aA]/u.test(text))
+      if (args.some(({ text }) => /^-[A-Za-z]*A/u.test(text)))
+        this.associative = true
       // Bash reads such a value as an array's, expanding what's in it.
       if (
         args.some(
           word =>
             holdsSubstitution(word) ||
-            (compound && word.dynamic && assignedValue.test(word.text)),
+            (word.dynamic &&
+              (compound || /^\w+\+?=\(/u.test(word.text)) &&
+              assignedValue.test(word.text)),
         )
       )
         this.ask(`${name} expands the text of what it assigns`)
     }
     if (
       readers.has(name) ||
-      name === '.' ||
-      name === 'source' ||
       (name === 'printf' && args[0]?.text.startsWith('-v') === true)
     )
-      this.unvouched = true
+      this.setterWords.push(...args.map(({ text }) => text))
+    if (name === '.' || name === 'source') this.anyVariable = true
   }
 
   /** Every command of `source`, run from `cwd`; the folders it may leave the shell in. */
@@ -1173,24 +1335,34 @@ class Policy {
         this.ask(`the gate can’t read the command: ${reason}`)
         return joined(cwd, unknownFolder)
       },
-      Parsed: ({ commands, unnamed, doubts, rereads }) => {
+      Parsed: ({ commands, unnamed, doubts, rereads, loopValues }) => {
         for (const doubt of doubts) this.ask(doubt)
         this.rereads = rereadsEither(this.rereads, rereads)
         const allWords = commands.flatMap(({ words, writes }) => [
           ...words,
           ...writes,
         ])
-        if (
-          allWords.some(
-            word => unvouchedValue(word) || holdsSubstitution(word),
-          ) ||
-          unnamed.some(
-            ({ text, dynamic }) =>
-              (dynamic && !numeric(text)) ||
-              (!dynamic && expressionText.test(text)),
+        this.values.push(...[...allWords, ...unnamed].flatMap(variableValues))
+        for (const { name, value } of loopValues)
+          this.values.push(
+            Option.match(value, {
+              onNone: () => ({ name, unvouched: true, names: [] }),
+              onSome: ({ text, dynamic }) => variableValue(name, text, dynamic),
+            }),
           )
-        )
-          this.unvouched = true
+        const prompt = [...allWords, ...unnamed].find(({ text, dynamic }) => {
+          const matched = promptVariable.exec(text)
+          return (
+            matched !== null &&
+            (dynamic ||
+              matched[1] === undefined ||
+              /\$\(|`|\[/u.test(matched[1]))
+          )
+        })
+        if (prompt !== undefined)
+          this.ask(
+            `${prompt.text} gives bash a prompt to expand, which runs commands`,
+          )
         if (commands.length > 1) this.several = true
         // Set anywhere, even after a `cd` (in a loop, it runs before the next one), they move it.
         const texts = [
@@ -1199,11 +1371,15 @@ class Policy {
         ].flatMap(spellings)
         const named = (name: string) => texts.some(text => text.includes(name))
         const running = texts.find(
-          text => runsVariable.test(text) || evaluatedVariable.test(text),
+          text =>
+            runsVariable.test(text) ||
+            evaluatedVariable.test(text) ||
+            assignsRunning.test(text),
         )
         if (running !== undefined)
           this.ask(`${running} sets what bash runs or reads as commands`)
         if (texts.some(text => setsPathWord.test(text))) this.setsPath = true
+        if (texts.some(text => envVariable.test(text))) this.setsEnv = true
         // `${!v:=x}` assigns to the variable `v` names, in the bash versions that take it.
         const indirect = texts.some(text => /\$\{![^}]*=/u.test(text))
         this.moved = {
@@ -1259,7 +1435,7 @@ class Policy {
       )
     ) {
       this.ask(`${first.text} sets a variable named only when it runs`)
-      this.unvouched = true
+      this.anyVariable = true
     }
   }
 
@@ -1347,6 +1523,9 @@ class Policy {
     this.rereadBy(name, args)
 
     if (name === '.' || name === 'source') {
+      // Newer bash takes `-p path` to search.
+      if (args[0]?.text.startsWith('-') === true && args[0].text !== '--')
+        this.ask(`${name} ${args[0].text} looks for its script elsewhere`)
       const script = operands(args)[0]
       if (script !== undefined) this.runsScript(name, script, cwd)
       return cwd
@@ -1372,6 +1551,17 @@ class Policy {
       if (startup)
         this.ask(`${name} runs a startup file named on its command line`)
       if (Option.isSome(file)) this.runsScript(name, file.value, cwd)
+      // Their options the gate doesn't know, so any operand may be the script, or none.
+      if (
+        !commanded &&
+        otherGrammars.has(name) &&
+        args.some(({ text }) => text.startsWith('-'))
+      )
+        this.ask(`${name} takes options by rules the gate doesn’t know`)
+      if (!commanded && otherGrammars.has(name))
+        for (const operand of operands(args))
+          if (operand !== Option.getOrUndefined(file))
+            this.runsScript(name, operand, cwd)
       const flag = args.findIndex(
         ({ text, dynamic }) => !dynamic && /^-[A-Za-z]*c[A-Za-z]*$/u.test(text),
       )
@@ -1436,7 +1626,7 @@ class Policy {
         if (word === undefined) break
         if (word.text === '--') return args.slice(index + 1)
         if (!word.dynamic && word.text.startsWith('-') && word.text !== '-') {
-          if (values.has(word.text)) index++
+          if (takesNextWord(word.text, values)) index++
           continue
         }
         if (skipped === positionals) break
@@ -1454,19 +1644,35 @@ class Policy {
           this.ask('env -C runs a command in another folder')
           return []
         }
-        return after(new Set(['-u', '--unset']))
+        // A bare `-`, and an entry with a name no assignment can have, which `env` takes all the same.
+        const command = after(new Set(['-u', '--unset']))
+        const first = command.findIndex(
+          ({ text, dynamic }) =>
+            text !== '-' && (dynamic || !text.includes('=')),
+        )
+        const entries = first === -1 ? command : command.slice(0, first)
+        return [
+          ...entries.filter(({ pattern }) => assignment.test(pattern)),
+          ...(first === -1 ? [] : command.slice(first)),
+        ]
       }
       case 'command':
-      case 'builtin':
-        return hasOption(args, '-v', '-V') ? [] : after(new Set())
+      case 'builtin': {
+        // `command -v x` only says what `x` is; an option past the command's name is that command's.
+        const named = args.findIndex(({ text }) => !text.startsWith('-'))
+        return hasOption(named === -1 ? args : args.slice(0, named), '-v', '-V')
+          ? []
+          : after(new Set())
+      }
       case 'exec':
         return after(new Set(['-a']))
       case 'nohup':
       case 'time':
       case 'chronic':
       case 'unbuffer':
-      case 'caffeinate':
         return after(new Set())
+      case 'caffeinate':
+        return after(new Set(['-t', '-w']))
       case 'nice':
         return after(new Set(['-n', '--adjustment']))
       case 'ionice':
@@ -1488,6 +1694,9 @@ class Policy {
         const command = after(
           new Set([
             '-I',
+            '-J',
+            '-R',
+            '-S',
             '-n',
             '-P',
             '-L',
@@ -1501,7 +1710,8 @@ class Policy {
             '--arg-file',
           ]),
         )
-        // A placeholder stands for the input, as the word after the command does.
+        // A placeholder stands for the input, as the word after the command does: what's read as written still
+        // counts, and where it's the command, or goes to a shell, what runs is the input's.
         const placeholder = args.flatMap(({ text }, index) => {
           const attached = /^-[IJ](.+)$/u.exec(text)?.[1]
           if (attached !== undefined) return [attached]
@@ -1510,14 +1720,26 @@ class Policy {
           if (text === '-i' || text === '--replace') return ['{}']
           return []
         })
-        const placed = command.map(word =>
-          placeholder.some(held => held !== '' && word.text.includes(held))
-            ? { ...word, dynamic: true }
-            : word,
+        const holds = ({ text }: Word) =>
+          placeholder.some(held => held !== '' && text.includes(held))
+        if (
+          command[0] !== undefined &&
+          (holds(command[0]) ||
+            (command.some(holds) &&
+              command.some(({ text }) => {
+                const called = basename(text)
+                return (
+                  shells.has(called) ||
+                  called === '.' ||
+                  called === 'source' ||
+                  called === 'eval'
+                )
+              })))
         )
-        return placed.length === 0
-          ? placed
-          : [...placed, { text: '<input>', pattern: '<input>', dynamic: true }]
+          this.ask('xargs fills in what a shell runs from its input')
+        return command.length === 0
+          ? command
+          : [...command, { text: '<input>', pattern: '<input>', dynamic: true }]
       }
       default:
         return undefined
@@ -1581,12 +1803,16 @@ class Policy {
       const inner = expression.slice(index + 1, end === -1 ? undefined : end)
       // `-execdir` and `-okdir` run in each match's folder, which the gate doesn't follow.
       const runIn = word.text.endsWith('dir') ? unknownFolder : cwd
+      // The line's redirections aren't this program's alone: `-exec` runs several, under one command.
+      const outer = this.current
+      this.current = undefined
       for (const root of roots)
         this.words(
           inner.map(part => foundWord(part, root)),
           runIn,
           depth,
         )
+      this.current = outer
       if (end !== -1) index = end
     }
   }

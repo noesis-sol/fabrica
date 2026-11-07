@@ -25,20 +25,33 @@ export interface SimpleCommand {
 
 /** What an arithmetic expression, or anything bash evaluates as one, reads. */
 export interface Rereads {
-  /** A variable, whose text bash evaluates in turn. */
-  readonly named: boolean
+  /** Variables, whose text bash evaluates in turn. */
+  readonly names: ReadonlyArray<string>
   /** A substitution's output or a positional parameter, read as the expression's own text. */
   readonly output: boolean
 }
 
-export const readsNothing: Rereads = { named: false, output: false }
+export const readsNothing: Rereads = { names: [], output: false }
+
+/** Commands that print only a number, unless the line redefines them. */
+const countingCommands: ReadonlySet<string> = new Set([
+  'wc',
+  'grep',
+  'sysctl',
+  'getconf',
+  'git',
+  'date',
+  'nproc',
+  'seq',
+])
 
 /**
- * A substitution whose output is a number whatever went into it, its last command being one of these: what the
- * commands before it print goes no further, and they are read as any others are.
+ * A substitution whose output is a number whatever went into it: one pipeline, its last command one of these,
+ * what's before it read as any command is. A file's name, which `wc` and `grep -c` print, can't be chosen by
+ * a variable or a glob here; `wc <` prints none.
  */
 const countingSubstitution =
-  /\$\((?:[^()`]*\|\s*)?(?:(?:wc\s|seq\s|grep -c\s|sysctl -n hw\.|getconf\s|git rev-list --count\s)[^()`|;&]*|date \+%s\s*|nproc\s*)\)/u
+  /\$\((?:[^()`;&\n|]*\|(?!\|)\s*)*(?:wc\s[^()`|;&\n]*<[^()`|;&\n]*|(?:wc\s|grep -c\s|sysctl -n hw\.|getconf\s|git rev-list --count\s)[^()`|;&\n$*?[]*|date \+%s\s*|nproc(?:\s+2>\/dev\/null)?\s*|seq(?:\s+-?\d+(?:\.\d+)?)+\s*)(?:\|\s*(?:tr -d\s[^()`|;&\n]*|xargs\s*)|\|\|\s*true\s*)?\)/u
 
 /** Whether `text` is such a substitution, whole. */
 export const countsOnly = (text: string): boolean => {
@@ -46,18 +59,34 @@ export const countsOnly = (text: string): boolean => {
   return found?.index === 0 && found[0].length === text.length
 }
 
+/** Whether `text` holds a substitution that may print anything. */
+const holdsRunning = (text: string): boolean =>
+  /\$\(|`/u.test(text.replace(new RegExp(countingSubstitution, 'gu'), '0'))
+
 /** What `expression`, evaluated as arithmetic, reads: a digit's `0x1f` or `16#ff` names nothing. */
-export const arithmeticReads = (expression: string): Rereads => ({
-  named: /(?:^|[^\w#])[A-Za-z_]/u.test(expression),
-  output: /\$\(|`|\$\{?[0-9@*]|\$\{!/u.test(
-    expression.replace(new RegExp(countingSubstitution, 'gu'), '0'),
-  ),
-})
+export const arithmeticReads = (expression: string): Rereads => {
+  const counted = expression.replace(
+    new RegExp(countingSubstitution, 'gu'),
+    '0',
+  )
+  return {
+    names: [...counted.matchAll(/(?:^|[^\w#])([A-Za-z_]\w*)/gu)].flatMap(
+      ([, name]) => name ?? [],
+    ),
+    output: /\$\(|`|\$\{?[0-9@*]|\$\{!/u.test(counted),
+  }
+}
 
 export const rereadsEither = (one: Rereads, other: Rereads): Rereads => ({
-  named: one.named || other.named,
+  names: [...one.names, ...other.names],
   output: one.output || other.output,
 })
+
+/** A variable a loop or an array literal sets: to each of its words, or to what the gate can't see. */
+export interface LoopValue {
+  readonly name: string
+  readonly value: Option.Option<Word>
+}
 
 export type Script = Data.TaggedEnum<{
   Parsed: {
@@ -74,6 +103,8 @@ export type Script = Data.TaggedEnum<{
     readonly unnamed: ReadonlyArray<Word>
     /** What the line's arithmetic reads again as an expression, where a subscript in that text runs commands. */
     readonly rereads: Rereads
+    /** What the line's loops and array literals give their variables. */
+    readonly loopValues: ReadonlyArray<LoopValue>
   }
   Unparsable: { readonly reason: string }
 }>
@@ -188,6 +219,8 @@ const doubtOfContinuedDollar =
   'a line continued right after a $, which changes how what follows is quoted'
 const doubtOfQuotedAssignment =
   'a quoted word that looks like an assignment, which bash runs as a command'
+const doubtOfCountingFunction =
+  'a function named as a command that prints only a number, which the gate takes it for'
 const doubtOfFunctionExpansion =
   'a ${ … } running commands in the shell, which only newer bash does'
 const doubtOfPromptExpansion =
@@ -207,12 +240,15 @@ const subscripted = /^[A-Za-z_]\w*\[(.*)\](?:\+?=.*)?$/su
 /** Text of an expanding here-document where bash evaluates a part as arithmetic. */
 const documentArithmetic = /\$\[|\$\{[^\n]*(?:\[|!|:[^-=+?])/u
 
-/** `[[`'s operators that evaluate what's beside them. */
-const testArithmetic = /(?:^|\s)-(?:eq|ne|lt|le|gt|ge|v)\s/u
+/** `[[`'s operators that evaluate what's beside them, and the one that reads a name's subscript. */
+const testNumeric = /(\S+)\s+-(?:eq|ne|lt|le|gt|ge)\s+(\S+)/gu
+const testName = /(?:^|\s)-v\s+(\S+)/gu
 
 /** A parameter expansion's text, where bash evaluates a part as arithmetic or reads a name's text as a variable. */
 const expansionSubscript = /^[#!]?[A-Za-z_]\w*\[(.*?)\]/su
-const expansionIndirect = /^![A-Za-z_]\w*(?![@*\w])/u
+const expansionIndirect = /^!([A-Za-z_]\w*)(?![@*\w[])/u
+const expansionIndirectParameter = /^![0-9@*#]/u
+const expansionIndirectElement = /^!([A-Za-z_]\w*)\[(?![@*]\])/u
 const expansionSlice =
   /^[A-Za-z_0-9@*#$?!-][\w@*]*(?:\[.*?\])?:(?![-=+?])(.*)$/su
 
@@ -305,6 +341,9 @@ class Reader {
   rereads = readsNothing
   /** Up to where a `((` already read goes: what's nested in it is part of what was read. */
   arithmeticEnd = 0
+  /** Up to where the last `[[` read goes. */
+  testEnd = 0
+  readonly loopValues: Array<LoopValue> = []
 
   constructor(
     readonly source: string,
@@ -331,12 +370,40 @@ class Reader {
 
   /** The `[[` the reader has just passed evaluates what's beside its numeric tests, wherever in the test. */
   noteTest(): void {
-    const close = this.source.indexOf(']]', this.index)
-    const test = this.source.slice(
-      this.index,
-      close === -1 ? this.source.length : close,
-    )
-    if (testArithmetic.test(test)) this.noteArithmetic(test)
+    if (this.index < this.testEnd) return
+    let at = this.index
+    for (; at < this.source.length; at++) {
+      const char = this.source.charAt(at)
+      if (char === '\\') at++
+      else if (char === "'") {
+        const close = this.source.indexOf("'", at + 1)
+        at = close === -1 ? this.source.length : close
+      } else if (char === '"') {
+        for (at++; at < this.source.length; at++) {
+          const inner = this.source.charAt(at)
+          if (inner === '\\') at++
+          else if (inner === '"') break
+        }
+      } else if (
+        char === ']' &&
+        this.source.charAt(at + 1) === ']' &&
+        /\s/u.test(this.source.charAt(at - 1)) &&
+        /^(?:$|[\s;&|)])/u.test(this.source.charAt(at + 2))
+      )
+        break
+    }
+    this.testEnd = at
+    const test = this.source.slice(this.index, at).replaceAll('\\\n', '')
+    let numeric = false
+    for (const [, left, right] of test.matchAll(testNumeric)) {
+      numeric = true
+      this.noteArithmetic(left ?? '')
+      this.noteArithmetic(right ?? '')
+    }
+    // What's beside the test's operators may be several words here: only a substitution matters.
+    if (numeric && holdsRunning(test)) this.noteArithmetic('$1')
+    for (const [, name] of test.matchAll(testName))
+      this.noteArithmetic(name ?? '')
   }
 
   /** `${` at the reader, its `{` next but one: followed by a blank or `|`, newer bash runs it as commands. */
@@ -356,7 +423,11 @@ class Reader {
     const subscript = expansionSubscript.exec(text)?.[1]
     if (subscript !== undefined && subscript !== '@' && subscript !== '*')
       this.noteArithmetic(subscript)
-    if (expansionIndirect.test(text)) this.noteArithmetic('x')
+    const indirect = expansionIndirect.exec(text)?.[1]
+    if (indirect !== undefined) this.noteArithmetic(indirect)
+    if (expansionIndirectParameter.test(text)) this.noteArithmetic('$1')
+    const element = expansionIndirectElement.exec(text)?.[1]
+    if (element !== undefined) this.noteArithmetic(element)
     const slice = expansionSlice.exec(text)?.[1]
     if (slice !== undefined) this.noteArithmetic(slice)
   }
@@ -376,6 +447,27 @@ class Reader {
     let patternWords = false
     /** A `[[ … ]]` test's parenthesis ended the words before it: what follows is still the test. */
     let testing = false
+    /** The command's words so far are all assignments. */
+    let assignmentsOnly = true
+    /** The `for` or `select` being read: its variable and what it gets. */
+    let loop:
+      | {
+          name: string | undefined
+          listed: boolean
+          readonly words: Array<Word>
+        }
+      | undefined
+    const endLoop = () => {
+      const { name, listed, words: list } = loop ?? {}
+      if (name !== undefined) {
+        // With no `in`, it gets the positional parameters.
+        if (listed !== true)
+          this.loopValues.push({ name, value: Option.none() })
+        for (const value of list ?? [])
+          this.loopValues.push({ name, value: Option.some(value) })
+      }
+      loop = undefined
+    }
     const finish = () => {
       if (words.length > 0 || writes.length > 0)
         this.commands.push({ words, writes })
@@ -383,6 +475,8 @@ class Reader {
       writes = []
       skip = 0
       testing = false
+      assignmentsOnly = true
+      endLoop()
     }
     while (this.index < this.source.length) {
       const char = this.peek()
@@ -456,6 +550,17 @@ class Reader {
       if (char === '(') {
         // `((…))`, a `for`'s too: read as commands below, and evaluated by bash.
         if (this.peek(1) === '(') this.noteDoubleParenthesis()
+        // An array literal's values, read below as commands.
+        const arrayName = /^([A-Za-z_]\w*)\+?=$/u.exec(
+          words.at(-1)?.text ?? '',
+        )?.[1]
+        if (arrayName !== undefined && this.source[this.index - 1] === '=')
+          this.loopValues.push({ name: arrayName, value: Option.none() })
+        if (
+          this.peek(1) === ')' &&
+          countingCommands.has(words.at(-1)?.text ?? '')
+        )
+          this.doubts.add(doubtOfCountingFunction)
         // Among a command's words, or against a word, it is no subshell: an extended glob (`@(out)`,
         // zsh's `(out)/x`), which matches what the gate would read as a command. A function's `()`,
         // an array's `=(`, `time (…)` and a `[[ … ]]` test aside.
@@ -509,12 +614,21 @@ class Reader {
         // `for x do …` and `for x { …; }`: with no `in`, the loop's body starts on the same line.
         if (word.plain && (word.word.text === 'do' || word.word.text === '{')) {
           skip = 0
+          endLoop()
           continue
+        }
+        if (loop !== undefined) {
+          if (loop.name === undefined) loop.name = word.word.text
+          else if (word.plain && word.word.text === 'in') loop.listed = true
+          else loop.words.push(word.word)
         }
         this.unnamed.push(word.word)
         continue
       }
       if (skip > 0) {
+        // `function wc`, as `wc()` above.
+        if (countingCommands.has(word.word.text))
+          this.doubts.add(doubtOfCountingFunction)
         this.unnamed.push(word.word)
         skip--
         continue
@@ -532,6 +646,8 @@ class Reader {
         this.doubts.add(doubtOfCoproc)
       if (words.length === 0 && word.plain && reserved.has(word.word.text)) {
         skip = skipped.get(word.word.text) ?? 0
+        if (word.word.text === 'for' || word.word.text === 'select')
+          loop = { name: undefined, listed: false, words: [] }
         continue
       }
       // An array's subscript still open: what follows, a `<<` or a `|` among it, isn't the shell's.
@@ -545,18 +661,22 @@ class Reader {
         this.doubts.add(doubtOfSubscript)
       // Where it would name the command: quoted, bash takes it for no assignment.
       if (
-        words.every(({ text }) => assignmentStart.test(text)) &&
+        assignmentsOnly &&
         assignmentStart.test(word.word.text) &&
         !assignmentStart.test(
           this.source.slice(start, this.index).replaceAll('\\\n', ''),
         )
       )
         this.doubts.add(doubtOfQuotedAssignment)
-      if (words.every(({ text }) => assignmentStart.test(text))) {
+      if (assignmentsOnly) {
         const subscript = subscripted.exec(word.word.text)?.[1]
         if (subscript !== undefined) this.noteArithmetic(subscript)
       }
+      // An array literal's `[x]=1`.
+      const element = /^\[(.+)\]\+?=/su.exec(word.word.text)?.[1]
+      if (element !== undefined) this.noteArithmetic(element)
       if (word.plain && word.word.text === '[[') this.noteTest()
+      assignmentsOnly &&= assignmentStart.test(word.word.text)
       words.push(word.word)
     }
     if (patterns && patternWords) this.doubts.add(doubtOfCase)
@@ -629,7 +749,7 @@ class Reader {
       if (document.expands) {
         for (const [text] of body.matchAll(assigningExpansion))
           this.unnamed.push({ text, pattern: text, dynamic: false })
-        if (documentArithmetic.test(body)) this.noteArithmetic('x')
+        if (documentArithmetic.test(body)) this.noteArithmetic(body)
       }
       if (!found) break
     }
@@ -962,5 +1082,6 @@ export const parseScript = (
     doubts: [...reader.doubts],
     dollarQuotes: reader.dollarQuotes,
     rereads: reader.rereads,
+    loopValues: reader.loopValues,
   })
 }
