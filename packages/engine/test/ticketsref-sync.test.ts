@@ -1239,6 +1239,65 @@ describe('a store whose ref is gone', () => {
   }
 
   it.effect(
+    'a pull stopped at its import, then a new clone, keeps the other engine’s edit',
+    () =>
+      Effect.gen(function* () {
+        const { remote, a, b } = yield* twoEngines
+        const shared = yield* a.create('Shared')
+        yield* converge(a, b)
+
+        // b edits a field of its own and pushes; the label is the sentinel the import trips on.
+        yield* TestClock.adjust('1 second')
+        yield* b.graph.update({
+          id: shared,
+          changes: { title: 'From b' },
+          actor: maintainer,
+        })
+        yield* b.graph.label({ id: shared, label: 'boom', actor: maintainer })
+        yield* b.sync.sync('origin')
+
+        // a has an unpushed commit of its own, on a field b didn’t touch, so its pull has to merge.
+        yield* TestClock.adjust('1 second')
+        yield* a.graph.update({
+          id: shared,
+          changes: { priority: 0 },
+          actor: maintainer,
+        })
+        yield* a.sync.commit
+        const { lastImported, lastPushed } = yield* a.sync.state
+        expect(Option.getOrThrow(lastImported)).not.toEqual(
+          Option.getOrThrow(lastPushed),
+        )
+
+        // The pull merges and moves the ref, then its import aborts. The last push must not have moved
+        // to the remote’s head ahead of the import, or a clone would rescan from it over the merge.
+        yield* a.sql.unsafe(
+          `CREATE TRIGGER boom BEFORE INSERT ON labels WHEN NEW.label = 'boom'
+           BEGIN SELECT RAISE(ABORT, 'injected'); END`,
+        )
+        const stopped = yield* Effect.exit(a.sync.pull('origin'))
+        expect(stopped._tag).toBe('Failure')
+        // The store never imported b’s edit, and the push stayed where it was.
+        expect((yield* a.sync.state).lastImported).toEqual(lastImported)
+        expect((yield* a.sync.state).lastPushed).toEqual(lastPushed)
+        expect((yield* a.graph.show(shared)).ticket.title).toBe('Shared')
+        yield* a.sql.unsafe('DROP TRIGGER boom')
+
+        // a’s clone is replaced: the commits it never pushed, the one it last imported among them, are gone.
+        renameSync(a.checkout, `${a.checkout}.old`)
+        git(root, 'clone', '--quiet', '--no-local', remote, a.checkout)
+
+        yield* converge(a, b)
+        yield* expectConverged(a, b)
+        const { ticket } = yield* a.graph.show(shared)
+        expect(ticket.title).toBe('From b')
+        expect(ticket.priority).toBe(0)
+        expect(yield* a.events('merge_conflict')).toEqual([])
+        expect(yield* b.events('merge_conflict')).toEqual([])
+      }).pipe(Effect.scoped),
+  )
+
+  it.effect(
     'a remote that doesn’t answer: nothing is exported until it does',
     () =>
       Effect.gen(function* () {

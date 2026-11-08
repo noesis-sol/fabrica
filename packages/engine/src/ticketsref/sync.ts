@@ -1227,8 +1227,12 @@ export const makeTicketsSync = Effect.fn('TicketsSync.make')(function* ({
         Fetched: ({ commit: remoteHead }) =>
           Effect.gen(function* () {
             yield* mergeFetched(remoteHead)
-            yield* local.setPushed(remoteHead)
+            // The import comes before the last push is kept: were it the other way, a crash between
+            // them leaves lastPushed at a commit the store hasn't imported, so a new clone (which loses
+            // lastImported) would rescan from it and write the store's stale values over the merge at
+            // their old clocks, dropping the other engine's edit with no conflict (fab-mgi.6.50).
             const { imported } = yield* settle
+            yield* local.setPushed(remoteHead)
             return Pulled.Merged({ imported })
           }),
       })
